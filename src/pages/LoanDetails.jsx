@@ -17,7 +17,9 @@ import {
   Banknote,
   Clock,
   CheckCircle2,
-  AlertTriangle
+  AlertTriangle,
+  Trash2,
+  AlertCircle as AlertCircleIcon
 } from 'lucide-react';
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
@@ -49,6 +51,63 @@ export default function LoanDetails() {
     queryKey: ['loan-transactions', loanId],
     queryFn: () => base44.entities.Transaction.filter({ loan_id: loanId }, '-date'),
     enabled: !!loanId
+  });
+
+  const deleteTransactionMutation = useMutation({
+    mutationFn: async ({ transactionId, reason }) => {
+      const transaction = transactions.find(t => t.id === transactionId);
+      const user = await base44.auth.me();
+      
+      // Mark transaction as deleted (audit trail)
+      await base44.entities.Transaction.update(transactionId, {
+        is_deleted: true,
+        deleted_by: user.email,
+        deleted_date: new Date().toISOString(),
+        deleted_reason: reason
+      });
+      
+      // Reverse the transaction effects
+      const newPrincipalPaid = (loan.principal_paid || 0) - (transaction.principal_applied || 0);
+      const newInterestPaid = (loan.interest_paid || 0) - (transaction.interest_applied || 0);
+      
+      await base44.entities.Loan.update(loanId, {
+        principal_paid: Math.max(0, newPrincipalPaid),
+        interest_paid: Math.max(0, newInterestPaid),
+        status: 'Active' // Reopen if was closed
+      });
+      
+      // Reverse schedule updates - recalculate from all non-deleted transactions
+      const allSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
+      
+      // Reset all schedule rows
+      for (const row of allSchedule) {
+        await base44.entities.RepaymentSchedule.update(row.id, {
+          principal_paid: 0,
+          interest_paid: 0,
+          status: 'Pending'
+        });
+      }
+      
+      // Reapply all non-deleted transactions
+      const activeTransactions = transactions.filter(t => !t.is_deleted && t.id !== transactionId);
+      for (const tx of activeTransactions) {
+        const { updates } = applyPaymentWaterfall(tx.amount, allSchedule, 0, 'credit');
+        for (const update of updates) {
+          const currentRow = allSchedule.find(r => r.id === update.id);
+          await base44.entities.RepaymentSchedule.update(update.id, {
+            interest_paid: update.interest_paid,
+            principal_paid: update.principal_paid,
+            status: update.status
+          });
+        }
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
+      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
+      queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
+      queryClient.invalidateQueries({ queryKey: ['loans'] });
+    }
   });
 
   const updateStatusMutation = useMutation({
@@ -373,34 +432,67 @@ export default function LoanDetails() {
 
         {/* Recent Transactions */}
         {transactions.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Recent Transactions</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="divide-y">
-                {transactions.slice(0, 10).map((tx) => (
-                  <div key={tx.id} className="py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-3">
-                      <div className={`p-2 rounded-lg ${tx.type === 'Repayment' ? 'bg-emerald-100' : 'bg-blue-100'}`}>
-                        <DollarSign className={`w-4 h-4 ${tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`} />
-                      </div>
-                      <div>
-                        <p className="font-medium">{tx.type}</p>
-                        <p className="text-sm text-slate-500">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <p className={`font-semibold ${tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`}>
-                        {formatCurrency(tx.amount)}
-                      </p>
-                      {tx.reference && <p className="text-xs text-slate-500">{tx.reference}</p>}
-                    </div>
-                  </div>
-                ))}
+        <Card>
+        <CardHeader>
+        <CardTitle>Transaction History</CardTitle>
+        </CardHeader>
+        <CardContent>
+        <div className="divide-y">
+        {transactions.slice(0, 10).map((tx) => (
+          <div key={tx.id} className={`py-3 flex items-center justify-between ${tx.is_deleted ? 'opacity-50 bg-red-50/50' : ''}`}>
+            <div className="flex items-center gap-3 flex-1">
+              <div className={`p-2 rounded-lg ${tx.is_deleted ? 'bg-red-100' : tx.type === 'Repayment' ? 'bg-emerald-100' : 'bg-blue-100'}`}>
+                {tx.is_deleted ? (
+                  <Trash2 className="w-4 h-4 text-red-600" />
+                ) : (
+                  <DollarSign className={`w-4 h-4 ${tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`} />
+                )}
               </div>
-            </CardContent>
-          </Card>
+              <div className="flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="font-medium">{tx.type}</p>
+                  {tx.is_deleted && (
+                    <Badge variant="destructive" className="text-xs">Deleted</Badge>
+                  )}
+                </div>
+                <p className="text-sm text-slate-500">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
+                {tx.is_deleted && (
+                  <p className="text-xs text-red-600 mt-1">
+                    Deleted by {tx.deleted_by} on {format(new Date(tx.deleted_date), 'MMM dd, yyyy')}
+                    {tx.deleted_reason && ` - ${tx.deleted_reason}`}
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="text-right">
+                <p className={`font-semibold ${tx.is_deleted ? 'text-red-600 line-through' : tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`}>
+                  {formatCurrency(tx.amount)}
+                </p>
+                {tx.reference && <p className="text-xs text-slate-500">{tx.reference}</p>}
+              </div>
+              {!tx.is_deleted && loan.status === 'Active' && (
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                  onClick={() => {
+                    const reason = prompt('Enter reason for deleting this transaction:');
+                    if (reason) {
+                      deleteTransactionMutation.mutate({ transactionId: tx.id, reason });
+                    }
+                  }}
+                  disabled={deleteTransactionMutation.isPending}
+                >
+                  <Trash2 className="w-4 h-4" />
+                </Button>
+              )}
+            </div>
+          </div>
+        ))}
+        </div>
+        </CardContent>
+        </Card>
         )}
 
         {/* Payment Modal */}
