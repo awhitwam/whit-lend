@@ -3,11 +3,12 @@ import { createPageUrl } from '@/utils';
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { formatCurrency } from './LoanCalculator';
+import { formatCurrency, calculateLiveInterestOutstanding } from './LoanCalculator';
 import { format } from 'date-fns';
-import { ChevronRight, Calendar, Banknote, TrendingUp, User } from 'lucide-react';
+import { ChevronRight, Calendar, Banknote, TrendingUp, User, AlertCircle } from 'lucide-react';
 
 export default function LoanCard({ loan }) {
+  const liveInterestOutstanding = calculateLiveInterestOutstanding(loan);
   const getStatusColor = (status) => {
     const colors = {
       'Pending': 'bg-slate-100 text-slate-700 border-slate-200',
@@ -65,6 +66,18 @@ export default function LoanCard({ loan }) {
             <p className="font-semibold text-red-600">{formatCurrency(totalOutstanding)}</p>
           </div>
         </div>
+
+        {loan.status === 'Active' && (
+          <div className="flex items-center justify-between p-3 mb-3 bg-slate-50 rounded-lg border border-slate-200">
+            <div className="flex items-center gap-2">
+              <AlertCircle className="w-4 h-4 text-slate-400" />
+              <span className="text-xs font-medium text-slate-600">Live Interest Due</span>
+            </div>
+            <span className={`font-bold text-sm ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
+              {liveInterestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(liveInterestOutstanding))}
+            </span>
+          </div>
+        )}
 
         {loan.status === 'Active' && (
           <div className="mb-4">
