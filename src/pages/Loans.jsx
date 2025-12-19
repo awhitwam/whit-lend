@@ -15,13 +15,13 @@ export default function Loans() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
 
-  const { data: loans = [], isLoading } = useQuery({
+  const { data: allLoans = [], isLoading } = useQuery({
     queryKey: ['loans'],
-    queryFn: async () => {
-      const allLoans = await base44.entities.Loan.list('-created_date');
-      return allLoans.filter(loan => !loan.is_deleted);
-    }
+    queryFn: () => base44.entities.Loan.list('-created_date')
   });
+
+  const loans = allLoans.filter(loan => !loan.is_deleted);
+  const deletedLoans = allLoans.filter(loan => loan.is_deleted);
 
   const filteredLoans = loans.filter(loan => {
     const matchesSearch = 

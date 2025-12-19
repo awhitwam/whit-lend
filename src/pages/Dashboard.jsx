@@ -25,7 +25,10 @@ import { isPast, isToday } from 'date-fns';
 export default function Dashboard() {
   const { data: loans = [], isLoading: loansLoading } = useQuery({
     queryKey: ['loans'],
-    queryFn: () => base44.entities.Loan.list('-created_date')
+    queryFn: async () => {
+      const allLoans = await base44.entities.Loan.list('-created_date');
+      return allLoans.filter(loan => !loan.is_deleted);
+    }
   });
 
   const { data: borrowers = [], isLoading: borrowersLoading } = useQuery({
