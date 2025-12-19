@@ -1,4 +1,4 @@
-import { addMonths, addWeeks, format } from 'date-fns';
+import { addMonths, addWeeks, format, startOfMonth, addDays, differenceInDays, endOfMonth } from 'date-fns';
 
 /**
  * Generates a repayment schedule based on loan parameters
@@ -10,6 +10,8 @@ import { addMonths, addWeeks, format } from 'date-fns';
  * @param {string} params.period - 'Monthly' or 'Weekly'
  * @param {Date} params.startDate - Loan start date
  * @param {number} params.interestOnlyPeriod - Number of interest-only periods (optional)
+ * @param {string} params.interestAlignment - 'period_based' or 'monthly_first'
+ * @param {boolean} params.extendForFullPeriod - If true, extend to complete full final period
  * @returns {Array} Array of repayment schedule objects
  */
 export function generateRepaymentSchedule({
@@ -19,8 +21,22 @@ export function generateRepaymentSchedule({
   interestType,
   period,
   startDate,
-  interestOnlyPeriod = 0
+  interestOnlyPeriod = 0,
+  interestAlignment = 'period_based',
+  extendForFullPeriod = false
 }) {
+  // If monthly_first alignment and Monthly period, use special logic
+  if (interestAlignment === 'monthly_first' && period === 'Monthly') {
+    return generateMonthlyFirstSchedule({
+      principal,
+      interestRate,
+      duration,
+      interestType,
+      startDate,
+      interestOnlyPeriod,
+      extendForFullPeriod
+    });
+  }
   const schedule = [];
   const periodsPerYear = period === 'Monthly' ? 12 : 52;
   const periodRate = interestRate / 100 / periodsPerYear;
@@ -171,6 +187,176 @@ export function generateRepaymentSchedule({
         interest_paid: 0,
         status: 'Pending'
       });
+    }
+  }
+  
+  return schedule;
+}
+
+/**
+ * Generate repayment schedule with monthly_first alignment
+ * Interest paid in advance, aligned to 1st of each month
+ */
+function generateMonthlyFirstSchedule({
+  principal,
+  interestRate,
+  duration,
+  interestType,
+  startDate,
+  interestOnlyPeriod = 0,
+  extendForFullPeriod = false
+}) {
+  const schedule = [];
+  const start = new Date(startDate);
+  const annualRate = interestRate / 100;
+  const monthlyRate = annualRate / 12;
+  const dailyRate = annualRate / 365;
+  
+  // Calculate first payment (partial month to end of current month)
+  const firstPaymentDate = start;
+  const endOfFirstMonth = endOfMonth(start);
+  const daysInFirstPeriod = differenceInDays(endOfFirstMonth, start) + 1;
+  const firstPeriodInterest = principal * dailyRate * daysInFirstPeriod;
+  
+  let installmentNum = 1;
+  let currentDate = firstPaymentDate;
+  let remainingBalance = principal;
+  
+  if (interestType === 'Reducing' || interestType === 'Flat') {
+    // First installment: partial interest only
+    schedule.push({
+      installment_number: installmentNum++,
+      due_date: format(firstPaymentDate, 'yyyy-MM-dd'),
+      principal_amount: 0,
+      interest_amount: Math.round(firstPeriodInterest * 100) / 100,
+      total_due: Math.round(firstPeriodInterest * 100) / 100,
+      balance: principal,
+      principal_paid: 0,
+      interest_paid: 0,
+      status: 'Pending'
+    });
+    
+    // Calculate subsequent monthly payments on the 1st
+    let monthsProcessed = 0;
+    const targetMonths = duration;
+    
+    while (monthsProcessed < targetMonths) {
+      currentDate = addMonths(startOfMonth(start), monthsProcessed + 1);
+      const isLastPeriod = monthsProcessed === targetMonths - 1;
+      
+      let interestForPeriod, principalForPeriod, payment;
+      
+      if (interestType === 'Flat') {
+        const totalInterest = principal * (annualRate) * (duration / 12);
+        interestForPeriod = totalInterest / duration;
+        principalForPeriod = principal / duration;
+        payment = principalForPeriod + interestForPeriod;
+      } else {
+        // Reducing balance
+        const r = monthlyRate;
+        const n = duration;
+        const pmt = principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+        
+        interestForPeriod = remainingBalance * r;
+        principalForPeriod = pmt - interestForPeriod;
+        payment = pmt;
+      }
+      
+      remainingBalance -= principalForPeriod;
+      
+      // Handle partial last period
+      if (isLastPeriod && !extendForFullPeriod) {
+        const nextMonth = addMonths(currentDate, 1);
+        const actualEndDate = addMonths(start, duration);
+        
+        if (actualEndDate < nextMonth) {
+          const daysInFinalPeriod = differenceInDays(actualEndDate, currentDate);
+          interestForPeriod = remainingBalance * dailyRate * daysInFinalPeriod;
+          principalForPeriod = remainingBalance;
+          payment = principalForPeriod + interestForPeriod;
+          remainingBalance = 0;
+        }
+      }
+      
+      schedule.push({
+        installment_number: installmentNum++,
+        due_date: format(currentDate, 'yyyy-MM-dd'),
+        principal_amount: Math.round(principalForPeriod * 100) / 100,
+        interest_amount: Math.round(interestForPeriod * 100) / 100,
+        total_due: Math.round(payment * 100) / 100,
+        balance: Math.max(0, Math.round(remainingBalance * 100) / 100),
+        principal_paid: 0,
+        interest_paid: 0,
+        status: 'Pending'
+      });
+      
+      monthsProcessed++;
+    }
+    
+  } else if (interestType === 'Interest-Only') {
+    // First payment: partial interest
+    schedule.push({
+      installment_number: installmentNum++,
+      due_date: format(firstPaymentDate, 'yyyy-MM-dd'),
+      principal_amount: 0,
+      interest_amount: Math.round(firstPeriodInterest * 100) / 100,
+      total_due: Math.round(firstPeriodInterest * 100) / 100,
+      balance: principal,
+      principal_paid: 0,
+      interest_paid: 0,
+      status: 'Pending'
+    });
+    
+    const effectiveInterestOnlyPeriod = interestOnlyPeriod > 0 ? interestOnlyPeriod : duration;
+    
+    // Interest-only payments on 1st of each month
+    for (let i = 0; i < effectiveInterestOnlyPeriod; i++) {
+      currentDate = addMonths(startOfMonth(start), i + 1);
+      const monthlyInterest = principal * monthlyRate;
+      
+      schedule.push({
+        installment_number: installmentNum++,
+        due_date: format(currentDate, 'yyyy-MM-dd'),
+        principal_amount: 0,
+        interest_amount: Math.round(monthlyInterest * 100) / 100,
+        total_due: Math.round(monthlyInterest * 100) / 100,
+        balance: principal,
+        principal_paid: 0,
+        interest_paid: 0,
+        status: 'Pending'
+      });
+    }
+    
+    // If there's a repayment period after interest-only
+    if (interestOnlyPeriod > 0 && interestOnlyPeriod < duration) {
+      const remainingPeriods = duration - interestOnlyPeriod;
+      const r = monthlyRate;
+      const n = remainingPeriods;
+      const pmt = principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+      
+      for (let i = 0; i < remainingPeriods; i++) {
+        currentDate = addMonths(startOfMonth(start), effectiveInterestOnlyPeriod + i + 1);
+        const interestForPeriod = remainingBalance * r;
+        const principalForPeriod = pmt - interestForPeriod;
+        remainingBalance -= principalForPeriod;
+        
+        schedule.push({
+          installment_number: installmentNum++,
+          due_date: format(currentDate, 'yyyy-MM-dd'),
+          principal_amount: Math.round(principalForPeriod * 100) / 100,
+          interest_amount: Math.round(interestForPeriod * 100) / 100,
+          total_due: Math.round(pmt * 100) / 100,
+          balance: Math.max(0, Math.round(remainingBalance * 100) / 100),
+          principal_paid: 0,
+          interest_paid: 0,
+          status: 'Pending'
+        });
+      }
+    } else {
+      // Balloon payment at the end
+      schedule[schedule.length - 1].principal_amount = principal;
+      schedule[schedule.length - 1].total_due += principal;
+      schedule[schedule.length - 1].balance = 0;
     }
   }
   
