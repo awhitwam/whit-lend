@@ -196,10 +196,15 @@ export function calculateLoanSummary(schedule) {
 
 /**
  * Apply payment using waterfall logic
- * Order: Penalties -> Interest -> Principal
+ * Order: Interest -> Principal -> Optional (reduce principal or credit)
+ * @param {number} payment - Payment amount
+ * @param {Array} scheduleRows - Repayment schedule rows
+ * @param {number} existingCredit - Existing overpayment credit
+ * @param {string} overpaymentOption - 'reduce_principal' or 'credit'
+ * @returns {Object} { updates, remainingPayment, principalReduction, creditAmount }
  */
-export function applyPaymentWaterfall(payment, scheduleRows) {
-  let remainingPayment = payment;
+export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0, overpaymentOption = 'credit') {
+  let remainingPayment = payment + existingCredit;
   const updates = [];
   
   // Sort by due date to pay oldest first
@@ -207,6 +212,7 @@ export function applyPaymentWaterfall(payment, scheduleRows) {
     new Date(a.due_date) - new Date(b.due_date)
   );
   
+  // First pass: pay scheduled installments
   for (const row of sortedRows) {
     if (remainingPayment <= 0) break;
     if (row.status === 'Paid') continue;
@@ -245,9 +251,53 @@ export function applyPaymentWaterfall(payment, scheduleRows) {
     }
   }
   
+  // Handle overpayment
+  let principalReduction = 0;
+  let creditAmount = 0;
+  
+  if (remainingPayment > 0) {
+    if (overpaymentOption === 'reduce_principal') {
+      // Apply to future principal - find first unpaid installment and reduce principal
+      for (const row of sortedRows) {
+        if (remainingPayment <= 0) break;
+        if (row.status === 'Paid') continue;
+        
+        const additionalPrincipal = Math.min(remainingPayment, row.principal_amount - (row.principal_paid || 0));
+        
+        if (additionalPrincipal > 0) {
+          const existingUpdate = updates.find(u => u.id === row.id);
+          if (existingUpdate) {
+            existingUpdate.principal_paid += additionalPrincipal;
+            existingUpdate.principalApplied += additionalPrincipal;
+          } else {
+            updates.push({
+              id: row.id,
+              interest_paid: row.interest_paid || 0,
+              principal_paid: (row.principal_paid || 0) + additionalPrincipal,
+              status: row.status,
+              interestApplied: 0,
+              principalApplied: additionalPrincipal
+            });
+          }
+          
+          principalReduction += additionalPrincipal;
+          remainingPayment -= additionalPrincipal;
+        }
+      }
+      
+      // Any remaining becomes credit
+      creditAmount = remainingPayment;
+    } else {
+      // Keep as credit for future payments
+      creditAmount = remainingPayment;
+    }
+  }
+  
   return {
     updates,
-    remainingPayment: Math.round(remainingPayment * 100) / 100
+    remainingPayment: Math.round(remainingPayment * 100) / 100,
+    principalReduction: Math.round(principalReduction * 100) / 100,
+    creditAmount: Math.round(creditAmount * 100) / 100
   };
 }
 

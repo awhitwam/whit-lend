@@ -61,8 +61,13 @@ export default function LoanDetails() {
 
   const paymentMutation = useMutation({
     mutationFn: async (paymentData) => {
-      // Apply waterfall logic
-      const { updates, remainingPayment } = applyPaymentWaterfall(paymentData.amount, schedule);
+      // Apply waterfall logic with overpayment handling
+      const { updates, principalReduction, creditAmount } = applyPaymentWaterfall(
+        paymentData.amount, 
+        schedule,
+        loan.overpayment_credit || 0,
+        paymentData.overpayment_option
+      );
       
       let totalPrincipalApplied = 0;
       let totalInterestApplied = 0;
@@ -91,7 +96,8 @@ export default function LoanDetails() {
       
       const updateData = {
         principal_paid: newPrincipalPaid,
-        interest_paid: newInterestPaid
+        interest_paid: newInterestPaid,
+        overpayment_credit: creditAmount
       };
       
       // Check if loan is fully paid
@@ -101,7 +107,7 @@ export default function LoanDetails() {
       
       await base44.entities.Loan.update(loanId, updateData);
       
-      return { totalPrincipalApplied, totalInterestApplied };
+      return { totalPrincipalApplied, totalInterestApplied, principalReduction, creditAmount };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
@@ -310,6 +316,12 @@ export default function LoanDetails() {
             <CardContent className="p-5">
               <p className="text-sm text-red-600 font-medium">Outstanding</p>
               <p className="text-2xl font-bold text-red-900">{formatCurrency(totalOutstanding)}</p>
+              {loan.overpayment_credit > 0 && (
+                <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                  <CheckCircle2 className="w-3 h-3" />
+                  Credit: {formatCurrency(loan.overpayment_credit)}
+                </p>
+              )}
             </CardContent>
           </Card>
         </div>

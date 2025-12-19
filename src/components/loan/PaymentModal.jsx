@@ -4,7 +4,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2, DollarSign, Calendar, FileText } from 'lucide-react';
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Loader2, DollarSign, Calendar, FileText, TrendingDown, Wallet } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 import { format } from 'date-fns';
 
@@ -20,7 +21,8 @@ export default function PaymentModal({
     amount: '',
     date: format(new Date(), 'yyyy-MM-dd'),
     reference: '',
-    notes: ''
+    notes: '',
+    overpayment_option: 'credit'
   });
 
   const handleSubmit = (e) => {
@@ -32,7 +34,8 @@ export default function PaymentModal({
       date: formData.date,
       type: 'Repayment',
       reference: formData.reference,
-      notes: formData.notes
+      notes: formData.notes,
+      overpayment_option: formData.overpayment_option
     });
   };
 
@@ -122,6 +125,50 @@ export default function PaymentModal({
               rows={2}
             />
           </div>
+
+          {formData.amount && parseFloat(formData.amount) > outstandingAmount && (
+            <div className="space-y-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+              <div className="flex items-center gap-2">
+                <div className="p-1.5 bg-amber-100 rounded">
+                  <DollarSign className="w-4 h-4 text-amber-600" />
+                </div>
+                <div>
+                  <p className="font-medium text-amber-900">Overpayment Detected</p>
+                  <p className="text-xs text-amber-700">
+                    Excess: {formatCurrency(parseFloat(formData.amount) - outstandingAmount)}
+                  </p>
+                </div>
+              </div>
+              
+              <Label className="text-sm font-medium text-amber-900">How should we handle the overpayment?</Label>
+              <RadioGroup 
+                value={formData.overpayment_option} 
+                onValueChange={(value) => handleChange('overpayment_option', value)}
+              >
+                <div className="flex items-start space-x-2 p-3 bg-white rounded-lg border border-amber-200 cursor-pointer hover:bg-amber-50">
+                  <RadioGroupItem value="reduce_principal" id="reduce" className="mt-1" />
+                  <Label htmlFor="reduce" className="cursor-pointer flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <TrendingDown className="w-4 h-4 text-emerald-600" />
+                      <span className="font-medium text-slate-900">Reduce Principal Balance</span>
+                    </div>
+                    <p className="text-xs text-slate-600">Apply excess to reduce future principal, lowering total interest paid</p>
+                  </Label>
+                </div>
+                
+                <div className="flex items-start space-x-2 p-3 bg-white rounded-lg border border-amber-200 cursor-pointer hover:bg-amber-50">
+                  <RadioGroupItem value="credit" id="credit" className="mt-1" />
+                  <Label htmlFor="credit" className="cursor-pointer flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Wallet className="w-4 h-4 text-blue-600" />
+                      <span className="font-medium text-slate-900">Keep as Credit</span>
+                    </div>
+                    <p className="text-xs text-slate-600">Store as credit to offset future payments automatically</p>
+                  </Label>
+                </div>
+              </RadioGroup>
+            </div>
+          )}
 
           <DialogFooter>
             <Button type="button" variant="outline" onClick={onClose}>
