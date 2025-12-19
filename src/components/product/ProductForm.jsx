@@ -13,7 +13,8 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
     period: product?.period || 'Monthly',
     min_amount: product?.min_amount || '',
     max_amount: product?.max_amount || '',
-    max_duration: product?.max_duration || ''
+    max_duration: product?.max_duration || '',
+    interest_only_period: product?.interest_only_period || ''
   });
 
   const handleSubmit = (e) => {
@@ -23,7 +24,8 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
       interest_rate: parseFloat(formData.interest_rate),
       min_amount: formData.min_amount ? parseFloat(formData.min_amount) : null,
       max_amount: formData.max_amount ? parseFloat(formData.max_amount) : null,
-      max_duration: formData.max_duration ? parseInt(formData.max_duration) : null
+      max_duration: formData.max_duration ? parseInt(formData.max_duration) : null,
+      interest_only_period: formData.interest_only_period ? parseInt(formData.interest_only_period) : null
     });
   };
 
@@ -71,6 +73,8 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
             <SelectContent>
               <SelectItem value="Flat">Flat Rate</SelectItem>
               <SelectItem value="Reducing">Reducing Balance</SelectItem>
+              <SelectItem value="Interest-Only">Interest-Only</SelectItem>
+              <SelectItem value="Rolled-Up">Rolled-Up / Capitalized</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -128,11 +132,28 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
         </div>
       </div>
 
+      {formData.interest_type === 'Interest-Only' && (
+        <div className="space-y-2">
+          <Label htmlFor="interest_only_period">Interest-Only Period (periods)</Label>
+          <Input
+            id="interest_only_period"
+            type="number"
+            value={formData.interest_only_period}
+            onChange={(e) => handleChange('interest_only_period', e.target.value)}
+            placeholder="e.g. 12 (leave empty for entire term)"
+            min={0}
+          />
+          <p className="text-xs text-slate-500">Leave empty if entire loan term is interest-only with balloon payment at the end.</p>
+        </div>
+      )}
+
       <div className="p-4 bg-blue-50 rounded-lg">
         <h4 className="font-medium text-blue-900 mb-2">Interest Calculation Methods</h4>
         <div className="text-sm text-blue-800 space-y-2">
           <p><strong>Flat Rate:</strong> Interest calculated on the original principal throughout the loan term. Simple but results in higher effective interest.</p>
           <p><strong>Reducing Balance:</strong> Interest calculated on the remaining principal balance. Standard amortization method, more favorable for borrowers.</p>
+          <p><strong>Interest-Only:</strong> Borrower pays only interest for a set period. Principal is either paid in later installments or as a balloon payment at the end. Best for businesses with irregular cash flow.</p>
+          <p><strong>Rolled-Up / Capitalized:</strong> No monthly payments. Interest compounds and is added to the loan balance. Everything paid at the end. Common for bridging loans and property development.</p>
         </div>
       </div>
 

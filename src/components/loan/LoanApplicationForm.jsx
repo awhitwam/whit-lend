@@ -52,7 +52,8 @@ export default function LoanApplicationForm({
       duration: parseInt(formData.duration),
       interestType: selectedProduct.interest_type,
       period: selectedProduct.period,
-      startDate: formData.start_date
+      startDate: formData.start_date,
+      interestOnlyPeriod: selectedProduct.interest_only_period || 0
     });
 
     const loanSummary = calculateLoanSummary(schedule);
@@ -87,6 +88,7 @@ export default function LoanApplicationForm({
       product_name: selectedProduct.name,
       interest_rate: selectedProduct.interest_rate,
       interest_type: selectedProduct.interest_type,
+      interest_only_period: selectedProduct.interest_only_period || 0,
       period: selectedProduct.period,
       total_interest: summary.totalInterest,
       total_repayable: summary.totalRepayable + exitFee,
