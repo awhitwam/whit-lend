@@ -99,40 +99,44 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
           </Select>
         </div>
 
-        <div className="space-y-2">
-          <Label htmlFor="interest_alignment">Interest Payment Schedule</Label>
-          <Select 
-            value={formData.interest_alignment} 
-            onValueChange={(value) => handleChange('interest_alignment', value)}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder="Select alignment" />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="period_based">Period-Based (from start date)</SelectItem>
-              <SelectItem value="monthly_first">Align to 1st of Month</SelectItem>
-            </SelectContent>
-          </Select>
-          {formData.interest_alignment === 'monthly_first' && (
-            <p className="text-xs text-slate-500 mt-1">
-              First payment: partial interest to month-end. Subsequent payments on 1st of each month.
-            </p>
-          )}
-        </div>
+        {formData.interest_type !== 'Rolled-Up' && (
+          <div className="space-y-2">
+            <Label htmlFor="interest_alignment">Interest Payment Schedule</Label>
+            <Select 
+              value={formData.interest_alignment} 
+              onValueChange={(value) => handleChange('interest_alignment', value)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select alignment" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="period_based">Period-Based (from start date)</SelectItem>
+                <SelectItem value="monthly_first">Align to 1st of Month</SelectItem>
+              </SelectContent>
+            </Select>
+            {formData.interest_alignment === 'monthly_first' && (
+              <p className="text-xs text-slate-500 mt-1">
+                First payment: partial interest to month-end. Subsequent payments on 1st of each month.
+              </p>
+            )}
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center space-x-2">
-        <input
-          type="checkbox"
-          id="extend_for_full_period"
-          checked={formData.extend_for_full_period}
-          onChange={(e) => handleChange('extend_for_full_period', e.target.checked)}
-          className="rounded border-slate-300"
-        />
-        <Label htmlFor="extend_for_full_period" className="font-normal cursor-pointer">
-          Extend loan to complete full final period (no partial final payment)
-        </Label>
-      </div>
+      {formData.interest_type !== 'Rolled-Up' && (
+        <div className="flex items-center space-x-2">
+          <input
+            type="checkbox"
+            id="extend_for_full_period"
+            checked={formData.extend_for_full_period}
+            onChange={(e) => handleChange('extend_for_full_period', e.target.checked)}
+            className="rounded border-slate-300"
+          />
+          <Label htmlFor="extend_for_full_period" className="font-normal cursor-pointer">
+            Extend loan to complete full final period (no partial final payment)
+          </Label>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         <div className="space-y-2">
