@@ -53,7 +53,9 @@ export default function LoanApplicationForm({
       interestType: selectedProduct.interest_type,
       period: selectedProduct.period,
       startDate: formData.start_date,
-      interestOnlyPeriod: selectedProduct.interest_only_period || 0
+      interestOnlyPeriod: selectedProduct.interest_only_period || 0,
+      interestAlignment: selectedProduct.interest_alignment || 'period_based',
+      extendForFullPeriod: selectedProduct.extend_for_full_period || false
     });
 
     const loanSummary = calculateLoanSummary(schedule);
