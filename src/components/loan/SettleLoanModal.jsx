@@ -4,8 +4,9 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { Loader2, Calculator, Calendar, TrendingDown, DollarSign, FileText } from 'lucide-react';
+import { Loader2, Calculator, Calendar, TrendingDown, DollarSign, FileText, Download } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
+import { generateSettlementStatementPDF } from './LoanPDFGenerator';
 import { format, differenceInDays } from 'date-fns';
 
 function calculateSettlementAmount(loan, settlementDate) {
@@ -154,6 +155,18 @@ export default function SettleLoanModal({
       notes: notes || `Full settlement of loan as of ${format(new Date(settlementDate), 'MMM dd, yyyy')}`,
       overpayment_option: 'credit'
     });
+  };
+
+  const handleDownloadPDF = () => {
+    const settlementData = {
+      settlementDate: settlementDate,
+      principalRemaining: settlement.principalRemaining,
+      interestDue: settlement.interestRemaining,
+      exitFee: settlement.exitFee,
+      totalSettlement: settlement.settlementAmount,
+      dailyBreakdown: settlement.dailyBreakdown
+    };
+    generateSettlementStatementPDF(loan, settlementData);
   };
 
   if (!loan || !settlement) return null;
@@ -318,9 +331,13 @@ export default function SettleLoanModal({
             </div>
           </div>
 
-          <DialogFooter className="flex gap-2">
+          <DialogFooter className="gap-2">
             <Button type="button" variant="outline" onClick={onClose}>
               Cancel
+            </Button>
+            <Button type="button" variant="secondary" onClick={handleDownloadPDF}>
+              <Download className="w-4 h-4 mr-2" />
+              Download PDF
             </Button>
             <Button 
               type="submit" 
