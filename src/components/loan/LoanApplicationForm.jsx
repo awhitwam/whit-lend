@@ -240,7 +240,7 @@ export default function LoanApplicationForm({
             type="button" 
             variant="outline" 
             onClick={handlePreview}
-            disabled={!formData.borrower_id || !formData.product_id || !formData.principal_amount || !formData.duration}
+            disabled={!formData.borrower_id || !formData.product_id || !formData.principal_amount || !formData.duration || !selectedProduct}
             className="w-full"
           >
             <Calculator className="w-4 h-4 mr-2" />
