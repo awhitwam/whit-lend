@@ -1,13 +1,38 @@
 import { format, isPast, isToday } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatCurrency } from './LoanCalculator';
-import { CheckCircle2, Clock, AlertTriangle, CircleDot, Receipt } from 'lucide-react';
+import { CheckCircle2, Clock, AlertTriangle, CircleDot, DollarSign } from 'lucide-react';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [] }) {
   // Check if any row has principal due (to show/hide principal column)
   const hasPrincipalPayments = schedule.some(row => row.principal_amount > 0);
+
+  // Combine schedule rows and transaction rows, sorted by date
+  const combinedRows = [];
+  
+  // Add schedule rows
+  schedule.forEach(row => {
+    combinedRows.push({
+      type: 'schedule',
+      date: new Date(row.due_date),
+      data: row
+    });
+  });
+  
+  // Add transaction rows (excluding deleted and disbursements)
+  transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+    .forEach(tx => {
+      combinedRows.push({
+        type: 'transaction',
+        date: new Date(tx.date),
+        data: tx
+      });
+    });
+  
+  // Sort by date
+  combinedRows.sort((a, b) => a.date - b.date);
 
   const getStatusBadge = (row) => {
     const isPastDue = isPast(new Date(row.due_date)) && !isToday(new Date(row.due_date));
@@ -86,96 +111,113 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             <TableHead className="font-semibold text-right">Paid</TableHead>
             <TableHead className="font-semibold text-right">Balance</TableHead>
             <TableHead className="font-semibold">Status</TableHead>
-            <TableHead className="font-semibold">Payments</TableHead>
             </TableRow>
             </TableHeader>
         <TableBody>
           {isLoading ? (
             Array(6).fill(0).map((_, i) => (
               <TableRow key={i}>
-                <TableCell colSpan={hasPrincipalPayments ? 9 : 8} className="h-14">
+                <TableCell colSpan={hasPrincipalPayments ? 8 : 7} className="h-14">
                   <div className="h-4 bg-slate-100 rounded animate-pulse w-full"></div>
                 </TableCell>
               </TableRow>
             ))
-          ) : schedule.length === 0 ? (
+          ) : combinedRows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={hasPrincipalPayments ? 9 : 8} className="text-center py-12 text-slate-500">
+              <TableCell colSpan={hasPrincipalPayments ? 8 : 7} className="text-center py-12 text-slate-500">
                 No repayment schedule found
               </TableCell>
             </TableRow>
           ) : (
-            schedule.map((row, index) => (
-              <TableRow 
-                key={row.id || row.installment_number} 
-                className={`${getRowClass(row)} transition-colors`}
-              >
-                <TableCell className="font-medium">
-                  <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-sm">
-                    {row.installment_number}
-                  </div>
-                </TableCell>
-                <TableCell>
-                  <div>
-                    <p className="font-medium">{format(new Date(row.due_date), 'MMM dd, yyyy')}</p>
-                    <p className="text-xs text-slate-500">{format(new Date(row.due_date), 'EEEE')}</p>
-                  </div>
-                </TableCell>
-                {hasPrincipalPayments && (
-                  <TableCell className="text-right font-mono text-sm">
-                    {formatCurrency(row.principal_amount)}
-                  </TableCell>
-                )}
-                <TableCell className="text-right font-mono text-sm text-amber-600">
-                  {formatCurrency(row.interest_amount)}
-                </TableCell>
-                <TableCell className="text-right font-mono font-semibold">
-                  {formatCurrency(getAccumulatedTotalDue(row, index))}
-                </TableCell>
-                <TableCell className="text-right font-mono text-sm text-emerald-600">
-                  {formatCurrency((row.principal_paid || 0) + (row.interest_paid || 0))}
-                </TableCell>
-                <TableCell className="text-right font-mono text-sm">
-                  {formatCurrency(row.balance)}
-                </TableCell>
-                <TableCell>
-                  {getStatusBadge(row)}
-                </TableCell>
-                <TableCell>
-                  {(row.interest_paid > 0 || row.principal_paid > 0) && (
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <button className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-700 font-medium">
-                          <Receipt className="w-3 h-3" />
-                          View
-                        </button>
-                      </PopoverTrigger>
-                      <PopoverContent className="w-80">
-                        <div className="space-y-2">
-                          <p className="font-semibold text-sm">Payments Applied</p>
-                          <div className="space-y-1 text-xs">
-                            <div className="flex justify-between">
-                              <span className="text-slate-600">Interest Paid:</span>
-                              <span className="font-medium text-amber-600">{formatCurrency(row.interest_paid || 0)}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span className="text-slate-600">Principal Paid:</span>
-                              <span className="font-medium text-emerald-600">{formatCurrency(row.principal_paid || 0)}</span>
-                            </div>
-                            <div className="flex justify-between pt-1 border-t">
-                              <span className="text-slate-600 font-medium">Total:</span>
-                              <span className="font-semibold">{formatCurrency((row.interest_paid || 0) + (row.principal_paid || 0))}</span>
-                            </div>
-                          </div>
+            combinedRows.map((item, index) => {
+              if (item.type === 'transaction') {
+                const tx = item.data;
+                return (
+                  <TableRow 
+                    key={`tx-${tx.id}`}
+                    className="bg-emerald-50/50 border-l-4 border-emerald-500"
+                  >
+                    <TableCell>
+                      <div className="flex items-center gap-2">
+                        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                          <DollarSign className="w-4 h-4 text-emerald-600" />
                         </div>
-                      </PopoverContent>
-                    </Popover>
-                  )}
-                </TableCell>
-                </TableRow>
-                ))
-                )}
-                </TableBody>
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium text-emerald-900">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
+                        <p className="text-xs text-emerald-700">Payment Received</p>
+                      </div>
+                    </TableCell>
+                    {hasPrincipalPayments && (
+                      <TableCell className="text-right font-mono text-sm text-emerald-700">
+                        -{formatCurrency(tx.principal_applied || 0)}
+                      </TableCell>
+                    )}
+                    <TableCell className="text-right font-mono text-sm text-emerald-700">
+                      -{formatCurrency(tx.interest_applied || 0)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-semibold text-emerald-900">
+                      -{formatCurrency(tx.amount)}
+                    </TableCell>
+                    <TableCell colSpan="2" className="text-xs text-slate-500">
+                      {tx.reference && <span className="font-medium">Ref: {tx.reference}</span>}
+                      {tx.notes && <span className="ml-2">{tx.notes}</span>}
+                    </TableCell>
+                    <TableCell>
+                      <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
+                        <CheckCircle2 className="w-3 h-3 mr-1" />
+                        Payment
+                      </Badge>
+                    </TableCell>
+                  </TableRow>
+                );
+              } else {
+                const row = item.data;
+                const scheduleIndex = schedule.findIndex(s => s.id === row.id);
+                return (
+                  <TableRow 
+                    key={row.id || row.installment_number} 
+                    className={`${getRowClass(row)} transition-colors`}
+                  >
+                    <TableCell className="font-medium">
+                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-sm">
+                        {row.installment_number}
+                      </div>
+                    </TableCell>
+                    <TableCell>
+                      <div>
+                        <p className="font-medium">{format(new Date(row.due_date), 'MMM dd, yyyy')}</p>
+                        <p className="text-xs text-slate-500">{format(new Date(row.due_date), 'EEEE')}</p>
+                      </div>
+                    </TableCell>
+                    {hasPrincipalPayments && (
+                      <TableCell className="text-right font-mono text-sm">
+                        {formatCurrency(row.principal_amount)}
+                      </TableCell>
+                    )}
+                    <TableCell className="text-right font-mono text-sm text-amber-600">
+                      {formatCurrency(row.interest_amount)}
+                    </TableCell>
+                    <TableCell className="text-right font-mono font-semibold">
+                      {formatCurrency(getAccumulatedTotalDue(row, scheduleIndex))}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm text-emerald-600">
+                      {formatCurrency((row.principal_paid || 0) + (row.interest_paid || 0))}
+                    </TableCell>
+                    <TableCell className="text-right font-mono text-sm">
+                      {formatCurrency(row.balance)}
+                    </TableCell>
+                    <TableCell>
+                      {getStatusBadge(row)}
+                    </TableCell>
+                  </TableRow>
+                );
+              }
+            })
+          )}
+        </TableBody>
       </Table>
     </div>
   );
