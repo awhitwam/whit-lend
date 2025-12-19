@@ -396,7 +396,7 @@ export default function LoanDetails() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
-                    {(loan.status === 'Pending' || loan.status === 'Approved') && (
+                    {loan.status !== 'Closed' && (
                       <DropdownMenuItem onClick={() => setIsEditOpen(true)}>
                         <Edit className="w-4 h-4 mr-2" />
                         Edit Loan
