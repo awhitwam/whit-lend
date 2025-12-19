@@ -1,10 +1,11 @@
 import { format, isPast, isToday } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { formatCurrency } from './LoanCalculator';
-import { CheckCircle2, Clock, AlertTriangle, CircleDot } from 'lucide-react';
+import { CheckCircle2, Clock, AlertTriangle, CircleDot, Receipt } from 'lucide-react';
 
-export default function RepaymentScheduleTable({ schedule, isLoading }) {
+export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [] }) {
   // Check if any row has principal due (to show/hide principal column)
   const hasPrincipalPayments = schedule.some(row => row.principal_amount > 0);
 
@@ -85,20 +86,21 @@ export default function RepaymentScheduleTable({ schedule, isLoading }) {
             <TableHead className="font-semibold text-right">Paid</TableHead>
             <TableHead className="font-semibold text-right">Balance</TableHead>
             <TableHead className="font-semibold">Status</TableHead>
-          </TableRow>
-        </TableHeader>
+            <TableHead className="font-semibold">Payments</TableHead>
+            </TableRow>
+            </TableHeader>
         <TableBody>
           {isLoading ? (
             Array(6).fill(0).map((_, i) => (
               <TableRow key={i}>
-                <TableCell colSpan={hasPrincipalPayments ? 8 : 7} className="h-14">
+                <TableCell colSpan={hasPrincipalPayments ? 9 : 8} className="h-14">
                   <div className="h-4 bg-slate-100 rounded animate-pulse w-full"></div>
                 </TableCell>
               </TableRow>
             ))
           ) : schedule.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={hasPrincipalPayments ? 8 : 7} className="text-center py-12 text-slate-500">
+              <TableCell colSpan={hasPrincipalPayments ? 9 : 8} className="text-center py-12 text-slate-500">
                 No repayment schedule found
               </TableCell>
             </TableRow>
@@ -139,10 +141,41 @@ export default function RepaymentScheduleTable({ schedule, isLoading }) {
                 <TableCell>
                   {getStatusBadge(row)}
                 </TableCell>
-              </TableRow>
-            ))
-          )}
-        </TableBody>
+                <TableCell>
+                  {(row.interest_paid > 0 || row.principal_paid > 0) && (
+                    <Popover>
+                      <PopoverTrigger asChild>
+                        <button className="flex items-center gap-1 text-xs text-emerald-600 hover:text-emerald-700 font-medium">
+                          <Receipt className="w-3 h-3" />
+                          View
+                        </button>
+                      </PopoverTrigger>
+                      <PopoverContent className="w-80">
+                        <div className="space-y-2">
+                          <p className="font-semibold text-sm">Payments Applied</p>
+                          <div className="space-y-1 text-xs">
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">Interest Paid:</span>
+                              <span className="font-medium text-amber-600">{formatCurrency(row.interest_paid || 0)}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span className="text-slate-600">Principal Paid:</span>
+                              <span className="font-medium text-emerald-600">{formatCurrency(row.principal_paid || 0)}</span>
+                            </div>
+                            <div className="flex justify-between pt-1 border-t">
+                              <span className="text-slate-600 font-medium">Total:</span>
+                              <span className="font-semibold">{formatCurrency((row.interest_paid || 0) + (row.principal_paid || 0))}</span>
+                            </div>
+                          </div>
+                        </div>
+                      </PopoverContent>
+                    </Popover>
+                  )}
+                </TableCell>
+                </TableRow>
+                ))
+                )}
+                </TableBody>
       </Table>
     </div>
   );
