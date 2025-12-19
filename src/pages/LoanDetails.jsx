@@ -21,7 +21,8 @@ import {
   Trash2,
   AlertCircle as AlertCircleIcon,
   Edit,
-  MoreVertical
+  MoreVertical,
+  Repeat
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -224,6 +225,13 @@ export default function LoanDetails() {
     }
   });
 
+  const toggleAutoExtendMutation = useMutation({
+    mutationFn: () => base44.entities.Loan.update(loanId, { auto_extend: !loan.auto_extend }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
+    }
+  });
+
   const paymentMutation = useMutation({
     mutationFn: async (paymentData) => {
       // Apply waterfall logic with overpayment handling
@@ -407,6 +415,12 @@ export default function LoanDetails() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    {loan.status === 'Active' && (
+                      <DropdownMenuItem onClick={() => toggleAutoExtendMutation.mutate()}>
+                        <Repeat className="w-4 h-4 mr-2" />
+                        {loan.auto_extend ? 'Disable' : 'Enable'} Auto-Extend
+                      </DropdownMenuItem>
+                    )}
                     {loan.status !== 'Closed' && (
                       <DropdownMenuItem onClick={() => setIsEditOpen(true)}>
                         <Edit className="w-4 h-4 mr-2" />
@@ -453,6 +467,12 @@ export default function LoanDetails() {
                   Duration
                 </div>
                 <p className="text-xl font-bold">{loan.duration} {loan.period === 'Monthly' ? 'months' : 'weeks'}</p>
+                {loan.auto_extend && (
+                  <div className="flex items-center gap-1 mt-1">
+                    <Repeat className="w-3 h-3 text-blue-600" />
+                    <p className="text-xs text-blue-600 font-medium">Auto-extending</p>
+                  </div>
+                )}
               </div>
               <div>
                 <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
@@ -487,6 +507,21 @@ export default function LoanDetails() {
                       <p className="text-xs text-slate-500 mt-0.5">Added to repayment</p>
                     </div>
                   )}
+                </div>
+              </div>
+            )}
+
+            {loan.auto_extend && loan.status === 'Active' && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <Repeat className="w-4 h-4 text-blue-600 mt-0.5" />
+                  <div>
+                    <p className="text-sm font-medium text-blue-900">Auto-Extend Enabled</p>
+                    <p className="text-xs text-blue-700 mt-0.5">
+                      This loan will continue to accrue interest beyond the original duration until fully settled. 
+                      Use the settlement calculator for accurate payoff amounts.
+                    </p>
+                  </div>
                 </div>
               </div>
             )}
