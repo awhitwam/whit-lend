@@ -164,12 +164,12 @@ export default function Dashboard() {
           <Card className="bg-white border-slate-200">
             <CardContent className="p-5">
               <div className="flex items-center gap-4">
-                <div className="p-3 rounded-xl bg-emerald-100">
-                  <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                <div className="p-3 rounded-xl bg-purple-100">
+                  <CheckCircle2 className="w-5 h-5 text-purple-600" />
                 </div>
                 <div>
                   <p className="text-2xl font-bold">{loans.filter(l => l.status === 'Closed').length}</p>
-                  <p className="text-sm text-slate-500">Closed Loans</p>
+                  <p className="text-sm text-slate-500">Settled Loans</p>
                 </div>
               </div>
             </CardContent>

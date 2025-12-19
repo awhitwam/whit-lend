@@ -14,10 +14,14 @@ export default function LoanCard({ loan }) {
       'Pending': 'bg-slate-100 text-slate-700 border-slate-200',
       'Approved': 'bg-blue-50 text-blue-700 border-blue-200',
       'Active': 'bg-emerald-50 text-emerald-700 border-emerald-200',
-      'Closed': 'bg-slate-100 text-slate-600 border-slate-200',
+      'Closed': 'bg-purple-100 text-purple-700 border-purple-200',
       'Defaulted': 'bg-red-50 text-red-700 border-red-200'
     };
     return colors[status] || colors['Pending'];
+  };
+
+  const getStatusLabel = (status) => {
+    return status === 'Closed' ? 'Settled' : status;
   };
 
   const principalRemaining = loan.principal_amount - (loan.principal_paid || 0);
@@ -36,7 +40,7 @@ export default function LoanCard({ loan }) {
             </div>
             <p className="text-sm text-slate-500">{loan.product_name}</p>
           </div>
-          <Badge className={getStatusColor(loan.status)}>{loan.status}</Badge>
+          <Badge className={getStatusColor(loan.status)}>{getStatusLabel(loan.status)}</Badge>
         </div>
 
         <div className="grid grid-cols-2 gap-4 mb-4">
