@@ -7,15 +7,18 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, FileText, Trash2 } from 'lucide-react';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight } from 'lucide-react';
 import { format } from 'date-fns';
-import LoanCard from '@/components/loan/LoanCard';
+import { formatCurrency } from '@/components/loan/LoanCalculator';
 import EmptyState from '@/components/ui/EmptyState';
 
 export default function Loans() {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('active');
+  const [sortField, setSortField] = useState('created_date');
+  const [sortDirection, setSortDirection] = useState('desc');
 
   const { data: allLoans = [], isLoading } = useQuery({
     queryKey: ['loans'],
@@ -34,6 +37,65 @@ export default function Loans() {
     
     return matchesSearch && matchesStatus;
   });
+
+  const sortedLoans = [...filteredLoans].sort((a, b) => {
+    let aVal, bVal;
+    
+    switch(sortField) {
+      case 'borrower_name':
+        aVal = a.borrower_name || '';
+        bVal = b.borrower_name || '';
+        break;
+      case 'product_name':
+        aVal = a.product_name || '';
+        bVal = b.product_name || '';
+        break;
+      case 'principal_amount':
+        aVal = a.principal_amount || 0;
+        bVal = b.principal_amount || 0;
+        break;
+      case 'start_date':
+        aVal = new Date(a.start_date);
+        bVal = new Date(b.start_date);
+        break;
+      case 'status':
+        aVal = a.status || '';
+        bVal = b.status || '';
+        break;
+      case 'created_date':
+      default:
+        aVal = new Date(a.created_date);
+        bVal = new Date(b.created_date);
+    }
+    
+    if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+    if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+    return 0;
+  });
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+    }
+  };
+
+  const getStatusColor = (status) => {
+    const colors = {
+      'Pending': 'bg-slate-100 text-slate-700',
+      'Approved': 'bg-blue-100 text-blue-700',
+      'Active': 'bg-emerald-100 text-emerald-700',
+      'Closed': 'bg-purple-100 text-purple-700',
+      'Defaulted': 'bg-red-100 text-red-700'
+    };
+    return colors[status] || colors['Pending'];
+  };
+
+  const getStatusLabel = (status) => {
+    return status === 'Closed' ? 'Settled' : status;
+  };
 
   const statusCounts = {
     all: loans.length,
@@ -112,10 +174,12 @@ export default function Loans() {
 
             {/* Content */}
             {isLoading ? (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {Array(6).fill(0).map((_, i) => (
-                  <div key={i} className="h-48 bg-white rounded-xl animate-pulse" />
-                ))}
+              <div className="bg-white rounded-xl border border-slate-200">
+                <div className="p-8 space-y-4">
+                  {Array(6).fill(0).map((_, i) => (
+                    <div key={i} className="h-12 bg-slate-100 rounded animate-pulse" />
+                  ))}
+                </div>
               </div>
             ) : filteredLoans.length === 0 ? (
               <EmptyState
@@ -134,10 +198,97 @@ export default function Loans() {
                 }
               />
             ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredLoans.map((loan) => (
-                  <LoanCard key={loan.id} loan={loan} />
-                ))}
+              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50">
+                      <TableHead className="w-12">#</TableHead>
+                      <TableHead>
+                        <button 
+                          onClick={() => handleSort('borrower_name')}
+                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+                        >
+                          Borrower
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button 
+                          onClick={() => handleSort('product_name')}
+                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+                        >
+                          Product
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="text-right">
+                        <button 
+                          onClick={() => handleSort('principal_amount')}
+                          className="flex items-center gap-1 ml-auto hover:text-slate-900 font-semibold"
+                        >
+                          Principal
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="text-right">Outstanding</TableHead>
+                      <TableHead>
+                        <button 
+                          onClick={() => handleSort('start_date')}
+                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+                        >
+                          Start Date
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button 
+                          onClick={() => handleSort('status')}
+                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+                        >
+                          Status
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-12"></TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {sortedLoans.map((loan, index) => {
+                      const principalRemaining = loan.principal_amount - (loan.principal_paid || 0);
+                      const interestRemaining = loan.total_interest - (loan.interest_paid || 0);
+                      const totalOutstanding = principalRemaining + interestRemaining;
+                      
+                      return (
+                        <TableRow key={loan.id} className="hover:bg-slate-50">
+                          <TableCell className="text-slate-500 font-medium">{index + 1}</TableCell>
+                          <TableCell className="font-medium">{loan.borrower_name}</TableCell>
+                          <TableCell className="text-slate-600">{loan.product_name}</TableCell>
+                          <TableCell className="text-right font-mono font-semibold">
+                            {formatCurrency(loan.principal_amount)}
+                          </TableCell>
+                          <TableCell className="text-right font-mono text-red-600 font-medium">
+                            {formatCurrency(totalOutstanding)}
+                          </TableCell>
+                          <TableCell className="text-slate-600">
+                            {format(new Date(loan.start_date), 'MMM dd, yyyy')}
+                          </TableCell>
+                          <TableCell>
+                            <Badge className={getStatusColor(loan.status)}>
+                              {getStatusLabel(loan.status)}
+                            </Badge>
+                          </TableCell>
+                          <TableCell>
+                            <Link to={createPageUrl(`LoanDetails?id=${loan.id}`)}>
+                              <Button variant="ghost" size="icon" className="h-8 w-8">
+                                <ChevronRight className="w-4 h-4" />
+                              </Button>
+                            </Link>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
               </div>
             )}
           </TabsContent>
