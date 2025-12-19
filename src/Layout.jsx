@@ -30,7 +30,7 @@ export default function Layout({ children, currentPageName }) {
   return (
     <div className="min-h-screen bg-slate-50">
       {/* Desktop Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 lg:block hidden md:block">
+      <aside className="fixed inset-y-0 left-0 z-50 w-64 bg-slate-900 hidden md:block">
         <div className="flex h-full flex-col">
           {/* Logo */}
           <div className="flex h-16 items-center gap-3 px-6 border-b border-slate-800">
@@ -73,7 +73,7 @@ export default function Layout({ children, currentPageName }) {
       </aside>
 
       {/* Mobile Header */}
-      <header className="lg:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b border-slate-200">
+      <header className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between px-4 h-14">
           <div className="flex items-center gap-2">
             <div className="p-1.5 bg-emerald-500 rounded-lg">
@@ -93,7 +93,7 @@ export default function Layout({ children, currentPageName }) {
 
       {/* Mobile Menu */}
       {mobileMenuOpen && (
-        <div className="lg:hidden fixed inset-0 z-30 bg-black/50" onClick={() => setMobileMenuOpen(false)}>
+        <div className="md:hidden fixed inset-0 z-30 bg-black/50" onClick={() => setMobileMenuOpen(false)}>
           <div 
             className="absolute top-14 left-0 right-0 bg-white border-b border-slate-200 shadow-lg"
             onClick={(e) => e.stopPropagation()}
@@ -125,7 +125,7 @@ export default function Layout({ children, currentPageName }) {
       )}
 
       {/* Main Content */}
-      <main className="lg:pl-64 md:pl-64 pt-14 lg:pt-0 md:pt-0">
+      <main className="md:pl-64 pt-14 md:pt-0">
         {children}
       </main>
     </div>
