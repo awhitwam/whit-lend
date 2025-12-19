@@ -163,8 +163,8 @@ export function applyPaymentWaterfall(payment, scheduleRows) {
 /**
  * Format currency
  */
-export function formatCurrency(amount, currency = 'KES') {
-  return new Intl.NumberFormat('en-KE', {
+export function formatCurrency(amount, currency = 'GBP') {
+  return new Intl.NumberFormat('en-GB', {
     style: 'currency',
     currency: currency,
     minimumFractionDigits: 2
