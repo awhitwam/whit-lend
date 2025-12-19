@@ -22,7 +22,8 @@ import {
   AlertCircle as AlertCircleIcon,
   Edit,
   MoreVertical,
-  Repeat
+  Repeat,
+  Download
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -35,7 +36,8 @@ import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanModal from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
 import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding, generateRepaymentSchedule, calculateLoanSummary } from '@/components/loan/LoanCalculator';
-import { format } from 'date-fns';
+import { generateLoanStatementPDF, generateSettlementStatementPDF } from '@/components/loan/LoanPDFGenerator';
+import { format, addDays, differenceInDays } from 'date-fns';
 
 export default function LoanDetails() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -232,6 +234,62 @@ export default function LoanDetails() {
     }
   });
 
+  const handleGenerateLoanStatement = () => {
+    generateLoanStatementPDF(loan, schedule, transactions);
+  };
+
+  const handleGenerateSettlementStatement = () => {
+    const settlementDate = new Date();
+    const startDate = new Date(loan.start_date);
+    const daysElapsed = differenceInDays(settlementDate, startDate);
+    
+    const principalRemaining = loan.principal_amount - (loan.principal_paid || 0);
+    const annualRate = loan.interest_rate / 100;
+    const dailyRate = annualRate / 365;
+    
+    // Calculate interest up to settlement date
+    let interestDue = 0;
+    if (loan.interest_type === 'Flat') {
+      const totalInterest = loan.total_interest;
+      const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
+      const daysPerPeriod = loan.period === 'Monthly' ? 30.417 : 7;
+      const interestPerDay = totalInterest / (loan.duration * daysPerPeriod);
+      interestDue = Math.min(interestPerDay * daysElapsed, totalInterest) - (loan.interest_paid || 0);
+    } else if (loan.interest_type === 'Reducing') {
+      interestDue = principalRemaining * dailyRate * daysElapsed;
+    } else if (loan.interest_type === 'Rolled-Up') {
+      const accruedInterest = loan.principal_amount * (Math.pow(1 + dailyRate, daysElapsed) - 1);
+      interestDue = accruedInterest - (loan.interest_paid || 0);
+    } else {
+      interestDue = principalRemaining * dailyRate * daysElapsed;
+    }
+    
+    interestDue = Math.max(0, interestDue);
+    
+    // Generate daily breakdown for last 14 days
+    const dailyBreakdown = [];
+    for (let i = 13; i >= 0; i--) {
+      const date = addDays(settlementDate, -i);
+      const dayInterest = principalRemaining * dailyRate;
+      dailyBreakdown.push({
+        date: date,
+        interest: dayInterest,
+        balance: principalRemaining
+      });
+    }
+    
+    const settlementData = {
+      settlementDate: settlementDate,
+      principalRemaining: principalRemaining,
+      interestDue: interestDue,
+      exitFee: loan.exit_fee || 0,
+      totalSettlement: principalRemaining + interestDue + (loan.exit_fee || 0),
+      dailyBreakdown: dailyBreakdown
+    };
+    
+    generateSettlementStatementPDF(loan, settlementData);
+  };
+
   const paymentMutation = useMutation({
     mutationFn: async (paymentData) => {
       // Apply waterfall logic with overpayment handling
@@ -415,6 +473,16 @@ export default function LoanDetails() {
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
+                    <DropdownMenuItem onClick={handleGenerateLoanStatement}>
+                      <Download className="w-4 h-4 mr-2" />
+                      Download Loan Statement
+                    </DropdownMenuItem>
+                    {loan.status === 'Active' && (
+                      <DropdownMenuItem onClick={handleGenerateSettlementStatement}>
+                        <Download className="w-4 h-4 mr-2" />
+                        Download Settlement Statement
+                      </DropdownMenuItem>
+                    )}
                     {loan.status === 'Active' && (
                       <DropdownMenuItem onClick={() => toggleAutoExtendMutation.mutate()}>
                         <Repeat className="w-4 h-4 mr-2" />
