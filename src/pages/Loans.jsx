@@ -202,7 +202,7 @@ export default function Loans() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      <TableHead className="w-12">#</TableHead>
+                      <TableHead className="w-24">Loan ID</TableHead>
                       <TableHead>
                         <button 
                           onClick={() => handleSort('borrower_name')}
@@ -257,10 +257,11 @@ export default function Loans() {
                       const principalRemaining = loan.principal_amount - (loan.principal_paid || 0);
                       const interestRemaining = loan.total_interest - (loan.interest_paid || 0);
                       const totalOutstanding = principalRemaining + interestRemaining;
+                      const loanDisplayId = 1000 + loans.findIndex(l => l.id === loan.id);
                       
                       return (
                         <TableRow key={loan.id} className="hover:bg-slate-50">
-                          <TableCell className="text-slate-500 font-medium">{index + 1}</TableCell>
+                          <TableCell className="font-mono font-semibold text-slate-700">#{loanDisplayId}</TableCell>
                           <TableCell className="font-medium">{loan.borrower_name}</TableCell>
                           <TableCell className="text-slate-600">{loan.product_name}</TableCell>
                           <TableCell className="text-right font-mono font-semibold">
