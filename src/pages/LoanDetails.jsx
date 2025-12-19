@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -19,17 +19,28 @@ import {
   CheckCircle2,
   AlertTriangle,
   Trash2,
-  AlertCircle as AlertCircleIcon
+  AlertCircle as AlertCircleIcon,
+  Edit,
+  MoreVertical
 } from 'lucide-react';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
-import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding } from '@/components/loan/LoanCalculator';
+import EditLoanModal from '@/components/loan/EditLoanModal';
+import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding, generateRepaymentSchedule, calculateLoanSummary } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
 
 export default function LoanDetails() {
   const urlParams = new URLSearchParams(window.location.search);
   const loanId = urlParams.get('id');
+  const navigate = useNavigate();
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [isEditOpen, setIsEditOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -51,6 +62,99 @@ export default function LoanDetails() {
     queryKey: ['loan-transactions', loanId],
     queryFn: () => base44.entities.Transaction.filter({ loan_id: loanId }, '-date'),
     enabled: !!loanId
+  });
+
+  const editLoanMutation = useMutation({
+    mutationFn: async (updatedData) => {
+      // Update loan with new parameters
+      await base44.entities.Loan.update(loanId, updatedData);
+      
+      // Regenerate schedule with new parameters
+      const newSchedule = generateRepaymentSchedule({
+        principal: updatedData.principal_amount,
+        interestRate: updatedData.interest_rate,
+        duration: updatedData.duration,
+        interestType: loan.interest_type,
+        period: loan.period,
+        startDate: updatedData.start_date,
+        interestOnlyPeriod: loan.interest_only_period || 0,
+        interestAlignment: loan.interest_alignment || 'period_based',
+        extendForFullPeriod: loan.extend_for_full_period || false
+      });
+      
+      const summary = calculateLoanSummary(newSchedule);
+      
+      // Update loan with new totals
+      await base44.entities.Loan.update(loanId, {
+        total_interest: summary.totalInterest,
+        total_repayable: summary.totalRepayable + (updatedData.exit_fee || 0)
+      });
+      
+      // Delete old schedule
+      const oldSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
+      for (const row of oldSchedule) {
+        await base44.entities.RepaymentSchedule.delete(row.id);
+      }
+      
+      // Create new schedule
+      for (const row of newSchedule) {
+        await base44.entities.RepaymentSchedule.create({
+          loan_id: loanId,
+          ...row
+        });
+      }
+      
+      // Reapply all non-deleted payments
+      const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
+      const newScheduleRows = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
+      
+      let totalPrincipalPaid = 0;
+      let totalInterestPaid = 0;
+      
+      for (const tx of activeTransactions) {
+        const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
+        
+        for (const update of updates) {
+          await base44.entities.RepaymentSchedule.update(update.id, {
+            interest_paid: update.interest_paid,
+            principal_paid: update.principal_paid,
+            status: update.status
+          });
+          totalPrincipalPaid += update.principalApplied;
+          totalInterestPaid += update.interestApplied;
+        }
+      }
+      
+      // Update loan payment totals
+      await base44.entities.Loan.update(loanId, {
+        principal_paid: totalPrincipalPaid,
+        interest_paid: totalInterestPaid
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
+      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
+      queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
+      queryClient.invalidateQueries({ queryKey: ['loans'] });
+      setIsEditOpen(false);
+    }
+  });
+
+  const deleteLoanMutation = useMutation({
+    mutationFn: async (reason) => {
+      const user = await base44.auth.me();
+      
+      await base44.entities.Loan.update(loanId, {
+        is_deleted: true,
+        deleted_by: user.email,
+        deleted_date: new Date().toISOString(),
+        deleted_reason: reason
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loans'] });
+      navigate(createPageUrl('Loans'));
+    }
   });
 
   const deleteTransactionMutation = useMutation({
@@ -284,6 +388,34 @@ export default function LoanDetails() {
                     Record Payment
                   </Button>
                 )}
+
+                <DropdownMenu>
+                  <DropdownMenuTrigger asChild>
+                    <Button variant="outline" size="sm">
+                      <MoreVertical className="w-4 h-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent align="end">
+                    {(loan.status === 'Pending' || loan.status === 'Approved') && (
+                      <DropdownMenuItem onClick={() => setIsEditOpen(true)}>
+                        <Edit className="w-4 h-4 mr-2" />
+                        Edit Loan
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem 
+                      className="text-red-600"
+                      onClick={() => {
+                        const reason = prompt('Enter reason for deleting this loan:');
+                        if (reason) {
+                          deleteLoanMutation.mutate(reason);
+                        }
+                      }}
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete Loan
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           </div>
@@ -504,7 +636,16 @@ export default function LoanDetails() {
           onSubmit={(data) => paymentMutation.mutate(data)}
           isLoading={paymentMutation.isPending}
         />
-      </div>
-    </div>
-  );
-}
+
+        {/* Edit Loan Modal */}
+        <EditLoanModal
+          isOpen={isEditOpen}
+          onClose={() => setIsEditOpen(false)}
+          loan={loan}
+          onSubmit={(data) => editLoanMutation.mutate(data)}
+          isLoading={editLoanMutation.isPending}
+        />
+        </div>
+        </div>
+        );
+        }

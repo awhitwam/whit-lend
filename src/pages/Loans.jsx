@@ -17,7 +17,10 @@ export default function Loans() {
 
   const { data: loans = [], isLoading } = useQuery({
     queryKey: ['loans'],
-    queryFn: () => base44.entities.Loan.list('-created_date')
+    queryFn: async () => {
+      const allLoans = await base44.entities.Loan.list('-created_date');
+      return allLoans.filter(loan => !loan.is_deleted);
+    }
   });
 
   const filteredLoans = loans.filter(loan => {
