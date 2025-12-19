@@ -268,43 +268,27 @@ export default function SettleLoanModal({
           </div>
 
           {settlement.dailyBreakdown.length > 0 && (
-            <div className="space-y-3">
-              <h3 className="font-semibold text-slate-900 flex items-center gap-2">
-                <TrendingDown className="w-4 h-4" />
-                Daily Interest Calculation (First 14 Days)
-              </h3>
-              <div className="border rounded-lg overflow-hidden">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-100">
-                    <tr>
-                      <th className="text-left p-2 font-medium text-slate-700">Day</th>
-                      <th className="text-left p-2 font-medium text-slate-700">Date</th>
-                      <th className="text-right p-2 font-medium text-slate-700">Balance</th>
-                      <th className="text-right p-2 font-medium text-slate-700">Daily Interest</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {settlement.dailyBreakdown.map((day) => (
-                      <tr key={day.day} className="hover:bg-slate-50">
-                        <td className="p-2">{day.day}</td>
-                        <td className="p-2 text-slate-600">{format(day.date, 'MMM dd')}</td>
-                        <td className="p-2 text-right font-medium">{formatCurrency(day.balance)}</td>
-                        <td className="p-2 text-right text-amber-600 font-medium">
-                          {formatCurrency(day.dailyInterest)}
-                        </td>
-                      </tr>
-                    ))}
-                    {settlement.daysElapsed > 14 && (
-                      <tr className="bg-slate-50">
-                        <td colSpan="4" className="p-2 text-center text-xs text-slate-500">
-                          ... {settlement.daysElapsed - 14} more days
-                        </td>
-                      </tr>
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <Card className="bg-amber-50 border-amber-200">
+              <CardContent className="p-4">
+                <h3 className="font-semibold text-slate-900 flex items-center gap-2 mb-3">
+                  <TrendingDown className="w-4 h-4" />
+                  Interest Calculation
+                </h3>
+                <div className="text-sm">
+                  <p className="text-slate-700">
+                    <span className="font-semibold">{settlement.daysElapsed} days</span>
+                    {' @ '}
+                    <span className="font-semibold text-amber-600">
+                      {formatCurrency(settlement.interestRemaining / settlement.daysElapsed)} per day
+                    </span>
+                    {' = '}
+                    <span className="font-bold text-amber-700">
+                      {formatCurrency(settlement.interestRemaining)}
+                    </span>
+                  </p>
+                </div>
+              </CardContent>
+            </Card>
           )}
 
           <div className="space-y-4 border-t pt-4">
