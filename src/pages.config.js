@@ -5,6 +5,7 @@ import Loans from './pages/Loans';
 import NewLoan from './pages/NewLoan';
 import LoanDetails from './pages/LoanDetails';
 import Products from './pages/Products';
+import __Layout from './Layout.jsx';
 
 
 export const PAGES = {
@@ -20,4 +21,5 @@ export const PAGES = {
 export const pagesConfig = {
     mainPage: "Dashboard",
     Pages: PAGES,
+    Layout: __Layout,
 };

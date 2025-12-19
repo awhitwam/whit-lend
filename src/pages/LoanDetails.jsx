@@ -253,6 +253,34 @@ export default function LoanDetails() {
                 <p className="text-xl font-bold">{format(new Date(loan.start_date), 'MMM dd, yyyy')}</p>
               </div>
             </div>
+            
+            {(loan.arrangement_fee > 0 || loan.exit_fee > 0) && (
+              <div className="mt-6 pt-6 border-t border-slate-200">
+                <p className="text-sm font-medium text-slate-700 mb-3">Fees</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                  {loan.arrangement_fee > 0 && (
+                    <div>
+                      <p className="text-xs text-slate-500">Arrangement Fee</p>
+                      <p className="text-lg font-semibold text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">Deducted from disbursement</p>
+                    </div>
+                  )}
+                  {loan.net_disbursed && (
+                    <div>
+                      <p className="text-xs text-slate-500">Net Disbursed</p>
+                      <p className="text-lg font-semibold text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
+                    </div>
+                  )}
+                  {loan.exit_fee > 0 && (
+                    <div>
+                      <p className="text-xs text-slate-500">Exit Fee</p>
+                      <p className="text-lg font-semibold text-amber-600">{formatCurrency(loan.exit_fee)}</p>
+                      <p className="text-xs text-slate-500 mt-0.5">Added to repayment</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 

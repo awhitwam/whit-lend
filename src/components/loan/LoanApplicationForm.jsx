@@ -20,6 +20,8 @@ export default function LoanApplicationForm({
     borrower_id: preselectedBorrowerId || '',
     product_id: '',
     principal_amount: '',
+    arrangement_fee: '',
+    exit_fee: '',
     duration: '',
     start_date: format(new Date(), 'yyyy-MM-dd')
   });
@@ -70,10 +72,16 @@ export default function LoanApplicationForm({
     }
 
     const borrower = borrowers.find(b => b.id === formData.borrower_id);
+    const arrangementFee = parseFloat(formData.arrangement_fee) || 0;
+    const exitFee = parseFloat(formData.exit_fee) || 0;
+    const principalAmount = parseFloat(formData.principal_amount);
     
     onSubmit({
       ...formData,
-      principal_amount: parseFloat(formData.principal_amount),
+      principal_amount: principalAmount,
+      arrangement_fee: arrangementFee,
+      exit_fee: exitFee,
+      net_disbursed: principalAmount - arrangementFee,
       duration: parseInt(formData.duration),
       borrower_name: `${borrower.first_name} ${borrower.last_name}`,
       product_name: selectedProduct.name,
@@ -81,7 +89,7 @@ export default function LoanApplicationForm({
       interest_type: selectedProduct.interest_type,
       period: selectedProduct.period,
       total_interest: summary.totalInterest,
-      total_repayable: summary.totalRepayable,
+      total_repayable: summary.totalRepayable + exitFee,
       principal_paid: 0,
       interest_paid: 0,
       status: 'Pending'
@@ -171,6 +179,35 @@ export default function LoanApplicationForm({
 
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
+              <Label htmlFor="arrangement_fee">Arrangement Fee</Label>
+              <Input
+                id="arrangement_fee"
+                type="number"
+                value={formData.arrangement_fee}
+                onChange={(e) => handleChange('arrangement_fee', e.target.value)}
+                placeholder="0.00"
+                min={0}
+                step="0.01"
+              />
+              <p className="text-xs text-slate-500">Deducted from disbursement</p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="exit_fee">Exit Fee</Label>
+              <Input
+                id="exit_fee"
+                type="number"
+                value={formData.exit_fee}
+                onChange={(e) => handleChange('exit_fee', e.target.value)}
+                placeholder="0.00"
+                min={0}
+                step="0.01"
+              />
+              <p className="text-xs text-slate-500">Added to final payment</p>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-2">
               <Label htmlFor="duration">Duration ({selectedProduct?.period || 'Periods'}) *</Label>
               <Input
                 id="duration"
@@ -218,13 +255,31 @@ export default function LoanApplicationForm({
                   <span className="text-slate-600">Principal Amount</span>
                   <span className="font-semibold">{formatCurrency(summary.totalPrincipal)}</span>
                 </div>
+                {formData.arrangement_fee && parseFloat(formData.arrangement_fee) > 0 && (
+                  <>
+                    <div className="flex justify-between py-2 border-b border-blue-100">
+                      <span className="text-slate-600">Arrangement Fee</span>
+                      <span className="font-semibold text-red-600">-{formatCurrency(parseFloat(formData.arrangement_fee))}</span>
+                    </div>
+                    <div className="flex justify-between py-2 border-b border-blue-100">
+                      <span className="text-slate-600">Net Disbursed</span>
+                      <span className="font-bold text-emerald-600">{formatCurrency(parseFloat(formData.principal_amount) - parseFloat(formData.arrangement_fee))}</span>
+                    </div>
+                  </>
+                )}
                 <div className="flex justify-between py-2 border-b border-blue-100">
                   <span className="text-slate-600">Total Interest</span>
                   <span className="font-semibold text-amber-600">{formatCurrency(summary.totalInterest)}</span>
                 </div>
+                {formData.exit_fee && parseFloat(formData.exit_fee) > 0 && (
+                  <div className="flex justify-between py-2 border-b border-blue-100">
+                    <span className="text-slate-600">Exit Fee</span>
+                    <span className="font-semibold text-amber-600">{formatCurrency(parseFloat(formData.exit_fee))}</span>
+                  </div>
+                )}
                 <div className="flex justify-between py-2 border-b border-blue-100">
                   <span className="text-slate-600">Total Repayable</span>
-                  <span className="font-bold text-lg">{formatCurrency(summary.totalRepayable)}</span>
+                  <span className="font-bold text-lg">{formatCurrency(summary.totalRepayable + (parseFloat(formData.exit_fee) || 0))}</span>
                 </div>
                 <div className="flex justify-between py-2">
                   <span className="text-slate-600">{selectedProduct?.period} Installment</span>
