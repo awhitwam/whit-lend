@@ -141,19 +141,30 @@ export default function SettleLoanModal({
   isLoading 
 }) {
   const [settlementDate, setSettlementDate] = useState(format(new Date(), 'yyyy-MM-dd'));
+  const [settlementAmount, setSettlementAmount] = useState('');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
 
   const settlement = loan ? calculateSettlementAmount(loan, settlementDate) : null;
 
+  // Update settlement amount when calculation changes
+  useState(() => {
+    if (settlement) {
+      setSettlementAmount(settlement.settlementAmount.toString());
+    }
+  }, [settlement?.settlementAmount]);
+
   const handleSubmit = (e) => {
     e.preventDefault();
     onSubmit({
-      amount: settlement.settlementAmount,
+      amount: parseFloat(settlementAmount) || settlement.settlementAmount,
       date: settlementDate,
       reference,
-      notes: notes || `Full settlement of loan as of ${format(new Date(settlementDate), 'MMM dd, yyyy')}`,
-      overpayment_option: 'credit'
+      notes: notes || `Settlement of loan as of ${format(new Date(settlementDate), 'MMM dd, yyyy')}`,
+      overpayment_option: 'credit',
+      loan_id: loan.id,
+      borrower_id: loan.borrower_id,
+      type: 'Repayment'
     });
   };
 
@@ -292,8 +303,27 @@ export default function SettleLoanModal({
           )}
 
           <div className="space-y-4 border-t pt-4">
-            <h3 className="font-semibold text-slate-900">Payment Details (Optional)</h3>
+            <h3 className="font-semibold text-slate-900">Payment Details</h3>
             
+            <div className="space-y-2">
+              <Label htmlFor="settlement_amount" className="flex items-center gap-2">
+                <DollarSign className="w-4 h-4" />
+                Settlement Amount *
+              </Label>
+              <Input
+                id="settlement_amount"
+                type="number"
+                step="0.01"
+                value={settlementAmount || settlement?.settlementAmount || ''}
+                onChange={(e) => setSettlementAmount(e.target.value)}
+                placeholder={formatCurrency(settlement?.settlementAmount || 0)}
+                required
+              />
+              <p className="text-xs text-slate-500">
+                Calculated amount: {formatCurrency(settlement?.settlementAmount || 0)}
+              </p>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="reference">Reference Number</Label>
               <Input
