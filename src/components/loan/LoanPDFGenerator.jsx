@@ -1,3 +1,4 @@
+
 import jsPDF from 'jspdf';
 import { format } from 'date-fns';
 import { formatCurrency } from './LoanCalculator';
@@ -248,33 +249,20 @@ export function generateSettlementStatementPDF(loan, settlementData) {
   doc.text('TOTAL SETTLEMENT AMOUNT', 20, y);
   doc.text(formatCurrency(settlementData.totalSettlement), 160, y, { align: 'right' });
   
-  // Interest Breakdown
+  // Interest Calculation Summary
   if (settlementData.dailyBreakdown && settlementData.dailyBreakdown.length > 0) {
+    const daysCount = Math.ceil((new Date(settlementData.settlementDate) - new Date(loan.start_date)) / (1000 * 60 * 60 * 24));
+    const dailyInterestRate = settlementData.interestDue / daysCount;
+    
     y += 15;
-    doc.setFontSize(14);
-    doc.text('Daily Interest Breakdown', 15, y);
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text('Interest Calculation', 15, y);
     
     y += 8;
-    doc.setFontSize(8);
-    doc.setFont(undefined, 'bold');
-    doc.text('Date', 15, y);
-    doc.text('Daily Interest', 120, y, { align: 'right' });
-    doc.text('Balance', 160, y, { align: 'right' });
-    
-    y += 2;
-    doc.line(15, y, 195, y);
-    
+    doc.setFontSize(10);
     doc.setFont(undefined, 'normal');
-    settlementData.dailyBreakdown.forEach((day) => {
-      y += 6;
-      if (y > 280) {
-        doc.addPage();
-        y = 20;
-      }
-      doc.text(format(new Date(day.date), 'MMM dd, yyyy'), 15, y);
-      doc.text(formatCurrency(day.interest), 120, y, { align: 'right' });
-      doc.text(formatCurrency(day.balance), 160, y, { align: 'right' });
-    });
+    doc.text(`${daysCount} days @ ${formatCurrency(dailyInterestRate)} per day`, 20, y);
   }
   
   // Payment Instructions
