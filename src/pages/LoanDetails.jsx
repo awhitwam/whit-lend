@@ -32,6 +32,7 @@ import {
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanModal from '@/components/loan/EditLoanModal';
+import SettleLoanModal from '@/components/loan/SettleLoanModal';
 import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding, generateRepaymentSchedule, calculateLoanSummary } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
 
@@ -41,6 +42,7 @@ export default function LoanDetails() {
   const navigate = useNavigate();
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isSettleOpen, setIsSettleOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -379,14 +381,23 @@ export default function LoanDetails() {
                   </Button>
                 )}
                 {loan.status === 'Active' && (
-                  <Button 
-                    size="sm" 
-                    className="bg-emerald-600 hover:bg-emerald-700"
-                    onClick={() => setIsPaymentOpen(true)}
-                  >
-                    <DollarSign className="w-4 h-4 mr-2" />
-                    Record Payment
-                  </Button>
+                  <>
+                    <Button 
+                      size="sm" 
+                      variant="outline"
+                      onClick={() => setIsSettleOpen(true)}
+                    >
+                      Calculate Settlement
+                    </Button>
+                    <Button 
+                      size="sm" 
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      onClick={() => setIsPaymentOpen(true)}
+                    >
+                      <DollarSign className="w-4 h-4 mr-2" />
+                      Record Payment
+                    </Button>
+                  </>
                 )}
 
                 <DropdownMenu>
@@ -644,6 +655,18 @@ export default function LoanDetails() {
           loan={loan}
           onSubmit={(data) => editLoanMutation.mutate(data)}
           isLoading={editLoanMutation.isPending}
+        />
+
+        {/* Settle Loan Modal */}
+        <SettleLoanModal
+          isOpen={isSettleOpen}
+          onClose={() => setIsSettleOpen(false)}
+          loan={loan}
+          onSubmit={(data) => {
+            paymentMutation.mutate(data);
+            setIsSettleOpen(false);
+          }}
+          isLoading={paymentMutation.isPending}
         />
         </div>
         </div>
