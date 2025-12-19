@@ -6,9 +6,10 @@ import { addMonths, addWeeks, format } from 'date-fns';
  * @param {number} params.principal - Principal loan amount
  * @param {number} params.interestRate - Annual interest rate (%)
  * @param {number} params.duration - Number of periods
- * @param {string} params.interestType - 'Flat' or 'Reducing'
+ * @param {string} params.interestType - 'Flat', 'Reducing', 'Interest-Only', or 'Rolled-Up'
  * @param {string} params.period - 'Monthly' or 'Weekly'
  * @param {Date} params.startDate - Loan start date
+ * @param {number} params.interestOnlyPeriod - Number of interest-only periods (optional)
  * @returns {Array} Array of repayment schedule objects
  */
 export function generateRepaymentSchedule({
@@ -17,13 +18,103 @@ export function generateRepaymentSchedule({
   duration,
   interestType,
   period,
-  startDate
+  startDate,
+  interestOnlyPeriod = 0
 }) {
   const schedule = [];
   const periodsPerYear = period === 'Monthly' ? 12 : 52;
   const periodRate = interestRate / 100 / periodsPerYear;
   
-  if (interestType === 'Flat') {
+  if (interestType === 'Rolled-Up') {
+    // Rolled-Up: No payments until the end, interest compounds on balance
+    let balance = principal;
+    
+    for (let i = 1; i <= duration; i++) {
+      const dueDate = period === 'Monthly' 
+        ? addMonths(new Date(startDate), i)
+        : addWeeks(new Date(startDate), i);
+      
+      const interestForPeriod = balance * periodRate;
+      balance += interestForPeriod;
+      
+      const isLastPeriod = i === duration;
+      const paymentDue = isLastPeriod ? balance : 0;
+      const principalDue = isLastPeriod ? principal : 0;
+      const interestDue = isLastPeriod ? balance - principal : 0;
+      
+      schedule.push({
+        installment_number: i,
+        due_date: format(dueDate, 'yyyy-MM-dd'),
+        principal_amount: Math.round(principalDue * 100) / 100,
+        interest_amount: Math.round(interestDue * 100) / 100,
+        total_due: Math.round(paymentDue * 100) / 100,
+        balance: isLastPeriod ? 0 : Math.round(balance * 100) / 100,
+        principal_paid: 0,
+        interest_paid: 0,
+        status: 'Pending'
+      });
+    }
+  } else if (interestType === 'Interest-Only') {
+    // Interest-Only: Pay only interest for a period, then principal + interest or balloon
+    const interestOnlyPayment = principal * periodRate;
+    const effectiveInterestOnlyPeriod = interestOnlyPeriod > 0 ? interestOnlyPeriod : duration;
+    
+    // Interest-only periods
+    for (let i = 1; i <= effectiveInterestOnlyPeriod; i++) {
+      const dueDate = period === 'Monthly' 
+        ? addMonths(new Date(startDate), i)
+        : addWeeks(new Date(startDate), i);
+      
+      schedule.push({
+        installment_number: i,
+        due_date: format(dueDate, 'yyyy-MM-dd'),
+        principal_amount: 0,
+        interest_amount: Math.round(interestOnlyPayment * 100) / 100,
+        total_due: Math.round(interestOnlyPayment * 100) / 100,
+        balance: principal,
+        principal_paid: 0,
+        interest_paid: 0,
+        status: 'Pending'
+      });
+    }
+    
+    // If there's a repayment period after interest-only
+    if (interestOnlyPeriod > 0 && interestOnlyPeriod < duration) {
+      const remainingPeriods = duration - interestOnlyPeriod;
+      const r = periodRate;
+      const n = remainingPeriods;
+      const pmt = principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+      
+      let remainingBalance = principal;
+      
+      for (let i = 1; i <= remainingPeriods; i++) {
+        const dueDate = period === 'Monthly'
+          ? addMonths(new Date(startDate), effectiveInterestOnlyPeriod + i)
+          : addWeeks(new Date(startDate), effectiveInterestOnlyPeriod + i);
+        
+        const interestForPeriod = remainingBalance * r;
+        const principalForPeriod = pmt - interestForPeriod;
+        remainingBalance -= principalForPeriod;
+        
+        schedule.push({
+          installment_number: effectiveInterestOnlyPeriod + i,
+          due_date: format(dueDate, 'yyyy-MM-dd'),
+          principal_amount: Math.round(principalForPeriod * 100) / 100,
+          interest_amount: Math.round(interestForPeriod * 100) / 100,
+          total_due: Math.round(pmt * 100) / 100,
+          balance: Math.max(0, Math.round(remainingBalance * 100) / 100),
+          principal_paid: 0,
+          interest_paid: 0,
+          status: 'Pending'
+        });
+      }
+    } else {
+      // Entire term is interest-only, balloon payment at the end
+      schedule[schedule.length - 1].principal_amount = principal;
+      schedule[schedule.length - 1].total_due = Math.round((principal + interestOnlyPayment) * 100) / 100;
+      schedule[schedule.length - 1].balance = 0;
+    }
+  } else if (interestType === 'Flat') {
     // Flat Rate: Interest calculated on original principal
     const totalInterest = principal * (interestRate / 100) * (duration / periodsPerYear);
     const interestPerPeriod = totalInterest / duration;
