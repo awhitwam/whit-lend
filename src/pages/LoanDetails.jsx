@@ -240,6 +240,9 @@ export default function LoanDetails() {
 
   const paymentMutation = useMutation({
     mutationFn: async (paymentData) => {
+      // Check if this is a settlement payment
+      const isSettlement = paymentData.notes?.toLowerCase().includes('settlement');
+      
       // Apply waterfall logic with overpayment handling
       const { updates, principalReduction, creditAmount } = applyPaymentWaterfall(
         paymentData.amount, 
@@ -262,6 +265,14 @@ export default function LoanDetails() {
         totalInterestApplied += update.interestApplied;
       }
       
+      // If settlement, delete all remaining unpaid installments
+      if (isSettlement) {
+        const remainingInstallments = schedule.filter(row => row.status === 'Pending');
+        for (const row of remainingInstallments) {
+          await base44.entities.RepaymentSchedule.delete(row.id);
+        }
+      }
+      
       // Create transaction
       await base44.entities.Transaction.create({
         ...paymentData,
@@ -279,8 +290,8 @@ export default function LoanDetails() {
         overpayment_credit: creditAmount
       };
       
-      // Check if loan is fully paid
-      if (newPrincipalPaid >= loan.principal_amount && newInterestPaid >= loan.total_interest) {
+      // Check if loan is fully paid or settled
+      if (isSettlement || (newPrincipalPaid >= loan.principal_amount && newInterestPaid >= loan.total_interest)) {
         updateData.status = 'Closed';
       }
       
@@ -302,10 +313,14 @@ export default function LoanDetails() {
       'Pending': 'bg-slate-100 text-slate-700',
       'Approved': 'bg-blue-100 text-blue-700',
       'Active': 'bg-emerald-100 text-emerald-700',
-      'Closed': 'bg-slate-100 text-slate-600',
+      'Closed': 'bg-purple-100 text-purple-700',
       'Defaulted': 'bg-red-100 text-red-700'
     };
     return colors[status] || colors['Pending'];
+  };
+
+  const getStatusLabel = (status) => {
+    return status === 'Closed' ? 'Settled' : status;
   };
 
   if (loanLoading) {
@@ -370,7 +385,7 @@ export default function LoanDetails() {
               </div>
               <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
                 <Badge className={`${getStatusColor(loan.status)} text-sm px-3 py-1`}>
-                  {loan.status}
+                  {getStatusLabel(loan.status)}
                 </Badge>
                 {loan.status === 'Pending' && (
                   <div className="flex gap-2">

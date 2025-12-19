@@ -40,7 +40,7 @@ export default function Loans() {
     Pending: loans.filter(l => l.status === 'Pending').length,
     Approved: loans.filter(l => l.status === 'Approved').length,
     Active: loans.filter(l => l.status === 'Active').length,
-    Closed: loans.filter(l => l.status === 'Closed').length,
+    Settled: loans.filter(l => l.status === 'Closed').length,
     Defaulted: loans.filter(l => l.status === 'Defaulted').length,
   };
 
@@ -101,7 +101,7 @@ export default function Loans() {
                     Approved ({statusCounts.Approved})
                   </TabsTrigger>
                   <TabsTrigger value="Closed" className="text-xs">
-                    Closed ({statusCounts.Closed})
+                    Settled ({statusCounts.Settled})
                   </TabsTrigger>
                   <TabsTrigger value="Defaulted" className="text-xs">
                     Defaulted ({statusCounts.Defaulted})
