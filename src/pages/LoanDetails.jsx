@@ -392,7 +392,7 @@ export default function LoanDetails() {
                   <>
                     <Button 
                       size="sm" 
-                      variant="outline"
+                      variant="secondary"
                       onClick={() => setIsSettleOpen(true)}
                     >
                       Calculate Settlement
@@ -410,7 +410,7 @@ export default function LoanDetails() {
 
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="outline" size="sm">
+                    <Button variant="secondary" size="sm">
                       <MoreVertical className="w-4 h-4" />
                     </Button>
                   </DropdownMenuTrigger>
