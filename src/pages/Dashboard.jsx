@@ -54,7 +54,10 @@ export default function Dashboard() {
     .reduce((sum, l) => sum + (l.principal_amount || 0), 0);
 
   const totalRepaid = transactions
-    .filter(t => t.type === 'Repayment')
+    .filter(t => {
+      const loan = loans.find(l => l.id === t.loan_id);
+      return t.type === 'Repayment' && loan; // Only count if loan exists and not deleted
+    })
     .reduce((sum, t) => sum + (t.amount || 0), 0);
 
   const totalOutstanding = activeLoans.reduce((sum, l) => {
