@@ -21,7 +21,7 @@ import {
 } from 'lucide-react';
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
-import { formatCurrency, applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
 
 export default function LoanDetails() {
@@ -159,6 +159,7 @@ export default function LoanDetails() {
   const interestRemaining = loan.total_interest - (loan.interest_paid || 0);
   const totalOutstanding = principalRemaining + interestRemaining;
   const progressPercent = ((loan.principal_paid || 0) + (loan.interest_paid || 0)) / loan.total_repayable * 100;
+  const liveInterestOutstanding = calculateLiveInterestOutstanding(loan);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -291,7 +292,7 @@ export default function LoanDetails() {
         </Card>
 
         {/* Financial Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <Card className="bg-gradient-to-br from-blue-50 to-blue-100/50 border-blue-200">
             <CardContent className="p-5">
               <p className="text-sm text-blue-600 font-medium">Total Repayable</p>
@@ -324,6 +325,19 @@ export default function LoanDetails() {
               )}
             </CardContent>
           </Card>
+          {loan.status === 'Active' && (
+            <Card className={`bg-gradient-to-br ${liveInterestOutstanding < 0 ? 'from-emerald-50 to-emerald-100/50 border-emerald-200' : 'from-purple-50 to-purple-100/50 border-purple-200'}`}>
+              <CardContent className="p-5">
+                <p className={`text-sm font-medium ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
+                  Live Interest {liveInterestOutstanding < 0 ? 'Overpaid' : 'Due'}
+                </p>
+                <p className={`text-2xl font-bold ${liveInterestOutstanding < 0 ? 'text-emerald-900' : 'text-purple-900'}`}>
+                  {liveInterestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(liveInterestOutstanding))}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">As of today</p>
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Progress */}
