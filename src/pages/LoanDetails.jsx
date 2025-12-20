@@ -189,7 +189,7 @@ export default function LoanDetails() {
       await base44.entities.Loan.update(loanId, {
         principal_paid: Math.max(0, newPrincipalPaid),
         interest_paid: Math.max(0, newInterestPaid),
-        status: 'Active' // Reopen if was closed
+        status: 'Live' // Reopen if was closed
       });
       
       // Reverse schedule updates - recalculate from all non-deleted transactions
@@ -318,8 +318,7 @@ export default function LoanDetails() {
   const getStatusColor = (status) => {
     const colors = {
       'Pending': 'bg-slate-100 text-slate-700',
-      'Approved': 'bg-blue-100 text-blue-700',
-      'Active': 'bg-emerald-100 text-emerald-700',
+      'Live': 'bg-emerald-100 text-emerald-700',
       'Closed': 'bg-purple-100 text-purple-700',
       'Defaulted': 'bg-red-100 text-red-700'
     };
@@ -361,10 +360,11 @@ export default function LoanDetails() {
   const totalOutstanding = principalRemaining + interestRemaining;
   const progressPercent = ((loan.principal_paid || 0) + (loan.interest_paid || 0)) / loan.total_repayable * 100;
   const liveInterestOutstanding = calculateLiveInterestOutstanding(loan);
+  const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
 
-  return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="max-w-6xl mx-auto p-6 space-y-6">
         {/* Back Button */}
         <Link to={createPageUrl('Loans')}>
           <Button variant="ghost" size="sm">
@@ -395,28 +395,16 @@ export default function LoanDetails() {
                   {getStatusLabel(loan.status)}
                 </Badge>
                 {loan.status === 'Pending' && (
-                  <div className="flex gap-2">
-                    <Button 
-                      size="sm" 
-                      variant="secondary"
-                      onClick={() => updateStatusMutation.mutate('Approved')}
-                      disabled={updateStatusMutation.isPending}
-                    >
-                      Approve
-                    </Button>
-                  </div>
-                )}
-                {loan.status === 'Approved' && (
                   <Button 
                     size="sm" 
                     className="bg-emerald-600 hover:bg-emerald-700"
-                    onClick={() => updateStatusMutation.mutate('Active')}
+                    onClick={() => updateStatusMutation.mutate('Live')}
                     disabled={updateStatusMutation.isPending}
                   >
-                    Disburse Loan
+                    Activate Loan
                   </Button>
                 )}
-                {loan.status === 'Active' && (
+                {loan.status === 'Live' && (
                   <>
                     <Button 
                       size="sm" 
@@ -472,11 +460,11 @@ export default function LoanDetails() {
                       Delete Loan
                     </DropdownMenuItem>
                   </DropdownMenuContent>
-                </DropdownMenu>
-              </div>
-            </div>
-          </div>
-          <CardContent className="p-6">
+                  </DropdownMenu>
+                  </div>
+                  </div>
+                  </div>
+                  <CardContent className="p-6">
             <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
               <div>
                 <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
@@ -594,7 +582,7 @@ export default function LoanDetails() {
               )}
             </CardContent>
           </Card>
-          {loan.status === 'Active' && (
+          {isLoanActive && (
             <Card className={`bg-gradient-to-br ${liveInterestOutstanding < 0 ? 'from-emerald-50 to-emerald-100/50 border-emerald-200' : 'from-purple-50 to-purple-100/50 border-purple-200'}`}>
               <CardContent className="p-5">
                 <p className={`text-sm font-medium ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
@@ -610,7 +598,7 @@ export default function LoanDetails() {
         </div>
 
         {/* Progress */}
-        {loan.status === 'Active' && (
+        {isLoanActive && (
           <Card>
             <CardContent className="p-5">
               <div className="flex items-center justify-between mb-2">

@@ -493,8 +493,8 @@ export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0,
  * @param {Date} asOfDate - Date to calculate as of (defaults to today)
  * @returns {number} Live interest outstanding (negative if overpaid)
  */
-export function calculateLiveInterestOutstanding(loan, asOfDate = new Date()) {
-  if (!loan || loan.status === 'Pending' || loan.status === 'Approved') {
+ export function calculateLiveInterestOutstanding(loan, asOfDate = new Date()) {
+  if (!loan || loan.status === 'Pending') {
     return 0;
   }
 

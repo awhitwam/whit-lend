@@ -32,9 +32,11 @@ export default function Loans() {
     const matchesSearch = 
       loan.borrower_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       loan.product_name?.toLowerCase().includes(searchTerm.toLowerCase());
-    
-    const matchesStatus = statusFilter === 'all' || loan.status === statusFilter;
-    
+
+    const matchesStatus = statusFilter === 'all' || 
+      loan.status === statusFilter || 
+      (statusFilter === 'Live' && (loan.status === 'Live' || loan.status === 'Active'));
+
     return matchesSearch && matchesStatus;
   });
 
@@ -85,7 +87,7 @@ export default function Loans() {
   const getStatusColor = (status) => {
     const colors = {
       'Pending': 'bg-slate-100 text-slate-700',
-      'Approved': 'bg-blue-100 text-blue-700',
+      'Live': 'bg-emerald-100 text-emerald-700',
       'Active': 'bg-emerald-100 text-emerald-700',
       'Closed': 'bg-purple-100 text-purple-700',
       'Defaulted': 'bg-red-100 text-red-700'
@@ -100,8 +102,7 @@ export default function Loans() {
   const statusCounts = {
     all: loans.length,
     Pending: loans.filter(l => l.status === 'Pending').length,
-    Approved: loans.filter(l => l.status === 'Approved').length,
-    Active: loans.filter(l => l.status === 'Active').length,
+    Live: loans.filter(l => l.status === 'Live' || l.status === 'Active').length,
     Settled: loans.filter(l => l.status === 'Closed').length,
     Defaulted: loans.filter(l => l.status === 'Defaulted').length,
   };
@@ -149,18 +150,15 @@ export default function Loans() {
                 />
               </div>
               <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full md:w-auto">
-                <TabsList className="grid grid-cols-3 md:grid-cols-6 w-full md:w-auto">
+                <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full md:w-auto">
                   <TabsTrigger value="all" className="text-xs">
                     All ({statusCounts.all})
                   </TabsTrigger>
                   <TabsTrigger value="Pending" className="text-xs">
                     Pending ({statusCounts.Pending})
                   </TabsTrigger>
-                  <TabsTrigger value="Active" className="text-xs">
-                    Active ({statusCounts.Active})
-                  </TabsTrigger>
-                  <TabsTrigger value="Approved" className="text-xs">
-                    Approved ({statusCounts.Approved})
+                  <TabsTrigger value="Live" className="text-xs">
+                    Live ({statusCounts.Live})
                   </TabsTrigger>
                   <TabsTrigger value="Closed" className="text-xs">
                     Settled ({statusCounts.Settled})
