@@ -6,6 +6,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { generateRepaymentSchedule, calculateLoanSummary, applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
 
 export default function Config() {
   const [file, setFile] = useState(null);
@@ -212,6 +213,21 @@ export default function Config() {
         
         if (!product) continue;
         
+        // Generate repayment schedule
+        const schedule = generateRepaymentSchedule({
+          principal: principalAmount,
+          interestRate: product.interest_rate,
+          duration: 6,
+          interestType: product.interest_type,
+          period: product.period,
+          startDate: parseDate(loanRelease.Date),
+          interestOnlyPeriod: 0,
+          interestAlignment: 'period_based',
+          extendForFullPeriod: false
+        });
+
+        const summary = calculateLoanSummary(schedule);
+
         const loan = await base44.entities.Loan.create({
           borrower_id: borrower.id,
           borrower_name: borrower.full_name,
@@ -227,100 +243,116 @@ export default function Config() {
           duration: 6,
           start_date: parseDate(loanRelease.Date),
           status: 'Live',
-          total_interest: 0,
-          total_repayable: principalAmount,
+          total_interest: summary.totalInterest,
+          total_repayable: summary.totalRepayable,
           principal_paid: 0,
           interest_paid: 0
         });
-        
-        loanMap[loanNum] = { loan, borrower };
-        
+
+        // Create repayment schedule
+        for (const row of schedule) {
+          await base44.entities.RepaymentSchedule.create({
+            loan_id: loan.id,
+            ...row
+          });
+        }
+
+        loanMap[loanNum] = { loan, borrower, transactions: [] };
+
         processed++;
         addLog(`  ✓ Loan #${loanNum}: ${borrower.full_name} - ${formatCurrency(principalAmount)}`);
         setProgress(40 + (processed / totalLoans) * 40);
         await delay(800);
-      }
-      addLog(`Total: ${processed} loans created`);
+        }
+        addLog(`Total: ${processed} loans created`);
       
       setProgress(80);
-      setStatus('Creating transactions...');
-      
+      setStatus('Processing transactions...');
+
       const repaymentTypes = ['Interest Collections', 'Principal Collections', 'Fee Collections'];
-      let txCount = 0;
-      const txBatchSize = 5;
-      let txBatch = [];
-      const loanTotals = {}; // Track totals per loan
-      
+
+      // Group transactions by loan
       for (const row of rows) {
         if (repaymentTypes.includes(row.Type)) {
           const borrowerInfo = extractBorrowerInfo(row['Transaction Details']);
           if (!borrowerInfo || !loanMap[borrowerInfo.loanNumber]) continue;
-          
-          const { loan, borrower } = loanMap[borrowerInfo.loanNumber];
+
           const amount = parseFloat(row.In);
-          
           if (amount > 0) {
-            const principalApplied = row.Type === 'Principal Collections' ? amount : 0;
-            const interestApplied = row.Type === 'Interest Collections' ? amount : 0;
-            
-            // Track totals
-            if (!loanTotals[loan.id]) {
-              loanTotals[loan.id] = { principal: 0, interest: 0 };
-            }
-            loanTotals[loan.id].principal += principalApplied;
-            loanTotals[loan.id].interest += interestApplied;
-            
-            txBatch.push({
-              loan_id: loan.id,
-              borrower_id: borrower.id,
-              amount: amount,
+            loanMap[borrowerInfo.loanNumber].transactions.push({
               date: parseDate(row.Date),
-              type: 'Repayment',
-              principal_applied: principalApplied,
-              interest_applied: interestApplied,
-              reference: row.Type,
-              notes: `Imported: ${row['Transaction Details']}`
+              amount: amount,
+              type: row.Type,
+              details: row['Transaction Details']
             });
-            
-            if (txBatch.length >= txBatchSize) {
-              for (const tx of txBatch) {
-                await base44.entities.Transaction.create(tx);
-                txCount++;
-              }
-              addLog(`  ✓ Created ${txBatchSize} transactions (total: ${txCount})`);
-              txBatch = [];
-              await delay(1000);
-              setProgress(80 + (txCount / rows.length) * 10);
-            }
           }
         }
       }
-      
-      // Process remaining transactions
-      for (const tx of txBatch) {
-        await base44.entities.Transaction.create(tx);
-        txCount++;
-      }
-      if (txBatch.length > 0) {
-        addLog(`  ✓ Created remaining ${txBatch.length} transactions`);
-      }
-      addLog(`Total: ${txCount} transactions created`);
-      
-      // Update loan totals and status
-      setStatus('Updating loan totals...');
-      addLog('Updating loan payment totals...');
-      for (const [loanId, totals] of Object.entries(loanTotals)) {
-        const loan = loanMap[Object.keys(loanMap).find(key => loanMap[key].loan.id === loanId)]?.loan;
-        const status = loan && totals.principal >= loan.principal_amount ? 'Closed' : 'Live';
-        
-        await base44.entities.Loan.update(loanId, {
-          principal_paid: totals.principal,
-          interest_paid: totals.interest,
+
+      // Apply payments to each loan's schedule
+      let txCount = 0;
+      let loanCount = 0;
+
+      for (const [loanNum, loanData] of Object.entries(loanMap)) {
+        const { loan, borrower, transactions: loanTxs } = loanData;
+
+        if (loanTxs.length === 0) continue;
+
+        // Sort transactions by date
+        loanTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        // Get schedule
+        const schedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loan.id }, 'installment_number');
+
+        let totalPrincipalPaid = 0;
+        let totalInterestPaid = 0;
+
+        // Apply each payment
+        for (const tx of loanTxs) {
+          const { updates } = applyPaymentWaterfall(tx.amount, schedule, 0, 'credit');
+
+          // Update schedule rows
+          for (const update of updates) {
+            await base44.entities.RepaymentSchedule.update(update.id, {
+              interest_paid: update.interest_paid,
+              principal_paid: update.principal_paid,
+              status: update.status
+            });
+            totalPrincipalPaid += update.principalApplied || 0;
+            totalInterestPaid += update.interestApplied || 0;
+          }
+
+          // Create transaction record
+          await base44.entities.Transaction.create({
+            loan_id: loan.id,
+            borrower_id: borrower.id,
+            amount: tx.amount,
+            date: tx.date,
+            type: 'Repayment',
+            principal_applied: updates.reduce((sum, u) => sum + (u.principalApplied || 0), 0),
+            interest_applied: updates.reduce((sum, u) => sum + (u.interestApplied || 0), 0),
+            reference: tx.type,
+            notes: `Imported: ${tx.details}`
+          });
+
+          txCount++;
+        }
+
+        // Update loan totals
+        const status = totalPrincipalPaid >= loan.principal_amount ? 'Closed' : 'Live';
+        await base44.entities.Loan.update(loan.id, {
+          principal_paid: totalPrincipalPaid,
+          interest_paid: totalInterestPaid,
           status: status
         });
-        await delay(300);
+
+        loanCount++;
+        addLog(`  ✓ Loan #${loanNum}: Applied ${loanTxs.length} payments`);
+        setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
+        await delay(800);
       }
-      addLog(`  ✓ Updated ${Object.keys(loanTotals).length} loans`);
+
+      addLog(`Total: ${txCount} transactions created and applied`);
       
       setProgress(90);
       setStatus('Creating expenses...');
