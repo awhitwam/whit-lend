@@ -10,9 +10,15 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
   const [formData, setFormData] = useState({
     first_name: borrower?.first_name || '',
     last_name: borrower?.last_name || '',
+    business: borrower?.business || '',
     phone: borrower?.phone || '',
+    mobile: borrower?.mobile || '',
+    landline: borrower?.landline || '',
     email: borrower?.email || '',
     address: borrower?.address || '',
+    city: borrower?.city || '',
+    zipcode: borrower?.zipcode || '',
+    country: borrower?.country || '',
     id_number: borrower?.id_number || '',
     status: borrower?.status || 'Active'
   });
@@ -51,14 +57,45 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
         </div>
       </div>
 
+      <div className="space-y-2">
+        <Label htmlFor="business">Business Name</Label>
+        <Input
+          id="business"
+          value={formData.business}
+          onChange={(e) => handleChange('business', e.target.value)}
+          placeholder="Company or business name"
+        />
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="phone">Phone Number *</Label>
+          <Label htmlFor="mobile">Mobile</Label>
+          <Input
+            id="mobile"
+            value={formData.mobile}
+            onChange={(e) => handleChange('mobile', e.target.value)}
+            placeholder="Mobile number"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="landline">Landline</Label>
+          <Input
+            id="landline"
+            value={formData.landline}
+            onChange={(e) => handleChange('landline', e.target.value)}
+            placeholder="Landline number"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="phone">Primary Phone *</Label>
           <Input
             id="phone"
             value={formData.phone}
             onChange={(e) => handleChange('phone', e.target.value)}
-            placeholder="+254 7XX XXX XXX"
+            placeholder="Primary contact number"
             required
           />
         </div>
@@ -74,15 +111,55 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
         </div>
       </div>
 
+      <div className="space-y-2">
+        <Label htmlFor="address">Address</Label>
+        <Textarea
+          id="address"
+          value={formData.address}
+          onChange={(e) => handleChange('address', e.target.value)}
+          placeholder="Street address"
+          rows={2}
+        />
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="space-y-2">
+          <Label htmlFor="city">City</Label>
+          <Input
+            id="city"
+            value={formData.city}
+            onChange={(e) => handleChange('city', e.target.value)}
+            placeholder="City"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="zipcode">Postcode</Label>
+          <Input
+            id="zipcode"
+            value={formData.zipcode}
+            onChange={(e) => handleChange('zipcode', e.target.value)}
+            placeholder="Postcode"
+          />
+        </div>
+        <div className="space-y-2">
+          <Label htmlFor="country">Country</Label>
+          <Input
+            id="country"
+            value={formData.country}
+            onChange={(e) => handleChange('country', e.target.value)}
+            placeholder="Country"
+          />
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
-          <Label htmlFor="id_number">ID Number *</Label>
+          <Label htmlFor="id_number">ID Number</Label>
           <Input
             id="id_number"
             value={formData.id_number}
             onChange={(e) => handleChange('id_number', e.target.value)}
             placeholder="National ID or Passport"
-            required
           />
         </div>
         <div className="space-y-2">
@@ -97,17 +174,6 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
             </SelectContent>
           </Select>
         </div>
-      </div>
-
-      <div className="space-y-2">
-        <Label htmlFor="address">Address</Label>
-        <Textarea
-          id="address"
-          value={formData.address}
-          onChange={(e) => handleChange('address', e.target.value)}
-          placeholder="Enter full address"
-          rows={3}
-        />
       </div>
 
       <div className="flex justify-end gap-3 pt-4 border-t">

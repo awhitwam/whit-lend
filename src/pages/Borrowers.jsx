@@ -3,7 +3,9 @@ import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Plus, Users } from 'lucide-react';
+import { Plus, Users, Upload } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
 import BorrowerTable from '@/components/borrower/BorrowerTable';
 import BorrowerForm from '@/components/borrower/BorrowerForm';
 import EmptyState from '@/components/ui/EmptyState';
@@ -62,10 +64,18 @@ export default function Borrowers() {
             <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Borrowers</h1>
             <p className="text-slate-500 mt-1">Manage your borrower profiles</p>
           </div>
-          <Button onClick={() => setIsFormOpen(true)} className="bg-slate-900 hover:bg-slate-800">
-            <Plus className="w-4 h-4 mr-2" />
-            Add Borrower
-          </Button>
+          <div className="flex gap-2">
+            <Link to={createPageUrl('ImportBorrowers')}>
+              <Button variant="outline">
+                <Upload className="w-4 h-4 mr-2" />
+                Import CSV
+              </Button>
+            </Link>
+            <Button onClick={() => setIsFormOpen(true)} className="bg-slate-900 hover:bg-slate-800">
+              <Plus className="w-4 h-4 mr-2" />
+              Add Borrower
+            </Button>
+          </div>
         </div>
 
         {/* Content */}
