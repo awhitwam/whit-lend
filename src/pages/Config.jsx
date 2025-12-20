@@ -201,7 +201,7 @@ export default function Config() {
         productMap[category] = product;
         prodCount++;
         addLog(`  ✓ Created product: ${category}`);
-        await delay(500);
+        await delay(1000);
       }
       addLog(`Total: ${prodCount} loan products created`);
       
@@ -225,7 +225,7 @@ export default function Config() {
           });
           expenseTypeMap[category] = expenseType;
           addLog(`  ✓ Created expense type: ${category}`);
-          await delay(300);
+          await delay(800);
         } catch (err) {
           const existing = await base44.entities.ExpenseType.filter({ name: category });
           if (existing.length > 0) {
@@ -333,6 +333,7 @@ export default function Config() {
             loan_id: loan.id,
             ...row
           });
+          await delay(200);
         }
 
         loanMap[loanNum] = { loan, borrower, transactions: [] };
@@ -340,7 +341,7 @@ export default function Config() {
         processed++;
         addLog(`  ✓ Loan #${loanNum}: ${borrower.full_name} - ${formatCurrency(principalAmount)}`);
         setProgress(40 + (processed / totalLoans) * 40);
-        await delay(800);
+        await delay(1500);
         }
         addLog(`Total: ${processed} loans created`);
       
@@ -398,6 +399,7 @@ export default function Config() {
             });
             totalPrincipalPaid += update.principalApplied || 0;
             totalInterestPaid += update.interestApplied || 0;
+            await delay(200);
           }
 
           // Create transaction record
@@ -427,7 +429,7 @@ export default function Config() {
         loanCount++;
         addLog(`  ✓ Loan #${loanNum}: Applied ${loanTxs.length} payments`);
         setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
-        await delay(800);
+        await delay(1500);
       }
 
       addLog(`Total: ${txCount} transactions created and applied`);
@@ -436,7 +438,7 @@ export default function Config() {
       setStatus('Creating expenses...');
       
       let expenseCount = 0;
-      const expBatchSize = 5;
+      const expBatchSize = 3;
       let expBatch = [];
       
       for (const row of rows) {
@@ -457,10 +459,11 @@ export default function Config() {
               for (const exp of expBatch) {
                 await base44.entities.Expense.create(exp);
                 expenseCount++;
+                await delay(300);
               }
               addLog(`  ✓ Created ${expBatchSize} expenses (total: ${expenseCount})`);
               expBatch = [];
-              await delay(1000);
+              await delay(1500);
             }
           }
         }
