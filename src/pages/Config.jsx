@@ -50,6 +50,14 @@ export default function Config() {
     return `${year}-${month.padStart(2, '0')}-${day.padStart(2, '0')}`;
   };
 
+  const formatCurrency = (amount) => {
+    return new Intl.NumberFormat('en-GB', {
+      style: 'currency',
+      currency: 'GBP',
+      minimumFractionDigits: 0
+    }).format(amount || 0);
+  };
+
   const extractBorrowerInfo = (details) => {
     const match = details.match(/^(Mr\.|Mrs\.|Ms\.|Dr\.)\s+(.+?)\s+-\s+Loan\s+#(\d+)/);
     if (match) {
@@ -122,9 +130,10 @@ export default function Config() {
         
         productMap[category] = product;
         prodCount++;
+        addLog(`  ✓ Created product: ${category}`);
         await delay(500);
       }
-      addLog(`Created ${prodCount} loan products`);
+      addLog(`Total: ${prodCount} loan products created`);
       
       setProgress(20);
       setStatus('Creating expense types...');
@@ -145,6 +154,7 @@ export default function Config() {
             description: `Imported from transactions`
           });
           expenseTypeMap[category] = expenseType;
+          addLog(`  ✓ Created expense type: ${category}`);
           await delay(300);
         } catch (err) {
           const existing = await base44.entities.ExpenseType.filter({ name: category });
@@ -235,10 +245,11 @@ export default function Config() {
         loanMap[loanNum] = { loan, borrower };
         
         processed++;
+        addLog(`  ✓ Loan #${loanNum}: ${borrower.full_name} - ${formatCurrency(principalAmount)}`);
         setProgress(40 + (processed / totalLoans) * 40);
         await delay(800);
       }
-      addLog(`Created ${processed} loans with borrowers`);
+      addLog(`Total: ${processed} loans created`);
       
       setProgress(80);
       setStatus('Creating transactions...');
@@ -285,6 +296,7 @@ export default function Config() {
                 await base44.entities.Transaction.create(tx);
                 txCount++;
               }
+              addLog(`  ✓ Created ${txBatchSize} transactions (total: ${txCount})`);
               txBatch = [];
               await delay(1000);
               setProgress(80 + (txCount / rows.length) * 10);
@@ -298,9 +310,14 @@ export default function Config() {
         await base44.entities.Transaction.create(tx);
         txCount++;
       }
+      if (txBatch.length > 0) {
+        addLog(`  ✓ Created remaining ${txBatch.length} transactions`);
+      }
+      addLog(`Total: ${txCount} transactions created`);
       
       // Update loan totals
       setStatus('Updating loan totals...');
+      addLog('Updating loan payment totals...');
       for (const [loanId, totals] of Object.entries(loanTotals)) {
         await base44.entities.Loan.update(loanId, {
           principal_paid: totals.principal,
@@ -308,7 +325,7 @@ export default function Config() {
         });
         await delay(300);
       }
-      addLog(`Updated ${Object.keys(loanTotals).length} loans with payment totals`);
+      addLog(`  ✓ Updated ${Object.keys(loanTotals).length} loans`);
       
       setProgress(90);
       setStatus('Creating expenses...');
@@ -336,6 +353,7 @@ export default function Config() {
                 await base44.entities.Expense.create(exp);
                 expenseCount++;
               }
+              addLog(`  ✓ Created ${expBatchSize} expenses (total: ${expenseCount})`);
               expBatch = [];
               await delay(1000);
             }
@@ -348,8 +366,10 @@ export default function Config() {
         await base44.entities.Expense.create(exp);
         expenseCount++;
       }
-      addLog(`Created ${expenseCount} expenses`);
-      addLog(`Created ${txCount} transactions`);
+      if (expBatch.length > 0) {
+        addLog(`  ✓ Created remaining ${expBatch.length} expenses`);
+      }
+      addLog(`Total: ${expenseCount} expenses created`);
       addLog(`✓ Import completed successfully!`);
       
       setProgress(100);
