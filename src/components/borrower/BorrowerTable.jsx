@@ -12,11 +12,11 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredBorrowers = borrowers.filter(b => {
-    const fullName = `${b.first_name} ${b.last_name}`.toLowerCase();
+    const displayName = (b.business || `${b.first_name} ${b.last_name}`).toLowerCase();
     const search = searchTerm.toLowerCase();
-    return fullName.includes(search) || 
+    return displayName.includes(search) || 
            b.phone?.includes(search) || 
-           b.id_number?.toLowerCase().includes(search) ||
+           b.unique_number?.includes(search) ||
            b.email?.toLowerCase().includes(search);
   });
 
@@ -36,9 +36,9 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
         <Table>
           <TableHeader>
             <TableRow className="bg-slate-50/50">
-              <TableHead className="font-semibold">Borrower</TableHead>
+              <TableHead className="font-semibold">ID</TableHead>
+              <TableHead className="font-semibold">Name / Business</TableHead>
               <TableHead className="font-semibold">Contact</TableHead>
-              <TableHead className="font-semibold">ID Number</TableHead>
               <TableHead className="font-semibold">Status</TableHead>
               <TableHead className="w-12"></TableHead>
             </TableRow>
@@ -59,8 +59,13 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
                 </TableCell>
               </TableRow>
             ) : (
-              filteredBorrowers.map((borrower) => (
+              filteredBorrowers.map((borrower) => {
+                const displayName = borrower.business || `${borrower.first_name} ${borrower.last_name}`;
+                return (
                 <TableRow key={borrower.id} className="hover:bg-slate-50/50 transition-colors">
+                  <TableCell className="font-mono font-semibold text-slate-700">
+                    #{borrower.unique_number}
+                  </TableCell>
                   <TableCell>
                     <Link 
                       to={createPageUrl(`BorrowerDetails?id=${borrower.id}`)}
@@ -71,8 +76,11 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
                       </div>
                       <div>
                         <p className="font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
-                          {borrower.first_name} {borrower.last_name}
+                          {displayName}
                         </p>
+                        {borrower.business && (
+                          <p className="text-xs text-slate-500">{borrower.first_name} {borrower.last_name}</p>
+                        )}
                         <p className="text-xs text-slate-500">Added {new Date(borrower.created_date).toLocaleDateString()}</p>
                       </div>
                     </Link>
@@ -90,9 +98,6 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
                         </div>
                       )}
                     </div>
-                  </TableCell>
-                  <TableCell className="font-mono text-sm text-slate-600">
-                    {borrower.id_number}
                   </TableCell>
                   <TableCell>
                     <Badge 
@@ -127,7 +132,7 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
                     </DropdownMenu>
                   </TableCell>
                 </TableRow>
-              ))
+              );})
             )}
           </TableBody>
         </Table>
