@@ -9,7 +9,8 @@ import {
   Menu,
   X,
   Building2,
-  Receipt
+  Receipt,
+  TrendingUp
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -17,6 +18,7 @@ const navigation = [
   { name: 'Dashboard', href: 'Dashboard', icon: LayoutDashboard },
   { name: 'Borrowers', href: 'Borrowers', icon: Users },
   { name: 'Loans', href: 'Loans', icon: FileText },
+  { name: 'Investors', href: 'Investors', icon: TrendingUp },
   { name: 'Ledger', href: 'Ledger', icon: Building2 },
   { name: 'Expenses', href: 'Expenses', icon: Receipt },
   { name: 'Products', href: 'Products', icon: Package },

@@ -29,7 +29,12 @@ export default function Ledger() {
     queryFn: () => base44.entities.Expense.list('-date')
   });
 
-  const isLoading = transactionsLoading || loansLoading || expensesLoading;
+  const { data: investorTransactions = [], isLoading: investorTxLoading } = useQuery({
+    queryKey: ['investor-transactions'],
+    queryFn: () => base44.entities.InvestorTransaction.list('-date')
+  });
+
+  const isLoading = transactionsLoading || loansLoading || expensesLoading || investorTxLoading;
 
   // Create loan lookup map
   const loanMap = {};
@@ -92,7 +97,55 @@ export default function Ledger() {
       amount_in: 0,
       amount_out: e.amount,
       balance: 0
-    }))
+    })),
+
+    // Investor capital in (money in from investors)
+    ...investorTransactions
+      .filter(t => t.type === 'capital_in')
+      .map(t => ({
+        id: `inv-in-${t.id}`,
+        date: t.date,
+        type: 'investor_capital_in',
+        description: `Capital from Investor - ${t.investor_name}`,
+        borrower: null,
+        loanId: null,
+        reference: t.reference,
+        amount_in: t.amount,
+        amount_out: 0,
+        balance: 0
+      })),
+
+    // Investor capital out (money out to investors)
+    ...investorTransactions
+      .filter(t => t.type === 'capital_out')
+      .map(t => ({
+        id: `inv-out-${t.id}`,
+        date: t.date,
+        type: 'investor_capital_out',
+        description: `Capital Withdrawal - ${t.investor_name}`,
+        borrower: null,
+        loanId: null,
+        reference: t.reference,
+        amount_in: 0,
+        amount_out: t.amount,
+        balance: 0
+      })),
+
+    // Investor interest payments (money out to investors)
+    ...investorTransactions
+      .filter(t => t.type === 'interest_payment')
+      .map(t => ({
+        id: `inv-int-${t.id}`,
+        date: t.date,
+        type: 'investor_interest',
+        description: `Interest Payment - ${t.investor_name}`,
+        borrower: null,
+        loanId: null,
+        reference: t.reference,
+        amount_in: 0,
+        amount_out: t.amount,
+        balance: 0
+      }))
   ];
 
   // Sort entries
@@ -156,7 +209,10 @@ export default function Ledger() {
     const colors = {
       repayment: 'bg-emerald-100 text-emerald-700',
       disbursement: 'bg-blue-100 text-blue-700',
-      expense: 'bg-red-100 text-red-700'
+      expense: 'bg-red-100 text-red-700',
+      investor_capital_in: 'bg-purple-100 text-purple-700',
+      investor_capital_out: 'bg-orange-100 text-orange-700',
+      investor_interest: 'bg-amber-100 text-amber-700'
     };
     return colors[type];
   };
@@ -165,7 +221,10 @@ export default function Ledger() {
     const labels = {
       repayment: 'Repayment',
       disbursement: 'Disbursement',
-      expense: 'Expense'
+      expense: 'Expense',
+      investor_capital_in: 'Investor Capital In',
+      investor_capital_out: 'Investor Capital Out',
+      investor_interest: 'Investor Interest'
     };
     return labels[type];
   };
