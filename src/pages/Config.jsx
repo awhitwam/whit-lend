@@ -237,6 +237,7 @@ export default function Config() {
       let txCount = 0;
       const txBatchSize = 5;
       let txBatch = [];
+      const loanTotals = {}; // Track totals per loan
       
       for (const row of rows) {
         if (repaymentTypes.includes(row.Type)) {
@@ -247,14 +248,24 @@ export default function Config() {
           const amount = parseFloat(row.In);
           
           if (amount > 0) {
+            const principalApplied = row.Type === 'Principal Collections' ? amount : 0;
+            const interestApplied = row.Type === 'Interest Collections' ? amount : 0;
+            
+            // Track totals
+            if (!loanTotals[loan.id]) {
+              loanTotals[loan.id] = { principal: 0, interest: 0 };
+            }
+            loanTotals[loan.id].principal += principalApplied;
+            loanTotals[loan.id].interest += interestApplied;
+            
             txBatch.push({
               loan_id: loan.id,
               borrower_id: borrower.id,
               amount: amount,
               date: parseDate(row.Date),
               type: 'Repayment',
-              principal_applied: row.Type === 'Principal Collections' ? amount : 0,
-              interest_applied: row.Type === 'Interest Collections' ? amount : 0,
+              principal_applied: principalApplied,
+              interest_applied: interestApplied,
               reference: row.Type,
               notes: `Imported: ${row['Transaction Details']}`
             });
@@ -265,7 +276,7 @@ export default function Config() {
                 txCount++;
               }
               txBatch = [];
-              await delay(1000); // Wait between batches
+              await delay(1000);
               setProgress(80 + (txCount / rows.length) * 10);
             }
           }
@@ -276,6 +287,16 @@ export default function Config() {
       for (const tx of txBatch) {
         await base44.entities.Transaction.create(tx);
         txCount++;
+      }
+      
+      // Update loan totals
+      setStatus('Updating loan totals...');
+      for (const [loanId, totals] of Object.entries(loanTotals)) {
+        await base44.entities.Loan.update(loanId, {
+          principal_paid: totals.principal,
+          interest_paid: totals.interest
+        });
+        await delay(300);
       }
       
       setProgress(90);
