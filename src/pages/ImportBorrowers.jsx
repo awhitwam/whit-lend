@@ -44,12 +44,16 @@ function parseCSV(text) {
 }
 
 function transformBorrowerData(row) {
+  const business = row['Business'];
+  const firstName = row['First Name'];
+  const lastName = row['Last Name'];
+  
   return {
     unique_number: row['Unique#'],
-    full_name: row['Full Name'],
-    first_name: row['First Name'],
-    last_name: row['Last Name'],
-    business: row['Business'],
+    full_name: business || `${firstName} ${lastName}`,
+    first_name: firstName,
+    last_name: lastName,
+    business: business,
     email: row['Email'],
     gender: row['Gender'],
     address: row['Address'],

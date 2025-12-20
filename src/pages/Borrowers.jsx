@@ -37,10 +37,21 @@ export default function Borrowers() {
     }
   });
 
-  const handleSubmit = (data) => {
+  const handleSubmit = async (data) => {
     if (editingBorrower) {
       updateMutation.mutate({ id: editingBorrower.id, data });
     } else {
+      // Auto-generate unique_number if not provided
+      if (!data.unique_number) {
+        const allBorrowers = await base44.entities.Borrower.list();
+        const highestNumber = allBorrowers.reduce((max, b) => {
+          const num = parseInt(b.unique_number) || 0;
+          return num > max ? num : max;
+        }, 1000000);
+        data.unique_number = (highestNumber + 1).toString();
+      }
+      // Set full_name as business name if available, otherwise first + last name
+      data.full_name = data.business || `${data.first_name} ${data.last_name}`;
       createMutation.mutate(data);
     }
   };
