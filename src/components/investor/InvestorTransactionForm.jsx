@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 
-export default function InvestorTransactionForm({ investor, onSubmit, onCancel, isLoading }) {
+export default function InvestorTransactionForm({ investor, monthlyInterestDue, onSubmit, onCancel, isLoading }) {
   const [formData, setFormData] = useState({
     type: 'capital_in',
     amount: '',
@@ -30,7 +30,13 @@ export default function InvestorTransactionForm({ investor, onSubmit, onCancel, 
         <Label htmlFor="type">Transaction Type *</Label>
         <Select
           value={formData.type}
-          onValueChange={(value) => setFormData({...formData, type: value})}
+          onValueChange={(value) => {
+            const newData = {...formData, type: value};
+            if (value === 'interest_payment' && monthlyInterestDue && !formData.amount) {
+              newData.amount = monthlyInterestDue.toString();
+            }
+            setFormData(newData);
+          }}
         >
           <SelectTrigger>
             <SelectValue />
@@ -41,6 +47,9 @@ export default function InvestorTransactionForm({ investor, onSubmit, onCancel, 
             <SelectItem value="interest_payment">Interest Payment</SelectItem>
           </SelectContent>
         </Select>
+        {formData.type === 'interest_payment' && monthlyInterestDue > 0 && (
+          <p className="text-xs text-amber-600">Monthly interest due: £{monthlyInterestDue.toFixed(2)}</p>
+        )}
       </div>
 
       <div className="space-y-2">

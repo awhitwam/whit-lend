@@ -134,6 +134,11 @@ export default function InvestorDetails() {
   const capitalOut = transactions.filter(t => t.type === 'capital_out').reduce((sum, t) => sum + t.amount, 0);
   const interestPaid = transactions.filter(t => t.type === 'interest_payment').reduce((sum, t) => sum + t.amount, 0);
 
+  // Calculate monthly interest due
+  const monthlyInterestDue = investor.interest_calculation_type === 'monthly_rate'
+    ? (investor.current_capital_balance || 0) * (investor.interest_rate / 100)
+    : investor.manual_interest_amount || 0;
+
   const getTransactionIcon = (type) => {
     if (type === 'capital_in') return { icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-100' };
     if (type === 'capital_out') return { icon: TrendingDown, color: 'text-red-600', bg: 'bg-red-100' };
@@ -181,7 +186,7 @@ export default function InvestorDetails() {
             </div>
           </div>
           <CardContent className="p-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               <div>
                 <p className="text-xs text-slate-500 mb-1">Interest Type</p>
                 <p className="font-semibold">
@@ -195,6 +200,12 @@ export default function InvestorDetails() {
                 <p className="text-xs text-slate-500 mb-1">Current Capital</p>
                 <p className="text-xl font-bold text-purple-600">
                   {formatCurrency(investor.current_capital_balance || 0)}
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Monthly Interest Due</p>
+                <p className="text-xl font-bold text-amber-600">
+                  {formatCurrency(monthlyInterestDue)}
                 </p>
               </div>
               <div>
@@ -336,6 +347,7 @@ export default function InvestorDetails() {
             </DialogHeader>
             <InvestorTransactionForm
               investor={investor}
+              monthlyInterestDue={monthlyInterestDue}
               onSubmit={(data) => createTransactionMutation.mutate(data)}
               onCancel={() => setIsTransactionOpen(false)}
               isLoading={createTransactionMutation.isPending}
