@@ -241,6 +241,90 @@ export default function LoanDetails() {
     }
   });
 
+  const recalculateLoanMutation = useMutation({
+    mutationFn: async () => {
+      // Fetch the product to get latest settings
+      const products = await base44.entities.LoanProduct.filter({ id: loan.product_id });
+      const product = products[0];
+      
+      if (!product) throw new Error('Product not found');
+      
+      // Update loan with product settings
+      await base44.entities.Loan.update(loanId, {
+        interest_rate: product.interest_rate,
+        interest_type: product.interest_type,
+        period: product.period
+      });
+      
+      // Regenerate schedule
+      const newSchedule = generateRepaymentSchedule({
+        principal: loan.principal_amount,
+        interestRate: product.interest_rate,
+        duration: loan.duration,
+        interestType: product.interest_type,
+        period: product.period,
+        startDate: loan.start_date,
+        interestOnlyPeriod: loan.interest_only_period || 0,
+        interestAlignment: loan.interest_alignment || 'period_based',
+        extendForFullPeriod: loan.extend_for_full_period || false
+      });
+      
+      const summary = calculateLoanSummary(newSchedule);
+      
+      // Update totals
+      await base44.entities.Loan.update(loanId, {
+        total_interest: summary.totalInterest,
+        total_repayable: summary.totalRepayable + (loan.exit_fee || 0)
+      });
+      
+      // Delete old schedule
+      const oldSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
+      for (const row of oldSchedule) {
+        await base44.entities.RepaymentSchedule.delete(row.id);
+      }
+      
+      // Create new schedule
+      for (const row of newSchedule) {
+        await base44.entities.RepaymentSchedule.create({
+          loan_id: loanId,
+          ...row
+        });
+      }
+      
+      // Reapply all non-deleted payments
+      const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
+      const newScheduleRows = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
+      
+      let totalPrincipalPaid = 0;
+      let totalInterestPaid = 0;
+      
+      for (const tx of activeTransactions) {
+        const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
+        
+        for (const update of updates) {
+          await base44.entities.RepaymentSchedule.update(update.id, {
+            interest_paid: update.interest_paid,
+            principal_paid: update.principal_paid,
+            status: update.status
+          });
+          totalPrincipalPaid += update.principalApplied;
+          totalInterestPaid += update.interestApplied;
+        }
+      }
+      
+      // Update loan payment totals
+      await base44.entities.Loan.update(loanId, {
+        principal_paid: totalPrincipalPaid,
+        interest_paid: totalInterestPaid
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
+      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
+      queryClient.invalidateQueries({ queryKey: ['loans'] });
+    }
+  });
+
   const handleGenerateLoanStatement = () => {
     generateLoanStatementPDF(loan, schedule, transactions);
   };
@@ -435,6 +519,19 @@ export default function LoanDetails() {
                       <Download className="w-4 h-4 mr-2" />
                       Download Loan Statement
                     </DropdownMenuItem>
+                    {loan.status !== 'Closed' && (
+                      <DropdownMenuItem 
+                        onClick={() => {
+                          if (confirm('Recalculate loan based on product settings? This will regenerate the schedule and reapply all payments.')) {
+                            recalculateLoanMutation.mutate();
+                          }
+                        }}
+                        disabled={recalculateLoanMutation.isPending}
+                      >
+                        <Repeat className="w-4 h-4 mr-2" />
+                        Recalculate Loan
+                      </DropdownMenuItem>
+                    )}
                     {loan.status === 'Active' && (
                       <DropdownMenuItem onClick={() => toggleAutoExtendMutation.mutate()}>
                         <Repeat className="w-4 h-4 mr-2" />
