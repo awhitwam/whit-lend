@@ -31,37 +31,54 @@ export default function Ledger() {
 
   const isLoading = transactionsLoading || loansLoading || expensesLoading;
 
+  // Create loan lookup map
+  const loanMap = {};
+  loans.forEach((loan, index) => {
+    loanMap[loan.id] = {
+      ...loan,
+      displayId: `#${1000 + index}`
+    };
+  });
+
   // Combine all entries into a single ledger
   const ledgerEntries = [
     // Repayments (money in)
     ...transactions
       .filter(t => !t.is_deleted && t.type === 'Repayment')
-      .map(t => ({
-        id: `tx-${t.id}`,
-        date: t.date,
-        type: 'repayment',
-        description: `Repayment - ${t.notes || 'Loan payment'}`,
-        borrower: null,
-        reference: t.reference,
-        amount_in: t.amount,
-        amount_out: 0,
-        balance: 0
-      })),
+      .map(t => {
+        const loan = loanMap[t.loan_id];
+        return {
+          id: `tx-${t.id}`,
+          date: t.date,
+          type: 'repayment',
+          description: `Repayment - ${t.notes || 'Loan payment'}`,
+          borrower: loan?.borrower_name || null,
+          loanId: loan?.displayId || null,
+          reference: t.reference,
+          amount_in: t.amount,
+          amount_out: 0,
+          balance: 0
+        };
+      }),
     
     // Disbursements (money out)
     ...loans
       .filter(l => !l.is_deleted && l.status !== 'Pending')
-      .map(l => ({
-        id: `loan-${l.id}`,
-        date: l.start_date,
-        type: 'disbursement',
-        description: `Loan Disbursement - ${l.borrower_name}`,
-        borrower: l.borrower_name,
-        reference: l.product_name,
-        amount_in: 0,
-        amount_out: l.net_disbursed || l.principal_amount,
-        balance: 0
-      })),
+      .map(l => {
+        const loan = loanMap[l.id];
+        return {
+          id: `loan-${l.id}`,
+          date: l.start_date,
+          type: 'disbursement',
+          description: `Loan Disbursement - ${l.borrower_name}`,
+          borrower: l.borrower_name,
+          loanId: loan?.displayId || null,
+          reference: l.product_name,
+          amount_in: 0,
+          amount_out: l.net_disbursed || l.principal_amount,
+          balance: 0
+        };
+      }),
     
     // Expenses (money out)
     ...expenses.map(e => ({
@@ -70,6 +87,7 @@ export default function Ledger() {
       type: 'expense',
       description: `${e.type_name} - ${e.description || 'Business expense'}`,
       borrower: e.borrower_name || null,
+      loanId: null,
       reference: null,
       amount_in: 0,
       amount_out: e.amount,
@@ -116,6 +134,7 @@ export default function Ledger() {
     const search = searchTerm.toLowerCase();
     return entry.description.toLowerCase().includes(search) ||
            entry.borrower?.toLowerCase().includes(search) ||
+           entry.loanId?.toLowerCase().includes(search) ||
            entry.reference?.toLowerCase().includes(search);
   });
 
@@ -254,6 +273,7 @@ export default function Ledger() {
                           <ArrowUpDown className="w-3 h-3" />
                         </button>
                       </TableHead>
+                      <TableHead>Loan ID</TableHead>
                       <TableHead>Reference</TableHead>
                       <TableHead className="text-right">Money In</TableHead>
                       <TableHead className="text-right">Money Out</TableHead>
@@ -263,7 +283,7 @@ export default function Ledger() {
                   <TableBody>
                     {filteredEntries.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={7} className="text-center py-12 text-slate-500">
+                        <TableCell colSpan={8} className="text-center py-12 text-slate-500">
                           No transactions found
                         </TableCell>
                       </TableRow>
@@ -285,6 +305,9 @@ export default function Ledger() {
                                 <p className="text-xs text-slate-500">{entry.borrower}</p>
                               )}
                             </div>
+                          </TableCell>
+                          <TableCell className="font-mono text-sm text-slate-700">
+                            {entry.loanId || '-'}
                           </TableCell>
                           <TableCell className="text-sm text-slate-600">
                             {entry.reference || '-'}
