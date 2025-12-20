@@ -14,6 +14,7 @@ export default function Config() {
   const [status, setStatus] = useState('');
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
+  const [logs, setLogs] = useState([]);
 
   const parseCSV = (text) => {
     const lines = text.trim().split('\n');
@@ -70,6 +71,10 @@ export default function Config() {
 
   const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
+  const addLog = (message) => {
+    setLogs(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`]);
+  };
+
   const handleImport = async () => {
     if (!file) return;
 
@@ -77,6 +82,7 @@ export default function Config() {
     setError(null);
     setProgress(0);
     setResult(null);
+    setLogs([]);
 
     try {
       const text = await file.text();
@@ -115,8 +121,9 @@ export default function Config() {
         
         productMap[category] = product;
         prodCount++;
-        await delay(500); // Wait between creates
+        await delay(500);
       }
+      addLog(`Created ${prodCount} loan products`);
       
       setProgress(20);
       setStatus('Creating expense types...');
@@ -227,8 +234,9 @@ export default function Config() {
         
         processed++;
         setProgress(40 + (processed / totalLoans) * 40);
-        await delay(800); // Wait between loan creation
+        await delay(800);
       }
+      addLog(`Created ${processed} loans with borrowers`);
       
       setProgress(80);
       setStatus('Creating transactions...');
@@ -298,6 +306,7 @@ export default function Config() {
         });
         await delay(300);
       }
+      addLog(`Updated ${Object.keys(loanTotals).length} loans with payment totals`);
       
       setProgress(90);
       setStatus('Creating expenses...');
