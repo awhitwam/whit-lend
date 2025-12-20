@@ -10,8 +10,8 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
     name: investor?.name || '',
     email: investor?.email || '',
     phone: investor?.phone || '',
-    interest_calculation_type: investor?.interest_calculation_type || 'monthly_rate',
-    interest_rate: investor?.interest_rate || '',
+    interest_calculation_type: investor?.interest_calculation_type || 'annual_rate',
+    annual_interest_rate: investor?.annual_interest_rate || '',
     manual_interest_amount: investor?.manual_interest_amount || '',
     status: investor?.status || 'Active'
   });
@@ -20,12 +20,12 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
     e.preventDefault();
     const data = { ...formData };
     
-    if (data.interest_calculation_type === 'monthly_rate') {
-      data.interest_rate = parseFloat(data.interest_rate);
+    if (data.interest_calculation_type === 'annual_rate') {
+      data.annual_interest_rate = parseFloat(data.annual_interest_rate);
       delete data.manual_interest_amount;
     } else {
       data.manual_interest_amount = parseFloat(data.manual_interest_amount);
-      delete data.interest_rate;
+      delete data.annual_interest_rate;
     }
     
     onSubmit(data);
@@ -73,23 +73,24 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="monthly_rate">Monthly Rate (%)</SelectItem>
+            <SelectItem value="annual_rate">Annual Rate (% p.a.)</SelectItem>
             <SelectItem value="manual_amount">Fixed Monthly Amount</SelectItem>
           </SelectContent>
         </Select>
       </div>
 
-      {formData.interest_calculation_type === 'monthly_rate' ? (
+      {formData.interest_calculation_type === 'annual_rate' ? (
         <div className="space-y-2">
-          <Label htmlFor="interest_rate">Monthly Interest Rate (%) *</Label>
+          <Label htmlFor="annual_interest_rate">Annual Interest Rate (% p.a.) *</Label>
           <Input
-            id="interest_rate"
+            id="annual_interest_rate"
             type="number"
             step="0.01"
-            value={formData.interest_rate}
-            onChange={(e) => setFormData({...formData, interest_rate: e.target.value})}
+            value={formData.annual_interest_rate}
+            onChange={(e) => setFormData({...formData, annual_interest_rate: e.target.value})}
             required
           />
+          <p className="text-xs text-slate-500">Interest will be calculated and paid monthly</p>
         </div>
       ) : (
         <div className="space-y-2">

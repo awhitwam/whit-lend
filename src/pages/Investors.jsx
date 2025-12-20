@@ -153,8 +153,8 @@ export default function Investors() {
                         </div>
                       </TableCell>
                       <TableCell>
-                        {investor.interest_calculation_type === 'monthly_rate' ? (
-                          <span className="text-sm">{investor.interest_rate}% monthly</span>
+                        {investor.interest_calculation_type === 'annual_rate' ? (
+                          <span className="text-sm">{investor.annual_interest_rate}% p.a.</span>
                         ) : (
                           <span className="text-sm">{formatCurrency(investor.manual_interest_amount)} fixed</span>
                         )}

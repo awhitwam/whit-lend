@@ -135,8 +135,8 @@ export default function InvestorDetails() {
   const interestPaid = transactions.filter(t => t.type === 'interest_payment').reduce((sum, t) => sum + t.amount, 0);
 
   // Calculate monthly interest due
-  const monthlyInterestDue = investor.interest_calculation_type === 'monthly_rate'
-    ? (investor.current_capital_balance || 0) * (investor.interest_rate / 100)
+  const monthlyInterestDue = investor.interest_calculation_type === 'annual_rate'
+    ? (investor.current_capital_balance || 0) * (investor.annual_interest_rate / 100 / 12)
     : investor.manual_interest_amount || 0;
 
   const getTransactionIcon = (type) => {
@@ -190,8 +190,8 @@ export default function InvestorDetails() {
               <div>
                 <p className="text-xs text-slate-500 mb-1">Interest Type</p>
                 <p className="font-semibold">
-                  {investor.interest_calculation_type === 'monthly_rate' 
-                    ? `${investor.interest_rate}% Monthly` 
+                  {investor.interest_calculation_type === 'annual_rate' 
+                    ? `${investor.annual_interest_rate}% p.a.` 
                     : `${formatCurrency(investor.manual_interest_amount)} Fixed`
                   }
                 </p>
