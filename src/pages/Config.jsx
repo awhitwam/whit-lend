@@ -109,19 +109,10 @@ export default function Config() {
       const productMap = {};
       let prodCount = 0;
       for (const category of productCategories) {
-        let interestType = 'Reducing';
-        let interestRate = 15;
-        
-        if (category.toLowerCase().includes('rollup')) {
-          interestType = 'Rolled-Up';
-        } else if (category.toLowerCase().includes('serviced')) {
-          interestType = 'Reducing';
-        }
-        
         const product = await base44.entities.LoanProduct.create({
           name: category,
-          interest_rate: interestRate,
-          interest_type: interestType,
+          interest_rate: 15,
+          interest_type: 'Interest-Only',
           period: 'Monthly',
           min_amount: 1000,
           max_amount: 1000000,
