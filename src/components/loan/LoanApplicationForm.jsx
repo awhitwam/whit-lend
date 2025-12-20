@@ -23,7 +23,8 @@ export default function LoanApplicationForm({
     arrangement_fee: '',
     exit_fee: '',
     duration: '',
-    start_date: format(new Date(), 'yyyy-MM-dd')
+    start_date: format(new Date(), 'yyyy-MM-dd'),
+    status: 'Live'
   });
 
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -96,7 +97,7 @@ export default function LoanApplicationForm({
       total_repayable: summary.totalRepayable + exitFee,
       principal_paid: 0,
       interest_paid: 0,
-      status: 'Pending'
+      status: formData.status
     }, previewSchedule);
   };
 
@@ -142,6 +143,23 @@ export default function LoanApplicationForm({
                 ))}
               </SelectContent>
             </Select>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="status">Status *</Label>
+            <Select 
+              value={formData.status} 
+              onValueChange={(value) => handleChange('status', value)}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="Live">Live</SelectItem>
+                <SelectItem value="Pending">Pending</SelectItem>
+              </SelectContent>
+            </Select>
+            <p className="text-xs text-slate-500">Live loans are immediately active. Use Pending for applications under review.</p>
           </div>
 
           {selectedProduct && (
