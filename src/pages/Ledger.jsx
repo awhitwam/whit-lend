@@ -4,8 +4,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Search, TrendingUp, TrendingDown, DollarSign, ArrowUpDown } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Search, TrendingUp, TrendingDown, DollarSign, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
 
@@ -13,6 +15,8 @@ export default function Ledger() {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('date');
   const [sortDirection, setSortDirection] = useState('desc');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
 
   const { data: transactions = [], isLoading: transactionsLoading } = useQuery({
     queryKey: ['transactions'],
@@ -191,6 +195,23 @@ export default function Ledger() {
            entry.reference?.toLowerCase().includes(search);
   });
 
+  // Pagination
+  const totalPages = Math.ceil(filteredEntries.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedEntries = filteredEntries.slice(startIndex, endIndex);
+
+  // Reset to page 1 when search or items per page changes
+  const handleSearchChange = (value) => {
+    setSearchTerm(value);
+    setCurrentPage(1);
+  };
+
+  const handleItemsPerPageChange = (value) => {
+    setItemsPerPage(parseInt(value));
+    setCurrentPage(1);
+  };
+
   // Calculate totals
   const totalIn = ledgerEntries.reduce((sum, e) => sum + e.amount_in, 0);
   const totalOut = ledgerEntries.reduce((sum, e) => sum + e.amount_out, 0);
@@ -285,15 +306,32 @@ export default function Ledger() {
           </Card>
         </div>
 
-        {/* Search */}
-        <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <Input
-            placeholder="Search ledger..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
+        {/* Search and Per Page */}
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input
+              placeholder="Search ledger..."
+              value={searchTerm}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-600">Show:</span>
+            <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
+              <SelectTrigger className="w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="text-sm text-slate-600">per page</span>
+          </div>
         </div>
 
         {/* Ledger Table */}
@@ -340,14 +378,14 @@ export default function Ledger() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredEntries.length === 0 ? (
+                    {paginatedEntries.length === 0 ? (
                       <TableRow>
                         <TableCell colSpan={8} className="text-center py-12 text-slate-500">
                           No transactions found
                         </TableCell>
                       </TableRow>
                     ) : (
-                      filteredEntries.map((entry) => (
+                      paginatedEntries.map((entry) => (
                         <TableRow key={entry.id} className="hover:bg-slate-50">
                           <TableCell className="font-medium text-slate-700">
                             {format(new Date(entry.date), 'dd MMM yyyy')}
@@ -385,6 +423,36 @@ export default function Ledger() {
                     )}
                   </TableBody>
                 </Table>
+              </div>
+            )}
+
+            {/* Pagination */}
+            {!isLoading && filteredEntries.length > 0 && (
+              <div className="flex items-center justify-between px-4 py-4 border-t">
+                <div className="text-sm text-slate-600">
+                  Showing {startIndex + 1} to {Math.min(endIndex, filteredEntries.length)} of {filteredEntries.length} entries
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <div className="text-sm text-slate-600">
+                    Page {currentPage} of {totalPages}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>

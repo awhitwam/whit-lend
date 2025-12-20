@@ -9,7 +9,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Search, Receipt, Edit, Trash2, Settings, FileText } from 'lucide-react';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, Search, Receipt, Edit, Trash2, Settings, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import ExpenseForm from '@/components/expense/ExpenseForm';
@@ -29,6 +30,8 @@ export default function Expenses() {
   const [editingType, setEditingType] = useState(null);
   const [typeName, setTypeName] = useState('');
   const [typeDescription, setTypeDescription] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   
   const queryClient = useQueryClient();
 
@@ -135,6 +138,22 @@ export default function Expenses() {
 
   const totalExpenses = filteredExpenses.reduce((sum, exp) => sum + (exp.amount || 0), 0);
 
+  // Pagination
+  const totalPages = Math.ceil(filteredExpenses.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedExpenses = filteredExpenses.slice(startIndex, endIndex);
+
+  const handleSearchChange = (value) => {
+    setSearchTerm(value);
+    setCurrentPage(1);
+  };
+
+  const handleItemsPerPageChange = (value) => {
+    setItemsPerPage(parseInt(value));
+    setCurrentPage(1);
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       <div className="max-w-7xl mx-auto p-6 space-y-6">
@@ -178,14 +197,31 @@ export default function Expenses() {
         </Card>
 
         {/* Filters */}
-        <div className="relative max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <Input
-            placeholder="Search expenses..."
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            className="pl-10"
-          />
+        <div className="flex flex-col md:flex-row gap-4">
+          <div className="relative flex-1 max-w-sm">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <Input
+              placeholder="Search expenses..."
+              value={searchTerm}
+              onChange={(e) => handleSearchChange(e.target.value)}
+              className="pl-10"
+            />
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-slate-600">Show:</span>
+            <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
+              <SelectTrigger className="w-24">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="text-sm text-slate-600">per page</span>
+          </div>
         </div>
 
         {/* Expenses List */}
@@ -225,7 +261,7 @@ export default function Expenses() {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredExpenses.map(expense => (
+                {paginatedExpenses.map(expense => (
                   <TableRow key={expense.id} className="hover:bg-slate-50">
                     <TableCell className="font-medium">
                       {format(new Date(expense.date), 'MMM dd, yyyy')}
@@ -285,6 +321,34 @@ export default function Expenses() {
                 ))}
               </TableBody>
             </Table>
+            {filteredExpenses.length > 0 && (
+              <div className="flex items-center justify-between px-4 py-4 border-t">
+                <div className="text-sm text-slate-600">
+                  Showing {startIndex + 1} to {Math.min(endIndex, filteredExpenses.length)} of {filteredExpenses.length} entries
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="w-4 h-4" />
+                  </Button>
+                  <div className="text-sm text-slate-600">
+                    Page {currentPage} of {totalPages}
+                  </div>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                    disabled={currentPage === totalPages}
+                  >
+                    <ChevronRight className="w-4 h-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
           </Card>
         )}
 
