@@ -87,6 +87,7 @@ export default function Config() {
     try {
       const text = await file.text();
       const rows = parseCSV(text);
+      addLog(`File loaded: ${rows.length} rows found`);
       
       setStatus('Creating loan products...');
       
@@ -134,6 +135,7 @@ export default function Config() {
           expenseCategories.add(row.Category);
         }
       });
+      addLog(`Found ${expenseCategories.size} expense categories`);
 
       const expenseTypeMap = {};
       for (const category of expenseCategories) {
@@ -346,6 +348,9 @@ export default function Config() {
         await base44.entities.Expense.create(exp);
         expenseCount++;
       }
+      addLog(`Created ${expenseCount} expenses`);
+      addLog(`Created ${txCount} transactions`);
+      addLog(`✓ Import completed successfully!`);
       
       setProgress(100);
       setStatus('Import complete!');
@@ -452,6 +457,17 @@ export default function Config() {
                     <AlertCircle className="w-4 h-4" />
                     <AlertDescription>{error}</AlertDescription>
                   </Alert>
+                )}
+
+                {logs.length > 0 && (
+                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                    <h3 className="font-semibold text-sm text-slate-700 mb-2">Import Log</h3>
+                    <div className="space-y-1 text-xs text-slate-600 font-mono max-h-64 overflow-y-auto">
+                      {logs.map((log, idx) => (
+                        <div key={idx}>{log}</div>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </CardContent>
             </Card>
