@@ -15,10 +15,12 @@ export default function Borrowers() {
   const [editingBorrower, setEditingBorrower] = useState(null);
   const queryClient = useQueryClient();
 
-  const { data: borrowers = [], isLoading } = useQuery({
+  const { data: allBorrowers = [], isLoading } = useQuery({
     queryKey: ['borrowers'],
     queryFn: () => base44.entities.Borrower.list('-created_date')
   });
+
+  const borrowers = allBorrowers.filter(b => !b.is_archived);
 
   const createMutation = useMutation({
     mutationFn: (data) => base44.entities.Borrower.create(data),

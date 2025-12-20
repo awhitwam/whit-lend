@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -18,7 +18,9 @@ import {
   Plus,
   FileText,
   User,
-  Calendar
+  Calendar,
+  Trash2,
+  Archive
 } from 'lucide-react';
 import BorrowerForm from '@/components/borrower/BorrowerForm';
 import LoanCard from '@/components/loan/LoanCard';
@@ -30,6 +32,7 @@ export default function BorrowerDetails() {
   const borrowerId = urlParams.get('id');
   const [isEditOpen, setIsEditOpen] = useState(false);
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const { data: borrower, isLoading: borrowerLoading } = useQuery({
     queryKey: ['borrower', borrowerId],
@@ -62,6 +65,41 @@ export default function BorrowerDetails() {
       setIsEditOpen(false);
     }
   });
+
+  const deleteOrArchiveMutation = useMutation({
+    mutationFn: async () => {
+      const user = await base44.auth.me();
+      
+      if (loans.length === 0) {
+        // Delete if no loans
+        await base44.entities.Borrower.delete(borrowerId);
+        return { action: 'deleted' };
+      } else {
+        // Archive if has loans
+        await base44.entities.Borrower.update(borrowerId, {
+          is_archived: true,
+          archived_by: user.email,
+          archived_date: new Date().toISOString()
+        });
+        return { action: 'archived' };
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['borrowers'] });
+      navigate(createPageUrl('Borrowers'));
+    }
+  });
+
+  const handleDeleteOrArchive = () => {
+    const action = loans.length === 0 ? 'delete' : 'archive';
+    const message = loans.length === 0 
+      ? 'Are you sure you want to delete this borrower? This action cannot be undone.'
+      : `This borrower has ${loans.length} loan(s). They will be archived instead of deleted. Continue?`;
+    
+    if (window.confirm(message)) {
+      deleteOrArchiveMutation.mutate();
+    }
+  };
 
   if (borrowerLoading) {
     return (
@@ -129,6 +167,24 @@ export default function BorrowerDetails() {
                 <Button variant="secondary" size="sm" onClick={() => setIsEditOpen(true)}>
                   <Edit className="w-4 h-4 mr-2" />
                   Edit
+                </Button>
+                <Button 
+                  variant="destructive" 
+                  size="sm" 
+                  onClick={handleDeleteOrArchive}
+                  disabled={deleteOrArchiveMutation.isPending}
+                >
+                  {loans.length === 0 ? (
+                    <>
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete
+                    </>
+                  ) : (
+                    <>
+                      <Archive className="w-4 h-4 mr-2" />
+                      Archive
+                    </>
+                  )}
                 </Button>
               </div>
             </div>
