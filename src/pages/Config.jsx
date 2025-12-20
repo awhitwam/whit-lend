@@ -315,13 +315,17 @@ export default function Config() {
       }
       addLog(`Total: ${txCount} transactions created`);
       
-      // Update loan totals
+      // Update loan totals and status
       setStatus('Updating loan totals...');
       addLog('Updating loan payment totals...');
       for (const [loanId, totals] of Object.entries(loanTotals)) {
+        const loan = loanMap[Object.keys(loanMap).find(key => loanMap[key].loan.id === loanId)]?.loan;
+        const status = loan && totals.principal >= loan.principal_amount ? 'Closed' : 'Live';
+        
         await base44.entities.Loan.update(loanId, {
           principal_paid: totals.principal,
-          interest_paid: totals.interest
+          interest_paid: totals.interest,
+          status: status
         });
         await delay(300);
       }
