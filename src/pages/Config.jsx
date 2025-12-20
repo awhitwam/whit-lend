@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database } from 'lucide-react';
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2 } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { generateRepaymentSchedule, calculateLoanSummary, applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
 
@@ -16,6 +16,21 @@ export default function Config() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [logs, setLogs] = useState([]);
+  
+  const [selectedTables, setSelectedTables] = useState({
+    RepaymentSchedule: false,
+    Transaction: false,
+    Expense: false,
+    Loan: false,
+    InvestorTransaction: false,
+    Investor: false,
+    Borrower: false,
+    ExpenseType: false,
+    LoanProduct: false
+  });
+  const [deleting, setDeleting] = useState(false);
+  const [deleteResult, setDeleteResult] = useState(null);
+  const [deleteError, setDeleteError] = useState(null);
 
   const parseCSV = (text) => {
     const lines = text.trim().split('\n');
@@ -82,6 +97,69 @@ export default function Config() {
 
   const addLog = (message) => {
     setLogs(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`]);
+  };
+
+  const handleDeleteData = async () => {
+    const selectedCount = Object.values(selectedTables).filter(Boolean).length;
+    if (selectedCount === 0) {
+      setDeleteError('Please select at least one table to delete');
+      return;
+    }
+
+    const confirmMessage = `Are you sure you want to delete all data from ${selectedCount} table(s)? This action cannot be undone.`;
+    if (!confirm(confirmMessage)) return;
+
+    setDeleting(true);
+    setDeleteError(null);
+    setDeleteResult(null);
+
+    try {
+      const deleteCounts = {};
+      
+      // Delete in order to respect foreign key constraints
+      const deleteOrder = [
+        'RepaymentSchedule',
+        'Transaction',
+        'Expense',
+        'Loan',
+        'InvestorTransaction',
+        'Investor',
+        'Borrower',
+        'ExpenseType',
+        'LoanProduct'
+      ];
+
+      for (const table of deleteOrder) {
+        if (selectedTables[table]) {
+          const records = await base44.entities[table].list();
+          deleteCounts[table] = records.length;
+          
+          for (const record of records) {
+            await base44.entities[table].delete(record.id);
+          }
+        }
+      }
+
+      setDeleteResult(deleteCounts);
+    } catch (err) {
+      console.error('Delete error:', err);
+      setDeleteError(err.message);
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const toggleTable = (table) => {
+    setSelectedTables(prev => ({ ...prev, [table]: !prev[table] }));
+  };
+
+  const selectAll = () => {
+    const allSelected = Object.values(selectedTables).every(Boolean);
+    const newState = {};
+    Object.keys(selectedTables).forEach(key => {
+      newState[key] = !allSelected;
+    });
+    setSelectedTables(newState);
   };
 
   const handleImport = async () => {
@@ -542,11 +620,82 @@ export default function Config() {
           <TabsContent value="general">
             <Card>
               <CardHeader>
-                <CardTitle>General Settings</CardTitle>
-                <CardDescription>Configure general application settings</CardDescription>
+                <CardTitle>Delete Data</CardTitle>
+                <CardDescription>Permanently delete data from selected tables</CardDescription>
               </CardHeader>
-              <CardContent>
-                <p className="text-sm text-slate-500">Additional settings can be configured here.</p>
+              <CardContent className="space-y-4">
+                <Alert variant="destructive">
+                  <AlertCircle className="w-4 h-4" />
+                  <AlertDescription>
+                    <strong>Warning:</strong> This action cannot be undone. All data from selected tables will be permanently deleted.
+                  </AlertDescription>
+                </Alert>
+
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between pb-3 border-b">
+                    <span className="text-sm font-medium">Select Tables</span>
+                    <Button variant="outline" size="sm" onClick={selectAll}>
+                      {Object.values(selectedTables).every(Boolean) ? 'Deselect All' : 'Select All'}
+                    </Button>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {Object.keys(selectedTables).map(table => (
+                      <label
+                        key={table}
+                        className="flex items-center gap-3 p-3 border rounded-lg cursor-pointer hover:bg-slate-50 transition-colors"
+                      >
+                        <input
+                          type="checkbox"
+                          checked={selectedTables[table]}
+                          onChange={() => toggleTable(table)}
+                          className="w-4 h-4 rounded border-slate-300"
+                        />
+                        <span className="text-sm font-medium">{table}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {deleting && (
+                  <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                    <span className="text-sm font-medium text-blue-900">Deleting data...</span>
+                  </div>
+                )}
+
+                {deleteResult && (
+                  <Alert className="border-emerald-200 bg-emerald-50">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <AlertDescription>
+                      <div className="space-y-2">
+                        <p className="font-semibold text-emerald-900">Data deleted successfully!</p>
+                        <ul className="text-sm text-emerald-800 space-y-1">
+                          {Object.entries(deleteResult).map(([table, count]) => (
+                            <li key={table}>• {table}: {count} records deleted</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {deleteError && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="w-4 h-4" />
+                    <AlertDescription>{deleteError}</AlertDescription>
+                  </Alert>
+                )}
+
+                <Button 
+                  variant="destructive" 
+                  onClick={handleDeleteData}
+                  disabled={deleting || Object.values(selectedTables).every(v => !v)}
+                  className="w-full"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Delete Selected Data
+                </Button>
               </CardContent>
             </Card>
           </TabsContent>
