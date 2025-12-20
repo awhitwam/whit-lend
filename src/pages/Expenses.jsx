@@ -76,10 +76,8 @@ export default function Expenses() {
     mutationFn: (data) => base44.entities.ExpenseType.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expense-types'] });
-      setIsTypeDialogOpen(false);
       setTypeName('');
       setTypeDescription('');
-      setEditingType(null);
     }
   });
 
@@ -347,18 +345,25 @@ export default function Expenses() {
                   />
                 </div>
               </div>
-              <Button type="submit" disabled={createTypeMutation.isPending || updateTypeMutation.isPending}>
-                {editingType ? 'Update' : 'Add'} Type
-              </Button>
-              {editingType && (
-                <Button type="button" variant="outline" onClick={() => {
-                  setEditingType(null);
-                  setTypeName('');
-                  setTypeDescription('');
-                }}>
-                  Cancel
+              <div className="flex gap-2">
+                <Button type="submit" disabled={createTypeMutation.isPending || updateTypeMutation.isPending}>
+                  {editingType ? 'Update' : 'Add'} Type
                 </Button>
-              )}
+                {editingType && (
+                  <Button type="button" variant="outline" onClick={() => {
+                    setEditingType(null);
+                    setTypeName('');
+                    setTypeDescription('');
+                  }}>
+                    Cancel
+                  </Button>
+                )}
+                {!editingType && (
+                  <Button type="button" variant="outline" onClick={() => setIsTypeDialogOpen(false)}>
+                    Done
+                  </Button>
+                )}
+              </div>
             </form>
 
             <div className="border-t pt-4">
