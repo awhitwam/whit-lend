@@ -68,6 +68,8 @@ export default function Config() {
     return null;
   };
 
+  const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+
   const handleImport = async () => {
     if (!file) return;
 
@@ -90,6 +92,7 @@ export default function Config() {
       });
 
       const productMap = {};
+      let prodCount = 0;
       for (const category of productCategories) {
         let interestType = 'Reducing';
         let interestRate = 15;
@@ -111,6 +114,8 @@ export default function Config() {
         });
         
         productMap[category] = product;
+        prodCount++;
+        await delay(500); // Wait between creates
       }
       
       setProgress(20);
@@ -131,6 +136,7 @@ export default function Config() {
             description: `Imported from transactions`
           });
           expenseTypeMap[category] = expenseType;
+          await delay(300);
         } catch (err) {
           const existing = await base44.entities.ExpenseType.filter({ name: category });
           if (existing.length > 0) {
@@ -221,6 +227,7 @@ export default function Config() {
         
         processed++;
         setProgress(40 + (processed / totalLoans) * 40);
+        await delay(800); // Wait between loan creation
       }
       
       setProgress(80);
@@ -228,6 +235,8 @@ export default function Config() {
       
       const repaymentTypes = ['Interest Collections', 'Principal Collections', 'Fee Collections'];
       let txCount = 0;
+      const txBatchSize = 5;
+      let txBatch = [];
       
       for (const row of rows) {
         if (repaymentTypes.includes(row.Type)) {
@@ -238,7 +247,7 @@ export default function Config() {
           const amount = parseFloat(row.In);
           
           if (amount > 0) {
-            await base44.entities.Transaction.create({
+            txBatch.push({
               loan_id: loan.id,
               borrower_id: borrower.id,
               amount: amount,
@@ -249,31 +258,63 @@ export default function Config() {
               reference: row.Type,
               notes: `Imported: ${row['Transaction Details']}`
             });
-            txCount++;
+            
+            if (txBatch.length >= txBatchSize) {
+              for (const tx of txBatch) {
+                await base44.entities.Transaction.create(tx);
+                txCount++;
+              }
+              txBatch = [];
+              await delay(1000); // Wait between batches
+              setProgress(80 + (txCount / rows.length) * 10);
+            }
           }
         }
+      }
+      
+      // Process remaining transactions
+      for (const tx of txBatch) {
+        await base44.entities.Transaction.create(tx);
+        txCount++;
       }
       
       setProgress(90);
       setStatus('Creating expenses...');
       
       let expenseCount = 0;
+      const expBatchSize = 5;
+      let expBatch = [];
+      
       for (const row of rows) {
         if (row.Type === 'Expenses' && row.Out) {
           const amount = parseFloat(row.Out);
           const expenseType = expenseTypeMap[row.Category];
           
           if (expenseType && amount > 0) {
-            await base44.entities.Expense.create({
+            expBatch.push({
               date: parseDate(row.Date),
               type_id: expenseType.id,
               type_name: expenseType.name,
               amount: amount,
               description: row['Transaction Details'] || row.Category
             });
-            expenseCount++;
+            
+            if (expBatch.length >= expBatchSize) {
+              for (const exp of expBatch) {
+                await base44.entities.Expense.create(exp);
+                expenseCount++;
+              }
+              expBatch = [];
+              await delay(1000);
+            }
           }
         }
+      }
+      
+      // Process remaining expenses
+      for (const exp of expBatch) {
+        await base44.entities.Expense.create(exp);
+        expenseCount++;
       }
       
       setProgress(100);
