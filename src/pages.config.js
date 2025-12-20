@@ -10,6 +10,7 @@ import ImportBorrowers from './pages/ImportBorrowers';
 import Ledger from './pages/Ledger';
 import Investors from './pages/Investors';
 import InvestorDetails from './pages/InvestorDetails';
+import ImportTransactions from './pages/ImportTransactions';
 import __Layout from './Layout.jsx';
 
 
@@ -26,6 +27,7 @@ export const PAGES = {
     "Ledger": Ledger,
     "Investors": Investors,
     "InvestorDetails": InvestorDetails,
+    "ImportTransactions": ImportTransactions,
 }
 
 export const pagesConfig = {
