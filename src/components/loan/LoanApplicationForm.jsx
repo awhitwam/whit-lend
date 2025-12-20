@@ -86,7 +86,7 @@ export default function LoanApplicationForm({
       exit_fee: exitFee,
       net_disbursed: principalAmount - arrangementFee,
       duration: parseInt(formData.duration),
-      borrower_name: `${borrower.first_name} ${borrower.last_name}`,
+      borrower_name: borrower.business || `${borrower.first_name} ${borrower.last_name}`,
       product_name: selectedProduct.name,
       interest_rate: selectedProduct.interest_rate,
       interest_type: selectedProduct.interest_type,
@@ -118,7 +118,7 @@ export default function LoanApplicationForm({
               <SelectContent>
                 {borrowers.filter(b => b.status === 'Active').map((borrower) => (
                   <SelectItem key={borrower.id} value={borrower.id}>
-                    {borrower.first_name} {borrower.last_name} - {borrower.phone}
+                    {borrower.business || `${borrower.first_name} ${borrower.last_name}`} - {borrower.phone}
                   </SelectItem>
                 ))}
               </SelectContent>
