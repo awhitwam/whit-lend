@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { 
   ArrowLeft, 
   DollarSign, 
@@ -630,112 +631,141 @@ export default function LoanDetails() {
           </Card>
         )}
 
-        {/* Repayment Schedule */}
-        <div>
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="text-xl font-semibold text-slate-900">Repayment Schedule</h2>
-            <Badge variant="outline">{schedule.length} installments</Badge>
-          </div>
-          <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} />
-        </div>
+        {/* Tabs for different views */}
+        <Tabs defaultValue="overview" className="space-y-6">
+          <TabsList>
+            <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="transactions">
+              Transactions
+              <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted).length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="expenses">
+              Expenses
+              <Badge variant="secondary" className="ml-2">{expenses.length}</Badge>
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Loan Expenses */}
-        {expenses.length > 0 && (
-          <Card>
-            <CardHeader>
-              <CardTitle>Loan Expenses</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="divide-y">
-                {expenses.map(expense => (
-                  <div key={expense.id} className="py-3 flex items-center justify-between">
-                    <div className="flex items-center gap-3 flex-1">
-                      <div className="p-2 rounded-lg bg-red-100">
-                        <DollarSign className="w-4 h-4 text-red-600" />
-                      </div>
-                      <div className="flex-1">
-                        <div className="flex items-center gap-2">
-                          <p className="font-medium">{expense.type_name}</p>
-                          <Badge variant="outline" className="text-xs">{expense.type_name}</Badge>
-                        </div>
-                        <p className="text-sm text-slate-500">{format(new Date(expense.date), 'MMM dd, yyyy')}</p>
-                        {expense.description && (
-                          <p className="text-xs text-slate-500 mt-1">{expense.description}</p>
-                        )}
-                      </div>
-                    </div>
-                    <p className="font-semibold text-red-600">{formatCurrency(expense.amount)}</p>
+          <TabsContent value="overview" className="space-y-6">
+            {/* Repayment Schedule */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-slate-900">Repayment Schedule</h2>
+                <Badge variant="outline">{schedule.length} installments</Badge>
+              </div>
+              <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} />
+            </div>
+          </TabsContent>
+
+          <TabsContent value="transactions">
+            <Card>
+              <CardHeader>
+                <CardTitle>Transaction History</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {transactions.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                    <p>No transactions yet</p>
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Recent Transactions */}
-        {transactions.length > 0 && (
-        <Card>
-        <CardHeader>
-        <CardTitle>Transaction History</CardTitle>
-        </CardHeader>
-        <CardContent>
-        <div className="divide-y">
-        {transactions.slice(0, 10).map((tx) => (
-          <div key={tx.id} className={`py-3 flex items-center justify-between ${tx.is_deleted ? 'opacity-50 bg-red-50/50' : ''}`}>
-            <div className="flex items-center gap-3 flex-1">
-              <div className={`p-2 rounded-lg ${tx.is_deleted ? 'bg-red-100' : tx.type === 'Repayment' ? 'bg-emerald-100' : 'bg-blue-100'}`}>
-                {tx.is_deleted ? (
-                  <Trash2 className="w-4 h-4 text-red-600" />
                 ) : (
-                  <DollarSign className={`w-4 h-4 ${tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`} />
+                  <div className="divide-y">
+                    {transactions.map((tx) => (
+                      <div key={tx.id} className={`py-3 flex items-center justify-between ${tx.is_deleted ? 'opacity-50 bg-red-50/50' : ''}`}>
+                        <div className="flex items-center gap-3 flex-1">
+                          <div className={`p-2 rounded-lg ${tx.is_deleted ? 'bg-red-100' : tx.type === 'Repayment' ? 'bg-emerald-100' : 'bg-blue-100'}`}>
+                            {tx.is_deleted ? (
+                              <Trash2 className="w-4 h-4 text-red-600" />
+                            ) : (
+                              <DollarSign className={`w-4 h-4 ${tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`} />
+                            )}
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium">{tx.type}</p>
+                              {tx.is_deleted && (
+                                <Badge variant="destructive" className="text-xs">Deleted</Badge>
+                              )}
+                            </div>
+                            <p className="text-sm text-slate-500">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
+                            {tx.is_deleted && (
+                              <p className="text-xs text-red-600 mt-1">
+                                Deleted by {tx.deleted_by} on {format(new Date(tx.deleted_date), 'MMM dd, yyyy')}
+                                {tx.deleted_reason && ` - ${tx.deleted_reason}`}
+                              </p>
+                            )}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <div className="text-right">
+                            <p className={`font-semibold ${tx.is_deleted ? 'text-red-600 line-through' : tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`}>
+                              {formatCurrency(tx.amount)}
+                            </p>
+                            {tx.reference && <p className="text-xs text-slate-500">{tx.reference}</p>}
+                          </div>
+                          {!tx.is_deleted && loan.status === 'Active' && (
+                            <Button
+                              variant="ghost"
+                              size="icon"
+                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
+                              onClick={() => {
+                                const reason = prompt('Enter reason for deleting this transaction:');
+                                if (reason) {
+                                  deleteTransactionMutation.mutate({ transactionId: tx.id, reason });
+                                }
+                              }}
+                              disabled={deleteTransactionMutation.isPending}
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </div>
-              <div className="flex-1">
-                <div className="flex items-center gap-2">
-                  <p className="font-medium">{tx.type}</p>
-                  {tx.is_deleted && (
-                    <Badge variant="destructive" className="text-xs">Deleted</Badge>
-                  )}
-                </div>
-                <p className="text-sm text-slate-500">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
-                {tx.is_deleted && (
-                  <p className="text-xs text-red-600 mt-1">
-                    Deleted by {tx.deleted_by} on {format(new Date(tx.deleted_date), 'MMM dd, yyyy')}
-                    {tx.deleted_reason && ` - ${tx.deleted_reason}`}
-                  </p>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="expenses">
+            <Card>
+              <CardHeader>
+                <CardTitle>Loan Expenses</CardTitle>
+              </CardHeader>
+              <CardContent>
+                {expenses.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                    <p>No expenses linked to this loan</p>
+                  </div>
+                ) : (
+                  <div className="divide-y">
+                    {expenses.map(expense => (
+                      <div key={expense.id} className="py-3 flex items-center justify-between">
+                        <div className="flex items-center gap-3 flex-1">
+                          <div className="p-2 rounded-lg bg-red-100">
+                            <DollarSign className="w-4 h-4 text-red-600" />
+                          </div>
+                          <div className="flex-1">
+                            <div className="flex items-center gap-2">
+                              <p className="font-medium">{expense.type_name}</p>
+                              <Badge variant="outline" className="text-xs">{expense.type_name}</Badge>
+                            </div>
+                            <p className="text-sm text-slate-500">{format(new Date(expense.date), 'MMM dd, yyyy')}</p>
+                            {expense.description && (
+                              <p className="text-xs text-slate-500 mt-1">{expense.description}</p>
+                            )}
+                          </div>
+                        </div>
+                        <p className="font-semibold text-red-600">{formatCurrency(expense.amount)}</p>
+                      </div>
+                    ))}
+                  </div>
                 )}
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <div className="text-right">
-                <p className={`font-semibold ${tx.is_deleted ? 'text-red-600 line-through' : tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`}>
-                  {formatCurrency(tx.amount)}
-                </p>
-                {tx.reference && <p className="text-xs text-slate-500">{tx.reference}</p>}
-              </div>
-              {!tx.is_deleted && loan.status === 'Active' && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                  onClick={() => {
-                    const reason = prompt('Enter reason for deleting this transaction:');
-                    if (reason) {
-                      deleteTransactionMutation.mutate({ transactionId: tx.id, reason });
-                    }
-                  }}
-                  disabled={deleteTransactionMutation.isPending}
-                >
-                  <Trash2 className="w-4 h-4" />
-                </Button>
-              )}
-            </div>
-          </div>
-        ))}
-        </div>
-        </CardContent>
-        </Card>
-        )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
 
         {/* Payment Modal */}
         <PaymentModal
