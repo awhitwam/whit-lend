@@ -5,6 +5,7 @@ import Loans from './pages/Loans';
 import NewLoan from './pages/NewLoan';
 import LoanDetails from './pages/LoanDetails';
 import Products from './pages/Products';
+import Expenses from './pages/Expenses';
 import __Layout from './Layout.jsx';
 
 
@@ -16,6 +17,7 @@ export const PAGES = {
     "NewLoan": NewLoan,
     "LoanDetails": LoanDetails,
     "Products": Products,
+    "Expenses": Expenses,
 }
 
 export const pagesConfig = {

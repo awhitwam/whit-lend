@@ -8,7 +8,8 @@ import {
   Package,
   Menu,
   X,
-  Building2
+  Building2,
+  Receipt
 } from 'lucide-react';
 import { useState } from 'react';
 
@@ -17,6 +18,7 @@ const navigation = [
   { name: 'Borrowers', href: 'Borrowers', icon: Users },
   { name: 'Loans', href: 'Loans', icon: FileText },
   { name: 'Products', href: 'Products', icon: Package },
+  { name: 'Expenses', href: 'Expenses', icon: Receipt },
 ];
 
 export default function Layout({ children, currentPageName }) {

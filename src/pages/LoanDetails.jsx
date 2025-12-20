@@ -69,6 +69,12 @@ export default function LoanDetails() {
     enabled: !!loanId
   });
 
+  const { data: expenses = [] } = useQuery({
+    queryKey: ['loan-expenses', loanId],
+    queryFn: () => base44.entities.Expense.filter({ loan_id: loanId }, '-date'),
+    enabled: !!loanId
+  });
+
   const editLoanMutation = useMutation({
     mutationFn: async (updatedData) => {
       // Update loan with new parameters
@@ -632,6 +638,39 @@ export default function LoanDetails() {
           </div>
           <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} />
         </div>
+
+        {/* Loan Expenses */}
+        {expenses.length > 0 && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Loan Expenses</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <div className="divide-y">
+                {expenses.map(expense => (
+                  <div key={expense.id} className="py-3 flex items-center justify-between">
+                    <div className="flex items-center gap-3 flex-1">
+                      <div className="p-2 rounded-lg bg-red-100">
+                        <DollarSign className="w-4 h-4 text-red-600" />
+                      </div>
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="font-medium">{expense.type_name}</p>
+                          <Badge variant="outline" className="text-xs">{expense.type_name}</Badge>
+                        </div>
+                        <p className="text-sm text-slate-500">{format(new Date(expense.date), 'MMM dd, yyyy')}</p>
+                        {expense.description && (
+                          <p className="text-xs text-slate-500 mt-1">{expense.description}</p>
+                        )}
+                      </div>
+                    </div>
+                    <p className="font-semibold text-red-600">{formatCurrency(expense.amount)}</p>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Recent Transactions */}
         {transactions.length > 0 && (
