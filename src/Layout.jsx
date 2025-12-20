@@ -22,6 +22,7 @@ const navigation = [
   { name: 'Ledger', href: 'Ledger', icon: Building2 },
   { name: 'Expenses', href: 'Expenses', icon: Receipt },
   { name: 'Products', href: 'Products', icon: Package },
+  { name: 'Settings', href: 'Config', icon: Menu },
 ];
 
 export default function Layout({ children, currentPageName }) {
