@@ -17,8 +17,9 @@ const navigation = [
   { name: 'Dashboard', href: 'Dashboard', icon: LayoutDashboard },
   { name: 'Borrowers', href: 'Borrowers', icon: Users },
   { name: 'Loans', href: 'Loans', icon: FileText },
-  { name: 'Products', href: 'Products', icon: Package },
+  { name: 'Ledger', href: 'Ledger', icon: Building2 },
   { name: 'Expenses', href: 'Expenses', icon: Receipt },
+  { name: 'Products', href: 'Products', icon: Package },
 ];
 
 export default function Layout({ children, currentPageName }) {
