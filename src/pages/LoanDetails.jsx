@@ -736,25 +736,13 @@ export default function LoanDetails() {
           </TabsList>
 
           <TabsContent value="overview" className="space-y-6">
-            {/* Split View: Ledger and Schedule */}
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              {/* Left: Actual Transactions Ledger */}
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold text-slate-900">Transaction Ledger</h2>
-                  <Badge variant="outline">{transactions.filter(t => !t.is_deleted).length + 1} entries</Badge>
-                </div>
-                <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} viewType="ledger" />
+            {/* Combined Repayment View */}
+            <div>
+              <div className="flex items-center justify-between mb-4">
+                <h2 className="text-xl font-semibold text-slate-900">Repayment Schedule & Transactions</h2>
+                <Badge variant="outline">{schedule.length} periods</Badge>
               </div>
-
-              {/* Right: Expected Schedule */}
-              <div>
-                <div className="flex items-center justify-between mb-4">
-                  <h2 className="text-xl font-semibold text-slate-900">Expected Schedule</h2>
-                  <Badge variant="outline">{schedule.length} installments</Badge>
-                </div>
-                <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} viewType="schedule" />
-              </div>
+              <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
             </div>
           </TabsContent>
 
