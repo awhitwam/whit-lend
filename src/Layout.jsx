@@ -43,7 +43,7 @@ export default function Layout({ children, currentPageName }) {
             <div className="p-2 bg-emerald-500 rounded-lg">
               <Building2 className="w-5 h-5 text-white" />
             </div>
-            <span className="text-xl font-bold text-white tracking-tight">LoanFlow</span>
+            <span className="text-xl font-bold text-white tracking-tight">WhitLend</span>
           </div>
 
           {/* Navigation */}
@@ -72,7 +72,7 @@ export default function Layout({ children, currentPageName }) {
           {/* Footer */}
           <div className="p-4 border-t border-slate-800">
             <p className="text-xs text-slate-500 text-center">
-              © 2024 LoanFlow
+              © 2024 WhitLend
             </p>
           </div>
         </div>
@@ -85,7 +85,7 @@ export default function Layout({ children, currentPageName }) {
             <div className="p-1.5 bg-emerald-500 rounded-lg">
               <Building2 className="w-4 h-4 text-white" />
             </div>
-            <span className="text-lg font-bold text-slate-900">LoanFlow</span>
+            <span className="text-lg font-bold text-slate-900">WhitLend</span>
           </div>
           <Button
             variant="ghost"
