@@ -40,13 +40,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   // Sort by date
   ledgerEntries.sort((a, b) => a.date - b.date);
   
-  // Calculate running balance
+  // Calculate running balance (principal only)
   let runningBalance = 0;
   ledgerEntries.forEach(entry => {
     if (entry.type === 'disbursement') {
       runningBalance = -entry.debit;
     } else {
-      runningBalance += entry.credit;
+      // Only principal payments reduce the balance
+      runningBalance += entry.principal;
     }
     entry.runningBalance = runningBalance;
   });
