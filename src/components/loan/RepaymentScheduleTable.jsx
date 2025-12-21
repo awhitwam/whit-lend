@@ -331,7 +331,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             Showing {startIndex + 1} to {Math.min(endIndex, itemCount)} of {itemCount}
           </div>
         </div>
-        <div className="max-h-[600px] overflow-y-auto relative">
+        <div className="overflow-hidden">
         {viewMode === 'detailed' ? (
           <Table>
             <TableHeader>
