@@ -668,19 +668,25 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <TableCell className="text-right font-mono text-sm py-2">
                   {row.isDisbursement ? (
                     <span className="text-red-600 font-semibold">{formatCurrency(loan.principal_amount)}</span>
-                  ) : row.transactions.length > 0 ? (
+                  ) : (viewMode === 'separate' && row.rowType === 'transaction') ? (
+                    formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0))
+                  ) : (viewMode === 'merged' && row.transactions.length > 0) ? (
                     formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0))
                   ) : '-'}
                 </TableCell>
                 <TableCell className="text-right font-mono text-sm py-2">
-                  {row.transactions.length > 0 ? (
+                  {(viewMode === 'separate' && row.rowType === 'transaction') ? (
                     <span className="text-emerald-600">{formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0))}</span>
-                    ) : '-'}
+                  ) : (viewMode === 'merged' && row.transactions.length > 0) ? (
+                    <span className="text-emerald-600">{formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0))}</span>
+                  ) : '-'}
                 </TableCell>
 
                 {/* Expected Schedule */}
                 <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200 py-2">
-                  {schedule.length > 0 && row.expectedInterest > 0 ? (
+                  {(viewMode === 'separate' && row.rowType === 'schedule' && row.scheduleEntry) ? (
+                    formatCurrency(row.scheduleEntry.interest_amount)
+                  ) : (viewMode === 'merged' && schedule.length > 0 && row.expectedInterest > 0) ? (
                     <div>
                       {formatCurrency(row.expectedInterest)}
                       {row.scheduleEntry && row.transactions.length > 0 && row.daysDifference !== null && (
@@ -701,7 +707,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   ) : ''}
                 </TableCell>
                 <TableCell className="text-right font-mono text-sm font-semibold py-2">
-                  {schedule.length > 0 ? formatCurrency(row.principalOutstanding + row.interestOutstanding) : ''}
+                  {(viewMode === 'merged' && schedule.length > 0) ? formatCurrency(row.principalOutstanding + row.interestOutstanding) : 
+                   (viewMode === 'separate' && row.rowType === 'schedule') ? formatCurrency(row.principalOutstanding + row.interestOutstanding) : ''}
                 </TableCell>
               </TableRow>
             ))}
