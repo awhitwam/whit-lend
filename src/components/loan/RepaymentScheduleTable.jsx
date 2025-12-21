@@ -335,12 +335,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   {schedule.length > 0 && row.expectedInterest > 0 ? (
                     <div>
                       <div>{formatCurrency(row.expectedInterest)}</div>
-                      {row.daysDifference !== null && row.scheduleEntry && (
+                      {row.scheduleEntry && row.transactions.length > 0 && (
                         <div className="text-xs text-slate-500 mt-1">
-                          Expected: {format(new Date(row.scheduleEntry.due_date), 'MMM dd')}
-                          <span className={`ml-1 ${row.daysDifference > 0 ? 'text-red-600' : row.daysDifference < 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
-                            {row.daysDifference === 0 ? '(on time)' : `(${Math.abs(row.daysDifference)}d ${row.daysDifference > 0 ? 'late' : 'early'})`}
-                          </span>
+                          Exp: {format(new Date(row.scheduleEntry.due_date), 'dd MMM')}
+                          {row.daysDifference !== null && (
+                            <span className={`ml-1 ${row.daysDifference > 0 ? 'text-red-600' : row.daysDifference < 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
+                              ({row.daysDifference === 0 ? 'on time' : `${Math.abs(row.daysDifference)}d ${row.daysDifference > 0 ? 'late' : 'early'}`})
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
