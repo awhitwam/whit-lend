@@ -782,7 +782,7 @@ export default function LoanDetails() {
                     <p>No transactions yet</p>
                   </div>
                 ) : (
-                  <>
+                  <div>
                   <div className="flex items-center justify-between mb-4">
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-slate-600">Show</span>
@@ -883,7 +883,7 @@ export default function LoanDetails() {
                       <ChevronRight className="w-4 h-4 ml-1" />
                     </Button>
                   </div>
-                  </>
+                  </div>
                 )}
               </CardContent>
             </Card>
