@@ -858,6 +858,32 @@ export default function LoanDetails() {
                       </div>
                     ))}
                   </div>
+                  <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setTxPage(p => Math.max(1, p - 1))}
+                      disabled={txPage === 1}
+                    >
+                      <ChevronLeft className="w-4 h-4 mr-1" />
+                      Previous
+                    </Button>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-slate-600">
+                        Page {txPage} of {Math.ceil(transactions.length / txPerPage)}
+                      </span>
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setTxPage(p => Math.min(Math.ceil(transactions.length / txPerPage), p + 1))}
+                      disabled={txPage >= Math.ceil(transactions.length / txPerPage)}
+                    >
+                      Next
+                      <ChevronRight className="w-4 h-4 ml-1" />
+                    </Button>
+                  </div>
+                  </>
                 )}
               </CardContent>
             </Card>
