@@ -242,6 +242,18 @@ export default function LoanDetails() {
     }
   });
 
+  const clearScheduleMutation = useMutation({
+    mutationFn: async () => {
+      const scheduleRows = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
+      for (const row of scheduleRows) {
+        await base44.entities.RepaymentSchedule.delete(row.id);
+      }
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
+    }
+  });
+
   const recalculateLoanMutation = useMutation({
     mutationFn: async () => {
       // Use centralized schedule manager
@@ -479,17 +491,31 @@ export default function LoanDetails() {
                       Download Loan Statement
                     </DropdownMenuItem>
                     {loan.status !== 'Closed' && (
-                      <DropdownMenuItem 
-                        onClick={() => {
-                          if (confirm('Recalculate loan based on product settings? This will regenerate the schedule and reapply all payments.')) {
-                            recalculateLoanMutation.mutate();
-                          }
-                        }}
-                        disabled={recalculateLoanMutation.isPending}
-                      >
-                        <Repeat className="w-4 h-4 mr-2" />
-                        Recalculate Loan
-                      </DropdownMenuItem>
+                      <>
+                        <DropdownMenuItem 
+                          onClick={() => {
+                            if (confirm('Regenerate the repayment schedule based on product settings? This will clear and recreate the schedule, then reapply all payments.')) {
+                              recalculateLoanMutation.mutate();
+                            }
+                          }}
+                          disabled={recalculateLoanMutation.isPending}
+                        >
+                          <Repeat className="w-4 h-4 mr-2" />
+                          Regenerate Schedule
+                        </DropdownMenuItem>
+                        <DropdownMenuItem 
+                          onClick={() => {
+                            if (confirm('Clear the repayment schedule? This will remove all scheduled payments but keep transactions.')) {
+                              clearScheduleMutation.mutate();
+                            }
+                          }}
+                          disabled={clearScheduleMutation.isPending}
+                          className="text-red-600"
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Clear Schedule
+                        </DropdownMenuItem>
+                      </>
                     )}
                     {loan.status === 'Active' && (
                       <DropdownMenuItem onClick={() => toggleAutoExtendMutation.mutate()}>
