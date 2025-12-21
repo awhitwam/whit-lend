@@ -5,13 +5,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Split, List } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, List, ChevronDown } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('detailed'); // 'separate', 'detailed'
+  const [expandedRows, setExpandedRows] = useState(new Set());
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
@@ -487,12 +488,29 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                       // Show splits if there are multiple transactions OR if status is partial with at least one transaction
                       const showSplits = (rowTransactions.length > 1) || (isPartial && rowTransactions.length >= 1);
+                      const isExpanded = expandedRows.has(row.id);
 
                       return (
                         <React.Fragment key={row.id}>
                           <TableRow className={statusColor}>
                             <TableCell className="font-medium">
                               <div className="flex items-center gap-2">
+                                {showSplits && (
+                                  <button
+                                    onClick={() => {
+                                      const newExpanded = new Set(expandedRows);
+                                      if (isExpanded) {
+                                        newExpanded.delete(row.id);
+                                      } else {
+                                        newExpanded.add(row.id);
+                                      }
+                                      setExpandedRows(newExpanded);
+                                    }}
+                                    className="p-0.5 hover:bg-slate-200 rounded"
+                                  >
+                                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`} />
+                                  </button>
+                                )}
                                 <span className="text-slate-400">📄</span>
                                 {row.installment_number}
                               </div>
@@ -505,9 +523,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               {totalPaid > 0 ? formatCurrency(totalPaid) : '$0.00'}
                             </TableCell>
                             <TableCell className="text-slate-600 text-sm">{notes}</TableCell>
-                          </TableRow>
+                            </TableRow>
 
-                          {showSplits && rowTransactions.map((tx, idx) => (
+                            {showSplits && isExpanded && rowTransactions.map((tx, idx) => (
                             <TableRow key={`${row.id}-split-${idx}`} className="bg-slate-50/50 border-l-2 border-slate-300 ml-4">
                               <TableCell className="py-2">
                                 <div className="pl-6 text-slate-400 text-xs">↳</div>
