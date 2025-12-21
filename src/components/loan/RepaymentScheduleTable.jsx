@@ -162,74 +162,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       });
     });
 
-    // For auto-extended loans, generate virtual schedule entries for months beyond the schedule
-    if (loan && loan.auto_extend && schedule.length > 0 && repaymentTransactions.length > 0) {
-      const lastScheduleDate = new Date(schedule[schedule.length - 1].due_date);
-      const lastTxDate = new Date(Math.max(...repaymentTransactions.map(tx => new Date(tx.date))));
-      
-      // If transactions exist beyond the last schedule entry, generate virtual entries
-      if (lastTxDate > lastScheduleDate) {
-        const period = loan.period;
-        const periodsPerYear = period === 'Monthly' ? 12 : 52;
-        const periodRate = (loan.interest_rate / 100) / periodsPerYear;
-        const scheduleSet = new Set(schedule.map(s => s.due_date));
-        
-        // Calculate expected interest per period based on loan type
-        const getExpectedInterest = (principal) => {
-          if (loan.interest_type === 'Flat' || loan.interest_type === 'Interest-Only') {
-            return loan.principal_amount * periodRate;
-          } else {
-            return principal * periodRate;
-          }
-        };
-        
-        // Generate virtual schedule entries
-        let currentDate = new Date(lastScheduleDate);
-        let installmentNum = schedule.length + 1;
-        let remainingPrincipal = loan.principal_amount;
-        
-        // Calculate remaining principal based on actual payments
-        const totalPrincipalPaid = repaymentTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-        remainingPrincipal -= totalPrincipalPaid;
-        
-        while (currentDate < lastTxDate) {
-          // Move to next period
-          if (period === 'Monthly') {
-            currentDate = addMonths(currentDate, 1);
-          } else {
-            currentDate = addWeeks(currentDate, 1);
-          }
-          
-          const dateStr = format(currentDate, 'yyyy-MM-dd');
-          
-          // Only add if not already in schedule and not past the last transaction
-          if (!scheduleSet.has(dateStr) && currentDate <= lastTxDate) {
-            const expectedInterest = getExpectedInterest(remainingPrincipal);
-            
-            allRows.push({
-              date: new Date(currentDate),
-              dateStr: dateStr,
-              isDisbursement: false,
-              transactions: [],
-              scheduleEntry: {
-                id: `virtual-${installmentNum}`,
-                installment_number: installmentNum,
-                due_date: dateStr,
-                interest_amount: Math.round(expectedInterest * 100) / 100,
-                principal_amount: 0,
-                total_due: Math.round(expectedInterest * 100) / 100,
-                balance: remainingPrincipal,
-                isVirtual: true
-              },
-              daysDifference: null,
-              rowType: 'schedule'
-            });
-            
-            installmentNum++;
-          }
-        }
-      }
-    }
+
 
     // Sort by date, then by type (schedule before transaction on same date)
     combinedRows = allRows.sort((a, b) => {
