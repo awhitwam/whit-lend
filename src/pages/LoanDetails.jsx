@@ -440,10 +440,18 @@ export default function LoanDetails() {
     );
   }
 
+  // Calculate totals from actual transactions
+  const actualPrincipalPaid = transactions
+    .filter(t => !t.is_deleted && t.type === 'Repayment')
+    .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+  const actualInterestPaid = transactions
+    .filter(t => !t.is_deleted && t.type === 'Repayment')
+    .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+  
   // Calculate totals from repayment schedule
   const schedulePrincipalPaid = schedule.reduce((sum, row) => sum + (row.principal_paid || 0), 0);
   const scheduleInterestPaid = schedule.reduce((sum, row) => sum + (row.interest_paid || 0), 0);
-  const totalPaidFromSchedule = schedulePrincipalPaid + scheduleInterestPaid;
+  const totalPaidFromSchedule = actualPrincipalPaid + actualInterestPaid;
   
   const principalRemaining = loan.principal_amount - schedulePrincipalPaid;
   const interestRemaining = loan.total_interest - scheduleInterestPaid;
@@ -674,7 +682,7 @@ export default function LoanDetails() {
           <Card className="bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200">
             <CardContent className="p-5">
               <p className="text-sm text-amber-600 font-medium">Interest Received</p>
-              <p className="text-2xl font-bold text-amber-900">{formatCurrency(scheduleInterestPaid)}</p>
+              <p className="text-2xl font-bold text-amber-900">{formatCurrency(actualInterestPaid)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border-emerald-200">
@@ -727,8 +735,8 @@ export default function LoanDetails() {
                 />
               </div>
               <div className="flex justify-between mt-2 text-sm text-slate-500">
-                <span>Principal: {formatCurrency(schedulePrincipalPaid)} / {formatCurrency(loan.principal_amount)}</span>
-                <span>Interest: {formatCurrency(scheduleInterestPaid)} / {formatCurrency(loan.total_interest)}</span>
+                <span>Principal: {formatCurrency(actualPrincipalPaid)} / {formatCurrency(loan.principal_amount)}</span>
+                <span>Interest: {formatCurrency(actualInterestPaid)} / {formatCurrency(loan.total_interest)}</span>
               </div>
             </CardContent>
           </Card>
