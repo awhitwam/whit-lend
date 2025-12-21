@@ -131,13 +131,15 @@ export default function Config() {
   };
 
   const extractBorrowerInfo = (details) => {
-    const match = details.match(/^(Mr\.|Mrs\.|Ms\.|Dr\.)\s+(.+?)\s+-\s+Loan\s+#(\d+)/);
+    // Try multiple patterns to extract loan information
+    // Pattern 1: Mr./Mrs./Ms./Dr. Name - Loan #123456
+    let match = details.match(/^(Mr\.|Mrs\.|Ms\.|Dr\.)\s+(.+?)\s+-\s+Loan\s+#(\d+)/);
     if (match) {
       const [, title, fullName, loanNumber] = match;
       const nameParts = fullName.trim().split(' ');
       const lastName = nameParts.pop();
       const firstName = nameParts.join(' ');
-      
+
       return {
         title,
         firstName,
@@ -146,6 +148,39 @@ export default function Config() {
         loanNumber
       };
     }
+
+    // Pattern 2: Any text followed by Loan #123456 (more flexible)
+    match = details.match(/Loan\s+#(\d+)/i);
+    if (match) {
+      const loanNumber = match[1];
+      // Try to extract name before "Loan #"
+      const nameMatch = details.match(/^(Mr\.|Mrs\.|Ms\.|Dr\.)?\s*(.+?)\s*-?\s*Loan\s+#/i);
+      if (nameMatch) {
+        const title = nameMatch[1] || 'Mr.';
+        const fullName = nameMatch[2].trim();
+        const nameParts = fullName.split(' ');
+        const lastName = nameParts.pop();
+        const firstName = nameParts.join(' ');
+
+        return {
+          title,
+          firstName: firstName || fullName,
+          lastName: lastName || '',
+          fullName: fullName,
+          loanNumber
+        };
+      }
+
+      // If no name found, just return the loan number
+      return {
+        title: 'Mr.',
+        firstName: 'Unknown',
+        lastName: 'Borrower',
+        fullName: 'Unknown Borrower',
+        loanNumber
+      };
+    }
+
     return null;
   };
 
@@ -343,6 +378,11 @@ export default function Config() {
       });
       
       if (specificLoanNumber && Object.keys(loanGroups).length === 0) {
+        addLog(`❌ Loan #${specificLoanNumber} not found in CSV file`);
+        addLog(`Found loan numbers: ${Array.from(new Set(rows.map(r => {
+          const info = extractBorrowerInfo(r['Transaction Details']);
+          return info ? info.loanNumber : null;
+        }).filter(Boolean))).join(', ')}`);
         throw new Error(`Loan #${specificLoanNumber} not found in CSV file`);
       }
 
