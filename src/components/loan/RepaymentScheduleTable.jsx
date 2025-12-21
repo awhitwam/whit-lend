@@ -313,15 +313,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 }
               >
                 <TableCell className="py-2">
-                  <div>
-                    <p className="font-medium">{format(row.date, 'MMM dd, yyyy')}</p>
-                    {row.daysDifference !== null && (
-                      <p className={`text-xs ${row.daysDifference > 0 ? 'text-red-600' : row.daysDifference < 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
-                        {row.daysDifference === 0 ? 'On time' : `${Math.abs(row.daysDifference)} days ${row.daysDifference > 0 ? 'late' : 'early'}`}
-                        {row.scheduleEntry && ` (exp: ${format(new Date(row.scheduleEntry.due_date), 'dd')})`}
-                      </p>
-                    )}
-                  </div>
+                  <p className="font-medium">{format(row.date, 'MMM dd, yyyy')}</p>
                 </TableCell>
                 
                 {/* Actual Transactions */}
@@ -340,7 +332,19 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                 {/* Expected Schedule */}
                 <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200 py-2">
-                  {schedule.length > 0 && row.expectedInterest > 0 ? formatCurrency(row.expectedInterest) : ''}
+                  {schedule.length > 0 && row.expectedInterest > 0 ? (
+                    <div>
+                      <div>{formatCurrency(row.expectedInterest)}</div>
+                      {row.daysDifference !== null && row.scheduleEntry && (
+                        <div className="text-xs text-slate-500 mt-1">
+                          Expected: {format(new Date(row.scheduleEntry.due_date), 'MMM dd')}
+                          <span className={`ml-1 ${row.daysDifference > 0 ? 'text-red-600' : row.daysDifference < 0 ? 'text-emerald-600' : 'text-slate-600'}`}>
+                            {row.daysDifference === 0 ? '(on time)' : `(${Math.abs(row.daysDifference)}d ${row.daysDifference > 0 ? 'late' : 'early'})`}
+                          </span>
+                        </div>
+                      )}
+                    </div>
+                  ) : ''}
                 </TableCell>
                 <TableCell className="text-right font-mono text-sm font-semibold py-2">
                   {schedule.length > 0 ? formatCurrency(row.principalOutstanding + row.interestOutstanding) : ''}
