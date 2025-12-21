@@ -280,9 +280,9 @@ export default function LoanDetails() {
   const recalculateLoanMutation = useMutation({
     mutationFn: async () => {
       toast.loading('Regenerating repayment schedule...', { id: 'regenerate-schedule' });
-      
-      // Use centralized schedule manager
-      await regenerateLoanSchedule(loanId);
+
+      // Use centralized schedule manager with current loan duration
+      await regenerateLoanSchedule(loanId, { duration: loan.duration });
 
       toast.loading('Reapplying payments...', { id: 'regenerate-schedule' });
 
