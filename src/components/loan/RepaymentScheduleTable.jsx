@@ -399,15 +399,31 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       }
                     }
 
-                    // Add initial interest entry if it exists
+                    // Calculate cumulative variance from beginning up to current page
+                    let cumulativeVariance = 0;
+
+                    // Process initial interest if exists
+                    if (initialInterestEntry) {
+                      const totalPaid = initialInterestEntry.interestPaid;
+                      const expectedTotal = initialInterestEntry.total_due;
+                      cumulativeVariance += (totalPaid - expectedTotal);
+                    }
+
+                    // Calculate cumulative variance for all rows BEFORE the current page
+                    for (let i = 0; i < startIndex; i++) {
+                      const row = schedule[i];
+                      const bucket = scheduleToTransactions.get(row.id);
+                      const totalPaid = bucket ? (bucket.interestPaid + bucket.principalPaid) : 0;
+                      const expectedTotal = row.total_due;
+                      cumulativeVariance += (totalPaid - expectedTotal);
+                    }
+
+                    // Add initial interest entry if it exists and we're on first page
                     const displayRows = [];
                     if (initialInterestEntry && startIndex === 0) {
                       displayRows.push(initialInterestEntry);
                     }
                     displayRows.push(...schedule.slice(startIndex, endIndex));
-
-                    // Calculate cumulative variance
-                    let cumulativeVariance = 0;
 
                     return displayRows.map((row, idx) => {
                       // Handle initial interest entry specially
@@ -415,7 +431,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         const totalPaid = row.interestPaid;
                         const expectedTotal = row.total_due;
                         const variance = totalPaid - expectedTotal;
-                        cumulativeVariance += variance;
 
                         return (
                           <React.Fragment key="initial">
