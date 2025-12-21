@@ -205,28 +205,28 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             Showing {startIndex + 1} to {Math.min(endIndex, combinedRows.length)} of {combinedRows.length}
           </div>
         </div>
-        <div className="max-h-[600px] overflow-y-auto relative">
+        <div className="overflow-auto relative" style={{ maxHeight: '600px' }}>
         <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50 sticky top-0 z-20 shadow-sm">
-                  <TableHead className="font-semibold bg-slate-50">Date</TableHead>
-                  <TableHead className="font-semibold bg-slate-50" colSpan={2}>Actual Transactions</TableHead>
-                  <TableHead className="font-semibold bg-slate-50" colSpan={2}>Expected Schedule</TableHead>
+              <TableHeader className="sticky top-0 z-20 bg-slate-50">
+                <TableRow className="bg-slate-50">
+                  <TableHead className="font-semibold bg-slate-50 sticky top-0">Date</TableHead>
+                  <TableHead className="font-semibold bg-slate-50 sticky top-0" colSpan={2}>Actual Transactions</TableHead>
+                  <TableHead className="font-semibold bg-slate-50 sticky top-0" colSpan={2}>Expected Schedule</TableHead>
                 </TableRow>
-                <TableRow className="bg-slate-50 border-t sticky top-[41px] z-20 shadow-sm">
-                  <TableHead className="bg-slate-50"></TableHead>
-                  <TableHead className="font-semibold text-right bg-slate-50">
+                <TableRow className="bg-slate-50 border-t">
+                  <TableHead className="bg-slate-50 sticky top-[41px]"></TableHead>
+                  <TableHead className="font-semibold text-right bg-slate-50 sticky top-[41px]">
                     <div>Principal</div>
                     <div className="text-xs text-red-600 font-bold mt-1">{formatCurrency(totalPrincipalDisbursed)}</div>
                   </TableHead>
-                  <TableHead className="font-semibold text-right bg-slate-50">
+                  <TableHead className="font-semibold text-right bg-slate-50 sticky top-[41px]">
                     <div>Interest</div>
                     <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(cumulativeInterestPaid)}</div>
                   </TableHead>
-                  <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50">
+                  <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50 sticky top-[41px]">
                     {schedule.length > 0 && 'Expected Interest'}
                   </TableHead>
-                  <TableHead className="font-semibold text-right bg-slate-50">
+                  <TableHead className="font-semibold text-right bg-slate-50 sticky top-[41px]">
                     {schedule.length > 0 && 'Total Outstanding'}
                   </TableHead>
                 </TableRow>
