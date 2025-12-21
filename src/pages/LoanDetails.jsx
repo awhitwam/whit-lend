@@ -469,15 +469,13 @@ export default function LoanDetails() {
               <div>
                 <div className="flex items-center gap-3 mb-2">
                   <FileText className="w-6 h-6" />
-                  <h1 className="text-2xl font-bold">{loan.product_name}</h1>
+                  <div>
+                    <h1 className="text-2xl font-bold">
+                      {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`} - {loan.borrower_name}
+                    </h1>
+                    <p className="text-sm text-slate-300 mt-1">{loan.product_name}</p>
+                  </div>
                 </div>
-                <Link 
-                  to={createPageUrl(`BorrowerDetails?id=${loan.borrower_id}`)}
-                  className="flex items-center gap-2 text-slate-300 hover:text-white transition-colors"
-                >
-                  <User className="w-4 h-4" />
-                  {loan.borrower_name}
-                </Link>
               </div>
               <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
                 <Badge className={`${getStatusColor(loan.status)} text-sm px-3 py-1`}>

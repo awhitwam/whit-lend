@@ -449,6 +449,7 @@ export default function Config() {
           const summary = calculateLoanSummary(schedule);
 
           const loan = await base44.entities.Loan.create({
+            loan_number: loanNum,
             borrower_id: borrower.id,
             borrower_name: borrower.full_name,
             product_id: product.id,
