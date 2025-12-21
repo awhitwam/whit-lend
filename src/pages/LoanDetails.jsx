@@ -285,9 +285,11 @@ export default function LoanDetails() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
       toast.success('Schedule cleared successfully', { id: 'clear-schedule' });
+      setIsClearDialogOpen(false);
     },
     onError: () => {
       toast.error('Failed to clear schedule', { id: 'clear-schedule' });
+      setIsClearDialogOpen(false);
     }
   });
 
@@ -332,9 +334,11 @@ export default function LoanDetails() {
       queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loans'] });
       toast.success('Schedule regenerated successfully', { id: 'regenerate-schedule' });
+      setIsRegenerateDialogOpen(false);
     },
     onError: () => {
       toast.error('Failed to regenerate schedule', { id: 'regenerate-schedule' });
+      setIsRegenerateDialogOpen(false);
     }
   });
 
@@ -967,19 +971,19 @@ export default function LoanDetails() {
             <AlertDialogHeader>
               <AlertDialogTitle>Regenerate Repayment Schedule?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will clear and recreate the schedule based on product settings, then reapply all payments. This action cannot be undone.
+                {recalculateLoanMutation.isPending 
+                  ? 'Regenerating schedule and reapplying payments...' 
+                  : 'This will clear and recreate the schedule based on product settings, then reapply all payments. This action cannot be undone.'}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={recalculateLoanMutation.isPending}>Cancel</AlertDialogCancel>
               <AlertDialogAction
-                onClick={() => {
-                  recalculateLoanMutation.mutate();
-                  setIsRegenerateDialogOpen(false);
-                }}
+                onClick={() => recalculateLoanMutation.mutate()}
+                disabled={recalculateLoanMutation.isPending}
                 className="bg-emerald-600 hover:bg-emerald-700"
               >
-                Regenerate
+                {recalculateLoanMutation.isPending ? 'Processing...' : 'Regenerate'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -991,19 +995,19 @@ export default function LoanDetails() {
             <AlertDialogHeader>
               <AlertDialogTitle>Clear Repayment Schedule?</AlertDialogTitle>
               <AlertDialogDescription>
-                This will remove all scheduled payments but keep transaction history. This action cannot be undone.
+                {clearScheduleMutation.isPending
+                  ? 'Clearing repayment schedule...'
+                  : 'This will remove all scheduled payments but keep transaction history. This action cannot be undone.'}
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogCancel disabled={clearScheduleMutation.isPending}>Cancel</AlertDialogCancel>
               <AlertDialogAction
-                onClick={() => {
-                  clearScheduleMutation.mutate();
-                  setIsClearDialogOpen(false);
-                }}
+                onClick={() => clearScheduleMutation.mutate()}
+                disabled={clearScheduleMutation.isPending}
                 className="bg-red-600 hover:bg-red-700"
               >
-                Clear Schedule
+                {clearScheduleMutation.isPending ? 'Processing...' : 'Clear Schedule'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
