@@ -96,26 +96,26 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   });
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden max-h-[600px] overflow-y-auto">
       <Table>
-        <TableHeader>
-          <TableRow className="bg-slate-50/50">
-            <TableHead className="font-semibold">Date</TableHead>
-            <TableHead className="font-semibold" colSpan={2}>Actual Transactions</TableHead>
-            <TableHead className="font-semibold" colSpan={2}>Expected Schedule</TableHead>
+        <TableHeader className="sticky top-0 z-10">
+          <TableRow className="bg-slate-50">
+            <TableHead className="font-semibold bg-slate-50">Date</TableHead>
+            <TableHead className="font-semibold bg-slate-50" colSpan={2}>Actual Transactions</TableHead>
+            <TableHead className="font-semibold bg-slate-50" colSpan={2}>Expected Schedule</TableHead>
           </TableRow>
-          <TableRow className="bg-slate-50/50 border-t">
-            <TableHead></TableHead>
-            <TableHead className="font-semibold text-right">
+          <TableRow className="bg-slate-50 border-t">
+            <TableHead className="bg-slate-50"></TableHead>
+            <TableHead className="font-semibold text-right bg-slate-50">
               <div>Principal</div>
               <div className="text-xs text-red-600 font-bold mt-1">{formatCurrency(totalPrincipalDisbursed)}</div>
             </TableHead>
-            <TableHead className="font-semibold text-right">
+            <TableHead className="font-semibold text-right bg-slate-50">
               <div>Interest</div>
               <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(totalInterestCollected)}</div>
             </TableHead>
-            <TableHead className="font-semibold text-right border-l-2 border-slate-300">Interest Due</TableHead>
-            <TableHead className="font-semibold text-right">Outstanding</TableHead>
+            <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50">Interest Due</TableHead>
+            <TableHead className="font-semibold text-right bg-slate-50">Outstanding</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
