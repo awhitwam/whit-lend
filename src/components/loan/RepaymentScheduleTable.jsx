@@ -116,7 +116,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               <div>Interest</div>
               <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(totalInterestCollected)}</div>
             </TableHead>
-            <TableHead className="font-semibold text-right">Interest Due</TableHead>
+            <TableHead className="font-semibold text-right border-l-2 border-slate-300">Interest Due</TableHead>
             <TableHead className="font-semibold text-right">Outstanding</TableHead>
           </TableRow>
         </TableHeader>
@@ -170,9 +170,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     </TableCell>
 
                     {/* Expected Schedule */}
-                <TableCell className="text-right font-mono text-sm">
-                  {row.expectedInterest > 0 ? formatCurrency(row.expectedInterest) : '-'}
-                </TableCell>
+                    <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200">
+                      {row.expectedInterest > 0 ? formatCurrency(row.expectedInterest) : '-'}
+                    </TableCell>
                 <TableCell className="text-right font-mono text-sm font-semibold text-red-600">
                   {formatCurrency(row.interestOutstanding)}
                 </TableCell>
