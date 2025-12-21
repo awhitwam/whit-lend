@@ -5,12 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Merge, Split } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
+  const [showMergedView, setShowMergedView] = useState(true);
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
@@ -18,114 +19,141 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     .filter(tx => !tx.is_deleted)
     .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
   
-  // Create combined entries - merge transactions with schedule entries in same month
-  const allDates = new Set();
-  const monthMap = new Map(); // Track schedule entries by month
-  
-  // Add disbursement date
-  if (loan) {
-    allDates.add(format(new Date(loan.start_date), 'yyyy-MM-dd'));
-  }
-  
-  // Map schedule entries by month
-  schedule.forEach(row => {
-    const scheduleDate = new Date(row.due_date);
-    const monthKey = format(scheduleDate, 'yyyy-MM');
-    if (!monthMap.has(monthKey)) {
-      monthMap.set(monthKey, []);
+  // Create combined or separate rows based on toggle
+  let combinedRows;
+
+  if (showMergedView) {
+    // MERGED VIEW: Combine transactions with schedule entries in same month
+    const allDates = new Set();
+    const monthMap = new Map();
+
+    if (loan) {
+      allDates.add(format(new Date(loan.start_date), 'yyyy-MM-dd'));
     }
-    monthMap.get(monthKey).push(row);
-  });
-  
-  // Add all transaction dates
-  transactions.filter(tx => !tx.is_deleted).forEach(tx => {
-    allDates.add(format(new Date(tx.date), 'yyyy-MM-dd'));
-  });
-  
-  // Track which schedules have been merged with transactions
-  const processedScheduleIds = new Set();
-  
-  // Add schedule dates that don't have a transaction in the same month
-  schedule.forEach(row => {
-    const scheduleDate = new Date(row.due_date);
-    const monthKey = format(scheduleDate, 'yyyy-MM');
-    
-    // Check if there's a transaction in this month
-    const txInMonth = transactions.filter(tx => !tx.is_deleted).some(tx => 
-      format(new Date(tx.date), 'yyyy-MM') === monthKey
-    );
-    
-    // If no transaction in this month, add the schedule date
-    if (!txInMonth) {
-      allDates.add(format(scheduleDate, 'yyyy-MM-dd'));
-    }
-  });
-  
-  // Create combined rows
-  const combinedRows = Array.from(allDates)
-    .sort()
-    .map(dateStr => {
-      const date = new Date(dateStr);
-      const monthKey = format(date, 'yyyy-MM');
 
-      // Find matching transaction(s)
-      const txs = transactions.filter(tx => 
-        !tx.is_deleted && format(new Date(tx.date), 'yyyy-MM-dd') === dateStr
-      );
-
-      // Find matching schedule entry
-      let scheduleEntry = schedule.find(s => 
-        format(new Date(s.due_date), 'yyyy-MM-dd') === dateStr
-      );
-
-      // If this is a transaction date, look for schedule entry in same month to merge
-      if (txs.length > 0 && !scheduleEntry) {
-        const scheduleInMonth = monthMap.get(monthKey);
-        if (scheduleInMonth && scheduleInMonth.length > 0) {
-          // Find the closest schedule entry that hasn't been matched yet
-          const availableSchedules = scheduleInMonth.filter(s => !processedScheduleIds.has(s.id));
-
-          if (availableSchedules.length > 0) {
-            const closestSchedule = availableSchedules
-              .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), date)) - Math.abs(differenceInDays(new Date(b.due_date), date)))[0];
-
-            scheduleEntry = closestSchedule;
-            processedScheduleIds.add(closestSchedule.id);
-          }
-        }
+    schedule.forEach(row => {
+      const scheduleDate = new Date(row.due_date);
+      const monthKey = format(scheduleDate, 'yyyy-MM');
+      if (!monthMap.has(monthKey)) {
+        monthMap.set(monthKey, []);
       }
+      monthMap.get(monthKey).push(row);
+    });
 
-      // If this is a schedule date with no transaction, still check for transaction in same month
-      if (!txs.length && scheduleEntry) {
-        const txInMonth = transactions.filter(tx => 
-          !tx.is_deleted && format(new Date(tx.date), 'yyyy-MM') === monthKey
+    transactions.filter(tx => !tx.is_deleted).forEach(tx => {
+      allDates.add(format(new Date(tx.date), 'yyyy-MM-dd'));
+    });
+
+    const processedScheduleIds = new Set();
+
+    schedule.forEach(row => {
+      const scheduleDate = new Date(row.due_date);
+      const monthKey = format(scheduleDate, 'yyyy-MM');
+
+      const txInMonth = transactions.filter(tx => !tx.is_deleted).some(tx => 
+        format(new Date(tx.date), 'yyyy-MM') === monthKey
+      );
+
+      if (!txInMonth) {
+        allDates.add(format(scheduleDate, 'yyyy-MM-dd'));
+      }
+    });
+
+    combinedRows = Array.from(allDates)
+      .sort()
+      .map(dateStr => {
+        const date = new Date(dateStr);
+        const monthKey = format(date, 'yyyy-MM');
+
+        const txs = transactions.filter(tx => 
+          !tx.is_deleted && format(new Date(tx.date), 'yyyy-MM-dd') === dateStr
         );
 
-        if (txInMonth.length > 0 && !processedScheduleIds.has(scheduleEntry.id)) {
-          // This schedule was already merged with a transaction, skip it
-          return null;
+        let scheduleEntry = schedule.find(s => 
+          format(new Date(s.due_date), 'yyyy-MM-dd') === dateStr
+        );
+
+        if (txs.length > 0 && !scheduleEntry) {
+          const scheduleInMonth = monthMap.get(monthKey);
+          if (scheduleInMonth && scheduleInMonth.length > 0) {
+            const availableSchedules = scheduleInMonth.filter(s => !processedScheduleIds.has(s.id));
+
+            if (availableSchedules.length > 0) {
+              const closestSchedule = availableSchedules
+                .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), date)) - Math.abs(differenceInDays(new Date(b.due_date), date)))[0];
+
+              scheduleEntry = closestSchedule;
+              processedScheduleIds.add(closestSchedule.id);
+            }
+          }
         }
-      }
 
-      // Check if this is the disbursement date
-      const isDisbursement = loan && format(new Date(loan.start_date), 'yyyy-MM-dd') === dateStr;
+        if (!txs.length && scheduleEntry) {
+          const txInMonth = transactions.filter(tx => 
+            !tx.is_deleted && format(new Date(tx.date), 'yyyy-MM') === monthKey
+          );
 
-      // Calculate days difference if we have both transaction and schedule
-      let daysDifference = null;
-      if (txs.length > 0 && scheduleEntry) {
-        daysDifference = differenceInDays(date, new Date(scheduleEntry.due_date));
-      }
-      
-      return {
-        date,
-        dateStr,
-        isDisbursement,
-        transactions: txs,
-        scheduleEntry,
-        daysDifference
-      };
+          if (txInMonth.length > 0 && !processedScheduleIds.has(scheduleEntry.id)) {
+            return null;
+          }
+        }
+
+        const isDisbursement = loan && format(new Date(loan.start_date), 'yyyy-MM-dd') === dateStr;
+
+        let daysDifference = null;
+        if (txs.length > 0 && scheduleEntry) {
+          daysDifference = differenceInDays(date, new Date(scheduleEntry.due_date));
+        }
+
+        return {
+          date,
+          dateStr,
+          isDisbursement,
+          transactions: txs,
+          scheduleEntry,
+          daysDifference
+        };
       })
       .filter(row => row !== null);
+  } else {
+    // SEPARATE VIEW: Show all schedule entries and all transactions separately
+    const allRows = [];
+
+    if (loan) {
+      allRows.push({
+        date: new Date(loan.start_date),
+        dateStr: format(new Date(loan.start_date), 'yyyy-MM-dd'),
+        isDisbursement: true,
+        transactions: [],
+        scheduleEntry: null,
+        daysDifference: null
+      });
+    }
+
+    schedule.forEach(row => {
+      allRows.push({
+        date: new Date(row.due_date),
+        dateStr: format(new Date(row.due_date), 'yyyy-MM-dd'),
+        isDisbursement: false,
+        transactions: [],
+        scheduleEntry: row,
+        daysDifference: null
+      });
+    });
+
+    transactions.filter(tx => !tx.is_deleted).forEach(tx => {
+      allRows.push({
+        date: new Date(tx.date),
+        dateStr: format(new Date(tx.date), 'yyyy-MM-dd'),
+        isDisbursement: false,
+        transactions: [tx],
+        scheduleEntry: null,
+        daysDifference: null
+      });
+    });
+
+    combinedRows = allRows.sort((a, b) => a.date - b.date);
+  }
   
   if (loan) {
     // Calculate running balances and cumulative interest with daily accrual
@@ -222,6 +250,44 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
+            <Button
+              variant={showMergedView ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowMergedView(!showMergedView)}
+              className="gap-2"
+            >
+              {showMergedView ? (
+                <>
+                  <Merge className="w-4 h-4" />
+                  Merged
+                </>
+              ) : (
+                <>
+                  <Split className="w-4 h-4" />
+                  Separate
+                </>
+              )}
+            </Button>
+            <div className="h-4 w-px bg-slate-300" />
+            <Button
+              variant={showMergedView ? "default" : "outline"}
+              size="sm"
+              onClick={() => setShowMergedView(!showMergedView)}
+              className="gap-2"
+            >
+              {showMergedView ? (
+                <>
+                  <Merge className="w-4 h-4" />
+                  Merged View
+                </>
+              ) : (
+                <>
+                  <SeparateVertical className="w-4 h-4" />
+                  Separate View
+                </>
+              )}
+            </Button>
+            <div className="h-4 w-px bg-slate-300" />
             <span className="text-sm text-slate-600">Show</span>
             <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
               <SelectTrigger className="w-20">
