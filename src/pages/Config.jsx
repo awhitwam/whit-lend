@@ -495,7 +495,7 @@ export default function Config() {
               });
               totalPrincipalPaid += update.principalApplied || 0;
               totalInterestPaid += update.interestApplied || 0;
-              await delay(300);
+              await delay(150);
             }
 
             // Create transaction record
@@ -512,7 +512,7 @@ export default function Config() {
             });
 
             txCount++;
-            await delay(500);
+            await delay(200);
           }
 
           // Update loan totals
@@ -526,7 +526,7 @@ export default function Config() {
           loanCount++;
           addLog(`  ✓ Loan #${loanNum}: Applied ${loanTxs.length} payments`);
           setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
-          await delay(2000);
+          await delay(1000);
         } catch (err) {
           addLog(`  ✗ Error applying payments for loan #${loanNum}: ${err.message}`);
         }
