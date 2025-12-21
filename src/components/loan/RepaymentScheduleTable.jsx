@@ -269,25 +269,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               )}
             </Button>
             <div className="h-4 w-px bg-slate-300" />
-            <Button
-              variant={showMergedView ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowMergedView(!showMergedView)}
-              className="gap-2"
-            >
-              {showMergedView ? (
-                <>
-                  <Merge className="w-4 h-4" />
-                  Merged View
-                </>
-              ) : (
-                <>
-                  <SeparateVertical className="w-4 h-4" />
-                  Separate View
-                </>
-              )}
-            </Button>
-            <div className="h-4 w-px bg-slate-300" />
             <span className="text-sm text-slate-600">Show</span>
             <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
               <SelectTrigger className="w-20">
