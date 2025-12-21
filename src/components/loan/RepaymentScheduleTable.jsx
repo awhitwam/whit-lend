@@ -451,7 +451,45 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       }
                     }
 
-                    return schedule.slice(startIndex, endIndex).map((row) => {
+                    // Add initial interest entry if it exists
+                    const displayRows = [];
+                    if (initialInterestEntry && startIndex === 0) {
+                      displayRows.push(initialInterestEntry);
+                    }
+                    displayRows.push(...schedule.slice(startIndex, endIndex));
+
+                    return displayRows.map((row) => {
+                      // Handle initial interest entry specially
+                      if (row.id === 'initial') {
+                        const totalPaid = row.interestPaid;
+                        const expectedTotal = row.total_due;
+                        const isPaid = totalPaid >= expectedTotal - 0.01;
+
+                        return (
+                          <React.Fragment key="initial">
+                            <TableRow className="bg-blue-50/30">
+                              <TableCell className="font-medium">
+                                <div className="flex items-center gap-2">
+                                  <span className="text-slate-400">📄</span>
+                                  Initial
+                                </div>
+                              </TableCell>
+                              <TableCell>{format(new Date(row.due_date), 'MMM dd, yyyy')}</TableCell>
+                              <TableCell className="text-right font-mono">{formatCurrency(expectedTotal)}</TableCell>
+                              <TableCell>
+                                <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>
+                              </TableCell>
+                              <TableCell>{format(new Date(row.due_date), 'MMM dd, yyyy')}</TableCell>
+                              <TableCell className="text-right font-mono">
+                                {formatCurrency(totalPaid)}
+                              </TableCell>
+                              <TableCell className="text-slate-600 text-sm">Initial interest</TableCell>
+                            </TableRow>
+                          </React.Fragment>
+                        );
+                      }
+
+                      // Regular schedule entry handling
                       const bucket = scheduleToTransactions.get(row.id);
                       const rowTransactions = bucket ? bucket.transactions : [];
                       const totalPaid = bucket ? (bucket.interestPaid + bucket.principalPaid) : 0;
