@@ -355,16 +355,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       }
                     }
 
-                    // Calculate cumulative variance from all previous rows
+                    // Calculate cumulative variance from all previous rows (using ONLY direct payments, not allocations)
                     let cumulativeVariance = 0;
 
                     for (let i = 0; i < startIndex; i++) {
                       const row = schedule[i];
                       const payments = initialPayments.get(row.id) || [];
                       const directPayment = payments.reduce((sum, tx) => sum + tx.amount, 0);
-                      const allocated = allocatedAmounts.get(row.id) || 0;
-                      const totalPaid = directPayment + allocated;
-                      cumulativeVariance += (totalPaid - row.total_due);
+                      cumulativeVariance += (directPayment - row.total_due);
                     }
 
                     const displayRows = schedule.slice(startIndex, endIndex);
@@ -378,8 +376,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       const expectedTotal = row.total_due;
                       const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
 
-                      // Calculate variance for this row
-                      const variance = totalPaid - expectedTotal;
+                      // Calculate variance for this row (using ONLY direct payment for cumulative variance)
+                      const variance = directPayment - expectedTotal;
                       cumulativeVariance += variance;
 
                       // Determine status
