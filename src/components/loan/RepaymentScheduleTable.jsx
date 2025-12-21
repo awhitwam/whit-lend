@@ -36,32 +36,27 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     monthMap.get(monthKey).push(row);
   });
   
-  // Add transaction dates and try to merge with schedule entries
-  const processedScheduleIds = new Set();
+  // Add all transaction dates
   transactions.filter(tx => !tx.is_deleted).forEach(tx => {
-    const txDate = new Date(tx.date);
-    const txMonthKey = format(txDate, 'yyyy-MM');
-    
-    // Check if there's a schedule entry in the same month
-    const scheduleInMonth = monthMap.get(txMonthKey);
-    if (scheduleInMonth && scheduleInMonth.length > 0) {
-      // Find the closest unprocessed schedule entry
-      const closestSchedule = scheduleInMonth
-        .filter(s => !processedScheduleIds.has(s.id))
-        .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), txDate)) - Math.abs(differenceInDays(new Date(b.due_date), txDate)))[0];
-      
-      if (closestSchedule) {
-        processedScheduleIds.add(closestSchedule.id);
-      }
-    }
-    
-    allDates.add(format(txDate, 'yyyy-MM-dd'));
+    allDates.add(format(new Date(tx.date), 'yyyy-MM-dd'));
   });
   
-  // Add remaining unprocessed schedule dates
+  // Track which schedules have been merged with transactions
+  const processedScheduleIds = new Set();
+  
+  // Add schedule dates that don't have a transaction in the same month
   schedule.forEach(row => {
-    if (!processedScheduleIds.has(row.id)) {
-      allDates.add(format(new Date(row.due_date), 'yyyy-MM-dd'));
+    const scheduleDate = new Date(row.due_date);
+    const monthKey = format(scheduleDate, 'yyyy-MM');
+    
+    // Check if there's a transaction in this month
+    const txInMonth = transactions.filter(tx => !tx.is_deleted).some(tx => 
+      format(new Date(tx.date), 'yyyy-MM') === monthKey
+    );
+    
+    // If no transaction in this month, add the schedule date
+    if (!txInMonth) {
+      allDates.add(format(scheduleDate, 'yyyy-MM-dd'));
     }
   });
   
@@ -86,11 +81,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       if (txs.length > 0 && !scheduleEntry) {
         const scheduleInMonth = monthMap.get(monthKey);
         if (scheduleInMonth && scheduleInMonth.length > 0) {
-          const closestSchedule = scheduleInMonth
-            .filter(s => !processedScheduleIds.has(s.id) || format(new Date(s.due_date), 'yyyy-MM-dd') === dateStr)
-            .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), date)) - Math.abs(differenceInDays(new Date(b.due_date), date)))[0];
+          // Find the closest schedule entry that hasn't been matched yet
+          const availableSchedules = scheduleInMonth.filter(s => !processedScheduleIds.has(s.id));
           
-          if (closestSchedule) {
+          if (availableSchedules.length > 0) {
+            const closestSchedule = availableSchedules
+              .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), date)) - Math.abs(differenceInDays(new Date(b.due_date), date)))[0];
+            
             scheduleEntry = closestSchedule;
             processedScheduleIds.add(closestSchedule.id);
           }
