@@ -369,10 +369,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         if (payments.length > 0) {
                           datePaid = format(new Date(payments[0].date), 'MMM dd, yyyy');
                         }
-                      } else if (daysOverdue > 0) {
+                      } else if (daysOverdue > 0 && cumulativeVariance < 0) {
+                        // Only mark as late if they're actually behind (negative cumulative variance)
                         statusBadge = <Badge className="bg-red-500 text-white">Late</Badge>;
                         statusColor = 'bg-red-50/30';
                         notes = `${daysOverdue} days overdue`;
+                        datePaid = '—';
+                      } else if (daysOverdue > 0 && cumulativeVariance >= 0) {
+                        // If overdue but cumulative variance is positive, they're ahead overall
+                        statusBadge = <Badge className="bg-blue-500 text-white">Ahead</Badge>;
+                        statusColor = 'bg-blue-50/30';
                         datePaid = '—';
                       } else {
                         statusBadge = <Badge className="bg-blue-500 text-white">⏰ Upcoming</Badge>;
