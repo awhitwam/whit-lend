@@ -21,6 +21,9 @@ export default function EditLoanModal({
     arrangement_fee: loan?.arrangement_fee || '',
     exit_fee: loan?.exit_fee || '',
     interest_rate: loan?.interest_rate || '',
+    interest_type: loan?.interest_type || '',
+    period: loan?.period || '',
+    interest_only_period: loan?.interest_only_period || 0,
     duration: loan?.duration || '',
     start_date: loan?.start_date || ''
   });
@@ -40,6 +43,9 @@ export default function EditLoanModal({
       arrangement_fee: parseFloat(formData.arrangement_fee) || 0,
       exit_fee: parseFloat(formData.exit_fee) || 0,
       interest_rate: parseFloat(formData.interest_rate),
+      interest_type: formData.interest_type,
+      period: formData.period,
+      interest_only_period: parseInt(formData.interest_only_period) || 0,
       duration: parseInt(formData.duration),
       start_date: formData.start_date,
       net_disbursed: parseFloat(formData.principal_amount) - (parseFloat(formData.arrangement_fee) || 0)
@@ -76,7 +82,10 @@ export default function EditLoanModal({
                   setFormData(prev => ({
                     ...prev,
                     product_id: value,
-                    interest_rate: product.interest_rate
+                    interest_rate: product.interest_rate,
+                    interest_type: product.interest_type,
+                    period: product.period,
+                    interest_only_period: product.interest_only_period || 0
                   }));
                 }
               }}

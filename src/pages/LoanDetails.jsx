@@ -111,11 +111,7 @@ export default function LoanDetails() {
       if (!product) throw new Error('Product not found');
 
       // Update loan with new parameters
-      await base44.entities.Loan.update(loanId, {
-        ...updatedData,
-        interest_type: product.interest_type,
-        period: product.period
-      });
+      await base44.entities.Loan.update(loanId, updatedData);
       
       toast.loading('Regenerating schedule...', { id: 'edit-loan' });
       
