@@ -389,11 +389,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     const dueDate = new Date(row.due_date);
                     const daysOverdue = differenceInDays(today, dueDate);
                     
-                    // Determine actual status based on payment amounts
-                    const isPaid = totalPaid >= expectedTotal - 0.01;
-                    const isPartial = totalPaid > 0 && totalPaid < expectedTotal - 0.01;
-                    
-                    if (isPaid) {
+                    if (row.status === 'Paid') {
                       statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                       statusColor = 'bg-emerald-50/30';
                       
@@ -405,13 +401,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         else if (daysDiff === 0) notes = 'On time';
                         else if (daysDiff > 0) notes = `${daysDiff} days late`;
                       }
-                    } else if (isPartial) {
+                    } else if (row.status === 'Partial') {
                       statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(paymentPercent)}%)</Badge>;
                       statusColor = 'bg-amber-50/30';
                       if (rowTransactions.length > 0) {
                         datePaid = format(new Date(rowTransactions[0].date), 'MMM dd, yyyy');
                       }
-                    } else if (daysOverdue > 0) {
+                    } else if (row.status === 'Overdue' || (row.status === 'Pending' && daysOverdue > 0)) {
                       statusBadge = <Badge className="bg-red-500 text-white">Late</Badge>;
                       statusColor = 'bg-red-50/30';
                       notes = `${daysOverdue} days overdue`;
@@ -423,7 +419,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     }
                     
                     // Only show splits if there are multiple transactions AND status is partial
-                    const showSplits = isPartial && rowTransactions.length > 1;
+                    const showSplits = row.status === 'Partial' && rowTransactions.length > 1;
                     
                     return (
                       <React.Fragment key={row.id}>
