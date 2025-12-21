@@ -5,14 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Split, List, ChevronDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, List } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('detailed'); // 'separate', 'detailed'
-  const [expandedRows, setExpandedRows] = useState(new Set());
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
@@ -261,6 +260,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <TableHead className="font-semibold bg-slate-50">Status</TableHead>
                 <TableHead className="font-semibold bg-slate-50">Date Paid</TableHead>
                 <TableHead className="font-semibold bg-slate-50 text-right">Amt Paid</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Variance</TableHead>
                 <TableHead className="font-semibold bg-slate-50">Notes</TableHead>
               </TableRow>
             </TableHeader>
@@ -406,12 +406,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     }
                     displayRows.push(...schedule.slice(startIndex, endIndex));
 
-                    return displayRows.map((row) => {
+                    // Calculate cumulative variance
+                    let cumulativeVariance = 0;
+
+                    return displayRows.map((row, idx) => {
                       // Handle initial interest entry specially
                       if (row.id === 'initial') {
                         const totalPaid = row.interestPaid;
                         const expectedTotal = row.total_due;
-                        const isPaid = totalPaid >= expectedTotal - 0.01;
+                        const variance = totalPaid - expectedTotal;
+                        cumulativeVariance += variance;
 
                         return (
                           <React.Fragment key="initial">
@@ -431,6 +435,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               <TableCell className="text-right font-mono">
                                 {formatCurrency(totalPaid)}
                               </TableCell>
+                              <TableCell className={`text-right font-mono font-semibold ${cumulativeVariance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                {cumulativeVariance >= 0 ? '+' : ''}{formatCurrency(cumulativeVariance)}
+                              </TableCell>
                               <TableCell className="text-slate-600 text-sm">Initial interest</TableCell>
                             </TableRow>
                           </React.Fragment>
@@ -443,6 +450,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       const totalPaid = bucket ? (bucket.interestPaid + bucket.principalPaid) : 0;
                       const expectedTotal = row.total_due;
                       const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
+
+                      // Calculate variance for this row
+                      const variance = totalPaid - expectedTotal;
+                      cumulativeVariance += variance;
 
                       // Determine status based on reconciled amounts
                       const isPaid = totalPaid >= expectedTotal - 0.01;
@@ -486,31 +497,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         datePaid = '—';
                       }
 
-                      // Show splits if there are multiple transactions OR if status is partial with at least one transaction
-                      const showSplits = (rowTransactions.length > 1) || (isPartial && rowTransactions.length >= 1);
-                      const isExpanded = expandedRows.has(row.id);
-
                       return (
                         <React.Fragment key={row.id}>
                           <TableRow className={statusColor}>
                             <TableCell className="font-medium">
                               <div className="flex items-center gap-2">
-                                {showSplits && (
-                                  <button
-                                    onClick={() => {
-                                      const newExpanded = new Set(expandedRows);
-                                      if (isExpanded) {
-                                        newExpanded.delete(row.id);
-                                      } else {
-                                        newExpanded.add(row.id);
-                                      }
-                                      setExpandedRows(newExpanded);
-                                    }}
-                                    className="p-0.5 hover:bg-slate-200 rounded"
-                                  >
-                                    <ChevronDown className={`w-4 h-4 text-slate-400 transition-transform ${isExpanded ? 'rotate-0' : '-rotate-90'}`} />
-                                  </button>
-                                )}
                                 <span className="text-slate-400">📄</span>
                                 {row.installment_number}
                               </div>
@@ -522,33 +513,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell className="text-right font-mono">
                               {totalPaid > 0 ? formatCurrency(totalPaid) : '$0.00'}
                             </TableCell>
+                            <TableCell className={`text-right font-mono font-semibold ${cumulativeVariance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {cumulativeVariance >= 0 ? '+' : ''}{formatCurrency(cumulativeVariance)}
+                            </TableCell>
                             <TableCell className="text-slate-600 text-sm">{notes}</TableCell>
-                            </TableRow>
-
-                            {showSplits && isExpanded && rowTransactions.map((tx, idx) => (
-                            <TableRow key={`${row.id}-split-${idx}`} className="bg-slate-50/50 border-l-2 border-slate-300 ml-4">
-                              <TableCell className="py-2">
-                                <div className="pl-6 text-slate-400 text-xs">↳</div>
-                              </TableCell>
-                              <TableCell className="text-sm font-medium text-slate-700 py-2">
-                                Split {idx + 1}
-                              </TableCell>
-                              <TableCell className="text-right text-sm py-2">
-                                {format(new Date(tx.date), 'MMM dd, yyyy')}
-                              </TableCell>
-                              <TableCell className="text-sm text-slate-500 py-2">
-                                Received {format(new Date(tx.date), 'MMM dd')}
-                              </TableCell>
-                              <TableCell className="py-2"></TableCell>
-                              <TableCell className="text-right font-mono text-sm py-2">
-                                {formatCurrency(tx.amount)}
-                              </TableCell>
-                              <TableCell className="text-sm text-slate-500 py-2">—</TableCell>
-                            </TableRow>
-                          ))}
+                          </TableRow>
                         </React.Fragment>
                       );
-                    });
+                      });
                   })()}
                 </>
               )}
