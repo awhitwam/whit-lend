@@ -155,54 +155,82 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     };
 
     return (
-    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-      <div className="flex items-center justify-between p-4 border-b border-slate-200">
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-slate-600">Show</span>
-          <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
-            <SelectTrigger className="w-20">
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value="10">10</SelectItem>
-              <SelectItem value="25">25</SelectItem>
-              <SelectItem value="50">50</SelectItem>
-              <SelectItem value="100">100</SelectItem>
-              <SelectItem value={combinedRows.length.toString()}>All</SelectItem>
-            </SelectContent>
-          </Select>
-          <span className="text-sm text-slate-600">entries</span>
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+        <div className="flex items-center justify-between p-4 border-b border-slate-200">
+          <div className="flex items-center gap-3">
+            <span className="text-sm text-slate-600">Show</span>
+            <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
+              <SelectTrigger className="w-20">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="10">10</SelectItem>
+                <SelectItem value="25">25</SelectItem>
+                <SelectItem value="50">50</SelectItem>
+                <SelectItem value="100">100</SelectItem>
+                <SelectItem value={combinedRows.length.toString()}>All</SelectItem>
+              </SelectContent>
+            </Select>
+            <span className="text-sm text-slate-600">entries</span>
+            {!isLoading && combinedRows.length > 0 && (
+              <>
+                <div className="h-4 w-px bg-slate-300 mx-1" />
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage - 1)}
+                    disabled={currentPage === 1}
+                  >
+                    <ChevronLeft className="w-4 h-4 mr-1" />
+                    Previous
+                  </Button>
+                  <span className="text-sm text-slate-600">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => handlePageChange(currentPage + 1)}
+                    disabled={currentPage === totalPages}
+                  >
+                    Next
+                    <ChevronRight className="w-4 h-4 ml-1" />
+                  </Button>
+                </div>
+              </>
+            )}
+          </div>
+          <div className="text-sm text-slate-600">
+            Showing {startIndex + 1} to {Math.min(endIndex, combinedRows.length)} of {combinedRows.length}
+          </div>
         </div>
-        <div className="text-sm text-slate-600">
-          Showing {startIndex + 1} to {Math.min(endIndex, combinedRows.length)} of {combinedRows.length}
-        </div>
-      </div>
-      <div className="max-h-[600px] overflow-y-auto relative">
+        <div className="max-h-[600px] overflow-y-auto relative">
         <Table>
-          <TableHeader className="sticky top-0 z-10">
-            <TableRow className="bg-slate-50">
-              <TableHead className="font-semibold bg-slate-50 sticky top-0">Date</TableHead>
-              <TableHead className="font-semibold bg-slate-50 sticky top-0" colSpan={2}>Actual Transactions</TableHead>
-              <TableHead className="font-semibold bg-slate-50 sticky top-0" colSpan={2}>Expected Schedule</TableHead>
-            </TableRow>
-            <TableRow className="bg-slate-50 border-t">
-              <TableHead className="bg-slate-50 sticky top-[42px]"></TableHead>
-              <TableHead className="font-semibold text-right bg-slate-50 sticky top-[42px]">
-                <div>Principal</div>
-                <div className="text-xs text-red-600 font-bold mt-1">{formatCurrency(totalPrincipalDisbursed)}</div>
-              </TableHead>
-              <TableHead className="font-semibold text-right bg-slate-50 sticky top-[42px]">
-                <div>Interest</div>
-                <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(cumulativeInterestPaid)}</div>
-              </TableHead>
-              <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50 sticky top-[42px]">
-                {schedule.length > 0 && 'Expected Interest'}
-              </TableHead>
-              <TableHead className="font-semibold text-right bg-slate-50 sticky top-[42px]">
-                {schedule.length > 0 && 'Total Outstanding'}
-              </TableHead>
-            </TableRow>
-          </TableHeader>
+              <TableHeader>
+                <TableRow className="bg-slate-50 sticky top-0 z-20 shadow-sm">
+                  <TableHead className="font-semibold bg-slate-50">Date</TableHead>
+                  <TableHead className="font-semibold bg-slate-50" colSpan={2}>Actual Transactions</TableHead>
+                  <TableHead className="font-semibold bg-slate-50" colSpan={2}>Expected Schedule</TableHead>
+                </TableRow>
+                <TableRow className="bg-slate-50 border-t sticky top-[41px] z-20 shadow-sm">
+                  <TableHead className="bg-slate-50"></TableHead>
+                  <TableHead className="font-semibold text-right bg-slate-50">
+                    <div>Principal</div>
+                    <div className="text-xs text-red-600 font-bold mt-1">{formatCurrency(totalPrincipalDisbursed)}</div>
+                  </TableHead>
+                  <TableHead className="font-semibold text-right bg-slate-50">
+                    <div>Interest</div>
+                    <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(cumulativeInterestPaid)}</div>
+                  </TableHead>
+                  <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50">
+                    {schedule.length > 0 && 'Expected Interest'}
+                  </TableHead>
+                  <TableHead className="font-semibold text-right bg-slate-50">
+                    {schedule.length > 0 && 'Total Outstanding'}
+                  </TableHead>
+                </TableRow>
+              </TableHeader>
         <TableBody>
           {isLoading ? (
             Array(6).fill(0).map((_, i) => (
@@ -275,33 +303,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         </TableBody>
         </Table>
         </div>
-        {!isLoading && combinedRows.length > 0 && (
-          <div className="flex items-center justify-between p-4 border-t border-slate-200">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handlePageChange(currentPage - 1)}
-              disabled={currentPage === 1}
-            >
-              <ChevronLeft className="w-4 h-4 mr-1" />
-              Previous
-            </Button>
-            <div className="flex items-center gap-2">
-              <span className="text-sm text-slate-600">
-                Page {currentPage} of {totalPages}
-              </span>
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => handlePageChange(currentPage + 1)}
-              disabled={currentPage === totalPages}
-            >
-              Next
-              <ChevronRight className="w-4 h-4 ml-1" />
-            </Button>
-          </div>
-        )}
         </div>
         );
         }
