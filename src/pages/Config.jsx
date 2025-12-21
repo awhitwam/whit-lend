@@ -645,56 +645,108 @@ export default function Config() {
           </TabsList>
 
           <TabsContent value="import" className="space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Import Transaction History</CardTitle>
-                <CardDescription>Upload a CSV file to bulk import loans, borrowers, and transactions</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="border-2 border-dashed border-slate-200 rounded-lg p-8 text-center">
-                  <input
-                    type="file"
-                    accept=".csv,.txt"
-                    onChange={(e) => setFile(e.target.files[0])}
-                    className="hidden"
-                    id="file-upload"
-                  />
-                  <label htmlFor="file-upload" className="cursor-pointer">
-                    <Upload className="w-12 h-12 mx-auto text-slate-400 mb-4" />
-                    <p className="text-sm text-slate-600 mb-2">
-                      {file ? file.name : 'Click to upload CSV file'}
-                    </p>
-                    <p className="text-xs text-slate-400">
-                      Expected format: Date, Type, Category, Transaction Details, In, Out, Balance
-                    </p>
-                  </label>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Import All Loans */}
+              <Card className="border-2">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Database className="w-5 h-5 text-blue-600" />
+                    Import All Loans
+                  </CardTitle>
+                  <CardDescription>Bulk import all loans, borrowers, and transactions from CSV</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
+                    <input
+                      type="file"
+                      accept=".csv,.txt"
+                      onChange={(e) => {
+                        setFile(e.target.files[0]);
+                        setSpecificLoanNumber('');
+                      }}
+                      className="hidden"
+                      id="file-upload-all"
+                    />
+                    <label htmlFor="file-upload-all" className="cursor-pointer">
+                      <Upload className="w-10 h-10 mx-auto text-slate-400 mb-3" />
+                      <p className="text-sm text-slate-600 mb-1">
+                        {file && !specificLoanNumber ? file.name : 'Click to upload CSV file'}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Import complete transaction history
+                      </p>
+                    </label>
                   </div>
 
-                  {file && (
+                  {file && !specificLoanNumber && !importing && !result && (
+                    <Button onClick={handleImport} className="w-full bg-blue-600 hover:bg-blue-700">
+                      <FileText className="w-4 h-4 mr-2" />
+                      Import All Loans
+                    </Button>
+                  )}
+                </CardContent>
+              </Card>
+
+              {/* Import Specific Loan */}
+              <Card className="border-2">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <FileText className="w-5 h-5 text-emerald-600" />
+                    Import Specific Loan
+                  </CardTitle>
+                  <CardDescription>Import a single loan by loan number with all related data</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
+                    <input
+                      type="file"
+                      accept=".csv,.txt"
+                      onChange={(e) => setFile(e.target.files[0])}
+                      className="hidden"
+                      id="file-upload-specific"
+                    />
+                    <label htmlFor="file-upload-specific" className="cursor-pointer">
+                      <Upload className="w-10 h-10 mx-auto text-slate-400 mb-3" />
+                      <p className="text-sm text-slate-600 mb-1">
+                        {file && specificLoanNumber ? file.name : 'Click to upload CSV file'}
+                      </p>
+                      <p className="text-xs text-slate-400">
+                        Import single loan data
+                      </p>
+                    </label>
+                  </div>
+
                   <div className="space-y-2">
                     <label className="text-sm font-medium text-slate-700">
-                      Specific Loan Number (Optional)
+                      Loan Number
                     </label>
                     <Input
                       type="text"
-                      placeholder="e.g., 1000001 - Leave empty to import all loans"
+                      placeholder="e.g., 1000001"
                       value={specificLoanNumber}
                       onChange={(e) => setSpecificLoanNumber(e.target.value)}
                       disabled={importing}
                       className="font-mono"
                     />
-                    <p className="text-xs text-slate-500">
-                      Enter a loan number to import only that specific loan with all its data
-                    </p>
                   </div>
-                  )}
 
-                  {file && !importing && !result && (
-                  <Button onClick={handleImport} className="w-full" size="lg">
-                    <FileText className="w-4 h-4 mr-2" />
-                    {specificLoanNumber ? `Import Loan #${specificLoanNumber}` : 'Import All Loans'}
-                  </Button>
+                  {file && specificLoanNumber && !importing && !result && (
+                    <Button onClick={handleImport} className="w-full bg-emerald-600 hover:bg-emerald-700">
+                      <FileText className="w-4 h-4 mr-2" />
+                      Import Loan #{specificLoanNumber}
+                    </Button>
                   )}
+                </CardContent>
+              </Card>
+            </div>
+
+            {/* Import Status and Logs */}
+            {(importing || result || error || logs.length > 0) && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Import Status</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
 
                 {importing && (
                   <div className="space-y-3">
@@ -761,8 +813,9 @@ export default function Config() {
                     </div>
                   </div>
                 )}
-              </CardContent>
-            </Card>
+                </CardContent>
+                </Card>
+                )}
 
             <Card>
               <CardHeader>
