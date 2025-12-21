@@ -55,7 +55,6 @@ import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { Sparkles } from 'lucide-react';
 
 export default function LoanDetails() {
   const urlParams = new URLSearchParams(window.location.search);
