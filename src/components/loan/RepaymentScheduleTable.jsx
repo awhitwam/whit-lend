@@ -90,7 +90,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             .filter(s => !processedScheduleIds.has(s.id) || format(new Date(s.due_date), 'yyyy-MM-dd') === dateStr)
             .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), date)) - Math.abs(differenceInDays(new Date(b.due_date), date)))[0];
           
-          if (closestSchedule && Math.abs(differenceInDays(new Date(closestSchedule.due_date), date)) <= 15) {
+          if (closestSchedule) {
             scheduleEntry = closestSchedule;
             processedScheduleIds.add(closestSchedule.id);
           }
