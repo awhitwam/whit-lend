@@ -513,7 +513,7 @@ export default function Config() {
         }
       }
 
-      // Apply payments to each loan's schedule
+      // Create transaction records (without applying to schedule)
       let txCount = 0;
       let loanCount = 0;
 
@@ -530,37 +530,16 @@ export default function Config() {
           // Sort transactions by date
           loanTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-          // Get schedule
-          const schedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loan.id }, 'installment_number');
-
-          let totalPrincipalPaid = 0;
-          let totalInterestPaid = 0;
-
-          // Apply each payment
+          // Create transaction records with raw data
           for (const tx of loanTxs) {
-            const { updates } = applyPaymentWaterfall(tx.amount, schedule, 0, 'credit');
-
-            // Update schedule rows
-            for (const update of updates) {
-              await base44.entities.RepaymentSchedule.update(update.id, {
-                interest_paid: update.interest_paid,
-                principal_paid: update.principal_paid,
-                status: update.status
-              });
-              totalPrincipalPaid += update.principalApplied || 0;
-              totalInterestPaid += update.interestApplied || 0;
-              await delay(150);
-            }
-
-            // Create transaction record
             await base44.entities.Transaction.create({
               loan_id: loan.id,
               borrower_id: borrower.id,
               amount: tx.amount,
               date: tx.date,
               type: 'Repayment',
-              principal_applied: updates.reduce((sum, u) => sum + (u.principalApplied || 0), 0),
-              interest_applied: updates.reduce((sum, u) => sum + (u.interestApplied || 0), 0),
+              principal_applied: 0,
+              interest_applied: tx.amount,
               reference: tx.type,
               notes: `Imported: ${tx.details}`
             });
@@ -569,24 +548,23 @@ export default function Config() {
             await delay(200);
           }
 
-          // Update loan totals
-          const status = totalPrincipalPaid >= loan.principal_amount ? 'Closed' : 'Live';
+          // Keep loan status as Live (don't mark as closed during import)
           await base44.entities.Loan.update(loan.id, {
-            principal_paid: totalPrincipalPaid,
-            interest_paid: totalInterestPaid,
-            status: status
+            principal_paid: 0,
+            interest_paid: 0,
+            status: 'Live'
           });
 
           loanCount++;
-          addLog(`  ✓ Loan #${loanNum}: Applied ${loanTxs.length} payments`);
+          addLog(`  ✓ Loan #${loanNum}: Created ${loanTxs.length} transaction records`);
           setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
           await delay(1000);
         } catch (err) {
-          addLog(`  ✗ Error applying payments for loan #${loanNum}: ${err.message}`);
+          addLog(`  ✗ Error creating transactions for loan #${loanNum}: ${err.message}`);
         }
       }
 
-      addLog(`Total: ${txCount} transactions created and applied`);
+      addLog(`Total: ${txCount} transactions imported as raw data`);
       
       setProgress(90);
       setStatus('Creating expenses...');
