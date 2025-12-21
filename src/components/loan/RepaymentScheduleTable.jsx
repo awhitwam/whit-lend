@@ -374,6 +374,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     sortedSchedule.forEach(row => {
                       scheduleToTransactions.set(row.id, {
                         transactions: [],
+                        interestPaid: 0,
+                        principalPaid: 0,
                         interestRemaining: row.interest_amount,
                         principalRemaining: row.principal_amount
                       });
@@ -384,14 +386,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       let remainingAmount = tx.amount;
 
                       for (const row of sortedSchedule) {
-                        if (remainingAmount <= 0) break;
+                        if (remainingAmount <= 0.01) break;
 
                         const bucket = scheduleToTransactions.get(row.id);
 
                         // Pay interest first
-                        if (bucket.interestRemaining > 0) {
+                        if (bucket.interestRemaining > 0.01) {
                           const interestPayment = Math.min(remainingAmount, bucket.interestRemaining);
                           bucket.interestRemaining -= interestPayment;
+                          bucket.interestPaid += interestPayment;
                           remainingAmount -= interestPayment;
 
                           if (!bucket.transactions.find(t => t.id === tx.id)) {
@@ -400,9 +403,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         }
 
                         // Then pay principal
-                        if (remainingAmount > 0 && bucket.principalRemaining > 0) {
+                        if (remainingAmount > 0.01 && bucket.principalRemaining > 0.01) {
                           const principalPayment = Math.min(remainingAmount, bucket.principalRemaining);
                           bucket.principalRemaining -= principalPayment;
+                          bucket.principalPaid += principalPayment;
                           remainingAmount -= principalPayment;
 
                           if (!bucket.transactions.find(t => t.id === tx.id)) {
@@ -415,9 +419,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     return schedule.slice(startIndex, endIndex).map((row) => {
                       const bucket = scheduleToTransactions.get(row.id);
                       const rowTransactions = bucket ? bucket.transactions : [];
-                      const totalPaid = (row.principal_paid || 0) + (row.interest_paid || 0);
+                      const totalPaid = bucket ? (bucket.interestPaid + bucket.principalPaid) : 0;
                       const expectedTotal = row.total_due;
                       const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
+
+                      // Determine status based on reconciled amounts
+                      const isPaid = totalPaid >= expectedTotal - 0.01;
+                      const isPartial = totalPaid > 0.01 && totalPaid < expectedTotal - 0.01;
 
                       let statusBadge;
                       let statusColor = '';
@@ -428,7 +436,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       const dueDate = new Date(row.due_date);
                       const daysOverdue = differenceInDays(today, dueDate);
 
-                      if (row.status === 'Paid') {
+                      if (isPaid) {
                         statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                         statusColor = 'bg-emerald-50/30';
 
@@ -440,13 +448,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           else if (daysDiff === 0) notes = 'On time';
                           else if (daysDiff > 0) notes = `${daysDiff} days late`;
                         }
-                      } else if (row.status === 'Partial') {
+                      } else if (isPartial) {
                         statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(paymentPercent)}%)</Badge>;
                         statusColor = 'bg-amber-50/30';
                         if (rowTransactions.length > 0) {
                           datePaid = format(new Date(rowTransactions[0].date), 'MMM dd, yyyy');
                         }
-                      } else if (row.status === 'Overdue' || (row.status === 'Pending' && daysOverdue > 0)) {
+                      } else if (daysOverdue > 0) {
                         statusBadge = <Badge className="bg-red-500 text-white">Late</Badge>;
                         statusColor = 'bg-red-50/30';
                         notes = `${daysOverdue} days overdue`;
@@ -458,7 +466,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       }
 
                       // Only show splits if there are multiple transactions AND status is partial
-                      const showSplits = row.status === 'Partial' && rowTransactions.length > 1;
+                      const showSplits = isPartial && rowTransactions.length > 1;
 
                       return (
                         <React.Fragment key={row.id}>
