@@ -24,7 +24,9 @@ import {
   Edit,
   MoreVertical,
   Repeat,
-  Download
+  Download,
+  ChevronLeft,
+  ChevronRight
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -49,6 +51,8 @@ export default function LoanDetails() {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
+  const [txPage, setTxPage] = useState(1);
+  const [txPerPage, setTxPerPage] = useState(25);
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -778,8 +782,30 @@ export default function LoanDetails() {
                     <p>No transactions yet</p>
                   </div>
                 ) : (
+                  <>
+                  <div className="flex items-center justify-between mb-4">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-slate-600">Show</span>
+                      <Select value={txPerPage.toString()} onValueChange={(v) => { setTxPerPage(Number(v)); setTxPage(1); }}>
+                        <SelectTrigger className="w-20">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="10">10</SelectItem>
+                          <SelectItem value="25">25</SelectItem>
+                          <SelectItem value="50">50</SelectItem>
+                          <SelectItem value="100">100</SelectItem>
+                          <SelectItem value={transactions.length.toString()}>All</SelectItem>
+                        </SelectContent>
+                      </Select>
+                      <span className="text-sm text-slate-600">entries</span>
+                    </div>
+                    <div className="text-sm text-slate-600">
+                      Showing {(txPage - 1) * txPerPage + 1} to {Math.min(txPage * txPerPage, transactions.length)} of {transactions.length}
+                    </div>
+                  </div>
                   <div className="divide-y">
-                    {transactions.map((tx) => (
+                    {transactions.slice((txPage - 1) * txPerPage, txPage * txPerPage).map((tx) => (
                       <div key={tx.id} className={`py-3 flex items-center justify-between ${tx.is_deleted ? 'opacity-50 bg-red-50/50' : ''}`}>
                         <div className="flex items-center gap-3 flex-1">
                           <div className={`p-2 rounded-lg ${tx.is_deleted ? 'bg-red-100' : tx.type === 'Repayment' ? 'bg-emerald-100' : 'bg-blue-100'}`}>

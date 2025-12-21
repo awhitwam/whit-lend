@@ -1,9 +1,15 @@
+import { useState } from 'react';
 import { format, differenceInDays } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(25);
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
@@ -131,10 +137,46 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     });
 
     cumulativeInterestPaid = currentCumulativeInterestPaid;
-  }
+    }
 
-  return (
+    // Pagination logic
+    const totalPages = Math.ceil(combinedRows.length / itemsPerPage);
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    const endIndex = startIndex + itemsPerPage;
+    const paginatedRows = combinedRows.slice(startIndex, endIndex);
+
+    const handlePageChange = (newPage) => {
+    setCurrentPage(Math.max(1, Math.min(newPage, totalPages)));
+    };
+
+    const handleItemsPerPageChange = (value) => {
+    setItemsPerPage(Number(value));
+    setCurrentPage(1);
+    };
+
+    return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+      <div className="flex items-center justify-between p-4 border-b border-slate-200">
+        <div className="flex items-center gap-2">
+          <span className="text-sm text-slate-600">Show</span>
+          <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
+            <SelectTrigger className="w-20">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="10">10</SelectItem>
+              <SelectItem value="25">25</SelectItem>
+              <SelectItem value="50">50</SelectItem>
+              <SelectItem value="100">100</SelectItem>
+              <SelectItem value={combinedRows.length.toString()}>All</SelectItem>
+            </SelectContent>
+          </Select>
+          <span className="text-sm text-slate-600">entries</span>
+        </div>
+        <div className="text-sm text-slate-600">
+          Showing {startIndex + 1} to {Math.min(endIndex, combinedRows.length)} of {combinedRows.length}
+        </div>
+      </div>
       <div className="max-h-[600px] overflow-y-auto relative">
         <Table>
           <TableHeader className="sticky top-0 z-10">
@@ -178,7 +220,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             </TableRow>
           ) : (
             <>
-            {combinedRows.map((row, index) => (
+            {paginatedRows.map((row, index) => (
               <TableRow 
                 key={index}
                 className={
@@ -233,6 +275,33 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         </TableBody>
         </Table>
         </div>
+        {!isLoading && combinedRows.length > 0 && (
+          <div className="flex items-center justify-between p-4 border-t border-slate-200">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(currentPage - 1)}
+              disabled={currentPage === 1}
+            >
+              <ChevronLeft className="w-4 h-4 mr-1" />
+              Previous
+            </Button>
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-slate-600">
+                Page {currentPage} of {totalPages}
+              </span>
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => handlePageChange(currentPage + 1)}
+              disabled={currentPage === totalPages}
+            >
+              Next
+              <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          </div>
+        )}
         </div>
         );
         }
