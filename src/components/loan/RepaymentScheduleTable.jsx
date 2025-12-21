@@ -64,6 +64,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   let cumulativeInterest = 0;
   let interestReceived = 0;
   
+  // Calculate the expected interest per period for extended periods
+  const lastScheduleEntry = schedule.length > 0 ? schedule[schedule.length - 1] : null;
+  const expectedInterestPerPeriod = lastScheduleEntry ? lastScheduleEntry.interest_amount : 0;
+  
   combinedRows.forEach(row => {
     if (row.isDisbursement) {
       runningBalance = -loan.principal_amount;
@@ -75,9 +79,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       interestReceived += tx.interest_applied || 0;
     });
     
-    // Add expected interest from schedule
+    // Add expected interest from schedule OR calculate for extended periods
     if (row.scheduleEntry) {
       cumulativeInterest += row.scheduleEntry.interest_amount;
+      row.expectedInterest = row.scheduleEntry.interest_amount;
+    } else if (lastScheduleEntry && row.date > new Date(lastScheduleEntry.due_date)) {
+      // For dates after schedule ends, continue accruing interest at the same rate
+      cumulativeInterest += expectedInterestPerPeriod;
+      row.expectedInterest = expectedInterestPerPeriod;
+    } else {
+      row.expectedInterest = 0;
     }
     
     row.runningBalance = runningBalance;
@@ -167,7 +178,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 
                 {/* Expected Schedule */}
                 <TableCell className="text-right font-mono text-sm">
-                  {row.scheduleEntry ? formatCurrency(row.scheduleEntry.interest_amount) : '-'}
+                  {row.expectedInterest > 0 ? formatCurrency(row.expectedInterest) : '-'}
                 </TableCell>
                 <TableCell className="text-right font-mono text-sm font-semibold">
                   {formatCurrency(row.cumulativeInterest)}
