@@ -5,9 +5,7 @@ import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
   // Calculate totals
-  const totalPrincipalCollected = transactions
-    .filter(tx => !tx.is_deleted)
-    .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+  const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
   const totalInterestCollected = transactions
     .filter(tx => !tx.is_deleted)
@@ -110,7 +108,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             <TableHead></TableHead>
             <TableHead className="font-semibold text-right">
               <div>Principal</div>
-              <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(totalPrincipalCollected)}</div>
+              <div className="text-xs text-red-600 font-bold mt-1">{formatCurrency(totalPrincipalDisbursed)}</div>
             </TableHead>
             <TableHead className="font-semibold text-right">
               <div>Interest</div>
