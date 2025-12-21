@@ -362,108 +362,148 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 </TableRow>
               ) : (
                 <>
-                  {schedule.slice(startIndex, endIndex).map((row) => {
-                    const totalPaid = (row.principal_paid || 0) + (row.interest_paid || 0);
-                    const expectedTotal = row.total_due;
-                    const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
-                    
-                    // Find transactions that contributed to THIS specific installment
-                    // Look for transactions within 60 days of due date if any payment was made
-                    const rowTransactions = transactions.filter(tx => {
-                      if (tx.is_deleted) return false;
-                      if (totalPaid === 0) return false;
-                      
-                      const txDate = new Date(tx.date);
-                      const dueDate = new Date(row.due_date);
-                      
-                      // Transaction is likely related if it's within reasonable range
-                      return Math.abs(differenceInDays(txDate, dueDate)) <= 60;
-                    }).sort((a, b) => new Date(a.date) - new Date(b.date));
-                    
-                    let statusBadge;
-                    let statusColor = '';
-                    let notes = '';
-                    let datePaid = '';
-                    
-                    const today = new Date();
-                    const dueDate = new Date(row.due_date);
-                    const daysOverdue = differenceInDays(today, dueDate);
-                    
-                    if (row.status === 'Paid') {
-                      statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
-                      statusColor = 'bg-emerald-50/30';
-                      
-                      if (rowTransactions.length > 0) {
-                        const firstTx = rowTransactions[0];
-                        datePaid = format(new Date(firstTx.date), 'MMM dd, yyyy');
-                        const daysDiff = differenceInDays(new Date(firstTx.date), dueDate);
-                        if (daysDiff < 0) notes = 'Paid early';
-                        else if (daysDiff === 0) notes = 'On time';
-                        else if (daysDiff > 0) notes = `${daysDiff} days late`;
+                  {(() => {
+                    // Reconcile transactions to schedule entries using waterfall logic
+                    const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+                    const sortedTransactions = transactions
+                      .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+                      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                    // Create map of schedule row to transactions that paid it
+                    const scheduleToTransactions = new Map();
+                    sortedSchedule.forEach(row => {
+                      scheduleToTransactions.set(row.id, {
+                        transactions: [],
+                        interestRemaining: row.interest_amount,
+                        principalRemaining: row.principal_amount
+                      });
+                    });
+
+                    // Apply each transaction using waterfall logic
+                    for (const tx of sortedTransactions) {
+                      let remainingAmount = tx.amount;
+
+                      for (const row of sortedSchedule) {
+                        if (remainingAmount <= 0) break;
+
+                        const bucket = scheduleToTransactions.get(row.id);
+
+                        // Pay interest first
+                        if (bucket.interestRemaining > 0) {
+                          const interestPayment = Math.min(remainingAmount, bucket.interestRemaining);
+                          bucket.interestRemaining -= interestPayment;
+                          remainingAmount -= interestPayment;
+
+                          if (!bucket.transactions.find(t => t.id === tx.id)) {
+                            bucket.transactions.push(tx);
+                          }
+                        }
+
+                        // Then pay principal
+                        if (remainingAmount > 0 && bucket.principalRemaining > 0) {
+                          const principalPayment = Math.min(remainingAmount, bucket.principalRemaining);
+                          bucket.principalRemaining -= principalPayment;
+                          remainingAmount -= principalPayment;
+
+                          if (!bucket.transactions.find(t => t.id === tx.id)) {
+                            bucket.transactions.push(tx);
+                          }
+                        }
                       }
-                    } else if (row.status === 'Partial') {
-                      statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(paymentPercent)}%)</Badge>;
-                      statusColor = 'bg-amber-50/30';
-                      if (rowTransactions.length > 0) {
-                        datePaid = format(new Date(rowTransactions[0].date), 'MMM dd, yyyy');
-                      }
-                    } else if (row.status === 'Overdue' || (row.status === 'Pending' && daysOverdue > 0)) {
-                      statusBadge = <Badge className="bg-red-500 text-white">Late</Badge>;
-                      statusColor = 'bg-red-50/30';
-                      notes = `${daysOverdue} days overdue`;
-                      datePaid = '—';
-                    } else {
-                      statusBadge = <Badge className="bg-blue-500 text-white">⏰ Upcoming</Badge>;
-                      statusColor = 'bg-blue-50/30';
-                      datePaid = '—';
                     }
-                    
-                    // Only show splits if there are multiple transactions AND status is partial
-                    const showSplits = row.status === 'Partial' && rowTransactions.length > 1;
-                    
-                    return (
-                      <React.Fragment key={row.id}>
-                        <TableRow className={statusColor}>
-                          <TableCell className="font-medium">
-                            <div className="flex items-center gap-2">
-                              <span className="text-slate-400">📄</span>
-                              {row.installment_number}
-                            </div>
-                          </TableCell>
-                          <TableCell>{format(new Date(row.due_date), 'MMM dd, yyyy')}</TableCell>
-                          <TableCell className="text-right font-mono">{formatCurrency(expectedTotal)}</TableCell>
-                          <TableCell>{statusBadge}</TableCell>
-                          <TableCell>{datePaid}</TableCell>
-                          <TableCell className="text-right font-mono">
-                            {totalPaid > 0 ? formatCurrency(totalPaid) : '$0.00'}
-                          </TableCell>
-                          <TableCell className="text-slate-600 text-sm">{notes}</TableCell>
-                        </TableRow>
-                        
-                        {showSplits && rowTransactions.map((tx, idx) => (
-                          <TableRow key={`${row.id}-split-${idx}`} className="bg-slate-50/50 border-l-2 border-slate-300 ml-4">
-                            <TableCell className="py-2">
-                              <div className="pl-6 text-slate-400 text-xs">↳</div>
+
+                    return schedule.slice(startIndex, endIndex).map((row) => {
+                      const bucket = scheduleToTransactions.get(row.id);
+                      const rowTransactions = bucket ? bucket.transactions : [];
+                      const totalPaid = (row.principal_paid || 0) + (row.interest_paid || 0);
+                      const expectedTotal = row.total_due;
+                      const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
+
+                      let statusBadge;
+                      let statusColor = '';
+                      let notes = '';
+                      let datePaid = '';
+
+                      const today = new Date();
+                      const dueDate = new Date(row.due_date);
+                      const daysOverdue = differenceInDays(today, dueDate);
+
+                      if (row.status === 'Paid') {
+                        statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
+                        statusColor = 'bg-emerald-50/30';
+
+                        if (rowTransactions.length > 0) {
+                          const firstTx = rowTransactions[0];
+                          datePaid = format(new Date(firstTx.date), 'MMM dd, yyyy');
+                          const daysDiff = differenceInDays(new Date(firstTx.date), dueDate);
+                          if (daysDiff < 0) notes = 'Paid early';
+                          else if (daysDiff === 0) notes = 'On time';
+                          else if (daysDiff > 0) notes = `${daysDiff} days late`;
+                        }
+                      } else if (row.status === 'Partial') {
+                        statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(paymentPercent)}%)</Badge>;
+                        statusColor = 'bg-amber-50/30';
+                        if (rowTransactions.length > 0) {
+                          datePaid = format(new Date(rowTransactions[0].date), 'MMM dd, yyyy');
+                        }
+                      } else if (row.status === 'Overdue' || (row.status === 'Pending' && daysOverdue > 0)) {
+                        statusBadge = <Badge className="bg-red-500 text-white">Late</Badge>;
+                        statusColor = 'bg-red-50/30';
+                        notes = `${daysOverdue} days overdue`;
+                        datePaid = '—';
+                      } else {
+                        statusBadge = <Badge className="bg-blue-500 text-white">⏰ Upcoming</Badge>;
+                        statusColor = 'bg-blue-50/30';
+                        datePaid = '—';
+                      }
+
+                      // Only show splits if there are multiple transactions AND status is partial
+                      const showSplits = row.status === 'Partial' && rowTransactions.length > 1;
+
+                      return (
+                        <React.Fragment key={row.id}>
+                          <TableRow className={statusColor}>
+                            <TableCell className="font-medium">
+                              <div className="flex items-center gap-2">
+                                <span className="text-slate-400">📄</span>
+                                {row.installment_number}
+                              </div>
                             </TableCell>
-                            <TableCell className="text-sm font-medium text-slate-700 py-2">
-                              Split {idx + 1}
+                            <TableCell>{format(new Date(row.due_date), 'MMM dd, yyyy')}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(expectedTotal)}</TableCell>
+                            <TableCell>{statusBadge}</TableCell>
+                            <TableCell>{datePaid}</TableCell>
+                            <TableCell className="text-right font-mono">
+                              {totalPaid > 0 ? formatCurrency(totalPaid) : '$0.00'}
                             </TableCell>
-                            <TableCell className="text-right text-sm py-2">
-                              {format(new Date(tx.date), 'MMM dd, yyyy')}
-                            </TableCell>
-                            <TableCell className="text-sm text-slate-500 py-2">
-                              Received {format(new Date(tx.date), 'MMM dd')}
-                            </TableCell>
-                            <TableCell className="py-2"></TableCell>
-                            <TableCell className="text-right font-mono text-sm py-2">
-                              {formatCurrency(tx.amount)}
-                            </TableCell>
-                            <TableCell className="text-sm text-slate-500 py-2">—</TableCell>
+                            <TableCell className="text-slate-600 text-sm">{notes}</TableCell>
                           </TableRow>
-                        ))}
-                      </React.Fragment>
-                    );
-                  })}
+
+                          {showSplits && rowTransactions.map((tx, idx) => (
+                            <TableRow key={`${row.id}-split-${idx}`} className="bg-slate-50/50 border-l-2 border-slate-300 ml-4">
+                              <TableCell className="py-2">
+                                <div className="pl-6 text-slate-400 text-xs">↳</div>
+                              </TableCell>
+                              <TableCell className="text-sm font-medium text-slate-700 py-2">
+                                Split {idx + 1}
+                              </TableCell>
+                              <TableCell className="text-right text-sm py-2">
+                                {format(new Date(tx.date), 'MMM dd, yyyy')}
+                              </TableCell>
+                              <TableCell className="text-sm text-slate-500 py-2">
+                                Received {format(new Date(tx.date), 'MMM dd')}
+                              </TableCell>
+                              <TableCell className="py-2"></TableCell>
+                              <TableCell className="text-right font-mono text-sm py-2">
+                                {formatCurrency(tx.amount)}
+                              </TableCell>
+                              <TableCell className="text-sm text-slate-500 py-2">—</TableCell>
+                            </TableRow>
+                          ))}
+                        </React.Fragment>
+                      );
+                    });
+                  })()}
                 </>
               )}
             </TableBody>
