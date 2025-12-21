@@ -79,28 +79,17 @@ export default function LoanDetails() {
 
   const editLoanMutation = useMutation({
     mutationFn: async (updatedData) => {
+      // Fetch the product to get its settings
+      const products = await base44.entities.LoanProduct.filter({ id: updatedData.product_id });
+      const product = products[0];
+      
+      if (!product) throw new Error('Product not found');
+
       // Update loan with new parameters
-      await base44.entities.Loan.update(loanId, updatedData);
-      
-      // Regenerate schedule with new parameters
-      const newSchedule = generateRepaymentSchedule({
-        principal: updatedData.principal_amount,
-        interestRate: updatedData.interest_rate,
-        duration: updatedData.duration,
-        interestType: loan.interest_type,
-        period: loan.period,
-        startDate: updatedData.start_date,
-        interestOnlyPeriod: loan.interest_only_period || 0,
-        interestAlignment: loan.interest_alignment || 'period_based',
-        extendForFullPeriod: loan.extend_for_full_period || false
-      });
-      
-      const summary = calculateLoanSummary(newSchedule);
-      
-      // Update loan with new totals
       await base44.entities.Loan.update(loanId, {
-        total_interest: summary.totalInterest,
-        total_repayable: summary.totalRepayable + (updatedData.exit_fee || 0)
+        ...updatedData,
+        interest_type: product.interest_type,
+        period: product.period
       });
       
       // Delete old schedule
@@ -109,13 +98,8 @@ export default function LoanDetails() {
         await base44.entities.RepaymentSchedule.delete(row.id);
       }
       
-      // Create new schedule
-      for (const row of newSchedule) {
-        await base44.entities.RepaymentSchedule.create({
-          loan_id: loanId,
-          ...row
-        });
-      }
+      // Use centralized schedule manager to regenerate
+      await regenerateLoanSchedule(loanId, { duration: updatedData.duration });
       
       // Reapply all non-deleted payments
       const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');

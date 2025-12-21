@@ -3,7 +3,10 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, AlertTriangle } from 'lucide-react';
+import { base44 } from '@/api/base44Client';
+import { useQuery } from '@tanstack/react-query';
 
 export default function EditLoanModal({ 
   isOpen, 
@@ -13,6 +16,7 @@ export default function EditLoanModal({
   isLoading 
 }) {
   const [formData, setFormData] = useState({
+    product_id: loan?.product_id || '',
     principal_amount: loan?.principal_amount || '',
     arrangement_fee: loan?.arrangement_fee || '',
     exit_fee: loan?.exit_fee || '',
@@ -21,9 +25,17 @@ export default function EditLoanModal({
     start_date: loan?.start_date || ''
   });
 
+  const { data: products = [] } = useQuery({
+    queryKey: ['loan-products'],
+    queryFn: () => base44.entities.LoanProduct.list()
+  });
+
   const handleSubmit = (e) => {
     e.preventDefault();
+    const selectedProduct = products.find(p => p.id === formData.product_id);
     onSubmit({
+      product_id: formData.product_id,
+      product_name: selectedProduct?.name || loan.product_name,
       principal_amount: parseFloat(formData.principal_amount),
       arrangement_fee: parseFloat(formData.arrangement_fee) || 0,
       exit_fee: parseFloat(formData.exit_fee) || 0,
@@ -54,6 +66,34 @@ export default function EditLoanModal({
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="product">Loan Product *</Label>
+            <Select 
+              value={formData.product_id} 
+              onValueChange={(value) => {
+                const product = products.find(p => p.id === value);
+                if (product) {
+                  setFormData(prev => ({
+                    ...prev,
+                    product_id: value,
+                    interest_rate: product.interest_rate
+                  }));
+                }
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="Select loan product" />
+              </SelectTrigger>
+              <SelectContent>
+                {products.map(product => (
+                  <SelectItem key={product.id} value={product.id}>
+                    {product.name} - {product.interest_rate}% {product.interest_type}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="principal_amount">Principal Amount *</Label>
