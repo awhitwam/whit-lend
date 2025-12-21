@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -31,6 +31,14 @@ export default function Config() {
   const [deleting, setDeleting] = useState(false);
   const [deleteResult, setDeleteResult] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
+  
+  const logEndRef = useRef(null);
+  
+  useEffect(() => {
+    if (logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [logs]);
 
   const parseCSV = (text) => {
     const lines = text.trim().split('\n');
@@ -170,6 +178,8 @@ export default function Config() {
     setProgress(0);
     setResult(null);
     setLogs([]);
+    
+    addLog('🚀 Starting import process...');
 
     try {
       const text = await file.text();
@@ -188,20 +198,24 @@ export default function Config() {
       const productMap = {};
       let prodCount = 0;
       for (const category of productCategories) {
-        const product = await base44.entities.LoanProduct.create({
-          name: category,
-          interest_rate: 15,
-          interest_type: 'Interest-Only',
-          period: 'Monthly',
-          min_amount: 1000,
-          max_amount: 1000000,
-          max_duration: 36
-        });
-        
-        productMap[category] = product;
-        prodCount++;
-        addLog(`  ✓ Created product: ${category}`);
-        await delay(1000);
+        try {
+          const product = await base44.entities.LoanProduct.create({
+            name: category,
+            interest_rate: 15,
+            interest_type: 'Interest-Only',
+            period: 'Monthly',
+            min_amount: 1000,
+            max_amount: 1000000,
+            max_duration: 36
+          });
+          
+          productMap[category] = product;
+          prodCount++;
+          addLog(`  ✓ Created product: ${category}`);
+          await delay(1000);
+        } catch (err) {
+          addLog(`  ✗ Error creating product ${category}: ${err.message}`);
+        }
       }
       addLog(`Total: ${prodCount} loan products created`);
       
@@ -256,92 +270,96 @@ export default function Config() {
       const totalLoans = Object.keys(loanGroups).length;
       
       for (const [loanNum, transactions] of Object.entries(loanGroups)) {
-        const loanRelease = transactions.find(t => t.Type === 'Loan Released');
-        const deductableFee = transactions.find(t => t.Type === 'Deductable Fee');
-        
-        if (!loanRelease) continue;
-        
-        const borrowerInfo = extractBorrowerInfo(loanRelease['Transaction Details']);
-        if (!borrowerInfo) continue;
-        
-        let borrower = borrowerMap[borrowerInfo.fullName];
-        if (!borrower) {
-          const existing = await base44.entities.Borrower.filter({ 
-            first_name: borrowerInfo.firstName,
-            last_name: borrowerInfo.lastName
-          });
+        try {
+          const loanRelease = transactions.find(t => t.Type === 'Loan Released');
+          const deductableFee = transactions.find(t => t.Type === 'Deductable Fee');
           
-          if (existing.length > 0) {
-            borrower = existing[0];
-          } else {
-            borrower = await base44.entities.Borrower.create({
+          if (!loanRelease) continue;
+          
+          const borrowerInfo = extractBorrowerInfo(loanRelease['Transaction Details']);
+          if (!borrowerInfo) continue;
+          
+          let borrower = borrowerMap[borrowerInfo.fullName];
+          if (!borrower) {
+            const existing = await base44.entities.Borrower.filter({ 
               first_name: borrowerInfo.firstName,
-              last_name: borrowerInfo.lastName,
-              full_name: borrowerInfo.fullName,
-              phone: '000000000',
-              status: 'Active'
+              last_name: borrowerInfo.lastName
             });
+            
+            if (existing.length > 0) {
+              borrower = existing[0];
+            } else {
+              borrower = await base44.entities.Borrower.create({
+                first_name: borrowerInfo.firstName,
+                last_name: borrowerInfo.lastName,
+                full_name: borrowerInfo.fullName,
+                phone: '000000000',
+                status: 'Active'
+              });
+            }
+            borrowerMap[borrowerInfo.fullName] = borrower;
           }
-          borrowerMap[borrowerInfo.fullName] = borrower;
-        }
-        
-        const principalAmount = parseFloat(loanRelease.Out);
-        const arrangementFee = deductableFee ? parseFloat(deductableFee.In) : 0;
-        const product = productMap[loanRelease.Category];
-        
-        if (!product) continue;
-        
-        // Generate repayment schedule
-        const schedule = generateRepaymentSchedule({
-          principal: principalAmount,
-          interestRate: product.interest_rate,
-          duration: 6,
-          interestType: product.interest_type,
-          period: product.period,
-          startDate: parseDate(loanRelease.Date),
-          interestOnlyPeriod: 0,
-          interestAlignment: 'period_based',
-          extendForFullPeriod: false
-        });
-
-        const summary = calculateLoanSummary(schedule);
-
-        const loan = await base44.entities.Loan.create({
-          borrower_id: borrower.id,
-          borrower_name: borrower.full_name,
-          product_id: product.id,
-          product_name: product.name,
-          principal_amount: principalAmount,
-          arrangement_fee: arrangementFee,
-          exit_fee: 0,
-          net_disbursed: principalAmount - arrangementFee,
-          interest_rate: product.interest_rate,
-          interest_type: product.interest_type,
-          period: product.period,
-          duration: 6,
-          start_date: parseDate(loanRelease.Date),
-          status: 'Live',
-          total_interest: summary.totalInterest,
-          total_repayable: summary.totalRepayable,
-          principal_paid: 0,
-          interest_paid: 0
-        });
-
-        // Create repayment schedule
-        for (const row of schedule) {
-          await base44.entities.RepaymentSchedule.create({
-            loan_id: loan.id,
-            ...row
+          
+          const principalAmount = parseFloat(loanRelease.Out);
+          const arrangementFee = deductableFee ? parseFloat(deductableFee.In) : 0;
+          const product = productMap[loanRelease.Category];
+          
+          if (!product) continue;
+          
+          // Generate repayment schedule
+          const schedule = generateRepaymentSchedule({
+            principal: principalAmount,
+            interestRate: product.interest_rate,
+            duration: 6,
+            interestType: product.interest_type,
+            period: product.period,
+            startDate: parseDate(loanRelease.Date),
+            interestOnlyPeriod: 0,
+            interestAlignment: 'period_based',
+            extendForFullPeriod: false
           });
-          await delay(200);
+
+          const summary = calculateLoanSummary(schedule);
+
+          const loan = await base44.entities.Loan.create({
+            borrower_id: borrower.id,
+            borrower_name: borrower.full_name,
+            product_id: product.id,
+            product_name: product.name,
+            principal_amount: principalAmount,
+            arrangement_fee: arrangementFee,
+            exit_fee: 0,
+            net_disbursed: principalAmount - arrangementFee,
+            interest_rate: product.interest_rate,
+            interest_type: product.interest_type,
+            period: product.period,
+            duration: 6,
+            start_date: parseDate(loanRelease.Date),
+            status: 'Live',
+            total_interest: summary.totalInterest,
+            total_repayable: summary.totalRepayable,
+            principal_paid: 0,
+            interest_paid: 0
+          });
+
+          // Create repayment schedule
+          for (const row of schedule) {
+            await base44.entities.RepaymentSchedule.create({
+              loan_id: loan.id,
+              ...row
+            });
+            await delay(200);
+          }
+
+          loanMap[loanNum] = { loan, borrower, transactions: [] };
+
+          processed++;
+          addLog(`  ✓ Loan #${loanNum}: ${borrower.full_name} - ${formatCurrency(principalAmount)}`);
+          setProgress(40 + (processed / totalLoans) * 40);
+          await delay(1500);
+        } catch (err) {
+          addLog(`  ✗ Error processing loan #${loanNum}: ${err.message}`);
         }
-
-        loanMap[loanNum] = { loan, borrower, transactions: [] };
-
-        processed++;
-        addLog(`  ✓ Loan #${loanNum}: ${borrower.full_name} - ${formatCurrency(principalAmount)}`);
-        setProgress(40 + (processed / totalLoans) * 40);
-        await delay(1500);
         }
         addLog(`Total: ${processed} loans created`);
       
@@ -373,63 +391,67 @@ export default function Config() {
       let loanCount = 0;
 
       for (const [loanNum, loanData] of Object.entries(loanMap)) {
-        const { loan, borrower, transactions: loanTxs } = loanData;
+        try {
+          const { loan, borrower, transactions: loanTxs } = loanData;
 
-        if (loanTxs.length === 0) continue;
+          if (loanTxs.length === 0) continue;
 
-        // Sort transactions by date
-        loanTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
+          // Sort transactions by date
+          loanTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
 
-        // Get schedule
-        const schedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loan.id }, 'installment_number');
+          // Get schedule
+          const schedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loan.id }, 'installment_number');
 
-        let totalPrincipalPaid = 0;
-        let totalInterestPaid = 0;
+          let totalPrincipalPaid = 0;
+          let totalInterestPaid = 0;
 
-        // Apply each payment
-        for (const tx of loanTxs) {
-          const { updates } = applyPaymentWaterfall(tx.amount, schedule, 0, 'credit');
+          // Apply each payment
+          for (const tx of loanTxs) {
+            const { updates } = applyPaymentWaterfall(tx.amount, schedule, 0, 'credit');
 
-          // Update schedule rows
-          for (const update of updates) {
-            await base44.entities.RepaymentSchedule.update(update.id, {
-              interest_paid: update.interest_paid,
-              principal_paid: update.principal_paid,
-              status: update.status
+            // Update schedule rows
+            for (const update of updates) {
+              await base44.entities.RepaymentSchedule.update(update.id, {
+                interest_paid: update.interest_paid,
+                principal_paid: update.principal_paid,
+                status: update.status
+              });
+              totalPrincipalPaid += update.principalApplied || 0;
+              totalInterestPaid += update.interestApplied || 0;
+              await delay(200);
+            }
+
+            // Create transaction record
+            await base44.entities.Transaction.create({
+              loan_id: loan.id,
+              borrower_id: borrower.id,
+              amount: tx.amount,
+              date: tx.date,
+              type: 'Repayment',
+              principal_applied: updates.reduce((sum, u) => sum + (u.principalApplied || 0), 0),
+              interest_applied: updates.reduce((sum, u) => sum + (u.interestApplied || 0), 0),
+              reference: tx.type,
+              notes: `Imported: ${tx.details}`
             });
-            totalPrincipalPaid += update.principalApplied || 0;
-            totalInterestPaid += update.interestApplied || 0;
-            await delay(200);
+
+            txCount++;
           }
 
-          // Create transaction record
-          await base44.entities.Transaction.create({
-            loan_id: loan.id,
-            borrower_id: borrower.id,
-            amount: tx.amount,
-            date: tx.date,
-            type: 'Repayment',
-            principal_applied: updates.reduce((sum, u) => sum + (u.principalApplied || 0), 0),
-            interest_applied: updates.reduce((sum, u) => sum + (u.interestApplied || 0), 0),
-            reference: tx.type,
-            notes: `Imported: ${tx.details}`
+          // Update loan totals
+          const status = totalPrincipalPaid >= loan.principal_amount ? 'Closed' : 'Live';
+          await base44.entities.Loan.update(loan.id, {
+            principal_paid: totalPrincipalPaid,
+            interest_paid: totalInterestPaid,
+            status: status
           });
 
-          txCount++;
+          loanCount++;
+          addLog(`  ✓ Loan #${loanNum}: Applied ${loanTxs.length} payments`);
+          setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
+          await delay(1500);
+        } catch (err) {
+          addLog(`  ✗ Error applying payments for loan #${loanNum}: ${err.message}`);
         }
-
-        // Update loan totals
-        const status = totalPrincipalPaid >= loan.principal_amount ? 'Closed' : 'Live';
-        await base44.entities.Loan.update(loan.id, {
-          principal_paid: totalPrincipalPaid,
-          interest_paid: totalInterestPaid,
-          status: status
-        });
-
-        loanCount++;
-        addLog(`  ✓ Loan #${loanNum}: Applied ${loanTxs.length} payments`);
-        setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
-        await delay(1500);
       }
 
       addLog(`Total: ${txCount} transactions created and applied`);
@@ -492,9 +514,11 @@ export default function Config() {
       
     } catch (err) {
       console.error('Import error:', err);
+      addLog(`❌ Import failed: ${err.message}`);
       setError(err.message);
     } finally {
       setImporting(false);
+      addLog('Import process ended');
     }
   };
 
@@ -589,11 +613,12 @@ export default function Config() {
 
                 {logs.length > 0 && (
                   <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                    <h3 className="font-semibold text-sm text-slate-700 mb-2">Import Log</h3>
+                    <h3 className="font-semibold text-sm text-slate-700 mb-2">Import Log ({logs.length} entries)</h3>
                     <div className="space-y-1 text-xs text-slate-600 font-mono max-h-64 overflow-y-auto">
-                      {logs.map((log, idx) => (
+                      {[...logs].reverse().map((log, idx) => (
                         <div key={idx}>{log}</div>
                       ))}
+                      <div ref={logEndRef} />
                     </div>
                   </div>
                 )}
