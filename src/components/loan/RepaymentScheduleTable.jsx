@@ -412,8 +412,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       });
                     });
 
-                    // Apply each transaction using waterfall logic
-                    for (const tx of sortedTransactions) {
+                    // Apply each transaction using waterfall logic (skip initial interest payments)
+                    const transactionsToApply = initialInterestEntry 
+                      ? sortedTransactions.filter(tx => !initialInterestEntry.transactions.includes(tx))
+                      : sortedTransactions;
+
+                    for (const tx of transactionsToApply) {
                       let remainingAmount = tx.amount;
 
                       for (const row of sortedSchedule) {
