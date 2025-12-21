@@ -282,187 +282,55 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               ) : (
                 <>
                   {(() => {
-                    // Reconcile transactions to schedule entries using waterfall logic
+                    // Simple approach: match transactions to schedule by date proximity
+                    // and calculate variance without waterfall logic
                     const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
                     const sortedTransactions = transactions
                       .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-                    // Check if there's an initial interest payment on loan start date
-                    let initialInterestEntry = null;
-                    if (loan && sortedSchedule.length > 0) {
-                      const loanStartDate = format(new Date(loan.start_date), 'yyyy-MM-dd');
-                      const firstInstallmentDate = sortedSchedule[0].due_date;
-
-                      // If first installment is after loan start date, there might be initial interest
-                      if (loanStartDate < firstInstallmentDate) {
-                        const txOnStartDate = sortedTransactions.filter(tx => 
-                          format(new Date(tx.date), 'yyyy-MM-dd') === loanStartDate
-                        );
-
-                        // If there are payments on start date and it's interest-based loan
-                        if (txOnStartDate.length > 0 && sortedSchedule[0].interest_amount > 0) {
-                          initialInterestEntry = {
-                            id: 'initial',
-                            installment_number: 0,
-                            due_date: loanStartDate,
-                            interest_amount: sortedSchedule[0].interest_amount,
-                            principal_amount: 0,
-                            total_due: sortedSchedule[0].interest_amount,
-                            transactions: txOnStartDate,
-                            interestPaid: txOnStartDate.reduce((sum, tx) => sum + tx.amount, 0),
-                            principalPaid: 0,
-                            interestRemaining: 0,
-                            principalRemaining: 0
-                          };
-                        }
-                      }
-                    }
-
-                    // Create map of schedule row to transactions that paid it
-                    const scheduleToTransactions = new Map();
+                    // Match each transaction to its nearest schedule entry
+                    const schedulePayments = new Map();
                     sortedSchedule.forEach(row => {
-                      scheduleToTransactions.set(row.id, {
-                        transactions: [],
-                        interestPaid: 0,
-                        principalPaid: 0,
-                        interestRemaining: row.interest_amount,
-                        principalRemaining: row.principal_amount
-                      });
+                      schedulePayments.set(row.id, []);
                     });
 
-                    // Apply each transaction using closest-date waterfall logic
-                    const transactionsToApply = initialInterestEntry 
-                      ? sortedTransactions.filter(tx => !initialInterestEntry.transactions.includes(tx))
-                      : sortedTransactions;
-
-                    for (const tx of transactionsToApply) {
-                      let remainingAmount = tx.amount;
+                    // Assign each transaction to the nearest schedule entry
+                    for (const tx of sortedTransactions) {
                       const txDate = new Date(tx.date);
+                      let closestRow = null;
+                      let closestDiff = Infinity;
 
-                      // Sort schedule by proximity to transaction date
-                      // Prioritize past unpaid entries, then future ones
-                      const scheduleByProximity = [...sortedSchedule].sort((a, b) => {
-                        const aDate = new Date(a.due_date);
-                        const bDate = new Date(b.due_date);
-                        const aBucket = scheduleToTransactions.get(a.id);
-                        const bBucket = scheduleToTransactions.get(b.id);
-
-                        const aHasRemaining = (aBucket.interestRemaining + aBucket.principalRemaining) > 0.01;
-                        const bHasRemaining = (bBucket.interestRemaining + bBucket.principalRemaining) > 0.01;
-
-                        // Skip fully paid entries
-                        if (!aHasRemaining && bHasRemaining) return 1;
-                        if (aHasRemaining && !bHasRemaining) return -1;
-
-                        const aPast = aDate <= txDate;
-                        const bPast = bDate <= txDate;
-
-                        // Prioritize past unpaid entries
-                        if (aPast && !bPast) return -1;
-                        if (!aPast && bPast) return 1;
-
-                        // Within same timeframe (both past or both future), sort by proximity
-                        const aDiff = Math.abs(txDate - aDate);
-                        const bDiff = Math.abs(txDate - bDate);
-                        return aDiff - bDiff;
-                      });
-
-                      for (const row of scheduleByProximity) {
-                        if (remainingAmount <= 0.01) break;
-
-                        const bucket = scheduleToTransactions.get(row.id);
-
-                        // Pay interest first
-                        if (bucket.interestRemaining > 0.01) {
-                          const interestPayment = Math.min(remainingAmount, bucket.interestRemaining);
-                          bucket.interestRemaining -= interestPayment;
-                          bucket.interestPaid += interestPayment;
-                          remainingAmount -= interestPayment;
-
-                          if (!bucket.transactions.find(t => t.id === tx.id)) {
-                            bucket.transactions.push(tx);
-                          }
+                      for (const row of sortedSchedule) {
+                        const rowDate = new Date(row.due_date);
+                        const diff = Math.abs(txDate - rowDate);
+                        if (diff < closestDiff) {
+                          closestDiff = diff;
+                          closestRow = row;
                         }
+                      }
 
-                        // Then pay principal
-                        if (remainingAmount > 0.01 && bucket.principalRemaining > 0.01) {
-                          const principalPayment = Math.min(remainingAmount, bucket.principalRemaining);
-                          bucket.principalRemaining -= principalPayment;
-                          bucket.principalPaid += principalPayment;
-                          remainingAmount -= principalPayment;
-
-                          if (!bucket.transactions.find(t => t.id === tx.id)) {
-                            bucket.transactions.push(tx);
-                          }
-                        }
+                      if (closestRow) {
+                        schedulePayments.get(closestRow.id).push(tx);
                       }
                     }
 
-                    // Calculate cumulative variance from beginning up to current page
+                    // Calculate cumulative variance from all previous rows
                     let cumulativeVariance = 0;
 
-                    // Process initial interest if exists
-                    if (initialInterestEntry) {
-                      const totalPaid = initialInterestEntry.interestPaid;
-                      const expectedTotal = initialInterestEntry.total_due;
-                      cumulativeVariance += (totalPaid - expectedTotal);
-                    }
-
-                    // Calculate cumulative variance for all rows BEFORE the current page
                     for (let i = 0; i < startIndex; i++) {
                       const row = schedule[i];
-                      const bucket = scheduleToTransactions.get(row.id);
-                      const totalPaid = bucket ? (bucket.interestPaid + bucket.principalPaid) : 0;
-                      const expectedTotal = row.total_due;
-                      cumulativeVariance += (totalPaid - expectedTotal);
+                      const payments = schedulePayments.get(row.id) || [];
+                      const totalPaid = payments.reduce((sum, tx) => sum + tx.amount, 0);
+                      cumulativeVariance += (totalPaid - row.total_due);
                     }
 
-                    // Add initial interest entry if it exists and we're on first page
-                    const displayRows = [];
-                    if (initialInterestEntry && startIndex === 0) {
-                      displayRows.push(initialInterestEntry);
-                    }
-                    displayRows.push(...schedule.slice(startIndex, endIndex));
+                    const displayRows = schedule.slice(startIndex, endIndex);
 
                     return displayRows.map((row, idx) => {
-                      // Handle initial interest entry specially
-                      if (row.id === 'initial') {
-                        const totalPaid = row.interestPaid;
-                        const expectedTotal = row.total_due;
-                        const variance = totalPaid - expectedTotal;
-
-                        return (
-                          <React.Fragment key="initial">
-                            <TableRow className="bg-blue-50/30">
-                              <TableCell className="font-medium">
-                                <div className="flex items-center gap-2">
-                                  <span className="text-slate-400">📄</span>
-                                  Initial
-                                </div>
-                              </TableCell>
-                              <TableCell>{format(new Date(row.due_date), 'MMM dd, yyyy')}</TableCell>
-                              <TableCell className="text-right font-mono">{formatCurrency(expectedTotal)}</TableCell>
-                              <TableCell>
-                                <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>
-                              </TableCell>
-                              <TableCell>{format(new Date(row.due_date), 'MMM dd, yyyy')}</TableCell>
-                              <TableCell className="text-right font-mono">
-                                {formatCurrency(totalPaid)}
-                              </TableCell>
-                              <TableCell className={`text-right font-mono font-semibold ${cumulativeVariance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                {cumulativeVariance >= 0 ? '+' : ''}{formatCurrency(cumulativeVariance)}
-                              </TableCell>
-                              <TableCell className="text-slate-600 text-sm">Initial interest</TableCell>
-                            </TableRow>
-                          </React.Fragment>
-                        );
-                      }
-
-                      // Regular schedule entry handling
-                      const bucket = scheduleToTransactions.get(row.id);
-                      const rowTransactions = bucket ? bucket.transactions : [];
-                      const totalPaid = bucket ? (bucket.interestPaid + bucket.principalPaid) : 0;
+                      // Get payments matched to this schedule entry
+                      const payments = schedulePayments.get(row.id) || [];
+                      const totalPaid = payments.reduce((sum, tx) => sum + tx.amount, 0);
                       const expectedTotal = row.total_due;
                       const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
 
@@ -470,7 +338,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       const variance = totalPaid - expectedTotal;
                       cumulativeVariance += variance;
 
-                      // Determine status based on reconciled amounts
+                      // Determine status
                       const isPaid = totalPaid >= expectedTotal - 0.01;
                       const isPartial = totalPaid > 0.01 && totalPaid < expectedTotal - 0.01;
 
@@ -487,8 +355,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                         statusColor = 'bg-emerald-50/30';
 
-                        if (rowTransactions.length > 0) {
-                          const firstTx = rowTransactions[0];
+                        if (payments.length > 0) {
+                          const firstTx = payments[0];
                           datePaid = format(new Date(firstTx.date), 'MMM dd, yyyy');
                           const daysDiff = differenceInDays(new Date(firstTx.date), dueDate);
                           if (daysDiff < 0) notes = 'Paid early';
@@ -498,8 +366,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       } else if (isPartial) {
                         statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(paymentPercent)}%)</Badge>;
                         statusColor = 'bg-amber-50/30';
-                        if (rowTransactions.length > 0) {
-                          datePaid = format(new Date(rowTransactions[0].date), 'MMM dd, yyyy');
+                        if (payments.length > 0) {
+                          datePaid = format(new Date(payments[0].date), 'MMM dd, yyyy');
                         }
                       } else if (daysOverdue > 0) {
                         statusBadge = <Badge className="bg-red-500 text-white">Late</Badge>;
