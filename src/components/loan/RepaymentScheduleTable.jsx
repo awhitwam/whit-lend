@@ -330,15 +330,44 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       });
                     });
 
-                    // Apply each transaction using waterfall logic (skip initial interest payments)
+                    // Apply each transaction using closest-date waterfall logic
                     const transactionsToApply = initialInterestEntry 
                       ? sortedTransactions.filter(tx => !initialInterestEntry.transactions.includes(tx))
                       : sortedTransactions;
 
                     for (const tx of transactionsToApply) {
                       let remainingAmount = tx.amount;
+                      const txDate = new Date(tx.date);
 
-                      for (const row of sortedSchedule) {
+                      // Sort schedule by proximity to transaction date
+                      // Prioritize past unpaid entries, then future ones
+                      const scheduleByProximity = [...sortedSchedule].sort((a, b) => {
+                        const aDate = new Date(a.due_date);
+                        const bDate = new Date(b.due_date);
+                        const aBucket = scheduleToTransactions.get(a.id);
+                        const bBucket = scheduleToTransactions.get(b.id);
+
+                        const aHasRemaining = (aBucket.interestRemaining + aBucket.principalRemaining) > 0.01;
+                        const bHasRemaining = (bBucket.interestRemaining + bBucket.principalRemaining) > 0.01;
+
+                        // Skip fully paid entries
+                        if (!aHasRemaining && bHasRemaining) return 1;
+                        if (aHasRemaining && !bHasRemaining) return -1;
+
+                        const aPast = aDate <= txDate;
+                        const bPast = bDate <= txDate;
+
+                        // Prioritize past unpaid entries
+                        if (aPast && !bPast) return -1;
+                        if (!aPast && bPast) return 1;
+
+                        // Within same timeframe (both past or both future), sort by proximity
+                        const aDiff = Math.abs(txDate - aDate);
+                        const bDiff = Math.abs(txDate - bDate);
+                        return aDiff - bDiff;
+                      });
+
+                      for (const row of scheduleByProximity) {
                         if (remainingAmount <= 0.01) break;
 
                         const bucket = scheduleToTransactions.get(row.id);
@@ -456,8 +485,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         datePaid = '—';
                       }
 
-                      // Only show splits if there are multiple transactions AND status is partial
-                      const showSplits = isPartial && rowTransactions.length > 1;
+                      // Show splits if there are multiple transactions OR if status is partial with at least one transaction
+                      const showSplits = (rowTransactions.length > 1) || (isPartial && rowTransactions.length >= 1);
 
                       return (
                         <React.Fragment key={row.id}>
