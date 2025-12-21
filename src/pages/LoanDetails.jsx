@@ -453,8 +453,8 @@ export default function LoanDetails() {
   const scheduleInterestPaid = schedule.reduce((sum, row) => sum + (row.interest_paid || 0), 0);
   const totalPaidFromSchedule = actualPrincipalPaid + actualInterestPaid;
   
-  const principalRemaining = loan.principal_amount - schedulePrincipalPaid;
-  const interestRemaining = loan.total_interest - scheduleInterestPaid;
+  const principalRemaining = loan.principal_amount - actualPrincipalPaid;
+  const interestRemaining = loan.total_interest - actualInterestPaid;
   const totalOutstanding = principalRemaining + interestRemaining;
   const progressPercent = totalPaidFromSchedule / loan.total_repayable * 100;
   const liveInterestOutstanding = calculateLiveInterestOutstanding(loan);
