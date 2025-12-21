@@ -532,14 +532,16 @@ export default function Config() {
 
           // Create transaction records with raw data
           for (const tx of loanTxs) {
+            const isPrincipal = tx.type === 'Principal Collections';
+
             await base44.entities.Transaction.create({
               loan_id: loan.id,
               borrower_id: borrower.id,
               amount: tx.amount,
               date: tx.date,
               type: 'Repayment',
-              principal_applied: 0,
-              interest_applied: tx.amount,
+              principal_applied: isPrincipal ? tx.amount : 0,
+              interest_applied: isPrincipal ? 0 : tx.amount,
               reference: tx.type,
               notes: `Imported: ${tx.details}`
             });
