@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2 } from 'lucide-react';
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2, StopCircle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { generateRepaymentSchedule, calculateLoanSummary, applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
 
@@ -16,6 +16,7 @@ export default function Config() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [logs, setLogs] = useState([]);
+  const cancelImport = useRef(false);
   
   const [selectedTables, setSelectedTables] = useState({
     RepaymentSchedule: false,
@@ -244,6 +245,7 @@ export default function Config() {
     setProgress(0);
     setResult(null);
     setLogs([]);
+    cancelImport.current = false;
     
     addLog('🚀 Starting import process...');
 
@@ -264,6 +266,10 @@ export default function Config() {
       const productMap = {};
       let prodCount = 0;
       for (const category of productCategories) {
+        if (cancelImport.current) {
+          addLog('❌ Import cancelled by user');
+          return;
+        }
         try {
           const product = await base44.entities.LoanProduct.create({
             name: category,
@@ -298,6 +304,10 @@ export default function Config() {
 
       const expenseTypeMap = {};
       for (const category of expenseCategories) {
+        if (cancelImport.current) {
+          addLog('❌ Import cancelled by user');
+          return;
+        }
         try {
           const expenseType = await base44.entities.ExpenseType.create({
             name: category,
@@ -336,6 +346,10 @@ export default function Config() {
       const totalLoans = Object.keys(loanGroups).length;
       
       for (const [loanNum, transactions] of Object.entries(loanGroups)) {
+        if (cancelImport.current) {
+          addLog('❌ Import cancelled by user');
+          return;
+        }
         try {
           const loanRelease = transactions.find(t => t.Type === 'Loan Released');
           const deductableFee = transactions.find(t => t.Type === 'Deductable Fee');
@@ -457,6 +471,10 @@ export default function Config() {
       let loanCount = 0;
 
       for (const [loanNum, loanData] of Object.entries(loanMap)) {
+        if (cancelImport.current) {
+          addLog('❌ Import cancelled by user');
+          return;
+        }
         try {
           const { loan, borrower, transactions: loanTxs } = loanData;
 
@@ -531,6 +549,10 @@ export default function Config() {
       let expBatch = [];
       
       for (const row of rows) {
+        if (cancelImport.current) {
+          addLog('❌ Import cancelled by user');
+          return;
+        }
         if (row.Type === 'Expenses' && row.Out) {
           const amount = parseFloat(row.Out);
           const expenseType = expenseTypeMap[row.Category];
@@ -645,9 +667,22 @@ export default function Config() {
 
                 {importing && (
                   <div className="space-y-3">
-                    <div className="flex items-center gap-3">
-                      <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-                      <span className="text-sm font-medium">{status}</span>
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                        <span className="text-sm font-medium">{status}</span>
+                      </div>
+                      <Button 
+                        variant="destructive" 
+                        size="sm"
+                        onClick={() => {
+                          cancelImport.current = true;
+                          addLog('⏹️ Stopping import...');
+                        }}
+                      >
+                        <StopCircle className="w-4 h-4 mr-2" />
+                        Stop Import
+                      </Button>
                     </div>
                     <Progress value={progress} className="h-2" />
                     <p className="text-xs text-slate-500 text-center">{progress}% complete</p>
