@@ -433,11 +433,31 @@ export default function Config() {
           
           if (!product) continue;
           
-          // Generate repayment schedule
+          // Calculate actual loan duration based on transaction dates
+          const loanStartDate = new Date(parseDate(loanRelease.Date));
+          const loanTransactions = transactions.filter(t => 
+            t.Type === 'Interest Collections' || t.Type === 'Principal Collections'
+          );
+          
+          let calculatedDuration = 6; // Default minimum
+          if (loanTransactions.length > 0) {
+            // Find the latest transaction date
+            const latestTxDate = new Date(parseDate(
+              loanTransactions[loanTransactions.length - 1].Date
+            ));
+            
+            // Calculate months between start and latest transaction
+            const monthsDiff = Math.ceil(
+              (latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24 * 30.44)
+            );
+            calculatedDuration = Math.max(monthsDiff + 6, 6); // Add 6 months buffer
+          }
+          
+          // Generate repayment schedule with calculated duration
           const schedule = generateRepaymentSchedule({
             principal: principalAmount,
             interestRate: product.interest_rate,
-            duration: 6,
+            duration: calculatedDuration,
             interestType: product.interest_type,
             period: product.period,
             startDate: parseDate(loanRelease.Date),
@@ -461,13 +481,14 @@ export default function Config() {
             interest_rate: product.interest_rate,
             interest_type: product.interest_type,
             period: product.period,
-            duration: 6,
+            duration: calculatedDuration,
             start_date: parseDate(loanRelease.Date),
             status: 'Live',
             total_interest: summary.totalInterest,
             total_repayable: summary.totalRepayable,
             principal_paid: 0,
-            interest_paid: 0
+            interest_paid: 0,
+            auto_extend: true
           });
 
           // Create repayment schedule
