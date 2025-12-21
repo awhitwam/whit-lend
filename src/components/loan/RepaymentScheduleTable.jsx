@@ -5,13 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Merge, Split, List } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, List } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  const [viewMode, setViewMode] = useState('merged'); // 'merged', 'separate', 'detailed'
+  const [viewMode, setViewMode] = useState('detailed'); // 'separate', 'detailed'
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
@@ -22,100 +22,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   // Create combined or separate rows based on view mode
   let combinedRows;
 
-  if (viewMode === 'merged') {
-    // MERGED VIEW: Combine transactions with schedule entries in same month
-    const allDates = new Set();
-    const monthMap = new Map();
-
-    if (loan) {
-      allDates.add(format(new Date(loan.start_date), 'yyyy-MM-dd'));
-    }
-
-    schedule.forEach(row => {
-      const scheduleDate = new Date(row.due_date);
-      const monthKey = format(scheduleDate, 'yyyy-MM');
-      if (!monthMap.has(monthKey)) {
-        monthMap.set(monthKey, []);
-      }
-      monthMap.get(monthKey).push(row);
-    });
-
-    transactions.filter(tx => !tx.is_deleted).forEach(tx => {
-      allDates.add(format(new Date(tx.date), 'yyyy-MM-dd'));
-    });
-
-    const processedScheduleIds = new Set();
-
-    schedule.forEach(row => {
-      const scheduleDate = new Date(row.due_date);
-      const monthKey = format(scheduleDate, 'yyyy-MM');
-
-      const txInMonth = transactions.filter(tx => !tx.is_deleted).some(tx => 
-        format(new Date(tx.date), 'yyyy-MM') === monthKey
-      );
-
-      if (!txInMonth) {
-        allDates.add(format(scheduleDate, 'yyyy-MM-dd'));
-      }
-    });
-
-    combinedRows = Array.from(allDates)
-      .sort()
-      .map(dateStr => {
-        const date = new Date(dateStr);
-        const monthKey = format(date, 'yyyy-MM');
-
-        const txs = transactions.filter(tx => 
-          !tx.is_deleted && format(new Date(tx.date), 'yyyy-MM-dd') === dateStr
-        );
-
-        let scheduleEntry = schedule.find(s => 
-          format(new Date(s.due_date), 'yyyy-MM-dd') === dateStr
-        );
-
-        if (txs.length > 0 && !scheduleEntry) {
-          const scheduleInMonth = monthMap.get(monthKey);
-          if (scheduleInMonth && scheduleInMonth.length > 0) {
-            const availableSchedules = scheduleInMonth.filter(s => !processedScheduleIds.has(s.id));
-
-            if (availableSchedules.length > 0) {
-              const closestSchedule = availableSchedules
-                .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), date)) - Math.abs(differenceInDays(new Date(b.due_date), date)))[0];
-
-              scheduleEntry = closestSchedule;
-              processedScheduleIds.add(closestSchedule.id);
-            }
-          }
-        }
-
-        if (!txs.length && scheduleEntry) {
-          const txInMonth = transactions.filter(tx => 
-            !tx.is_deleted && format(new Date(tx.date), 'yyyy-MM') === monthKey
-          );
-
-          if (txInMonth.length > 0 && !processedScheduleIds.has(scheduleEntry.id)) {
-            return null;
-          }
-        }
-
-        const isDisbursement = loan && format(new Date(loan.start_date), 'yyyy-MM-dd') === dateStr;
-
-        let daysDifference = null;
-        if (txs.length > 0 && scheduleEntry) {
-          daysDifference = differenceInDays(date, new Date(scheduleEntry.due_date));
-        }
-
-        return {
-          date,
-          dateStr,
-          isDisbursement,
-          transactions: txs,
-          scheduleEntry,
-          daysDifference
-        };
-      })
-      .filter(row => row !== null);
-  } else if (viewMode === 'separate') {
+  if (viewMode === 'separate') {
     // SEPARATE VIEW: Show all schedule entries and all transactions separately
     // Every transaction gets its own row, every schedule entry gets its own row
     const allRows = [];
@@ -276,13 +183,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
               <Button
-                variant={viewMode === 'merged' ? "default" : "ghost"}
+                variant={viewMode === 'detailed' ? "default" : "ghost"}
                 size="sm"
-                onClick={() => setViewMode('merged')}
+                onClick={() => setViewMode('detailed')}
                 className="gap-1 h-8"
               >
-                <Merge className="w-4 h-4" />
-                Merged
+                <List className="w-4 h-4" />
+                SmartView
               </Button>
               <Button
                 variant={viewMode === 'separate' ? "default" : "ghost"}
@@ -292,15 +199,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               >
                 <Split className="w-4 h-4" />
                 Separate
-              </Button>
-              <Button
-                variant={viewMode === 'detailed' ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode('detailed')}
-                className="gap-1 h-8"
-              >
-                <List className="w-4 h-4" />
-                Detailed
               </Button>
             </div>
             <div className="h-4 w-px bg-slate-300" />
