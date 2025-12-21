@@ -369,6 +369,37 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+                    // Check if there's an initial interest payment on loan start date
+                    let initialInterestEntry = null;
+                    if (loan && sortedSchedule.length > 0) {
+                      const loanStartDate = format(new Date(loan.start_date), 'yyyy-MM-dd');
+                      const firstInstallmentDate = sortedSchedule[0].due_date;
+
+                      // If first installment is after loan start date, there might be initial interest
+                      if (loanStartDate < firstInstallmentDate) {
+                        const txOnStartDate = sortedTransactions.filter(tx => 
+                          format(new Date(tx.date), 'yyyy-MM-dd') === loanStartDate
+                        );
+
+                        // If there are payments on start date and it's interest-based loan
+                        if (txOnStartDate.length > 0 && sortedSchedule[0].interest_amount > 0) {
+                          initialInterestEntry = {
+                            id: 'initial',
+                            installment_number: 0,
+                            due_date: loanStartDate,
+                            interest_amount: sortedSchedule[0].interest_amount,
+                            principal_amount: 0,
+                            total_due: sortedSchedule[0].interest_amount,
+                            transactions: txOnStartDate,
+                            interestPaid: txOnStartDate.reduce((sum, tx) => sum + tx.amount, 0),
+                            principalPaid: 0,
+                            interestRemaining: 0,
+                            principalRemaining: 0
+                          };
+                        }
+                      }
+                    }
+
                     // Create map of schedule row to transactions that paid it
                     const scheduleToTransactions = new Map();
                     sortedSchedule.forEach(row => {
