@@ -235,7 +235,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     }
 
     // Pagination logic
-    const totalPages = Math.ceil(combinedRows.length / itemsPerPage);
+    const itemCount = viewMode === 'detailed' ? schedule.length : combinedRows.length;
+    const totalPages = Math.ceil(itemCount / itemsPerPage);
     const startIndex = (currentPage - 1) * itemsPerPage;
     const endIndex = startIndex + itemsPerPage;
     const paginatedRows = combinedRows.slice(startIndex, endIndex);
@@ -297,7 +298,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               </SelectContent>
             </Select>
             <span className="text-sm text-slate-600">entries</span>
-            {!isLoading && combinedRows.length > 0 && (
+            {!isLoading && itemCount > 0 && (
               <>
                 <div className="h-4 w-px bg-slate-300 mx-1" />
                 <div className="flex items-center gap-2">
@@ -327,7 +328,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             )}
           </div>
           <div className="text-sm text-slate-600">
-            Showing {startIndex + 1} to {Math.min(endIndex, combinedRows.length)} of {combinedRows.length}
+            Showing {startIndex + 1} to {Math.min(endIndex, itemCount)} of {itemCount}
           </div>
         </div>
         <div className="max-h-[600px] overflow-y-auto relative">
