@@ -17,22 +17,52 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     .filter(tx => !tx.is_deleted)
     .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
   
-  // Create combined entries with all unique dates
+  // Create combined entries - merge transactions with schedule entries in same month
   const allDates = new Set();
+  const monthMap = new Map(); // Track schedule entries by month
   
   // Add disbursement date
   if (loan) {
     allDates.add(format(new Date(loan.start_date), 'yyyy-MM-dd'));
   }
   
-  // Add all transaction dates
-  transactions.filter(tx => !tx.is_deleted).forEach(tx => {
-    allDates.add(format(new Date(tx.date), 'yyyy-MM-dd'));
+  // Map schedule entries by month
+  schedule.forEach(row => {
+    const scheduleDate = new Date(row.due_date);
+    const monthKey = format(scheduleDate, 'yyyy-MM');
+    if (!monthMap.has(monthKey)) {
+      monthMap.set(monthKey, []);
+    }
+    monthMap.get(monthKey).push(row);
   });
   
-  // Add all schedule dates
+  // Add transaction dates and try to merge with schedule entries
+  const processedScheduleIds = new Set();
+  transactions.filter(tx => !tx.is_deleted).forEach(tx => {
+    const txDate = new Date(tx.date);
+    const txMonthKey = format(txDate, 'yyyy-MM');
+    
+    // Check if there's a schedule entry in the same month
+    const scheduleInMonth = monthMap.get(txMonthKey);
+    if (scheduleInMonth && scheduleInMonth.length > 0) {
+      // Find the closest unprocessed schedule entry
+      const closestSchedule = scheduleInMonth
+        .filter(s => !processedScheduleIds.has(s.id))
+        .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), txDate)) - Math.abs(differenceInDays(new Date(b.due_date), txDate)))[0];
+      
+      if (closestSchedule) {
+        processedScheduleIds.add(closestSchedule.id);
+      }
+    }
+    
+    allDates.add(format(txDate, 'yyyy-MM-dd'));
+  });
+  
+  // Add remaining unprocessed schedule dates
   schedule.forEach(row => {
-    allDates.add(format(new Date(row.due_date), 'yyyy-MM-dd'));
+    if (!processedScheduleIds.has(row.id)) {
+      allDates.add(format(new Date(row.due_date), 'yyyy-MM-dd'));
+    }
   });
   
   // Create combined rows
@@ -40,6 +70,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     .sort()
     .map(dateStr => {
       const date = new Date(dateStr);
+      const monthKey = format(date, 'yyyy-MM');
       
       // Find matching transaction(s)
       const txs = transactions.filter(tx => 
@@ -47,19 +78,41 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       );
       
       // Find matching schedule entry
-      const scheduleEntry = schedule.find(s => 
+      let scheduleEntry = schedule.find(s => 
         format(new Date(s.due_date), 'yyyy-MM-dd') === dateStr
       );
       
+      // If this is a transaction date, look for schedule entry in same month to merge
+      if (txs.length > 0 && !scheduleEntry) {
+        const scheduleInMonth = monthMap.get(monthKey);
+        if (scheduleInMonth && scheduleInMonth.length > 0) {
+          const closestSchedule = scheduleInMonth
+            .filter(s => !processedScheduleIds.has(s.id) || format(new Date(s.due_date), 'yyyy-MM-dd') === dateStr)
+            .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), date)) - Math.abs(differenceInDays(new Date(b.due_date), date)))[0];
+          
+          if (closestSchedule && Math.abs(differenceInDays(new Date(closestSchedule.due_date), date)) <= 15) {
+            scheduleEntry = closestSchedule;
+            processedScheduleIds.add(closestSchedule.id);
+          }
+        }
+      }
+      
       // Check if this is the disbursement date
       const isDisbursement = loan && format(new Date(loan.start_date), 'yyyy-MM-dd') === dateStr;
+      
+      // Calculate days difference if we have both transaction and schedule
+      let daysDifference = null;
+      if (txs.length > 0 && scheduleEntry) {
+        daysDifference = differenceInDays(date, new Date(scheduleEntry.due_date));
+      }
       
       return {
         date,
         dateStr,
         isDisbursement,
         transactions: txs,
-        scheduleEntry
+        scheduleEntry,
+        daysDifference
       };
     });
   
@@ -260,7 +313,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 }
               >
                 <TableCell className="py-2">
-                  <p className="font-medium">{format(row.date, 'MMM dd, yyyy')}</p>
+                  <div>
+                    <p className="font-medium">{format(row.date, 'MMM dd, yyyy')}</p>
+                    {row.daysDifference !== null && (
+                      <p className={`text-xs ${row.daysDifference > 0 ? 'text-red-600' : row.daysDifference < 0 ? 'text-emerald-600' : 'text-slate-500'}`}>
+                        {row.daysDifference === 0 ? 'On time' : `${Math.abs(row.daysDifference)} days ${row.daysDifference > 0 ? 'late' : 'early'}`}
+                        {row.scheduleEntry && ` (exp: ${format(new Date(row.scheduleEntry.due_date), 'dd')})`}
+                      </p>
+                    )}
+                  </div>
                 </TableCell>
                 
                 {/* Actual Transactions */}
