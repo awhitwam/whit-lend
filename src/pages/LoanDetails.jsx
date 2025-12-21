@@ -517,7 +517,7 @@ export default function LoanDetails() {
                         </DropdownMenuItem>
                       </>
                     )}
-                    {loan.status === 'Active' && (
+                    {(loan.status === 'Active' || loan.status === 'Live') && (
                       <DropdownMenuItem onClick={() => toggleAutoExtendMutation.mutate()}>
                         <Repeat className="w-4 h-4 mr-2" />
                         {loan.auto_extend ? 'Disable' : 'Enable'} Auto-Extend
