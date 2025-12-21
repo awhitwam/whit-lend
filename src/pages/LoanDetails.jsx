@@ -742,7 +742,7 @@ export default function LoanDetails() {
                 <h2 className="text-xl font-semibold text-slate-900">Repayment Schedule</h2>
                 <Badge variant="outline">{schedule.length} installments</Badge>
               </div>
-              <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} />
+              <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
             </div>
           </TabsContent>
 

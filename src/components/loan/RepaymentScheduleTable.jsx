@@ -1,221 +1,122 @@
-import { format, isPast, isToday } from 'date-fns';
+import { format } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from './LoanCalculator';
-import { CheckCircle2, Clock, AlertTriangle, CircleDot, DollarSign } from 'lucide-react';
 
-export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [] }) {
-  // Check if any row has principal due (to show/hide principal column)
-  const hasPrincipalPayments = schedule.some(row => row.principal_amount > 0);
-
-  // Combine schedule rows and transaction rows, sorted by date
-  const combinedRows = [];
+export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
+  // Create ledger entries
+  const ledgerEntries = [];
   
-  // Add schedule rows
-  schedule.forEach(row => {
-    combinedRows.push({
-      type: 'schedule',
-      date: new Date(row.due_date),
-      data: row
+  // Add loan disbursement as first entry
+  if (loan) {
+    ledgerEntries.push({
+      type: 'disbursement',
+      date: new Date(loan.start_date),
+      description: 'Loan Disbursement',
+      debit: loan.principal_amount,
+      credit: 0,
+      balance: -loan.principal_amount
     });
-  });
+  }
   
-  // Add transaction rows (excluding deleted and disbursements)
+  // Add all transactions (actual repayments)
   transactions
-    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+    .filter(tx => !tx.is_deleted)
     .forEach(tx => {
-      combinedRows.push({
-        type: 'transaction',
-        date: new Date(tx.date),
-        data: tx
-      });
+      if (tx.type === 'Repayment') {
+        ledgerEntries.push({
+          type: 'repayment',
+          date: new Date(tx.date),
+          description: `Payment Received${tx.reference ? ` - ${tx.reference}` : ''}`,
+          debit: 0,
+          credit: tx.amount,
+          principal: tx.principal_applied || 0,
+          interest: tx.interest_applied || 0,
+          reference: tx.reference,
+          notes: tx.notes
+        });
+      }
     });
   
   // Sort by date
-  combinedRows.sort((a, b) => a.date - b.date);
+  ledgerEntries.sort((a, b) => a.date - b.date);
+  
+  // Calculate running balance
+  let runningBalance = 0;
+  ledgerEntries.forEach(entry => {
+    if (entry.type === 'disbursement') {
+      runningBalance = -entry.debit;
+    } else {
+      runningBalance += entry.credit;
+    }
+    entry.runningBalance = runningBalance;
+  });
 
-  const getStatusBadge = (row) => {
-    const isPastDue = isPast(new Date(row.due_date)) && !isToday(new Date(row.due_date));
-    
-    if (row.status === 'Paid') {
-      return (
-        <Badge className="bg-emerald-50 text-emerald-700 border-emerald-200">
-          <CheckCircle2 className="w-3 h-3 mr-1" />
-          Paid
-        </Badge>
-      );
-    }
-    if (row.status === 'Partial') {
-      return (
-        <Badge className="bg-amber-50 text-amber-700 border-amber-200">
-          <CircleDot className="w-3 h-3 mr-1" />
-          Partial
-        </Badge>
-      );
-    }
-    if (isPastDue || row.status === 'Overdue') {
-      return (
-        <Badge className="bg-red-50 text-red-700 border-red-200">
-          <AlertTriangle className="w-3 h-3 mr-1" />
-          Overdue
-        </Badge>
-      );
-    }
-    return (
-      <Badge className="bg-slate-50 text-slate-600 border-slate-200">
-        <Clock className="w-3 h-3 mr-1" />
-        Pending
-      </Badge>
-    );
-  };
 
-  const getRowClass = (row) => {
-    const isPastDue = isPast(new Date(row.due_date)) && !isToday(new Date(row.due_date));
-    
-    if (row.status === 'Paid') return 'bg-emerald-50/30';
-    if (row.status === 'Partial') return 'bg-amber-50/30';
-    if (isPastDue) return 'bg-red-50/30';
-    if (isToday(new Date(row.due_date))) return 'bg-blue-50/30';
-    return '';
-  };
-
-  // Calculate cumulative total due based on unpaid interest
-  const getAccumulatedTotalDue = (currentRow, index) => {
-    let accumulatedInterest = 0;
-    let accumulatedPrincipal = 0;
-    
-    // Sum up all interest and principal from start to current row
-    for (let i = 0; i <= index; i++) {
-      const row = schedule[i];
-      const interestUnpaid = row.interest_amount - (row.interest_paid || 0);
-      const principalUnpaid = row.principal_amount - (row.principal_paid || 0);
-      accumulatedInterest += interestUnpaid;
-      accumulatedPrincipal += principalUnpaid;
-    }
-    
-    return accumulatedInterest + accumulatedPrincipal;
-  };
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
       <Table>
         <TableHeader>
           <TableRow className="bg-slate-50/50">
-            <TableHead className="font-semibold w-16">#</TableHead>
-            <TableHead className="font-semibold">Due Date</TableHead>
-            {hasPrincipalPayments && (
-              <TableHead className="font-semibold text-right">Principal</TableHead>
-            )}
+            <TableHead className="font-semibold">Date</TableHead>
+            <TableHead className="font-semibold">Description</TableHead>
+            <TableHead className="font-semibold text-right">Principal</TableHead>
             <TableHead className="font-semibold text-right">Interest</TableHead>
-            <TableHead className="font-semibold text-right">Total Due</TableHead>
-            <TableHead className="font-semibold text-right">Paid</TableHead>
+            <TableHead className="font-semibold text-right">Debit</TableHead>
+            <TableHead className="font-semibold text-right">Credit</TableHead>
             <TableHead className="font-semibold text-right">Balance</TableHead>
-            <TableHead className="font-semibold">Status</TableHead>
-            </TableRow>
-            </TableHeader>
+          </TableRow>
+        </TableHeader>
         <TableBody>
           {isLoading ? (
             Array(6).fill(0).map((_, i) => (
               <TableRow key={i}>
-                <TableCell colSpan={hasPrincipalPayments ? 8 : 7} className="h-14">
+                <TableCell colSpan={7} className="h-14">
                   <div className="h-4 bg-slate-100 rounded animate-pulse w-full"></div>
                 </TableCell>
               </TableRow>
             ))
-          ) : combinedRows.length === 0 ? (
+          ) : ledgerEntries.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={hasPrincipalPayments ? 8 : 7} className="text-center py-12 text-slate-500">
-                No repayment schedule found
+              <TableCell colSpan={7} className="text-center py-12 text-slate-500">
+                No transaction history
               </TableCell>
             </TableRow>
           ) : (
-            combinedRows.map((item, index) => {
-              if (item.type === 'transaction') {
-                const tx = item.data;
-                return (
-                  <TableRow 
-                    key={`tx-${tx.id}`}
-                    className="bg-emerald-50/50 border-l-4 border-emerald-500"
-                  >
-                    <TableCell>
-                      <div className="flex items-center gap-2">
-                        <div className="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center">
-                          <DollarSign className="w-4 h-4 text-emerald-600" />
-                        </div>
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium text-emerald-900">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
-                        <p className="text-xs text-emerald-700">Payment Received</p>
-                      </div>
-                    </TableCell>
-                    {hasPrincipalPayments && (
-                      <TableCell className="text-right font-mono text-sm text-emerald-700">
-                        -{formatCurrency(tx.principal_applied || 0)}
-                      </TableCell>
-                    )}
-                    <TableCell className="text-right font-mono text-sm text-emerald-700">
-                      -{formatCurrency(tx.interest_applied || 0)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono font-semibold text-emerald-900">
-                      -{formatCurrency(tx.amount)}
-                    </TableCell>
-                    <TableCell colSpan="2" className="text-xs text-slate-500">
-                      {tx.reference && <span className="font-medium">Ref: {tx.reference}</span>}
-                      {tx.notes && <span className="ml-2">{tx.notes}</span>}
-                    </TableCell>
-                    <TableCell>
-                      <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200">
-                        <CheckCircle2 className="w-3 h-3 mr-1" />
-                        Payment
-                      </Badge>
-                    </TableCell>
-                  </TableRow>
-                );
-              } else {
-                const row = item.data;
-                const scheduleIndex = schedule.findIndex(s => s.id === row.id);
-                return (
-                  <TableRow 
-                    key={row.id || row.installment_number} 
-                    className={`${getRowClass(row)} transition-colors`}
-                  >
-                    <TableCell className="font-medium">
-                      <div className="w-8 h-8 rounded-full bg-slate-100 flex items-center justify-center text-sm">
-                        {row.installment_number}
-                      </div>
-                    </TableCell>
-                    <TableCell>
-                      <div>
-                        <p className="font-medium">{format(new Date(row.due_date), 'MMM dd, yyyy')}</p>
-                        <p className="text-xs text-slate-500">{format(new Date(row.due_date), 'EEEE')}</p>
-                      </div>
-                    </TableCell>
-                    {hasPrincipalPayments && (
-                      <TableCell className="text-right font-mono text-sm">
-                        {formatCurrency(row.principal_amount)}
-                      </TableCell>
-                    )}
-                    <TableCell className="text-right font-mono text-sm text-amber-600">
-                      {formatCurrency(row.interest_amount)}
-                    </TableCell>
-                    <TableCell className="text-right font-mono font-semibold">
-                      {formatCurrency(getAccumulatedTotalDue(row, scheduleIndex))}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm text-emerald-600">
-                      {formatCurrency((row.principal_paid || 0) + (row.interest_paid || 0))}
-                    </TableCell>
-                    <TableCell className="text-right font-mono text-sm">
-                      {formatCurrency(row.balance)}
-                    </TableCell>
-                    <TableCell>
-                      {getStatusBadge(row)}
-                    </TableCell>
-                  </TableRow>
-                );
-              }
-            })
+            ledgerEntries.map((entry, index) => (
+              <TableRow 
+                key={index}
+                className={entry.type === 'disbursement' ? 'bg-red-50/50 border-l-4 border-red-500' : 'bg-emerald-50/50 border-l-4 border-emerald-500'}
+              >
+                <TableCell>
+                  <div>
+                    <p className="font-medium">{format(entry.date, 'MMM dd, yyyy')}</p>
+                    <p className="text-xs text-slate-500">{format(entry.date, 'EEEE')}</p>
+                  </div>
+                </TableCell>
+                <TableCell>
+                  <div>
+                    <p className="font-medium">{entry.description}</p>
+                    {entry.notes && <p className="text-xs text-slate-500 mt-1">{entry.notes}</p>}
+                  </div>
+                </TableCell>
+                <TableCell className="text-right font-mono text-sm">
+                  {entry.principal > 0 ? formatCurrency(entry.principal) : '-'}
+                </TableCell>
+                <TableCell className="text-right font-mono text-sm">
+                  {entry.interest > 0 ? formatCurrency(entry.interest) : '-'}
+                </TableCell>
+                <TableCell className="text-right font-mono font-semibold text-red-600">
+                  {entry.debit > 0 ? formatCurrency(entry.debit) : '-'}
+                </TableCell>
+                <TableCell className="text-right font-mono font-semibold text-emerald-600">
+                  {entry.credit > 0 ? formatCurrency(entry.credit) : '-'}
+                </TableCell>
+                <TableCell className={`text-right font-mono font-bold ${entry.runningBalance < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {formatCurrency(Math.abs(entry.runningBalance))} {entry.runningBalance < 0 ? 'DR' : 'CR'}
+                </TableCell>
+              </TableRow>
+            ))
           )}
         </TableBody>
       </Table>
