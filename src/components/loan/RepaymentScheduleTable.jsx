@@ -1,4 +1,4 @@
-import { format } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from './LoanCalculator';
@@ -7,7 +7,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
-  const totalInterestCollected = transactions
+  let cumulativeInterestPaid = transactions
     .filter(tx => !tx.is_deleted)
     .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
   
@@ -57,43 +57,81 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       };
     });
   
-  // Calculate running balances and cumulative interest
-  let runningBalance = 0;
-  let cumulativeInterest = 0;
-  let interestReceived = 0;
-  
-  // Calculate the expected interest per period for extended periods
-  const lastScheduleEntry = schedule.length > 0 ? schedule[schedule.length - 1] : null;
-  const expectedInterestPerPeriod = lastScheduleEntry ? lastScheduleEntry.interest_amount : 0;
-  
-  combinedRows.forEach(row => {
-    if (row.isDisbursement) {
-      runningBalance = -loan.principal_amount;
-    }
-    
-    // Add principal from transactions
-    row.transactions.forEach(tx => {
-      runningBalance += tx.principal_applied || 0;
-      interestReceived += tx.interest_applied || 0;
+  if (loan) {
+    // Calculate running balances and cumulative interest with daily accrual
+    let principalOutstanding = loan.principal_amount;
+    let cumulativeInterestAccrued = 0;
+    let currentCumulativeInterestPaid = 0;
+    let lastInterestCalculationDate = new Date(loan.start_date);
+
+    combinedRows.forEach(row => {
+      const currentDate = row.date;
+
+      // Calculate interest that accrued since last calculation date
+      const daysSinceLastCalculation = Math.max(0, differenceInDays(currentDate, lastInterestCalculationDate));
+
+      if (daysSinceLastCalculation > 0 && principalOutstanding > 0) {
+        let interestAccruedDaily = 0;
+        const dailyRate = loan.interest_rate / 100 / 365;
+
+        if (loan.interest_type === 'Flat' || loan.interest_type === 'Interest-Only') {
+          interestAccruedDaily = loan.principal_amount * dailyRate;
+        } else if (loan.interest_type === 'Reducing' || loan.interest_type === 'Rolled-Up') {
+          interestAccruedDaily = principalOutstanding * dailyRate;
+        }
+        
+        cumulativeInterestAccrued += interestAccruedDaily * daysSinceLastCalculation;
+      }
+
+      // Apply actual transactions for the current date
+      row.transactions.forEach(tx => {
+        if (tx.principal_applied) {
+          principalOutstanding -= tx.principal_applied;
+        }
+        if (tx.interest_applied) {
+          currentCumulativeInterestPaid += tx.interest_applied;
+        }
+      });
+
+      principalOutstanding = Math.max(0, principalOutstanding);
+
+      // Set values for the current row
+      row.principalOutstanding = principalOutstanding;
+      row.interestOutstanding = cumulativeInterestAccrued - currentCumulativeInterestPaid;
+
+      // Calculate expected periodic interest for this row
+      if (row.scheduleEntry) {
+        row.expectedInterest = row.scheduleEntry.interest_amount;
+      } else if (principalOutstanding > 0 && row.date >= new Date(loan.start_date)) {
+        // Dynamically calculate expected periodic interest
+        let dynamicallyCalculatedExpectedInterest = 0;
+        const annualRate = loan.interest_rate / 100;
+
+        if (loan.period === 'Monthly') {
+          const monthlyRate = annualRate / 12;
+          if (loan.interest_type === 'Flat' || loan.interest_type === 'Interest-Only') {
+            dynamicallyCalculatedExpectedInterest = loan.principal_amount * monthlyRate;
+          } else if (loan.interest_type === 'Reducing' || loan.interest_type === 'Rolled-Up') {
+            dynamicallyCalculatedExpectedInterest = principalOutstanding * monthlyRate;
+          }
+        } else if (loan.period === 'Weekly') {
+          const weeklyRate = annualRate / 52;
+          if (loan.interest_type === 'Flat' || loan.interest_type === 'Interest-Only') {
+            dynamicallyCalculatedExpectedInterest = loan.principal_amount * weeklyRate;
+          } else if (loan.interest_type === 'Reducing' || loan.interest_type === 'Rolled-Up') {
+            dynamicallyCalculatedExpectedInterest = principalOutstanding * weeklyRate;
+          }
+        }
+        row.expectedInterest = dynamicallyCalculatedExpectedInterest;
+      } else {
+        row.expectedInterest = 0;
+      }
+
+      lastInterestCalculationDate = currentDate;
     });
-    
-    // Add expected interest from schedule OR calculate for extended periods
-    if (row.scheduleEntry) {
-      cumulativeInterest += row.scheduleEntry.interest_amount;
-      row.expectedInterest = row.scheduleEntry.interest_amount;
-    } else if (lastScheduleEntry && row.date > new Date(lastScheduleEntry.due_date)) {
-      // For dates after schedule ends, continue accruing interest at the same rate
-      cumulativeInterest += expectedInterestPerPeriod;
-      row.expectedInterest = expectedInterestPerPeriod;
-    } else {
-      row.expectedInterest = 0;
-    }
-    
-    row.runningBalance = runningBalance;
-    row.cumulativeInterest = cumulativeInterest;
-    row.interestReceived = interestReceived;
-    row.interestOutstanding = cumulativeInterest - interestReceived;
-  });
+
+    cumulativeInterestPaid = currentCumulativeInterestPaid;
+  }
 
   return (
     <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -113,10 +151,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               </TableHead>
               <TableHead className="font-semibold text-right bg-slate-50 sticky top-[42px]">
                 <div>Interest</div>
-                <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(totalInterestCollected)}</div>
+                <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(cumulativeInterestPaid)}</div>
               </TableHead>
-              <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50 sticky top-[42px]">Interest Due</TableHead>
-              <TableHead className="font-semibold text-right bg-slate-50 sticky top-[42px]">Outstanding</TableHead>
+              <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50 sticky top-[42px]">Expected Interest</TableHead>
+              <TableHead className="font-semibold text-right bg-slate-50 sticky top-[42px]">Total Outstanding</TableHead>
             </TableRow>
           </TableHeader>
         <TableBody>
@@ -172,8 +210,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200">
                       {row.expectedInterest > 0 ? formatCurrency(row.expectedInterest) : '-'}
                     </TableCell>
-                <TableCell className="text-right font-mono text-sm font-semibold text-red-600">
-                  {formatCurrency(row.interestOutstanding)}
+                <TableCell className="text-right font-mono text-sm font-semibold">
+                  {formatCurrency(row.principalOutstanding + row.interestOutstanding)}
                 </TableCell>
               </TableRow>
             ))}
@@ -181,7 +219,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             <TableRow className="bg-slate-100 font-bold border-t-2 border-slate-300">
               <TableCell colSpan={4} className="text-right">Total Outstanding:</TableCell>
               <TableCell className="text-right font-mono text-lg text-red-600">
-                {formatCurrency(combinedRows.length > 0 ? combinedRows[combinedRows.length - 1].interestOutstanding : 0)}
+                {formatCurrency(combinedRows.length > 0 ? (combinedRows[combinedRows.length - 1].principalOutstanding + combinedRows[combinedRows.length - 1].interestOutstanding) : 0)}
               </TableCell>
             </TableRow>
             </>
