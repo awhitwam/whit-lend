@@ -1,17 +1,17 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { format, differenceInDays } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Merge, Split } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Merge, Split, List } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  const [showMergedView, setShowMergedView] = useState(true);
+  const [viewMode, setViewMode] = useState('merged'); // 'merged', 'separate', 'detailed'
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
@@ -19,10 +19,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     .filter(tx => !tx.is_deleted)
     .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
   
-  // Create combined or separate rows based on toggle
+  // Create combined or separate rows based on view mode
   let combinedRows;
 
-  if (showMergedView) {
+  if (viewMode === 'merged') {
     // MERGED VIEW: Combine transactions with schedule entries in same month
     const allDates = new Set();
     const monthMap = new Map();
@@ -115,7 +115,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         };
       })
       .filter(row => row !== null);
-  } else {
+  } else if (viewMode === 'separate') {
     // SEPARATE VIEW: Show all schedule entries and all transactions separately
     const allRows = [];
 
@@ -153,6 +153,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     });
 
     combinedRows = allRows.sort((a, b) => a.date - b.date);
+  } else {
+    // DETAILED VIEW: Show schedule with nested transaction splits
+    combinedRows = [];
   }
   
   if (loan) {
@@ -250,24 +253,35 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
         <div className="flex items-center justify-between p-4 border-b border-slate-200">
           <div className="flex items-center gap-3">
-            <Button
-              variant={showMergedView ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowMergedView(!showMergedView)}
-              className="gap-2"
-            >
-              {showMergedView ? (
-                <>
-                  <Merge className="w-4 h-4" />
-                  Merged
-                </>
-              ) : (
-                <>
-                  <Split className="w-4 h-4" />
-                  Separate
-                </>
-              )}
-            </Button>
+            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+              <Button
+                variant={viewMode === 'merged' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode('merged')}
+                className="gap-1 h-8"
+              >
+                <Merge className="w-4 h-4" />
+                Merged
+              </Button>
+              <Button
+                variant={viewMode === 'separate' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode('separate')}
+                className="gap-1 h-8"
+              >
+                <Split className="w-4 h-4" />
+                Separate
+              </Button>
+              <Button
+                variant={viewMode === 'detailed' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode('detailed')}
+                className="gap-1 h-8"
+              >
+                <List className="w-4 h-4" />
+                Detailed
+              </Button>
+            </div>
             <div className="h-4 w-px bg-slate-300" />
             <span className="text-sm text-slate-600">Show</span>
             <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
@@ -317,6 +331,116 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           </div>
         </div>
         <div className="max-h-[600px] overflow-y-auto relative">
+        {viewMode === 'detailed' ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-slate-50 sticky top-0 z-20">
+                <TableHead className="font-semibold bg-slate-50 w-16">Inst.</TableHead>
+                <TableHead className="font-semibold bg-slate-50">Due Date</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Expected Amt</TableHead>
+                <TableHead className="font-semibold bg-slate-50">Status</TableHead>
+                <TableHead className="font-semibold bg-slate-50">Date Paid</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Amt Paid</TableHead>
+                <TableHead className="font-semibold bg-slate-50">Notes</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                Array(6).fill(0).map((_, i) => (
+                  <TableRow key={i}>
+                    <TableCell colSpan={7} className="h-14">
+                      <div className="h-4 bg-slate-100 rounded animate-pulse w-full"></div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : schedule.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={7} className="text-center py-12 text-slate-500">
+                    No schedule available
+                  </TableCell>
+                </TableRow>
+              ) : (
+                <>
+                  {schedule.slice(startIndex, endIndex).map((row) => {
+                    const relatedTxs = transactions.filter(tx => !tx.is_deleted && tx.date && 
+                      Math.abs(differenceInDays(new Date(tx.date), new Date(row.due_date))) <= 30
+                    );
+                    
+                    const totalPaid = (row.principal_paid || 0) + (row.interest_paid || 0);
+                    const expectedTotal = row.total_due;
+                    const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
+                    
+                    let statusBadge;
+                    let statusColor = '';
+                    let notes = '';
+                    
+                    const today = new Date();
+                    const dueDate = new Date(row.due_date);
+                    const daysLate = differenceInDays(today, dueDate);
+                    
+                    if (row.status === 'Paid') {
+                      statusBadge = <Badge className="bg-emerald-500 text-white">Paid</Badge>;
+                      statusColor = 'bg-emerald-50/30';
+                      
+                      if (relatedTxs.length > 0) {
+                        const firstTx = relatedTxs[0];
+                        const daysDiff = differenceInDays(new Date(firstTx.date), dueDate);
+                        if (daysDiff < 0) notes = 'Paid early';
+                        else if (daysDiff > 0) notes = `${daysDiff} days late`;
+                      }
+                    } else if (row.status === 'Partial') {
+                      statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(paymentPercent)}%)</Badge>;
+                      statusColor = 'bg-amber-50/30';
+                    } else if (daysLate > 0) {
+                      statusBadge = <Badge className="bg-red-500 text-white">Late</Badge>;
+                      statusColor = 'bg-red-50/30';
+                      notes = `${daysLate} days overdue`;
+                    } else {
+                      statusBadge = <Badge className="bg-blue-500 text-white">Upcoming</Badge>;
+                      statusColor = 'bg-blue-50/30';
+                    }
+                    
+                    return (
+                      <React.Fragment key={row.id}>
+                        <TableRow className={statusColor}>
+                          <TableCell className="font-medium">{row.installment_number}</TableCell>
+                          <TableCell>{format(new Date(row.due_date), 'MMM dd, yyyy')}</TableCell>
+                          <TableCell className="text-right font-mono">{formatCurrency(expectedTotal)}</TableCell>
+                          <TableCell>{statusBadge}</TableCell>
+                          <TableCell>
+                            {relatedTxs.length > 0 ? format(new Date(relatedTxs[0].date), 'MMM dd, yyyy') : '—'}
+                          </TableCell>
+                          <TableCell className="text-right font-mono">
+                            {totalPaid > 0 ? formatCurrency(totalPaid) : '$0.00'}
+                          </TableCell>
+                          <TableCell className="text-slate-600 text-sm">{notes}</TableCell>
+                        </TableRow>
+                        
+                        {relatedTxs.length > 1 && relatedTxs.map((tx, idx) => (
+                          <TableRow key={`${row.id}-split-${idx}`} className="bg-slate-50/50">
+                            <TableCell></TableCell>
+                            <TableCell className="pl-8 text-sm">
+                              <span className="text-slate-500">↳ Split {idx + 1}</span>
+                            </TableCell>
+                            <TableCell className="text-right text-sm text-slate-600">
+                              {format(new Date(tx.date), 'MMM dd, yyyy')}
+                            </TableCell>
+                            <TableCell className="text-sm text-slate-500">Received {format(new Date(tx.date), 'MMM dd')}</TableCell>
+                            <TableCell></TableCell>
+                            <TableCell className="text-right font-mono text-sm">
+                              {formatCurrency(tx.amount)}
+                            </TableCell>
+                            <TableCell className="text-sm text-slate-500">—</TableCell>
+                          </TableRow>
+                        ))}
+                      </React.Fragment>
+                    );
+                  })}
+                </>
+              )}
+            </TableBody>
+          </Table>
+        ) : (
         <Table>
               <TableHeader>
                 <TableRow className="bg-slate-50 sticky top-0 z-20 shadow-sm">
@@ -428,6 +552,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           )}
         </TableBody>
         </Table>
+        )}
         </div>
         </div>
         );
