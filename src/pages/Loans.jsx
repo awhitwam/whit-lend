@@ -44,6 +44,10 @@ export default function Loans() {
     let aVal, bVal;
     
     switch(sortField) {
+      case 'loan_number':
+        aVal = a.loan_number || '';
+        bVal = b.loan_number || '';
+        break;
       case 'borrower_name':
         aVal = a.borrower_name || '';
         bVal = b.borrower_name || '';
@@ -200,7 +204,15 @@ export default function Loans() {
                 <Table>
                   <TableHeader>
                     <TableRow className="bg-slate-50">
-                      <TableHead className="w-24">Loan ID</TableHead>
+                      <TableHead className="w-24">
+                        <button 
+                          onClick={() => handleSort('loan_number')}
+                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+                        >
+                          Loan #
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
                       <TableHead>
                         <button 
                           onClick={() => handleSort('borrower_name')}
@@ -255,11 +267,12 @@ export default function Loans() {
                       const principalRemaining = loan.principal_amount - (loan.principal_paid || 0);
                       const interestRemaining = loan.total_interest - (loan.interest_paid || 0);
                       const totalOutstanding = principalRemaining + interestRemaining;
-                      const loanDisplayId = 1000 + loans.findIndex(l => l.id === loan.id);
                       
                       return (
                         <TableRow key={loan.id} className="hover:bg-slate-50">
-                          <TableCell className="font-mono font-semibold text-slate-700">#{loanDisplayId}</TableCell>
+                          <TableCell className="font-mono font-semibold text-slate-700">
+                            {loan.loan_number || '-'}
+                          </TableCell>
                           <TableCell className="font-medium">{loan.borrower_name}</TableCell>
                           <TableCell className="text-slate-600">{loan.product_name}</TableCell>
                           <TableCell className="text-right font-mono font-semibold">
