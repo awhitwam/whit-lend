@@ -302,25 +302,32 @@ export default function Config() {
           return;
         }
         try {
-          const product = await base44.entities.LoanProduct.create({
-            name: category,
-            interest_rate: 15,
-            interest_type: 'Interest-Only',
-            period: 'Monthly',
-            min_amount: 1000,
-            max_amount: 1000000,
-            max_duration: 36
-          });
-          
-          productMap[category] = product;
-          prodCount++;
-          addLog(`  ✓ Created product: ${category}`);
+          // Check if product already exists
+          const existing = await base44.entities.LoanProduct.filter({ name: category });
+          if (existing.length > 0) {
+            productMap[category] = existing[0];
+            addLog(`  → Product already exists: ${category}`);
+          } else {
+            const product = await base44.entities.LoanProduct.create({
+              name: category,
+              interest_rate: 15,
+              interest_type: 'Interest-Only',
+              period: 'Monthly',
+              min_amount: 1000,
+              max_amount: 1000000,
+              max_duration: 36
+            });
+            
+            productMap[category] = product;
+            prodCount++;
+            addLog(`  ✓ Created product: ${category}`);
+          }
           await delay(1000);
         } catch (err) {
-          addLog(`  ✗ Error creating product ${category}: ${err.message}`);
+          addLog(`  ✗ Error with product ${category}: ${err.message}`);
         }
       }
-      addLog(`Total: ${prodCount} loan products created`);
+      addLog(`Total: ${prodCount} new loan products created`);
       
       setProgress(20);
       setStatus('Creating expense types...');
