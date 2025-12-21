@@ -282,43 +282,36 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               ) : (
                 <>
                   {(() => {
-                    // Sequential allocation: apply transactions in order to schedule entries
+                    // Match transactions by date proximity (original approach)
                     const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
                     const sortedTransactions = transactions
                       .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-                    // Track how much has been paid against each schedule entry
-                    const scheduleBalances = new Map(); // row.id -> { paid: number, transactions: [] }
-                    sortedSchedule.forEach(row => {
-                      scheduleBalances.set(row.id, { paid: 0, transactions: [] });
-                    });
-
-                    // Apply each transaction sequentially
-                    for (const tx of sortedTransactions) {
-                      let remainingAmount = tx.amount;
-
-                      // Apply to schedule entries in order until amount is exhausted
-                      for (const row of sortedSchedule) {
-                        if (remainingAmount <= 0.01) break;
-
-                        const balance = scheduleBalances.get(row.id);
-                        const needed = row.total_due - balance.paid;
-
-                        if (needed > 0.01) {
-                          const applied = Math.min(remainingAmount, needed);
-                          balance.paid += applied;
-                          balance.transactions.push({ tx, amount: applied });
-                          remainingAmount -= applied;
-                        }
-                      }
-                    }
-
+                    // Match each transaction to its nearest schedule entry by date
                     const initialPayments = new Map();
                     sortedSchedule.forEach(row => {
-                      const balance = scheduleBalances.get(row.id);
-                      initialPayments.set(row.id, balance.transactions.map(t => t.tx));
+                      initialPayments.set(row.id, []);
                     });
+
+                    for (const tx of sortedTransactions) {
+                      const txDate = new Date(tx.date);
+                      let closestRow = null;
+                      let closestDiff = Infinity;
+
+                      for (const row of sortedSchedule) {
+                        const rowDate = new Date(row.due_date);
+                        const diff = Math.abs(txDate - rowDate);
+                        if (diff < closestDiff) {
+                          closestDiff = diff;
+                          closestRow = row;
+                        }
+                      }
+
+                      if (closestRow) {
+                        initialPayments.get(closestRow.id).push(tx);
+                      }
+                    }
 
                     const allocatedAmounts = new Map();
                     const latePaymentSources = new Map();
@@ -340,9 +333,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                     return displayRows.map((row, idx) => {
                       // Get payments matched to this schedule entry
-                      const balance = scheduleBalances.get(row.id);
-                      const directPayment = balance.paid;
-                      const payments = balance.transactions.map(t => t.tx).filter((tx, i, arr) => arr.indexOf(tx) === i); // unique transactions
+                      const payments = initialPayments.get(row.id) || [];
+                      const directPayment = payments.reduce((sum, tx) => sum + tx.amount, 0);
                       const allocated = allocatedAmounts.get(row.id) || 0;
                       const totalPaid = directPayment + allocated;
                       const expectedTotal = row.total_due;
