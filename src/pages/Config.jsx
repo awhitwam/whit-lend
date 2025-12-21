@@ -441,22 +441,8 @@ export default function Config() {
           
           if (!product) continue;
           
-          // Calculate actual loan duration based on transaction dates
-          const loanStartDate = new Date(parseDate(loanRelease.Date));
-          const loanTransactions = transactions.filter(t => 
-            t.Type === 'Interest Collections' || t.Type === 'Principal Collections'
-          );
-          
-          let calculatedDuration = 6;
-          if (loanTransactions.length > 0) {
-            const latestTxDate = new Date(parseDate(
-              loanTransactions[loanTransactions.length - 1].Date
-            ));
-            const monthsDiff = Math.ceil(
-              (latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24 * 30.44)
-            );
-            calculatedDuration = Math.max(monthsDiff + 6, 6);
-          }
+          // Use default 6 month duration for all imported loans
+          const calculatedDuration = 6;
           
           // Use centralized schedule manager
           const { loan } = await applyScheduleToNewLoan({
