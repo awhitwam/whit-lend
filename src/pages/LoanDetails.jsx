@@ -40,6 +40,7 @@ import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import { format } from 'date-fns';
+import { toast } from 'sonner';
 
 export default function LoanDetails() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -79,6 +80,8 @@ export default function LoanDetails() {
 
   const editLoanMutation = useMutation({
     mutationFn: async (updatedData) => {
+      toast.loading('Updating loan...', { id: 'edit-loan' });
+      
       // Fetch the product to get its settings
       const products = await base44.entities.LoanProduct.filter({ id: updatedData.product_id });
       const product = products[0];
@@ -92,6 +95,8 @@ export default function LoanDetails() {
         period: product.period
       });
       
+      toast.loading('Regenerating schedule...', { id: 'edit-loan' });
+      
       // Delete old schedule
       const oldSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
       for (const row of oldSchedule) {
@@ -100,6 +105,8 @@ export default function LoanDetails() {
       
       // Use centralized schedule manager to regenerate
       await regenerateLoanSchedule(loanId, { duration: updatedData.duration });
+      
+      toast.loading('Reapplying payments...', { id: 'edit-loan' });
       
       // Reapply all non-deleted payments
       const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
@@ -133,7 +140,11 @@ export default function LoanDetails() {
       queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loans'] });
+      toast.success('Loan updated successfully', { id: 'edit-loan' });
       setIsEditOpen(false);
+    },
+    onError: () => {
+      toast.error('Failed to update loan', { id: 'edit-loan' });
     }
   });
 
@@ -156,6 +167,7 @@ export default function LoanDetails() {
 
   const deleteTransactionMutation = useMutation({
     mutationFn: async ({ transactionId, reason }) => {
+      toast.loading('Deleting transaction...', { id: 'delete-transaction' });
       const transaction = transactions.find(t => t.id === transactionId);
       const user = await base44.auth.me();
       
@@ -208,26 +220,45 @@ export default function LoanDetails() {
       queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loans'] });
+      toast.success('Transaction deleted', { id: 'delete-transaction' });
+    },
+    onError: () => {
+      toast.error('Failed to delete transaction', { id: 'delete-transaction' });
     }
   });
 
   const updateStatusMutation = useMutation({
-    mutationFn: (status) => base44.entities.Loan.update(loanId, { status }),
+    mutationFn: (status) => {
+      toast.loading('Updating loan status...', { id: 'update-status' });
+      return base44.entities.Loan.update(loanId, { status });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loans'] });
+      toast.success('Loan status updated', { id: 'update-status' });
+    },
+    onError: () => {
+      toast.error('Failed to update status', { id: 'update-status' });
     }
   });
 
   const toggleAutoExtendMutation = useMutation({
-    mutationFn: () => base44.entities.Loan.update(loanId, { auto_extend: !loan.auto_extend }),
+    mutationFn: () => {
+      toast.loading('Updating auto-extend...', { id: 'auto-extend' });
+      return base44.entities.Loan.update(loanId, { auto_extend: !loan.auto_extend });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
+      toast.success(`Auto-extend ${loan.auto_extend ? 'disabled' : 'enabled'}`, { id: 'auto-extend' });
+    },
+    onError: () => {
+      toast.error('Failed to update auto-extend', { id: 'auto-extend' });
     }
   });
 
   const clearScheduleMutation = useMutation({
     mutationFn: async () => {
+      toast.loading('Clearing repayment schedule...', { id: 'clear-schedule' });
       const scheduleRows = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
       for (const row of scheduleRows) {
         await base44.entities.RepaymentSchedule.delete(row.id);
@@ -235,13 +266,21 @@ export default function LoanDetails() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
+      toast.success('Schedule cleared successfully', { id: 'clear-schedule' });
+    },
+    onError: () => {
+      toast.error('Failed to clear schedule', { id: 'clear-schedule' });
     }
   });
 
   const recalculateLoanMutation = useMutation({
     mutationFn: async () => {
+      toast.loading('Regenerating repayment schedule...', { id: 'regenerate-schedule' });
+      
       // Use centralized schedule manager
       await regenerateLoanSchedule(loanId);
+
+      toast.loading('Reapplying payments...', { id: 'regenerate-schedule' });
 
       // Reapply all non-deleted payments
       const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
@@ -274,6 +313,10 @@ export default function LoanDetails() {
       queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loans'] });
+      toast.success('Schedule regenerated successfully', { id: 'regenerate-schedule' });
+    },
+    onError: () => {
+      toast.error('Failed to regenerate schedule', { id: 'regenerate-schedule' });
     }
   });
 
@@ -283,6 +326,8 @@ export default function LoanDetails() {
 
   const paymentMutation = useMutation({
     mutationFn: async (paymentData) => {
+      toast.loading('Processing payment...', { id: 'payment' });
+      
       // Check if this is a settlement payment
       const isSettlement = paymentData.notes?.toLowerCase().includes('settlement');
       
@@ -347,7 +392,11 @@ export default function LoanDetails() {
       queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
       queryClient.invalidateQueries({ queryKey: ['loans'] });
+      toast.success('Payment recorded successfully', { id: 'payment' });
       setIsPaymentOpen(false);
+    },
+    onError: () => {
+      toast.error('Failed to record payment', { id: 'payment' });
     }
   });
 
