@@ -282,78 +282,49 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               ) : (
                 <>
                   {(() => {
-                    // Smart allocation: match transactions by date, then allocate overpayments to previous underpayments
+                    // Sequential allocation: apply transactions in order to schedule entries
                     const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
                     const sortedTransactions = transactions
                       .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-                    // Initially match each transaction to its nearest schedule entry
-                    const initialPayments = new Map();
+                    // Track how much has been paid against each schedule entry
+                    const scheduleBalances = new Map(); // row.id -> { paid: number, transactions: [] }
                     sortedSchedule.forEach(row => {
-                      initialPayments.set(row.id, []);
+                      scheduleBalances.set(row.id, { paid: 0, transactions: [] });
                     });
 
+                    // Apply each transaction sequentially
                     for (const tx of sortedTransactions) {
-                      const txDate = new Date(tx.date);
-                      let closestRow = null;
-                      let closestDiff = Infinity;
+                      let remainingAmount = tx.amount;
 
+                      // Apply to schedule entries in order until amount is exhausted
                       for (const row of sortedSchedule) {
-                        const rowDate = new Date(row.due_date);
-                        const diff = Math.abs(txDate - rowDate);
-                        if (diff < closestDiff) {
-                          closestDiff = diff;
-                          closestRow = row;
-                        }
-                      }
+                        if (remainingAmount <= 0.01) break;
 
-                      if (closestRow) {
-                        initialPayments.get(closestRow.id).push(tx);
+                        const balance = scheduleBalances.get(row.id);
+                        const needed = row.total_due - balance.paid;
+
+                        if (needed > 0.01) {
+                          const applied = Math.min(remainingAmount, needed);
+                          balance.paid += applied;
+                          balance.transactions.push({ tx, amount: applied });
+                          remainingAmount -= applied;
+                        }
                       }
                     }
 
-                    // Now allocate overpayments to previous underpayments
-                    const allocatedAmounts = new Map(); // row.id -> allocated amount
-                    const latePaymentSources = new Map(); // row.id -> transaction that covered it
+                    const initialPayments = new Map();
+                    sortedSchedule.forEach(row => {
+                      const balance = scheduleBalances.get(row.id);
+                      initialPayments.set(row.id, balance.transactions.map(t => t.tx));
+                    });
 
+                    const allocatedAmounts = new Map();
+                    const latePaymentSources = new Map();
                     sortedSchedule.forEach(row => {
                       allocatedAmounts.set(row.id, 0);
                     });
-
-                    let excessPool = 0; // Running pool of overpayments
-
-                    for (let i = 0; i < sortedSchedule.length; i++) {
-                      const row = sortedSchedule[i];
-                      const payments = initialPayments.get(row.id) || [];
-                      const directPayment = payments.reduce((sum, tx) => sum + tx.amount, 0);
-
-                      // Check if there's a shortfall
-                      const shortfall = row.total_due - directPayment;
-
-                      if (shortfall > 0.01 && excessPool > 0.01) {
-                        // Allocate from excess pool to cover shortfall
-                        const allocation = Math.min(shortfall, excessPool);
-                        allocatedAmounts.set(row.id, allocation);
-                        excessPool -= allocation;
-
-                        // Find the transaction that created this excess (look forward)
-                        for (let j = i + 1; j < sortedSchedule.length; j++) {
-                          const futureRow = sortedSchedule[j];
-                          const futurePayments = initialPayments.get(futureRow.id) || [];
-                          const futureDirectPayment = futurePayments.reduce((sum, tx) => sum + tx.amount, 0);
-                          const futureExcess = futureDirectPayment - futureRow.total_due;
-
-                          if (futureExcess > 0.01 && futurePayments.length > 0) {
-                            latePaymentSources.set(row.id, futurePayments[0]);
-                            break;
-                          }
-                        }
-                      } else if (directPayment > row.total_due + 0.01) {
-                        // This period has excess
-                        excessPool += (directPayment - row.total_due);
-                      }
-                    }
 
                     // Calculate cumulative variance from all previous rows (using ONLY direct payments, not allocations)
                     let cumulativeVariance = 0;
@@ -369,8 +340,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                     return displayRows.map((row, idx) => {
                       // Get payments matched to this schedule entry
-                      const payments = initialPayments.get(row.id) || [];
-                      const directPayment = payments.reduce((sum, tx) => sum + tx.amount, 0);
+                      const balance = scheduleBalances.get(row.id);
+                      const directPayment = balance.paid;
+                      const payments = balance.transactions.map(t => t.tx).filter((tx, i, arr) => arr.indexOf(tx) === i); // unique transactions
                       const allocated = allocatedAmounts.get(row.id) || 0;
                       const totalPaid = directPayment + allocated;
                       const expectedTotal = row.total_due;
