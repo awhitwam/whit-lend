@@ -368,20 +368,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
                     
                     // Find transactions that contributed to THIS specific installment
-                    // by checking which transactions were applied when this row got its payments
+                    // Look for transactions within 60 days of due date if any payment was made
                     const rowTransactions = transactions.filter(tx => {
                       if (tx.is_deleted) return false;
+                      if (totalPaid === 0) return false;
                       
-                      // For partial or paid installments, find transactions around the time payment was made
-                      if ((row.status === 'Paid' || row.status === 'Partial') && totalPaid > 0) {
-                        const txDate = new Date(tx.date);
-                        const dueDate = new Date(row.due_date);
-                        
-                        // Transaction is likely related if it's within reasonable range
-                        // and the amounts align somewhat
-                        return Math.abs(differenceInDays(txDate, dueDate)) <= 60;
-                      }
-                      return false;
+                      const txDate = new Date(tx.date);
+                      const dueDate = new Date(row.due_date);
+                      
+                      // Transaction is likely related if it's within reasonable range
+                      return Math.abs(differenceInDays(txDate, dueDate)) <= 60;
                     }).sort((a, b) => new Date(a.date) - new Date(b.date));
                     
                     let statusBadge;
@@ -393,7 +389,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     const dueDate = new Date(row.due_date);
                     const daysOverdue = differenceInDays(today, dueDate);
                     
-                    if (row.status === 'Paid') {
+                    // Determine actual status based on payment amounts
+                    const isPaid = totalPaid >= expectedTotal - 0.01;
+                    const isPartial = totalPaid > 0 && totalPaid < expectedTotal - 0.01;
+                    
+                    if (isPaid) {
                       statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                       statusColor = 'bg-emerald-50/30';
                       
@@ -405,7 +405,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         else if (daysDiff === 0) notes = 'On time';
                         else if (daysDiff > 0) notes = `${daysDiff} days late`;
                       }
-                    } else if (row.status === 'Partial') {
+                    } else if (isPartial) {
                       statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(paymentPercent)}%)</Badge>;
                       statusColor = 'bg-amber-50/30';
                       if (rowTransactions.length > 0) {
@@ -423,7 +423,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     }
                     
                     // Only show splits if there are multiple transactions AND status is partial
-                    const showSplits = row.status === 'Partial' && rowTransactions.length > 1;
+                    const showSplits = isPartial && rowTransactions.length > 1;
                     
                     return (
                       <React.Fragment key={row.id}>
