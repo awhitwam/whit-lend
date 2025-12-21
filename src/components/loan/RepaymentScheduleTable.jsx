@@ -67,37 +67,49 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     .map(dateStr => {
       const date = new Date(dateStr);
       const monthKey = format(date, 'yyyy-MM');
-      
+
       // Find matching transaction(s)
       const txs = transactions.filter(tx => 
         !tx.is_deleted && format(new Date(tx.date), 'yyyy-MM-dd') === dateStr
       );
-      
+
       // Find matching schedule entry
       let scheduleEntry = schedule.find(s => 
         format(new Date(s.due_date), 'yyyy-MM-dd') === dateStr
       );
-      
+
       // If this is a transaction date, look for schedule entry in same month to merge
       if (txs.length > 0 && !scheduleEntry) {
         const scheduleInMonth = monthMap.get(monthKey);
         if (scheduleInMonth && scheduleInMonth.length > 0) {
           // Find the closest schedule entry that hasn't been matched yet
           const availableSchedules = scheduleInMonth.filter(s => !processedScheduleIds.has(s.id));
-          
+
           if (availableSchedules.length > 0) {
             const closestSchedule = availableSchedules
               .sort((a, b) => Math.abs(differenceInDays(new Date(a.due_date), date)) - Math.abs(differenceInDays(new Date(b.due_date), date)))[0];
-            
+
             scheduleEntry = closestSchedule;
             processedScheduleIds.add(closestSchedule.id);
           }
         }
       }
-      
+
+      // If this is a schedule date with no transaction, still check for transaction in same month
+      if (!txs.length && scheduleEntry) {
+        const txInMonth = transactions.filter(tx => 
+          !tx.is_deleted && format(new Date(tx.date), 'yyyy-MM') === monthKey
+        );
+
+        if (txInMonth.length > 0 && !processedScheduleIds.has(scheduleEntry.id)) {
+          // This schedule was already merged with a transaction, skip it
+          return null;
+        }
+      }
+
       // Check if this is the disbursement date
       const isDisbursement = loan && format(new Date(loan.start_date), 'yyyy-MM-dd') === dateStr;
-      
+
       // Calculate days difference if we have both transaction and schedule
       let daysDifference = null;
       if (txs.length > 0 && scheduleEntry) {
@@ -112,7 +124,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         scheduleEntry,
         daysDifference
       };
-    });
+      })
+      .filter(row => row !== null);
   
   if (loan) {
     // Calculate running balances and cumulative interest with daily accrual
