@@ -26,7 +26,9 @@ import {
   Repeat,
   Download,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Sparkles,
+  Loader2
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -53,6 +55,7 @@ import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { Sparkles } from 'lucide-react';
 
 export default function LoanDetails() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -67,6 +70,8 @@ export default function LoanDetails() {
   const [deleteReason, setDeleteReason] = useState('');
   const [txPage, setTxPage] = useState(1);
   const [txPerPage, setTxPerPage] = useState(25);
+  const [aiSummary, setAiSummary] = useState('');
+  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -344,6 +349,56 @@ export default function LoanDetails() {
 
   const handleGenerateLoanStatement = () => {
     generateLoanStatementPDF(loan, schedule, transactions);
+  };
+
+  const generateAISummary = async () => {
+    setIsLoadingSummary(true);
+    try {
+      const result = await base44.integrations.Core.InvokeLLM({
+        prompt: `You are a loan analyst. Analyze this loan repayment data and provide a clear, concise summary.
+
+Loan Details:
+- Borrower: ${loan.borrower_name}
+- Principal: ${formatCurrency(loan.principal_amount)}
+- Interest Rate: ${loan.interest_rate}% ${loan.interest_type}
+- Duration: ${loan.duration} ${loan.period === 'Monthly' ? 'months' : 'weeks'}
+- Start Date: ${format(new Date(loan.start_date), 'MMM dd, yyyy')}
+- Status: ${loan.status}
+
+Financial Summary:
+- Total Repayable: ${formatCurrency(loan.total_repayable)}
+- Principal Paid: ${formatCurrency(actualPrincipalPaid)} / ${formatCurrency(loan.principal_amount)}
+- Interest Paid: ${formatCurrency(actualInterestPaid)} / ${formatCurrency(loan.total_interest)}
+- Outstanding: ${formatCurrency(totalOutstanding)}
+
+Schedule Progress:
+- Total Installments: ${schedule.length}
+- Paid: ${schedule.filter(s => s.status === 'Paid').length}
+- Partial: ${schedule.filter(s => s.status === 'Partial').length}
+- Pending: ${schedule.filter(s => s.status === 'Pending').length}
+- Overdue: ${schedule.filter(s => s.status === 'Overdue').length}
+
+Recent Transactions (last 5):
+${transactions.filter(t => !t.is_deleted).slice(0, 5).map(t => 
+  `- ${format(new Date(t.date), 'MMM dd, yyyy')}: ${formatCurrency(t.amount)} (Principal: ${formatCurrency(t.principal_applied || 0)}, Interest: ${formatCurrency(t.interest_applied || 0)})`
+).join('\n')}
+
+Please provide:
+1. A brief overall assessment of the loan status
+2. Payment performance (on time, behind, ahead)
+3. Any concerns or positive observations
+4. Next steps or recommendations
+
+Keep it concise and actionable. Use bullet points where appropriate.`,
+        add_context_from_internet: false
+      });
+      
+      setAiSummary(result);
+    } catch (error) {
+      toast.error('Failed to generate AI summary');
+    } finally {
+      setIsLoadingSummary(false);
+    }
   };
 
   const paymentMutation = useMutation({
@@ -749,6 +804,48 @@ export default function LoanDetails() {
             </CardContent>
           </Card>
         )}
+
+        {/* AI Summary */}
+        <Card className="border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-white">
+          <CardHeader>
+            <div className="flex items-center justify-between">
+              <CardTitle className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-purple-600" />
+                AI Repayment Analysis
+              </CardTitle>
+              <Button
+                onClick={generateAISummary}
+                disabled={isLoadingSummary}
+                size="sm"
+                className="bg-purple-600 hover:bg-purple-700"
+              >
+                {isLoadingSummary ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="w-4 h-4 mr-2" />
+                    Generate Analysis
+                  </>
+                )}
+              </Button>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {aiSummary ? (
+              <div className="prose prose-sm max-w-none">
+                <div className="whitespace-pre-wrap text-slate-700">{aiSummary}</div>
+              </div>
+            ) : (
+              <p className="text-slate-500 text-sm text-center py-4">
+                Click "Generate Analysis" to get an AI-powered summary of the loan repayment status, 
+                including payment performance and recommendations.
+              </p>
+            )}
+          </CardContent>
+        </Card>
 
         {/* Tabs for different views */}
         <Tabs defaultValue="overview" className="space-y-6">
