@@ -16,6 +16,7 @@ export default function Config() {
   const [result, setResult] = useState(null);
   const [error, setError] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [specificLoanNumber, setSpecificLoanNumber] = useState('');
   const cancelImport = useRef(false);
   
   const [selectedTables, setSelectedTables] = useState({
@@ -290,7 +291,11 @@ export default function Config() {
       const expenseCategories = new Set();
       rows.forEach(row => {
         if (row.Type === 'Expenses' && row.Category) {
-          expenseCategories.add(row.Category);
+          // Only include expenses if no specific loan or if it matches specific loan
+          const borrowerInfo = extractBorrowerInfo(row['Transaction Details']);
+          if (!specificLoanNumber || (borrowerInfo && borrowerInfo.loanNumber === specificLoanNumber)) {
+            expenseCategories.add(row.Category);
+          }
         }
       });
       addLog(`Found ${expenseCategories.size} expense categories`);
@@ -325,12 +330,20 @@ export default function Config() {
         const borrowerInfo = extractBorrowerInfo(row['Transaction Details']);
         if (borrowerInfo) {
           const loanNum = borrowerInfo.loanNumber;
+          // Filter by specific loan number if provided
+          if (specificLoanNumber && loanNum !== specificLoanNumber) {
+            return;
+          }
           if (!loanGroups[loanNum]) {
             loanGroups[loanNum] = [];
           }
           loanGroups[loanNum].push(row);
         }
       });
+      
+      if (specificLoanNumber && Object.keys(loanGroups).length === 0) {
+        throw new Error(`Loan #${specificLoanNumber} not found in CSV file`);
+      }
 
       const borrowerMap = {};
       const loanMap = {};
@@ -547,6 +560,12 @@ export default function Config() {
           return;
         }
         if (row.Type === 'Expenses' && row.Out) {
+          // Only include expenses if no specific loan or if it matches specific loan
+          const borrowerInfo = extractBorrowerInfo(row['Transaction Details']);
+          if (specificLoanNumber && (!borrowerInfo || borrowerInfo.loanNumber !== specificLoanNumber)) {
+            continue;
+          }
+          
           const amount = parseFloat(row.Out);
           const expenseType = expenseTypeMap[row.Category];
           
@@ -649,14 +668,33 @@ export default function Config() {
                       Expected format: Date, Type, Category, Transaction Details, In, Out, Balance
                     </p>
                   </label>
-                </div>
+                  </div>
 
-                {file && !importing && !result && (
+                  {file && (
+                  <div className="space-y-2">
+                    <label className="text-sm font-medium text-slate-700">
+                      Specific Loan Number (Optional)
+                    </label>
+                    <Input
+                      type="text"
+                      placeholder="e.g., 1000001 - Leave empty to import all loans"
+                      value={specificLoanNumber}
+                      onChange={(e) => setSpecificLoanNumber(e.target.value)}
+                      disabled={importing}
+                      className="font-mono"
+                    />
+                    <p className="text-xs text-slate-500">
+                      Enter a loan number to import only that specific loan with all its data
+                    </p>
+                  </div>
+                  )}
+
+                  {file && !importing && !result && (
                   <Button onClick={handleImport} className="w-full" size="lg">
                     <FileText className="w-4 h-4 mr-2" />
-                    Start Import
+                    {specificLoanNumber ? `Import Loan #${specificLoanNumber}` : 'Import All Loans'}
                   </Button>
-                )}
+                  )}
 
                 {importing && (
                   <div className="space-y-3">
