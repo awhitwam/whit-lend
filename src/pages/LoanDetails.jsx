@@ -804,48 +804,6 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
           </Card>
         )}
 
-        {/* AI Summary */}
-        <Card className="border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-white">
-          <CardHeader>
-            <div className="flex items-center justify-between">
-              <CardTitle className="flex items-center gap-2">
-                <Sparkles className="w-5 h-5 text-purple-600" />
-                AI Repayment Analysis
-              </CardTitle>
-              <Button
-                onClick={generateAISummary}
-                disabled={isLoadingSummary}
-                size="sm"
-                className="bg-purple-600 hover:bg-purple-700"
-              >
-                {isLoadingSummary ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Analyzing...
-                  </>
-                ) : (
-                  <>
-                    <Sparkles className="w-4 h-4 mr-2" />
-                    Generate Analysis
-                  </>
-                )}
-              </Button>
-            </div>
-          </CardHeader>
-          <CardContent>
-            {aiSummary ? (
-              <div className="prose prose-sm max-w-none">
-                <div className="whitespace-pre-wrap text-slate-700">{aiSummary}</div>
-              </div>
-            ) : (
-              <p className="text-slate-500 text-sm text-center py-4">
-                Click "Generate Analysis" to get an AI-powered summary of the loan repayment status, 
-                including payment performance and recommendations.
-              </p>
-            )}
-          </CardContent>
-        </Card>
-
         {/* Tabs for different views */}
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList>
@@ -857,6 +815,10 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             <TabsTrigger value="expenses">
               Expenses
               <Badge variant="secondary" className="ml-2">{expenses.length}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="ai-analysis">
+              <Sparkles className="w-4 h-4 mr-1" />
+              AI Analysis
             </TabsTrigger>
           </TabsList>
 
@@ -1024,6 +986,49 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                       </div>
                     ))}
                   </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="ai-analysis">
+            <Card className="border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-white">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center gap-2">
+                    <Sparkles className="w-5 h-5 text-purple-600" />
+                    AI Repayment Analysis
+                  </CardTitle>
+                  <Button
+                    onClick={generateAISummary}
+                    disabled={isLoadingSummary}
+                    size="sm"
+                    className="bg-purple-600 hover:bg-purple-700"
+                  >
+                    {isLoadingSummary ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Analyzing...
+                      </>
+                    ) : (
+                      <>
+                        <Sparkles className="w-4 h-4 mr-2" />
+                        Generate Analysis
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {aiSummary ? (
+                  <div className="prose prose-sm max-w-none">
+                    <div className="whitespace-pre-wrap text-slate-700">{aiSummary}</div>
+                  </div>
+                ) : (
+                  <p className="text-slate-500 text-sm text-center py-4">
+                    Click "Generate Analysis" to get an AI-powered summary of the loan repayment status, 
+                    including payment performance and recommendations.
+                  </p>
                 )}
               </CardContent>
             </Card>
