@@ -69,12 +69,7 @@ export default function Config() {
     localStorage.setItem('importStatus', status);
   }, [importing, progress, status]);
   
-  // Auto-scroll to latest log
-  useEffect(() => {
-    if (logEndRef.current) {
-      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
-    }
-  }, [logs]);
+
   
   // Prevent page unload during import
   useEffect(() => {
@@ -489,7 +484,7 @@ export default function Config() {
               });
               totalPrincipalPaid += update.principalApplied || 0;
               totalInterestPaid += update.interestApplied || 0;
-              await delay(200);
+              await delay(300);
             }
 
             // Create transaction record
@@ -506,6 +501,7 @@ export default function Config() {
             });
 
             txCount++;
+            await delay(500);
           }
 
           // Update loan totals
@@ -519,7 +515,7 @@ export default function Config() {
           loanCount++;
           addLog(`  ✓ Loan #${loanNum}: Applied ${loanTxs.length} payments`);
           setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
-          await delay(1500);
+          await delay(2000);
         } catch (err) {
           addLog(`  ✗ Error applying payments for loan #${loanNum}: ${err.message}`);
         }
