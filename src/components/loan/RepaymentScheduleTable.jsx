@@ -141,7 +141,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             <TableRow className="bg-slate-50">
               <TableHead className="font-semibold bg-slate-50 sticky top-0">Date</TableHead>
               <TableHead className="font-semibold bg-slate-50 sticky top-0" colSpan={2}>Actual Transactions</TableHead>
-              <TableHead className="font-semibold bg-slate-50 sticky top-0" colSpan={2}>Expected Schedule</TableHead>
+              {schedule.length > 0 && (
+                <TableHead className="font-semibold bg-slate-50 sticky top-0" colSpan={2}>Expected Schedule</TableHead>
+              )}
             </TableRow>
             <TableRow className="bg-slate-50 border-t">
               <TableHead className="bg-slate-50 sticky top-[42px]"></TableHead>
@@ -153,8 +155,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <div>Interest</div>
                 <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(cumulativeInterestPaid)}</div>
               </TableHead>
-              <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50 sticky top-[42px]">Expected Interest</TableHead>
-              <TableHead className="font-semibold text-right bg-slate-50 sticky top-[42px]">Total Outstanding</TableHead>
+              {schedule.length > 0 && (
+                <>
+                  <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50 sticky top-[42px]">Expected Interest</TableHead>
+                  <TableHead className="font-semibold text-right bg-slate-50 sticky top-[42px]">Total Outstanding</TableHead>
+                </>
+              )}
             </TableRow>
           </TableHeader>
         <TableBody>
@@ -204,24 +210,30 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   {row.transactions.length > 0 ? (
                     <span className="text-emerald-600">{formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0))}</span>
                     ) : '-'}
-                    </TableCell>
+                </TableCell>
 
-                    {/* Expected Schedule */}
+                {/* Expected Schedule */}
+                {schedule.length > 0 && (
+                  <>
                     <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200">
                       {row.expectedInterest > 0 ? formatCurrency(row.expectedInterest) : '-'}
                     </TableCell>
-                <TableCell className="text-right font-mono text-sm font-semibold">
-                  {formatCurrency(row.principalOutstanding + row.interestOutstanding)}
-                </TableCell>
+                    <TableCell className="text-right font-mono text-sm font-semibold">
+                      {formatCurrency(row.principalOutstanding + row.interestOutstanding)}
+                    </TableCell>
+                  </>
+                )}
               </TableRow>
             ))}
             {/* Total Row */}
-            <TableRow className="bg-slate-100 font-bold border-t-2 border-slate-300">
-              <TableCell colSpan={4} className="text-right">Total Outstanding:</TableCell>
-              <TableCell className="text-right font-mono text-lg text-red-600">
-                {formatCurrency(combinedRows.length > 0 ? (combinedRows[combinedRows.length - 1].principalOutstanding + combinedRows[combinedRows.length - 1].interestOutstanding) : 0)}
-              </TableCell>
-            </TableRow>
+            {schedule.length > 0 && (
+              <TableRow className="bg-slate-100 font-bold border-t-2 border-slate-300">
+                <TableCell colSpan={4} className="text-right">Total Outstanding:</TableCell>
+                <TableCell className="text-right font-mono text-lg text-red-600">
+                  {formatCurrency(combinedRows.length > 0 ? (combinedRows[combinedRows.length - 1].principalOutstanding + combinedRows[combinedRows.length - 1].interestOutstanding) : 0)}
+                </TableCell>
+              </TableRow>
+            )}
             </>
           )}
         </TableBody>
