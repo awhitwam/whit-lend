@@ -4,6 +4,15 @@ import { Badge } from "@/components/ui/badge";
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
+  // Calculate totals
+  const totalPrincipalCollected = transactions
+    .filter(tx => !tx.is_deleted)
+    .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+  
+  const totalInterestCollected = transactions
+    .filter(tx => !tx.is_deleted)
+    .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+  
   // Create combined entries with all unique dates
   const allDates = new Set();
   
@@ -89,8 +98,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           </TableRow>
           <TableRow className="bg-slate-50/50 border-t">
             <TableHead></TableHead>
-            <TableHead className="font-semibold text-right">Principal</TableHead>
-            <TableHead className="font-semibold text-right">Interest</TableHead>
+            <TableHead className="font-semibold text-right">
+              <div>Principal</div>
+              <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(totalPrincipalCollected)}</div>
+            </TableHead>
+            <TableHead className="font-semibold text-right">
+              <div>Interest</div>
+              <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(totalInterestCollected)}</div>
+            </TableHead>
             <TableHead className="font-semibold text-right">(DR/CR)</TableHead>
             <TableHead className="font-semibold text-right">Interest Due</TableHead>
             <TableHead className="font-semibold text-right">Cumulative</TableHead>
