@@ -117,8 +117,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       .filter(row => row !== null);
   } else if (viewMode === 'separate') {
     // SEPARATE VIEW: Show all schedule entries and all transactions separately
+    // Every transaction gets its own row, every schedule entry gets its own row
     const allRows = [];
 
+    // Add disbursement row
     if (loan) {
       allRows.push({
         date: new Date(loan.start_date),
@@ -126,10 +128,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         isDisbursement: true,
         transactions: [],
         scheduleEntry: null,
-        daysDifference: null
+        daysDifference: null,
+        rowType: 'disbursement'
       });
     }
 
+    // Add ALL schedule entries as separate rows
     schedule.forEach(row => {
       allRows.push({
         date: new Date(row.due_date),
@@ -137,22 +141,35 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         isDisbursement: false,
         transactions: [],
         scheduleEntry: row,
-        daysDifference: null
+        daysDifference: null,
+        rowType: 'schedule'
       });
     });
 
-    transactions.filter(tx => !tx.is_deleted).forEach(tx => {
-      allRows.push({
-        date: new Date(tx.date),
-        dateStr: format(new Date(tx.date), 'yyyy-MM-dd'),
-        isDisbursement: false,
-        transactions: [tx],
-        scheduleEntry: null,
-        daysDifference: null
+    // Add ALL transactions (excluding deleted and disbursements) as separate rows
+    transactions
+      .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+      .forEach(tx => {
+        allRows.push({
+          date: new Date(tx.date),
+          dateStr: format(new Date(tx.date), 'yyyy-MM-dd'),
+          isDisbursement: false,
+          transactions: [tx],
+          scheduleEntry: null,
+          daysDifference: null,
+          rowType: 'transaction'
+        });
       });
-    });
 
-    combinedRows = allRows.sort((a, b) => a.date - b.date);
+    // Sort by date, then by type (schedule before transaction on same date)
+    combinedRows = allRows.sort((a, b) => {
+      const dateCompare = a.date - b.date;
+      if (dateCompare !== 0) return dateCompare;
+      
+      // On same date: disbursement first, then schedule, then transaction
+      const typeOrder = { disbursement: 0, schedule: 1, transaction: 2 };
+      return typeOrder[a.rowType] - typeOrder[b.rowType];
+    });
   } else {
     // DETAILED VIEW: Show schedule with nested transaction splits
     combinedRows = [];
