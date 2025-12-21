@@ -282,20 +282,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               ) : (
                 <>
                   {(() => {
-                    // Simple approach: match transactions to schedule by date proximity
-                    // and calculate variance without waterfall logic
+                    // Smart allocation: match transactions by date, then allocate overpayments to previous underpayments
                     const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
                     const sortedTransactions = transactions
                       .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-                    // Match each transaction to its nearest schedule entry
-                    const schedulePayments = new Map();
+                    // Initially match each transaction to its nearest schedule entry
+                    const initialPayments = new Map();
                     sortedSchedule.forEach(row => {
-                      schedulePayments.set(row.id, []);
+                      initialPayments.set(row.id, []);
                     });
 
-                    // Assign each transaction to the nearest schedule entry
                     for (const tx of sortedTransactions) {
                       const txDate = new Date(tx.date);
                       let closestRow = null;
@@ -311,7 +309,49 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       }
 
                       if (closestRow) {
-                        schedulePayments.get(closestRow.id).push(tx);
+                        initialPayments.get(closestRow.id).push(tx);
+                      }
+                    }
+
+                    // Now allocate overpayments to previous underpayments
+                    const allocatedAmounts = new Map(); // row.id -> allocated amount
+                    const latePaymentSources = new Map(); // row.id -> transaction that covered it
+
+                    sortedSchedule.forEach(row => {
+                      allocatedAmounts.set(row.id, 0);
+                    });
+
+                    let excessPool = 0; // Running pool of overpayments
+
+                    for (let i = 0; i < sortedSchedule.length; i++) {
+                      const row = sortedSchedule[i];
+                      const payments = initialPayments.get(row.id) || [];
+                      const directPayment = payments.reduce((sum, tx) => sum + tx.amount, 0);
+
+                      // Check if there's a shortfall
+                      const shortfall = row.total_due - directPayment;
+
+                      if (shortfall > 0.01 && excessPool > 0.01) {
+                        // Allocate from excess pool to cover shortfall
+                        const allocation = Math.min(shortfall, excessPool);
+                        allocatedAmounts.set(row.id, allocation);
+                        excessPool -= allocation;
+
+                        // Find the transaction that created this excess (look forward)
+                        for (let j = i + 1; j < sortedSchedule.length; j++) {
+                          const futureRow = sortedSchedule[j];
+                          const futurePayments = initialPayments.get(futureRow.id) || [];
+                          const futureDirectPayment = futurePayments.reduce((sum, tx) => sum + tx.amount, 0);
+                          const futureExcess = futureDirectPayment - futureRow.total_due;
+
+                          if (futureExcess > 0.01 && futurePayments.length > 0) {
+                            latePaymentSources.set(row.id, futurePayments[0]);
+                            break;
+                          }
+                        }
+                      } else if (directPayment > row.total_due + 0.01) {
+                        // This period has excess
+                        excessPool += (directPayment - row.total_due);
                       }
                     }
 
@@ -320,8 +360,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                     for (let i = 0; i < startIndex; i++) {
                       const row = schedule[i];
-                      const payments = schedulePayments.get(row.id) || [];
-                      const totalPaid = payments.reduce((sum, tx) => sum + tx.amount, 0);
+                      const payments = initialPayments.get(row.id) || [];
+                      const directPayment = payments.reduce((sum, tx) => sum + tx.amount, 0);
+                      const allocated = allocatedAmounts.get(row.id) || 0;
+                      const totalPaid = directPayment + allocated;
                       cumulativeVariance += (totalPaid - row.total_due);
                     }
 
@@ -329,8 +371,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                     return displayRows.map((row, idx) => {
                       // Get payments matched to this schedule entry
-                      const payments = schedulePayments.get(row.id) || [];
-                      const totalPaid = payments.reduce((sum, tx) => sum + tx.amount, 0);
+                      const payments = initialPayments.get(row.id) || [];
+                      const directPayment = payments.reduce((sum, tx) => sum + tx.amount, 0);
+                      const allocated = allocatedAmounts.get(row.id) || 0;
+                      const totalPaid = directPayment + allocated;
                       const expectedTotal = row.total_due;
                       const paymentPercent = expectedTotal > 0 ? (totalPaid / expectedTotal) * 100 : 0;
 
@@ -341,6 +385,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       // Determine status
                       const isPaid = totalPaid >= expectedTotal - 0.01;
                       const isPartial = totalPaid > 0.01 && totalPaid < expectedTotal - 0.01;
+
+                      // Check if this was paid late (via allocation from future payment)
+                      const latePaymentTx = latePaymentSources.get(row.id);
 
                       let statusBadge;
                       let statusColor = '';
@@ -362,6 +409,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           if (daysDiff < 0) notes = 'Paid early';
                           else if (daysDiff === 0) notes = 'On time';
                           else if (daysDiff > 0) notes = `${daysDiff} days late`;
+                        } else if (latePaymentTx && allocated > 0.01) {
+                          // Paid late via allocation from future payment
+                          datePaid = format(new Date(latePaymentTx.date), 'MMM dd, yyyy');
+                          const daysDiff = differenceInDays(new Date(latePaymentTx.date), dueDate);
+                          notes = `${daysDiff} days late`;
                         }
                       } else if (isPartial) {
                         statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(paymentPercent)}%)</Badge>;
