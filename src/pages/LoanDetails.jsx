@@ -34,6 +34,16 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanModal from '@/components/loan/EditLoanModal';
@@ -51,6 +61,10 @@ export default function LoanDetails() {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
+  const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
+  const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [deleteReason, setDeleteReason] = useState('');
   const [txPage, setTxPage] = useState(1);
   const [txPerPage, setTxPerPage] = useState(25);
   const queryClient = useQueryClient();
@@ -538,22 +552,14 @@ export default function LoanDetails() {
                     {loan.status !== 'Closed' && (
                       <>
                         <DropdownMenuItem 
-                          onClick={() => {
-                            if (confirm('Regenerate the repayment schedule based on product settings? This will clear and recreate the schedule, then reapply all payments.')) {
-                              recalculateLoanMutation.mutate();
-                            }
-                          }}
+                          onClick={() => setIsRegenerateDialogOpen(true)}
                           disabled={recalculateLoanMutation.isPending}
                         >
                           <Repeat className="w-4 h-4 mr-2" />
                           Regenerate Schedule
                         </DropdownMenuItem>
                         <DropdownMenuItem 
-                          onClick={() => {
-                            if (confirm('Clear the repayment schedule? This will remove all scheduled payments but keep transactions.')) {
-                              clearScheduleMutation.mutate();
-                            }
-                          }}
+                          onClick={() => setIsClearDialogOpen(true)}
                           disabled={clearScheduleMutation.isPending}
                           className="text-red-600"
                         >
@@ -576,12 +582,7 @@ export default function LoanDetails() {
                     )}
                     <DropdownMenuItem 
                       className="text-red-600"
-                      onClick={() => {
-                        const reason = prompt('Enter reason for deleting this loan:');
-                        if (reason) {
-                          deleteLoanMutation.mutate(reason);
-                        }
-                      }}
+                      onClick={() => setIsDeleteDialogOpen(true)}
                     >
                       <Trash2 className="w-4 h-4 mr-2" />
                       Delete Loan
@@ -959,6 +960,90 @@ export default function LoanDetails() {
           }}
           isLoading={paymentMutation.isPending}
         />
+
+        {/* Regenerate Schedule Dialog */}
+        <AlertDialog open={isRegenerateDialogOpen} onOpenChange={setIsRegenerateDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Regenerate Repayment Schedule?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will clear and recreate the schedule based on product settings, then reapply all payments. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  recalculateLoanMutation.mutate();
+                  setIsRegenerateDialogOpen(false);
+                }}
+                className="bg-emerald-600 hover:bg-emerald-700"
+              >
+                Regenerate
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Clear Schedule Dialog */}
+        <AlertDialog open={isClearDialogOpen} onOpenChange={setIsClearDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Clear Repayment Schedule?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This will remove all scheduled payments but keep transaction history. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  clearScheduleMutation.mutate();
+                  setIsClearDialogOpen(false);
+                }}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Clear Schedule
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete Loan Dialog */}
+        <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Delete Loan?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Please provide a reason for deleting this loan. This action marks the loan as deleted but preserves the record for audit purposes.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="py-4">
+              <textarea
+                className="w-full min-h-[100px] px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                placeholder="Enter reason for deletion..."
+                value={deleteReason}
+                onChange={(e) => setDeleteReason(e.target.value)}
+              />
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => setDeleteReason('')}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (deleteReason.trim()) {
+                    deleteLoanMutation.mutate(deleteReason);
+                    setIsDeleteDialogOpen(false);
+                    setDeleteReason('');
+                  }
+                }}
+                disabled={!deleteReason.trim()}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Delete Loan
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         </div>
         </div>
         );
