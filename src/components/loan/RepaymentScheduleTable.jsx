@@ -105,7 +105,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             <TableHead className="font-semibold">Date</TableHead>
             <TableHead className="font-semibold" colSpan={2}>Actual Transactions</TableHead>
             <TableHead className="font-semibold text-right">Principal Balance</TableHead>
-            <TableHead className="font-semibold" colSpan={3}>Expected Schedule</TableHead>
+            <TableHead className="font-semibold" colSpan={2}>Expected Schedule</TableHead>
           </TableRow>
           <TableRow className="bg-slate-50/50 border-t">
             <TableHead></TableHead>
@@ -119,7 +119,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             </TableHead>
             <TableHead className="font-semibold text-right">(DR/CR)</TableHead>
             <TableHead className="font-semibold text-right">Interest Due</TableHead>
-            <TableHead className="font-semibold text-right">Cumulative</TableHead>
             <TableHead className="font-semibold text-right">Outstanding</TableHead>
           </TableRow>
         </TableHeader>
@@ -127,19 +126,20 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           {isLoading ? (
             Array(6).fill(0).map((_, i) => (
               <TableRow key={i}>
-                <TableCell colSpan={7} className="h-14">
+                <TableCell colSpan={6} className="h-14">
                   <div className="h-4 bg-slate-100 rounded animate-pulse w-full"></div>
                 </TableCell>
               </TableRow>
             ))
           ) : combinedRows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={7} className="text-center py-12 text-slate-500">
+              <TableCell colSpan={6} className="text-center py-12 text-slate-500">
                 No data available
               </TableCell>
             </TableRow>
           ) : (
-            combinedRows.map((row, index) => (
+            <>
+            {combinedRows.map((row, index) => (
               <TableRow 
                 key={index}
                 className={
@@ -180,14 +180,19 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <TableCell className="text-right font-mono text-sm">
                   {row.expectedInterest > 0 ? formatCurrency(row.expectedInterest) : '-'}
                 </TableCell>
-                <TableCell className="text-right font-mono text-sm font-semibold">
-                  {formatCurrency(row.cumulativeInterest)}
-                </TableCell>
                 <TableCell className="text-right font-mono text-sm font-semibold text-red-600">
                   {formatCurrency(row.interestOutstanding)}
                 </TableCell>
               </TableRow>
-            ))
+            ))}
+            {/* Total Row */}
+            <TableRow className="bg-slate-100 font-bold border-t-2 border-slate-300">
+              <TableCell colSpan={5} className="text-right">Total Outstanding:</TableCell>
+              <TableCell className="text-right font-mono text-lg text-red-600">
+                {formatCurrency(combinedRows.length > 0 ? combinedRows[combinedRows.length - 1].interestOutstanding : 0)}
+              </TableCell>
+            </TableRow>
+            </>
           )}
         </TableBody>
       </Table>
