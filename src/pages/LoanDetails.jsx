@@ -36,7 +36,8 @@ import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanModal from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
-import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding, generateRepaymentSchedule, calculateLoanSummary } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding } from '@/components/loan/LoanCalculator';
+import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import { format } from 'date-fns';
 
@@ -243,64 +244,19 @@ export default function LoanDetails() {
 
   const recalculateLoanMutation = useMutation({
     mutationFn: async () => {
-      // Fetch the product to get latest settings
-      const products = await base44.entities.LoanProduct.filter({ id: loan.product_id });
-      const product = products[0];
-      
-      if (!product) throw new Error('Product not found');
-      
-      // Update loan with product settings
-      await base44.entities.Loan.update(loanId, {
-        interest_rate: product.interest_rate,
-        interest_type: product.interest_type,
-        period: product.period
-      });
-      
-      // Regenerate schedule
-      const newSchedule = generateRepaymentSchedule({
-        principal: loan.principal_amount,
-        interestRate: product.interest_rate,
-        duration: loan.duration,
-        interestType: product.interest_type,
-        period: product.period,
-        startDate: loan.start_date,
-        interestOnlyPeriod: loan.interest_only_period || 0,
-        interestAlignment: loan.interest_alignment || 'period_based',
-        extendForFullPeriod: loan.extend_for_full_period || false
-      });
-      
-      const summary = calculateLoanSummary(newSchedule);
-      
-      // Update totals
-      await base44.entities.Loan.update(loanId, {
-        total_interest: summary.totalInterest,
-        total_repayable: summary.totalRepayable + (loan.exit_fee || 0)
-      });
-      
-      // Delete old schedule
-      const oldSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
-      for (const row of oldSchedule) {
-        await base44.entities.RepaymentSchedule.delete(row.id);
-      }
-      
-      // Create new schedule
-      for (const row of newSchedule) {
-        await base44.entities.RepaymentSchedule.create({
-          loan_id: loanId,
-          ...row
-        });
-      }
-      
+      // Use centralized schedule manager
+      await regenerateLoanSchedule(loanId);
+
       // Reapply all non-deleted payments
       const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
       const newScheduleRows = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
-      
+
       let totalPrincipalPaid = 0;
       let totalInterestPaid = 0;
-      
+
       for (const tx of activeTransactions) {
         const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
-        
+
         for (const update of updates) {
           await base44.entities.RepaymentSchedule.update(update.id, {
             interest_paid: update.interest_paid,
@@ -311,7 +267,7 @@ export default function LoanDetails() {
           totalInterestPaid += update.interestApplied;
         }
       }
-      
+
       // Update loan payment totals
       await base44.entities.Loan.update(loanId, {
         principal_paid: totalPrincipalPaid,

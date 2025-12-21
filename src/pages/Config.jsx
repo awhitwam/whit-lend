@@ -7,7 +7,8 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
 import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2, StopCircle } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { generateRepaymentSchedule, calculateLoanSummary, applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
+import { applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
+import { applyScheduleToNewLoan } from '@/components/loan/LoanScheduleManager';
 
 export default function Config() {
   const [file, setFile] = useState(null);
@@ -439,36 +440,19 @@ export default function Config() {
             t.Type === 'Interest Collections' || t.Type === 'Principal Collections'
           );
           
-          let calculatedDuration = 6; // Default minimum
+          let calculatedDuration = 6;
           if (loanTransactions.length > 0) {
-            // Find the latest transaction date
             const latestTxDate = new Date(parseDate(
               loanTransactions[loanTransactions.length - 1].Date
             ));
-            
-            // Calculate months between start and latest transaction
             const monthsDiff = Math.ceil(
               (latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24 * 30.44)
             );
-            calculatedDuration = Math.max(monthsDiff + 6, 6); // Add 6 months buffer
+            calculatedDuration = Math.max(monthsDiff + 6, 6);
           }
           
-          // Generate repayment schedule with calculated duration
-          const schedule = generateRepaymentSchedule({
-            principal: principalAmount,
-            interestRate: product.interest_rate,
-            duration: calculatedDuration,
-            interestType: product.interest_type,
-            period: product.period,
-            startDate: parseDate(loanRelease.Date),
-            interestOnlyPeriod: 0,
-            interestAlignment: 'period_based',
-            extendForFullPeriod: false
-          });
-
-          const summary = calculateLoanSummary(schedule);
-
-          const loan = await base44.entities.Loan.create({
+          // Use centralized schedule manager
+          const { loan } = await applyScheduleToNewLoan({
             loan_number: loanNum,
             borrower_id: borrower.id,
             borrower_name: borrower.full_name,
@@ -478,27 +462,14 @@ export default function Config() {
             arrangement_fee: arrangementFee,
             exit_fee: 0,
             net_disbursed: principalAmount - arrangementFee,
-            interest_rate: product.interest_rate,
-            interest_type: product.interest_type,
-            period: product.period,
-            duration: calculatedDuration,
             start_date: parseDate(loanRelease.Date),
-            status: 'Live',
-            total_interest: summary.totalInterest,
-            total_repayable: summary.totalRepayable,
-            principal_paid: 0,
-            interest_paid: 0,
-            auto_extend: true
+            status: 'Live'
+          }, product, {
+            duration: calculatedDuration,
+            autoExtend: true
           });
 
-          // Create repayment schedule
-          for (const row of schedule) {
-            await base44.entities.RepaymentSchedule.create({
-              loan_id: loan.id,
-              ...row
-            });
-            await delay(200);
-          }
+          await delay(200);
 
           loanMap[loanNum] = { loan, borrower, transactions: [] };
 
