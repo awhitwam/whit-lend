@@ -104,7 +104,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           <TableRow className="bg-slate-50/50">
             <TableHead className="font-semibold">Date</TableHead>
             <TableHead className="font-semibold" colSpan={2}>Actual Transactions</TableHead>
-            <TableHead className="font-semibold text-right">Principal Balance</TableHead>
             <TableHead className="font-semibold" colSpan={2}>Expected Schedule</TableHead>
           </TableRow>
           <TableRow className="bg-slate-50/50 border-t">
@@ -117,7 +116,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               <div>Interest</div>
               <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(totalInterestCollected)}</div>
             </TableHead>
-            <TableHead className="font-semibold text-right">(DR/CR)</TableHead>
             <TableHead className="font-semibold text-right">Interest Due</TableHead>
             <TableHead className="font-semibold text-right">Outstanding</TableHead>
           </TableRow>
@@ -126,14 +124,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           {isLoading ? (
             Array(6).fill(0).map((_, i) => (
               <TableRow key={i}>
-                <TableCell colSpan={6} className="h-14">
+                <TableCell colSpan={5} className="h-14">
                   <div className="h-4 bg-slate-100 rounded animate-pulse w-full"></div>
                 </TableCell>
               </TableRow>
             ))
           ) : combinedRows.length === 0 ? (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-12 text-slate-500">
+              <TableCell colSpan={5} className="text-center py-12 text-slate-500">
                 No data available
               </TableCell>
             </TableRow>
@@ -168,15 +166,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <TableCell className="text-right font-mono text-sm">
                   {row.transactions.length > 0 ? (
                     <span className="text-emerald-600">{formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0))}</span>
-                  ) : '-'}
-                </TableCell>
-                
-                {/* Running Balance */}
-                <TableCell className={`text-right font-mono font-bold ${row.runningBalance < 0 ? 'text-red-600' : 'text-emerald-600'}`}>
-                  {formatCurrency(Math.abs(row.runningBalance))} {row.runningBalance < 0 ? 'DR' : 'CR'}
-                </TableCell>
-                
-                {/* Expected Schedule */}
+                    ) : '-'}
+                    </TableCell>
+
+                    {/* Expected Schedule */}
                 <TableCell className="text-right font-mono text-sm">
                   {row.expectedInterest > 0 ? formatCurrency(row.expectedInterest) : '-'}
                 </TableCell>
@@ -187,7 +180,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             ))}
             {/* Total Row */}
             <TableRow className="bg-slate-100 font-bold border-t-2 border-slate-300">
-              <TableCell colSpan={5} className="text-right">Total Outstanding:</TableCell>
+              <TableCell colSpan={4} className="text-right">Total Outstanding:</TableCell>
               <TableCell className="text-right font-mono text-lg text-red-600">
                 {formatCurrency(combinedRows.length > 0 ? combinedRows[combinedRows.length - 1].interestOutstanding : 0)}
               </TableCell>
