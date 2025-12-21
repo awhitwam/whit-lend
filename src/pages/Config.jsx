@@ -21,11 +21,11 @@ export default function Config() {
     RepaymentSchedule: false,
     Transaction: false,
     Expense: false,
+    ExpenseType: false,
     Loan: false,
+    Borrower: false,
     InvestorTransaction: false,
     Investor: false,
-    Borrower: false,
-    ExpenseType: false,
     LoanProduct: false
   });
   const [deleting, setDeleting] = useState(false);
