@@ -660,8 +660,8 @@ export default function LoanDetails() {
           </Card>
           <Card className="bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200">
             <CardContent className="p-5">
-              <p className="text-sm text-amber-600 font-medium">Total Interest</p>
-              <p className="text-2xl font-bold text-amber-900">{formatCurrency(loan.total_interest)}</p>
+              <p className="text-sm text-amber-600 font-medium">Interest Received</p>
+              <p className="text-2xl font-bold text-amber-900">{formatCurrency(scheduleInterestPaid)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border-emerald-200">
