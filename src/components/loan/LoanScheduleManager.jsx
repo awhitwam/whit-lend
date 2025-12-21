@@ -31,23 +31,26 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   // Determine duration
   let duration = options.duration || loan.duration;
   
-  // If calculating from transactions, find the latest transaction date
-  if (!options.duration) {
-    const transactions = await base44.entities.Transaction.filter({ 
-      loan_id: loanId, 
-      is_deleted: false 
-    }, '-date');
+  // For auto-extended loans or when recalculating, extend schedule to cover all transactions
+  const transactions = await base44.entities.Transaction.filter({ 
+    loan_id: loanId, 
+    is_deleted: false,
+    type: 'Repayment'
+  }, '-date');
+  
+  if (transactions.length > 0 && (loan.auto_extend || !options.duration)) {
+    const latestTx = transactions[0];
+    const loanStartDate = new Date(loan.start_date);
+    const latestTxDate = new Date(latestTx.date);
     
-    if (transactions.length > 0) {
-      const latestTx = transactions[0];
-      const loanStartDate = new Date(loan.start_date);
-      const latestTxDate = new Date(latestTx.date);
-      
-      const monthsDiff = Math.ceil(
-        (latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24 * 30.44)
-      );
-      duration = Math.max(monthsDiff + 6, duration); // Add buffer
-    }
+    // Calculate periods needed to cover all transactions
+    const daysElapsed = Math.ceil((latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24));
+    const periodsNeeded = product.period === 'Monthly' 
+      ? Math.ceil(daysElapsed / 30.44) 
+      : Math.ceil(daysElapsed / 7);
+    
+    // Ensure schedule covers all transaction dates plus a buffer
+    duration = Math.max(periodsNeeded + 2, duration);
   }
 
   // Generate new schedule
