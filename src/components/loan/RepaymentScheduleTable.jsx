@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Split, List } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, List, Download } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
@@ -173,8 +173,38 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     };
 
     const handleItemsPerPageChange = (value) => {
-    setItemsPerPage(Number(value));
-    setCurrentPage(1);
+      setItemsPerPage(Number(value));
+      setCurrentPage(1);
+    };
+
+    const exportToCSV = () => {
+      if (viewMode !== 'separate' || combinedRows.length === 0) return;
+
+      const headers = ['Date', 'Type', 'Principal', 'Interest', 'Expected Interest', 'Principal Outstanding', 'Interest Outstanding', 'Total Outstanding'];
+      const csvRows = [headers.join(',')];
+
+      combinedRows.forEach(row => {
+        const csvRow = [
+          format(row.date, 'yyyy-MM-dd'),
+          row.isDisbursement ? 'Disbursement' : (row.rowType === 'transaction' ? 'Payment' : 'Schedule'),
+          row.isDisbursement ? loan.principal_amount : (row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0) || ''),
+          row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0) || '',
+          row.expectedInterest || '',
+          row.principalOutstanding || '',
+          row.interestOutstanding || '',
+          (row.principalOutstanding || 0) + (row.interestOutstanding || 0) || ''
+        ];
+        csvRows.push(csvRow.join(','));
+      });
+
+      const csvContent = csvRows.join('\n');
+      const blob = new Blob([csvContent], { type: 'text/csv' });
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = `loan-${loan?.loan_number || 'schedule'}-separate-view.csv`;
+      link.click();
+      window.URL.revokeObjectURL(url);
     };
 
     return (
@@ -201,6 +231,20 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 Separate
               </Button>
             </div>
+            {viewMode === 'separate' && (
+              <>
+                <div className="h-4 w-px bg-slate-300" />
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={exportToCSV}
+                  className="gap-1 h-8"
+                >
+                  <Download className="w-4 h-4" />
+                  Export CSV
+                </Button>
+              </>
+            )}
             <div className="h-4 w-px bg-slate-300" />
             <span className="text-sm text-slate-600">Show</span>
             <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
