@@ -205,9 +205,12 @@ export default function Config() {
           const records = await base44.entities[table].list();
           deleteCounts[table] = records.length;
           
-          for (const record of records) {
-            await base44.entities[table].delete(record.id);
-          }
+          // Bulk delete using filter with empty query to match all
+          await fetch(`/api/entities/${table}`, {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: {} })
+          });
         }
       }
 
