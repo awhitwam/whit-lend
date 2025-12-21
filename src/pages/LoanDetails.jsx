@@ -456,7 +456,7 @@ export default function LoanDetails() {
   const principalRemaining = loan.principal_amount - actualPrincipalPaid;
   const interestRemaining = loan.total_interest - actualInterestPaid;
   const totalOutstanding = principalRemaining + interestRemaining;
-  const progressPercent = totalPaidFromSchedule / loan.total_repayable * 100;
+  const progressPercent = (actualPrincipalPaid / loan.principal_amount) * 100;
   const liveInterestOutstanding = calculateLiveInterestOutstanding(loan);
   const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
 
@@ -725,7 +725,7 @@ export default function LoanDetails() {
           <Card>
             <CardContent className="p-5">
               <div className="flex items-center justify-between mb-2">
-                <span className="font-medium">Repayment Progress</span>
+                <span className="font-medium">Principal Repayment Progress</span>
                 <span className="text-lg font-bold">{progressPercent.toFixed(1)}%</span>
               </div>
               <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
@@ -735,8 +735,7 @@ export default function LoanDetails() {
                 />
               </div>
               <div className="flex justify-between mt-2 text-sm text-slate-500">
-                <span>Principal: {formatCurrency(actualPrincipalPaid)} / {formatCurrency(loan.principal_amount)}</span>
-                <span>Interest: {formatCurrency(actualInterestPaid)} / {formatCurrency(loan.total_interest)}</span>
+                <span>{formatCurrency(actualPrincipalPaid)} / {formatCurrency(loan.principal_amount)}</span>
               </div>
             </CardContent>
           </Card>
