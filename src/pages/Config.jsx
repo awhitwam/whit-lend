@@ -34,11 +34,61 @@ export default function Config() {
   
   const logEndRef = useRef(null);
   
+  // Load logs from localStorage on mount
+  useEffect(() => {
+    const savedLogs = localStorage.getItem('importLogs');
+    const savedImporting = localStorage.getItem('importing');
+    const savedProgress = localStorage.getItem('importProgress');
+    const savedStatus = localStorage.getItem('importStatus');
+    
+    if (savedLogs) {
+      setLogs(JSON.parse(savedLogs));
+    }
+    if (savedImporting === 'true') {
+      setImporting(true);
+    }
+    if (savedProgress) {
+      setProgress(Number(savedProgress));
+    }
+    if (savedStatus) {
+      setStatus(savedStatus);
+    }
+  }, []);
+  
+  // Save logs to localStorage whenever they change
+  useEffect(() => {
+    if (logs.length > 0) {
+      localStorage.setItem('importLogs', JSON.stringify(logs));
+    }
+  }, [logs]);
+  
+  // Save import state
+  useEffect(() => {
+    localStorage.setItem('importing', importing.toString());
+    localStorage.setItem('importProgress', progress.toString());
+    localStorage.setItem('importStatus', status);
+  }, [importing, progress, status]);
+  
+  // Auto-scroll to latest log
   useEffect(() => {
     if (logEndRef.current) {
       logEndRef.current.scrollIntoView({ behavior: 'smooth' });
     }
   }, [logs]);
+  
+  // Prevent page unload during import
+  useEffect(() => {
+    const handleBeforeUnload = (e) => {
+      if (importing) {
+        e.preventDefault();
+        e.returnValue = 'Import in progress. Are you sure you want to leave?';
+        return e.returnValue;
+      }
+    };
+    
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload);
+  }, [importing]);
 
   const parseCSV = (text) => {
     const lines = text.trim().split('\n');
@@ -104,7 +154,20 @@ export default function Config() {
   const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
 
   const addLog = (message) => {
-    setLogs(prev => [...prev, `${new Date().toLocaleTimeString()}: ${message}`]);
+    const logEntry = `${new Date().toLocaleTimeString()}: ${message}`;
+    setLogs(prev => {
+      const newLogs = [...prev, logEntry];
+      localStorage.setItem('importLogs', JSON.stringify(newLogs));
+      return newLogs;
+    });
+  };
+  
+  const clearLogs = () => {
+    setLogs([]);
+    localStorage.removeItem('importLogs');
+    localStorage.removeItem('importing');
+    localStorage.removeItem('importProgress');
+    localStorage.removeItem('importStatus');
   };
 
   const handleDeleteData = async () => {
@@ -518,6 +581,7 @@ export default function Config() {
       setError(err.message);
     } finally {
       setImporting(false);
+      localStorage.setItem('importing', 'false');
       addLog('Import process ended');
     }
   };
@@ -613,7 +677,12 @@ export default function Config() {
 
                 {logs.length > 0 && (
                   <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                    <h3 className="font-semibold text-sm text-slate-700 mb-2">Import Log ({logs.length} entries)</h3>
+                    <div className="flex items-center justify-between mb-2">
+                      <h3 className="font-semibold text-sm text-slate-700">Import Log ({logs.length} entries)</h3>
+                      <Button variant="ghost" size="sm" onClick={clearLogs}>
+                        Clear Log
+                      </Button>
+                    </div>
                     <div className="space-y-1 text-xs text-slate-600 font-mono max-h-64 overflow-y-auto">
                       {[...logs].reverse().map((log, idx) => (
                         <div key={idx}>{log}</div>
