@@ -743,6 +743,48 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                 </div>
               </div>
             )}
+
+            {product && (
+              <div className="mt-6 pt-6 border-t border-slate-200">
+                <p className="text-sm font-medium text-slate-700 mb-3">Product Configuration</p>
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <p className="text-xs text-slate-500">Interest Calculation</p>
+                    <p className="text-sm font-medium text-slate-800">
+                      {product.interest_calculation_method === 'daily' ? 'Daily (variable payments)' : 'Monthly (fixed 365÷12)'}
+                    </p>
+                  </div>
+                  {product.period === 'Monthly' && (
+                    <div>
+                      <p className="text-xs text-slate-500">Payment Alignment</p>
+                      <p className="text-sm font-medium text-slate-800">
+                        {product.interest_alignment === 'period_based' ? 'From start date' : '1st of month'}
+                      </p>
+                    </div>
+                  )}
+                  {product.interest_only_period > 0 && (
+                    <div>
+                      <p className="text-xs text-slate-500">Interest-Only Period</p>
+                      <p className="text-sm font-medium text-slate-800">
+                        {product.interest_only_period} {product.period === 'Monthly' ? 'months' : 'weeks'}
+                      </p>
+                    </div>
+                  )}
+                  {product.extend_for_full_period && (
+                    <div>
+                      <p className="text-xs text-slate-500">Period Extension</p>
+                      <p className="text-sm font-medium text-slate-800">Full period required</p>
+                    </div>
+                  )}
+                  {product.interest_paid_in_advance && (
+                    <div>
+                      <p className="text-xs text-slate-500">Interest Payment</p>
+                      <p className="text-sm font-medium text-slate-800">Paid in advance</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
