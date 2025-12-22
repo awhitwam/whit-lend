@@ -567,31 +567,29 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
 
         {/* Header */}
         <Card className="overflow-hidden">
-          <div className="bg-gradient-to-r from-slate-800 to-slate-700 p-4 text-white">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
-              <div>
-                <div className="flex items-center gap-2">
-                  <FileText className="w-5 h-5" />
-                  <div>
-                    <h1 className="text-xl font-bold">
-                      {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`} - {loan.borrower_name}
-                    </h1>
-                    <p className="text-xs text-slate-300 mt-0.5">{loan.product_name}</p>
-                  </div>
+          <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-4 py-2 text-white">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <FileText className="w-4 h-4" />
+                <div>
+                  <h1 className="text-base font-bold">
+                    {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`} - {loan.borrower_name}
+                  </h1>
+                  <p className="text-xs text-slate-300">{loan.product_name}</p>
                 </div>
               </div>
-              <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
-                <Badge className={`${getStatusColor(loan.status)} text-sm px-3 py-1`}>
+              <div className="flex items-center gap-2">
+                <Badge className={`${getStatusColor(loan.status)} text-xs px-2 py-0.5`}>
                   {getStatusLabel(loan.status)}
                 </Badge>
                 {loan.status === 'Pending' && (
                   <Button 
                     size="sm" 
-                    className="bg-emerald-600 hover:bg-emerald-700"
+                    className="bg-emerald-600 hover:bg-emerald-700 h-7 text-xs"
                     onClick={() => updateStatusMutation.mutate('Live')}
                     disabled={updateStatusMutation.isPending}
                   >
-                    Activate Loan
+                    Activate
                   </Button>
                 )}
                 {loan.status === 'Live' && (
@@ -600,30 +598,30 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                       size="sm" 
                       variant="secondary"
                       onClick={() => setIsSettleOpen(true)}
+                      className="h-7 text-xs"
                     >
-                      Calculate Settlement
+                      Settle
                     </Button>
                     <Button 
                       size="sm" 
-                      className="bg-emerald-600 hover:bg-emerald-700"
+                      className="bg-emerald-600 hover:bg-emerald-700 h-7 text-xs"
                       onClick={() => setIsPaymentOpen(true)}
                     >
-                      <DollarSign className="w-4 h-4 mr-2" />
-                      Record Payment
+                      <DollarSign className="w-3 h-3 mr-1" />
+                      Payment
                     </Button>
                   </>
                 )}
-
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="secondary" size="sm">
-                      <MoreVertical className="w-4 h-4" />
+                    <Button variant="secondary" size="sm" className="h-7">
+                      <MoreVertical className="w-3 h-3" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end">
                     <DropdownMenuItem onClick={handleGenerateLoanStatement}>
                       <Download className="w-4 h-4 mr-2" />
-                      Download Loan Statement
+                      Download Statement
                     </DropdownMenuItem>
                     {loan.status !== 'Closed' && (
                       <>
@@ -664,130 +662,47 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                       Delete Loan
                     </DropdownMenuItem>
                   </DropdownMenuContent>
-                  </DropdownMenu>
-                  </div>
-                  </div>
-                  </div>
-                  <CardContent className="p-4">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div>
-                <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
-                  <Banknote className="w-3.5 h-3.5" />
-                  Principal
-                </div>
-                <p className="text-lg font-bold">{formatCurrency(loan.principal_amount)}</p>
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
-                  <TrendingUp className="w-3.5 h-3.5" />
-                  Interest Rate
-                </div>
-                <p className="text-lg font-bold">{loan.interest_rate}%</p>
-                <p className="text-xs text-slate-500">{loan.interest_type}</p>
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
-                  <Clock className="w-3.5 h-3.5" />
-                  Duration
-                </div>
-                <p className="text-lg font-bold">{loan.duration} {loan.period === 'Monthly' ? 'months' : 'weeks'}</p>
-                {loan.auto_extend && (
-                  <div className="flex items-center gap-1">
-                    <Repeat className="w-3 h-3 text-blue-600" />
-                    <p className="text-xs text-blue-600 font-medium">Auto-extending</p>
-                  </div>
-                )}
-              </div>
-              <div>
-                <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
-                  <Calendar className="w-3.5 h-3.5" />
-                  Start Date
-                </div>
-                <p className="text-lg font-bold">{format(new Date(loan.start_date), 'MMM dd, yyyy')}</p>
+                </DropdownMenu>
               </div>
             </div>
-
-            {(loan.arrangement_fee > 0 || loan.exit_fee > 0) && (
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <p className="text-xs font-medium text-slate-700 mb-2">Fees</p>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
-                  {loan.arrangement_fee > 0 && (
-                    <div>
-                      <p className="text-xs text-slate-500">Arrangement Fee</p>
-                      <p className="text-base font-semibold text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
-                    </div>
-                  )}
-                  {loan.net_disbursed && (
-                    <div>
-                      <p className="text-xs text-slate-500">Net Disbursed</p>
-                      <p className="text-base font-semibold text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
-                    </div>
-                  )}
-                  {loan.exit_fee > 0 && (
-                    <div>
-                      <p className="text-xs text-slate-500">Exit Fee</p>
-                      <p className="text-base font-semibold text-amber-600">{formatCurrency(loan.exit_fee)}</p>
-                    </div>
-                  )}
-                </div>
+          </div>
+          <CardContent className="p-3">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
+              <div>
+                <p className="text-slate-500 mb-0.5">Principal</p>
+                <p className="font-bold">{formatCurrency(loan.principal_amount)}</p>
               </div>
-            )}
-
-            {loan.auto_extend && loan.status === 'Active' && (
-              <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex items-start gap-2">
-                  <Repeat className="w-3.5 h-3.5 text-blue-600 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-medium text-blue-900">Auto-Extend Enabled</p>
-                    <p className="text-xs text-blue-700 mt-0.5">
-                      This loan will continue to accrue interest beyond the original duration until fully settled.
-                    </p>
-                  </div>
-                </div>
+              <div>
+                <p className="text-slate-500 mb-0.5">Rate</p>
+                <p className="font-bold">{loan.interest_rate}% {loan.interest_type}</p>
               </div>
-            )}
-
-            {product && (
-              <div className="mt-4 pt-4 border-t border-slate-200">
-                <p className="text-xs font-medium text-slate-700 mb-2">Product Configuration</p>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <p className="text-xs text-slate-500">Interest Calculation</p>
-                    <p className="text-sm font-medium text-slate-800">
-                      {product.interest_calculation_method === 'daily' ? 'Daily (variable payments)' : 'Monthly (fixed 365÷12)'}
-                    </p>
-                  </div>
-                  {product.period === 'Monthly' && (
-                    <div>
-                      <p className="text-xs text-slate-500">Payment Alignment</p>
-                      <p className="text-sm font-medium text-slate-800">
-                        {product.interest_alignment === 'period_based' ? 'From start date' : '1st of month'}
-                      </p>
-                    </div>
-                  )}
-                  {product.interest_only_period > 0 && (
-                    <div>
-                      <p className="text-xs text-slate-500">Interest-Only Period</p>
-                      <p className="text-sm font-medium text-slate-800">
-                        {product.interest_only_period} {product.period === 'Monthly' ? 'months' : 'weeks'}
-                      </p>
-                    </div>
-                  )}
-                  {product.extend_for_full_period && (
-                    <div>
-                      <p className="text-xs text-slate-500">Period Extension</p>
-                      <p className="text-sm font-medium text-slate-800">Full period required</p>
-                    </div>
-                  )}
-                  {product.interest_paid_in_advance && (
-                    <div>
-                      <p className="text-xs text-slate-500">Interest Payment</p>
-                      <p className="text-sm font-medium text-slate-800">Paid in advance</p>
-                    </div>
-                  )}
-                </div>
+              <div>
+                <p className="text-slate-500 mb-0.5">Duration</p>
+                <p className="font-bold">{loan.duration} {loan.period === 'Monthly' ? 'mo' : 'wk'}{loan.auto_extend && ' (ext)'}</p>
               </div>
-            )}
+              <div>
+                <p className="text-slate-500 mb-0.5">Start Date</p>
+                <p className="font-bold">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
+              </div>
+              {loan.arrangement_fee > 0 && (
+                <div>
+                  <p className="text-slate-500 mb-0.5">Arr. Fee</p>
+                  <p className="font-bold text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
+                </div>
+              )}
+              {loan.exit_fee > 0 && (
+                <div>
+                  <p className="text-slate-500 mb-0.5">Exit Fee</p>
+                  <p className="font-bold text-amber-600">{formatCurrency(loan.exit_fee)}</p>
+                </div>
+              )}
+              {loan.net_disbursed && (
+                <div>
+                  <p className="text-slate-500 mb-0.5">Net Disbursed</p>
+                  <p className="font-bold text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
+                </div>
+              )}
+            </div>
           </CardContent>
         </Card>
 
