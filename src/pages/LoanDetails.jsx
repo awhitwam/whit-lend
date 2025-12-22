@@ -848,9 +848,9 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
               Repayments
               <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="transactions">
-              Transactions
-              <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted).length}</Badge>
+            <TabsTrigger value="schedule">
+              Schedule
+              <Badge variant="secondary" className="ml-2">{schedule.length}</Badge>
             </TabsTrigger>
             <TabsTrigger value="expenses">
               Expenses
@@ -866,7 +866,7 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             {/* Combined Repayment View */}
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-slate-900">Schedule</h2>
+                <h2 className="text-xl font-semibold text-slate-900">Status View</h2>
                 <Badge variant="outline">{schedule.length} periods</Badge>
               </div>
               <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
@@ -964,121 +964,81 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             </Card>
           </TabsContent>
 
-          <TabsContent value="transactions">
+          <TabsContent value="schedule">
             <Card>
               <CardHeader>
-                <CardTitle>Transaction History</CardTitle>
+                <CardTitle>Repayment Schedule</CardTitle>
               </CardHeader>
               <CardContent>
-                {transactions.length === 0 ? (
-                  <div className="text-center py-12 text-slate-500">
-                    <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-                    <p>No transactions yet</p>
-                  </div>
-                ) : (
-                  <div>
-                  <div className="flex items-center justify-between mb-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-slate-600">Show</span>
-                      <Select value={txPerPage.toString()} onValueChange={(v) => { setTxPerPage(Number(v)); setTxPage(1); }}>
-                        <SelectTrigger className="w-20">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="10">10</SelectItem>
-                          <SelectItem value="25">25</SelectItem>
-                          <SelectItem value="50">50</SelectItem>
-                          <SelectItem value="100">100</SelectItem>
-                          <SelectItem value={transactions.length.toString()}>All</SelectItem>
-                        </SelectContent>
-                      </Select>
-                      <span className="text-sm text-slate-600">entries</span>
-                    </div>
-                    <div className="text-sm text-slate-600">
-                      Showing {(txPage - 1) * txPerPage + 1} to {Math.min(txPage * txPerPage, transactions.length)} of {transactions.length}
-                    </div>
-                  </div>
-                  <div className="divide-y">
-                    {transactions.slice((txPage - 1) * txPerPage, txPage * txPerPage).map((tx) => (
-                      <div key={tx.id} className={`py-3 flex items-center justify-between ${tx.is_deleted ? 'opacity-50 bg-red-50/50' : ''}`}>
-                        <div className="flex items-center gap-3 flex-1">
-                          <div className={`p-2 rounded-lg ${tx.is_deleted ? 'bg-red-100' : tx.type === 'Repayment' ? 'bg-emerald-100' : 'bg-blue-100'}`}>
-                            {tx.is_deleted ? (
-                              <Trash2 className="w-4 h-4 text-red-600" />
-                            ) : (
-                              <DollarSign className={`w-4 h-4 ${tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`} />
-                            )}
-                          </div>
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <p className="font-medium">{tx.type}</p>
-                              {tx.is_deleted && (
-                                <Badge variant="destructive" className="text-xs">Deleted</Badge>
-                              )}
-                            </div>
-                            <p className="text-sm text-slate-500">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
-                            {tx.is_deleted && (
-                              <p className="text-xs text-red-600 mt-1">
-                                Deleted by {tx.deleted_by} on {format(new Date(tx.deleted_date), 'MMM dd, yyyy')}
-                                {tx.deleted_reason && ` - ${tx.deleted_reason}`}
-                              </p>
-                            )}
-                          </div>
+                {(() => {
+                  const totalPrincipal = schedule.reduce((sum, s) => sum + s.principal_amount, 0);
+                  const totalInterest = schedule.reduce((sum, s) => sum + s.interest_amount, 0);
+                  const totalDue = schedule.reduce((sum, s) => sum + s.total_due, 0);
+
+                  return (
+                    <>
+                      <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-lg">
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">Total Principal</p>
+                          <p className="text-xl font-bold text-slate-900">{formatCurrency(totalPrincipal)}</p>
                         </div>
-                        <div className="flex items-center gap-3">
-                          <div className="text-right">
-                            <p className={`font-semibold ${tx.is_deleted ? 'text-red-600 line-through' : tx.type === 'Repayment' ? 'text-emerald-600' : 'text-blue-600'}`}>
-                              {formatCurrency(tx.amount)}
-                            </p>
-                            {tx.reference && <p className="text-xs text-slate-500">{tx.reference}</p>}
-                          </div>
-                          {!tx.is_deleted && loan.status === 'Active' && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="text-red-500 hover:text-red-700 hover:bg-red-50"
-                              onClick={() => {
-                                const reason = prompt('Enter reason for deleting this transaction:');
-                                if (reason) {
-                                  deleteTransactionMutation.mutate({ transactionId: tx.id, reason });
-                                }
-                              }}
-                              disabled={deleteTransactionMutation.isPending}
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </Button>
-                          )}
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">Total Interest</p>
+                          <p className="text-xl font-bold text-amber-600">{formatCurrency(totalInterest)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">Total Due</p>
+                          <p className="text-xl font-bold text-emerald-600">{formatCurrency(totalDue)}</p>
                         </div>
                       </div>
-                    ))}
-                  </div>
-                  <div className="flex items-center justify-between mt-4 pt-4 border-t">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setTxPage(p => Math.max(1, p - 1))}
-                      disabled={txPage === 1}
-                    >
-                      <ChevronLeft className="w-4 h-4 mr-1" />
-                      Previous
-                    </Button>
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-slate-600">
-                        Page {txPage} of {Math.ceil(transactions.length / txPerPage)}
-                      </span>
-                    </div>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setTxPage(p => Math.min(Math.ceil(transactions.length / txPerPage), p + 1))}
-                      disabled={txPage >= Math.ceil(transactions.length / txPerPage)}
-                    >
-                      Next
-                      <ChevronRight className="w-4 h-4 ml-1" />
-                    </Button>
-                  </div>
-                  </div>
-                )}
+
+                      {schedule.length === 0 ? (
+                        <div className="text-center py-12 text-slate-500">
+                          <FileText className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                          <p>No schedule entries yet</p>
+                        </div>
+                      ) : (
+                        <div className="overflow-x-auto">
+                          <table className="w-full">
+                            <thead className="bg-slate-50 border-b border-slate-200">
+                              <tr>
+                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Period</th>
+                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Due Date</th>
+                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Principal</th>
+                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Interest</th>
+                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Total Due</th>
+                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Balance</th>
+                                <th className="text-center py-3 px-4 text-sm font-semibold text-slate-700">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                              {schedule.map((row) => (
+                                <tr key={row.id} className="hover:bg-slate-50">
+                                  <td className="py-3 px-4 text-sm font-medium">{row.installment_number}</td>
+                                  <td className="py-3 px-4 text-sm">{format(new Date(row.due_date), 'dd/MM/yy')}</td>
+                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(row.principal_amount)}</td>
+                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(row.interest_amount)}</td>
+                                  <td className="py-3 px-4 text-sm font-semibold text-right">{formatCurrency(row.total_due)}</td>
+                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(row.balance)}</td>
+                                  <td className="py-3 px-4 text-center">
+                                    <Badge className={
+                                      row.status === 'Paid' ? 'bg-emerald-500 text-white' :
+                                      row.status === 'Partial' ? 'bg-amber-500 text-white' :
+                                      row.status === 'Overdue' ? 'bg-red-500 text-white' :
+                                      'bg-blue-500 text-white'
+                                    }>
+                                      {row.status}
+                                    </Badge>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
               </CardContent>
             </Card>
           </TabsContent>
