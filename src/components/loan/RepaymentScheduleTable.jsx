@@ -12,6 +12,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('detailed'); // 'separate', 'detailed', 'smartview2'
+  const [showCumulativeColumns, setShowCumulativeColumns] = useState(false);
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
@@ -254,6 +255,20 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 </Button>
               </>
             )}
+            {viewMode === 'smartview2' && (
+              <>
+                <div className="h-4 w-px bg-slate-300" />
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showCumulativeColumns}
+                    onChange={(e) => setShowCumulativeColumns(e.target.checked)}
+                    className="w-4 h-4 rounded border-slate-300"
+                  />
+                  Show Cumulative
+                </label>
+              </>
+            )}
             <div className="h-4 w-px bg-slate-300" />
             <span className="text-sm text-slate-600">Show</span>
             <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
@@ -317,7 +332,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     <TableHead className="font-semibold bg-slate-50 text-right">Amt Paid</TableHead>
                   </>
                 )}
-                {viewMode === 'smartview2' && (
+                {viewMode === 'smartview2' && showCumulativeColumns && (
                   <>
                     <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Expected</TableHead>
                     <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Paid</TableHead>
@@ -628,12 +643,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell>{format(dueDate, 'MMM dd, yyyy')}</TableCell>
                             <TableCell className="text-right font-mono">{formatCurrency(row.total_due)}</TableCell>
                             <TableCell>{statusBadge}</TableCell>
-                            <TableCell className="text-right font-mono text-slate-600">
-                              {formatCurrency(cumulativeExpected)}
-                            </TableCell>
-                            <TableCell className="text-right font-mono text-slate-600">
-                              {formatCurrency(cumulativePaidAtDate)}
-                            </TableCell>
+                            {showCumulativeColumns && (
+                              <>
+                                <TableCell className="text-right font-mono text-slate-600">
+                                  {formatCurrency(cumulativeExpected)}
+                                </TableCell>
+                                <TableCell className="text-right font-mono text-slate-600">
+                                  {formatCurrency(cumulativePaidAtDate)}
+                                </TableCell>
+                              </>
+                            )}
                             <TableCell className={`text-right font-mono font-semibold ${cumulativeBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {cumulativeBalance >= 0 ? '+' : ''}{formatCurrency(cumulativeBalance)}
                             </TableCell>
