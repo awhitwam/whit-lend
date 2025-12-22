@@ -135,7 +135,7 @@ export default function Products() {
                     </DropdownMenuContent>
                   </DropdownMenu>
                 </CardHeader>
-                <CardContent className="space-y-4">
+                <CardContent className="space-y-3">
                   <div className="grid grid-cols-2 gap-4">
                     <div className="flex items-center gap-2">
                       <div className="p-2 rounded-lg bg-blue-100">
@@ -157,25 +157,28 @@ export default function Products() {
                     </div>
                   </div>
                   
-                  {(product.min_amount || product.max_amount) && (
-                    <div className="flex items-center gap-2 p-3 bg-slate-50 rounded-lg">
-                      <Banknote className="w-4 h-4 text-slate-400" />
-                      <p className="text-sm text-slate-600">
-                        {product.min_amount && product.max_amount 
-                          ? `${formatCurrency(product.min_amount)} - ${formatCurrency(product.max_amount)}`
-                          : product.min_amount 
-                            ? `Min: ${formatCurrency(product.min_amount)}`
-                            : `Max: ${formatCurrency(product.max_amount)}`
-                        }
-                      </p>
+                  <div className="pt-2 border-t space-y-2">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-slate-500">Calculation:</span>
+                      <span className="font-medium text-slate-700">
+                        {product.interest_calculation_method === 'daily' ? 'Daily (variable)' : 'Monthly (fixed 365/12)'}
+                      </span>
                     </div>
-                  )}
-                  
-                  {product.max_duration && (
-                    <p className="text-sm text-slate-500">
-                      Max duration: {product.max_duration} {product.period === 'Monthly' ? 'months' : 'weeks'}
-                    </p>
-                  )}
+                    {product.interest_alignment && product.period === 'Monthly' && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-500">Alignment:</span>
+                        <span className="font-medium text-slate-700">
+                          {product.interest_alignment === 'period_based' ? 'From start date' : '1st of month'}
+                        </span>
+                      </div>
+                    )}
+                    {product.min_amount && (
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-500">Min amount:</span>
+                        <span className="font-medium text-slate-700">{formatCurrency(product.min_amount)}</span>
+                      </div>
+                    )}
+                  </div>
                 </CardContent>
               </Card>
             ))}

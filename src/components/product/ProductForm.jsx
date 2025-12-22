@@ -16,8 +16,6 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
     extend_for_full_period: product?.extend_for_full_period || false,
     interest_paid_in_advance: product?.interest_paid_in_advance || false,
     min_amount: product?.min_amount || '',
-    max_amount: product?.max_amount || '',
-    max_duration: product?.max_duration || '',
     interest_only_period: product?.interest_only_period || ''
   });
 
@@ -27,8 +25,6 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
       ...formData,
       interest_rate: parseFloat(formData.interest_rate),
       min_amount: formData.min_amount ? parseFloat(formData.min_amount) : null,
-      max_amount: formData.max_amount ? parseFloat(formData.max_amount) : null,
-      max_duration: formData.max_duration ? parseInt(formData.max_duration) : null,
       interest_only_period: formData.interest_only_period ? parseInt(formData.interest_only_period) : null
     });
   };
@@ -175,40 +171,16 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
         </div>
       )}
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="min_amount">Minimum Amount</Label>
-          <Input
-            id="min_amount"
-            type="number"
-            value={formData.min_amount}
-            onChange={(e) => handleChange('min_amount', e.target.value)}
-            placeholder="e.g. 1000"
-            min={0}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="max_amount">Maximum Amount</Label>
-          <Input
-            id="max_amount"
-            type="number"
-            value={formData.max_amount}
-            onChange={(e) => handleChange('max_amount', e.target.value)}
-            placeholder="e.g. 1000000"
-            min={0}
-          />
-        </div>
-        <div className="space-y-2">
-          <Label htmlFor="max_duration">Max Duration (periods)</Label>
-          <Input
-            id="max_duration"
-            type="number"
-            value={formData.max_duration}
-            onChange={(e) => handleChange('max_duration', e.target.value)}
-            placeholder="e.g. 24"
-            min={1}
-          />
-        </div>
+      <div className="space-y-2">
+        <Label htmlFor="min_amount">Minimum Amount</Label>
+        <Input
+          id="min_amount"
+          type="number"
+          value={formData.min_amount}
+          onChange={(e) => handleChange('min_amount', e.target.value)}
+          placeholder="e.g. 1000"
+          min={0}
+        />
       </div>
 
       {formData.interest_type === 'Interest-Only' && (
