@@ -20,6 +20,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     .filter(tx => !tx.is_deleted)
     .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
   
+  // Calculate total expected interest from schedule
+  const totalExpectedInterest = schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
+
   // Create combined or separate rows based on view mode
   let combinedRows;
 
@@ -827,7 +830,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(cumulativeInterestPaid)}</div>
                   </TableHead>
                   <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50">
-                    {schedule.length > 0 && 'Expected Interest'}
+                    {schedule.length > 0 && (
+                      <>
+                        <div>Expected Interest</div>
+                        <div className="text-xs text-blue-600 font-bold mt-1">{formatCurrency(totalExpectedInterest)}</div>
+                      </>
+                    )}
                   </TableHead>
                   <TableHead className="font-semibold text-right bg-slate-50">
                     {schedule.length > 0 && 'Total Outstanding'}
