@@ -557,21 +557,24 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       // For future dates: calculate cumulative up to TODAY only
                       const evaluationDate = isPastDue ? dueDate : today;
 
-                      // Calculate principal paid up to due date (before this payment is due)
-                      const txBeforeDueDate = sortedTransactions.filter(tx => new Date(tx.date) < dueDate);
-                      const principalPaidBeforeDueDate = txBeforeDueDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                      const principalOutstandingAtDueDate = loan.principal_amount - principalPaidBeforeDueDate;
+                      // Get the previous period's due date to determine principal outstanding at start of this period
+                      const previousDueDate = actualIndex > 0 ? new Date(sortedSchedule[actualIndex - 1].due_date) : new Date(loan.start_date);
 
-                      // Recalculate expected interest based on actual outstanding principal
+                      // Calculate principal paid up to END of previous period
+                      const txUpToPreviousPeriod = sortedTransactions.filter(tx => new Date(tx.date) <= previousDueDate);
+                      const principalPaidUpToPreviousPeriod = txUpToPreviousPeriod.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                      const principalOutstandingAtStartOfPeriod = loan.principal_amount - principalPaidUpToPreviousPeriod;
+
+                      // Recalculate expected interest based on principal outstanding at START of period
                       let expectedInterestForPeriod = 0;
                       if (loan.interest_type === 'Flat') {
                         expectedInterestForPeriod = loan.principal_amount * periodRate;
                       } else if (loan.interest_type === 'Reducing') {
-                        expectedInterestForPeriod = principalOutstandingAtDueDate * periodRate;
+                        expectedInterestForPeriod = principalOutstandingAtStartOfPeriod * periodRate;
                       } else if (loan.interest_type === 'Interest-Only') {
                         expectedInterestForPeriod = loan.principal_amount * periodRate;
                       } else if (loan.interest_type === 'Rolled-Up') {
-                        expectedInterestForPeriod = principalOutstandingAtDueDate * periodRate;
+                        expectedInterestForPeriod = principalOutstandingAtStartOfPeriod * periodRate;
                       }
 
                       // Add to cumulative expected if due date has passed
