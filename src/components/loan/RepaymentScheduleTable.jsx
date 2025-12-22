@@ -782,27 +782,140 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <span className="text-xs text-slate-500 ml-2">
                               {(() => {
                                 const scheduleEntry = row.scheduleEntry;
-                                const actualDays = scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
-                                const principalStart = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
-                                const dailyAmount = principalStart * (loan.interest_rate / 100 / 365);
-                                return `${actualDays}d × ${formatCurrency(dailyAmount)}/day`;
+                                const dailyRate = loan.interest_rate / 100 / 365;
+                                
+                                // Find the period start date
+                                const currentIndex = combinedRows.findIndex(r => r.scheduleEntry?.id === scheduleEntry.id);
+                                const previousScheduleRows = combinedRows.slice(0, currentIndex).filter(r => r.rowType === 'schedule');
+                                const periodStart = previousScheduleRows.length > 0 
+                                  ? new Date(previousScheduleRows[previousScheduleRows.length - 1].scheduleEntry.due_date)
+                                  : new Date(loan.start_date);
+                                const periodEnd = new Date(scheduleEntry.due_date);
+                                
+                                // Find capital transactions within this period
+                                const capitalTxInPeriod = combinedRows.filter(r => 
+                                  r.rowType === 'transaction' && 
+                                  r.date > periodStart && 
+                                  r.date <= periodEnd &&
+                                  r.transactions.some(tx => tx.principal_applied > 0)
+                                ).sort((a, b) => a.date - b.date);
+                                
+                                if (capitalTxInPeriod.length === 0) {
+                                  // No mid-period changes
+                                  const principalStart = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
+                                  const dailyAmount = principalStart * dailyRate;
+                                  const actualDays = scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
+                                  return `${actualDays}d × ${formatCurrency(dailyAmount)}/day`;
+                                } else {
+                                  // Mid-period changes - show segments
+                                  const segments = [];
+                                  let segmentStart = periodStart;
+                                  let runningPrincipal = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
+                                  
+                                  for (const txRow of capitalTxInPeriod) {
+                                    const daysInSegment = differenceInDays(txRow.date, segmentStart);
+                                    if (daysInSegment > 0) {
+                                      const dailyAmount = runningPrincipal * dailyRate;
+                                      segments.push(`${daysInSegment}d × ${formatCurrency(dailyAmount)}/day`);
+                                    }
+                                    
+                                    const principalPaid = txRow.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                                    runningPrincipal = Math.max(0, runningPrincipal - principalPaid);
+                                    segmentStart = txRow.date;
+                                  }
+                                  
+                                  // Final segment
+                                  const finalDays = differenceInDays(periodEnd, segmentStart);
+                                  if (finalDays > 0) {
+                                    const dailyAmount = runningPrincipal * dailyRate;
+                                    segments.push(`${finalDays}d × ${formatCurrency(dailyAmount)}/day`);
+                                  }
+                                  
+                                  return segments.join(' + ');
+                                }
                               })()}
                             </span>
                           </div>
                         </TooltipTrigger>
-                        <TooltipContent className="max-w-xs">
+                        <TooltipContent className="max-w-md">
                           <div className="space-y-1 text-xs">
                             <p className="font-semibold">Interest Calculation:</p>
                             <p>Annual Rate: {loan.interest_rate}%</p>
                             <p>Daily Rate: {(loan.interest_rate / 100 / 365 * 100).toFixed(4)}% per day</p>
-                            <p>Days in Period: {row.scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7)}</p>
-                            <p>Principal at Start: {formatCurrency(row.scheduleEntry?.calculation_principal_start || row.principalOutstanding)}</p>
-                            <p className="pt-1 border-t">Formula: Principal × Daily Rate × Days</p>
-                            {row.scheduleEntry?.calculation_days && (
-                              <p className="text-amber-600 pt-1">
-                                = {formatCurrency(row.scheduleEntry.calculation_principal_start)} × {(loan.interest_rate / 100 / 365 * 100).toFixed(4)}% × {row.scheduleEntry.calculation_days}d
-                              </p>
-                            )}
+                            {(() => {
+                              const scheduleEntry = row.scheduleEntry;
+                              const currentIndex = combinedRows.findIndex(r => r.scheduleEntry?.id === scheduleEntry.id);
+                              const previousScheduleRows = combinedRows.slice(0, currentIndex).filter(r => r.rowType === 'schedule');
+                              const periodStart = previousScheduleRows.length > 0 
+                                ? new Date(previousScheduleRows[previousScheduleRows.length - 1].scheduleEntry.due_date)
+                                : new Date(loan.start_date);
+                              const periodEnd = new Date(scheduleEntry.due_date);
+                              
+                              const capitalTxInPeriod = combinedRows.filter(r => 
+                                r.rowType === 'transaction' && 
+                                r.date > periodStart && 
+                                r.date <= periodEnd &&
+                                r.transactions.some(tx => tx.principal_applied > 0)
+                              ).sort((a, b) => a.date - b.date);
+                              
+                              if (capitalTxInPeriod.length === 0) {
+                                return (
+                                  <>
+                                    <p>Days in Period: {row.scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7)}</p>
+                                    <p>Principal at Start: {formatCurrency(row.scheduleEntry?.calculation_principal_start || row.principalOutstanding)}</p>
+                                    <p className="pt-1 border-t">Formula: Principal × Daily Rate × Days</p>
+                                  </>
+                                );
+                              } else {
+                                const dailyRate = loan.interest_rate / 100 / 365;
+                                let segmentStart = periodStart;
+                                let runningPrincipal = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
+                                const segments = [];
+                                
+                                for (const txRow of capitalTxInPeriod) {
+                                  const daysInSegment = differenceInDays(txRow.date, segmentStart);
+                                  if (daysInSegment > 0) {
+                                    const interestForSegment = runningPrincipal * dailyRate * daysInSegment;
+                                    segments.push({
+                                      days: daysInSegment,
+                                      principal: runningPrincipal,
+                                      interest: interestForSegment,
+                                      endDate: format(txRow.date, 'MMM dd')
+                                    });
+                                  }
+                                  
+                                  const principalPaid = txRow.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                                  runningPrincipal = Math.max(0, runningPrincipal - principalPaid);
+                                  segmentStart = txRow.date;
+                                }
+                                
+                                const finalDays = differenceInDays(periodEnd, segmentStart);
+                                if (finalDays > 0) {
+                                  const interestForSegment = runningPrincipal * dailyRate * finalDays;
+                                  segments.push({
+                                    days: finalDays,
+                                    principal: runningPrincipal,
+                                    interest: interestForSegment,
+                                    endDate: format(periodEnd, 'MMM dd')
+                                  });
+                                }
+                                
+                                return (
+                                  <>
+                                    <p className="font-semibold text-amber-600">Mid-Period Principal Change</p>
+                                    <p className="pt-1 border-t">Interest Segments:</p>
+                                    {segments.map((seg, i) => (
+                                      <p key={i} className="pl-2">
+                                        • {seg.days}d × {formatCurrency(seg.principal)} × {(dailyRate * 100).toFixed(4)}% = {formatCurrency(seg.interest)}
+                                      </p>
+                                    ))}
+                                    <p className="pt-1 border-t font-semibold">
+                                      Total: {formatCurrency(segments.reduce((sum, s) => sum + s.interest, 0))}
+                                    </p>
+                                  </>
+                                );
+                              }
+                            })()}
                           </div>
                         </TooltipContent>
                       </Tooltip>
