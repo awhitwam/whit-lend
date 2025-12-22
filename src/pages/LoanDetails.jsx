@@ -930,28 +930,31 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                           <p>No repayments recorded yet</p>
                         </div>
                       ) : (
-                        <div className="divide-y">
-                          {repayments.map((tx) => (
-                            <div key={tx.id} className="py-4 flex items-center justify-between hover:bg-slate-50 px-2 rounded">
-                              <div className="flex items-center gap-3 flex-1">
-                                <div className="p-2 rounded-lg bg-emerald-100">
-                                  <DollarSign className="w-5 h-5 text-emerald-600" />
-                                </div>
-                                <div className="flex-1">
-                                  <p className="font-medium">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
-                                  {tx.reference && <p className="text-sm text-slate-500">Ref: {tx.reference}</p>}
-                                  {tx.notes && <p className="text-xs text-slate-500 mt-1">{tx.notes}</p>}
-                                </div>
-                              </div>
-                              <div className="text-right">
-                                <p className="font-semibold text-lg text-emerald-600">{formatCurrency(tx.amount)}</p>
-                                <div className="flex gap-3 text-sm text-slate-600 mt-1">
-                                  <span>Principal: {formatCurrency(tx.principal_applied || 0)}</span>
-                                  <span>Interest: {formatCurrency(tx.interest_applied || 0)}</span>
-                                </div>
-                              </div>
-                            </div>
-                          ))}
+                        <div className="overflow-x-auto">
+                          <table className="w-full">
+                            <thead className="bg-slate-50 border-b border-slate-200">
+                              <tr>
+                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Reference</th>
+                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Amount</th>
+                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Principal</th>
+                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Interest</th>
+                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Notes</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-200">
+                              {repayments.map((tx) => (
+                                <tr key={tx.id} className="hover:bg-slate-50">
+                                  <td className="py-3 px-4 text-sm font-medium">{format(new Date(tx.date), 'dd/MM/yy')}</td>
+                                  <td className="py-3 px-4 text-sm text-slate-600">{tx.reference || '—'}</td>
+                                  <td className="py-3 px-4 text-sm font-semibold text-emerald-600 text-right">{formatCurrency(tx.amount)}</td>
+                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(tx.principal_applied || 0)}</td>
+                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(tx.interest_applied || 0)}</td>
+                                  <td className="py-3 px-4 text-sm text-slate-500">{tx.notes || '—'}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
                         </div>
                       )}
                     </>
