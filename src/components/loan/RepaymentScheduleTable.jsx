@@ -332,13 +332,19 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     <TableHead className="font-semibold bg-slate-50 text-right">Amt Paid</TableHead>
                   </>
                 )}
-                {viewMode === 'smartview2' && showCumulativeColumns && (
+                {viewMode === 'smartview2' && (
                   <>
-                    <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Expected</TableHead>
-                    <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Paid</TableHead>
+                    <TableHead className="font-semibold bg-slate-50 text-right">Principal Paid</TableHead>
+                    {showCumulativeColumns && (
+                      <>
+                        <TableHead className="font-semibold bg-slate-50 text-right">Principal Outstanding</TableHead>
+                        <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Interest Expected</TableHead>
+                        <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Interest Paid</TableHead>
+                      </>
+                    )}
                   </>
                 )}
-                <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Variance</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Interest Variance</TableHead>
                 <TableHead className="font-semibold bg-slate-50">Notes</TableHead>
               </TableRow>
             </TableHeader>
@@ -504,9 +510,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                     const today = new Date();
 
-                    // Calculate cumulative interest expected and paid up to before display window
+                    // Calculate cumulative values up to before display window
                     let cumulativeInterestExpected = 0;
                     let cumulativeInterestPaid = 0;
+                    let cumulativePrincipalPaid = 0;
 
                     for (let i = 0; i < startIndex; i++) {
                       const row = schedule[i];
@@ -518,10 +525,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       }
 
                       const evaluationDate = isPastDue ? dueDate : today;
-                      const interestPaidUpToDate = sortedTransactions
-                        .filter(tx => new Date(tx.date) <= evaluationDate)
-                        .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-                      cumulativeInterestPaid = interestPaidUpToDate;
+                      const txUpToDate = sortedTransactions.filter(tx => new Date(tx.date) <= evaluationDate);
+                      cumulativeInterestPaid = txUpToDate.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                      cumulativePrincipalPaid = txUpToDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
                     }
 
                     const displayRows = schedule.slice(startIndex, endIndex);
@@ -540,10 +546,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         cumulativeInterestExpected += row.interest_amount;
                       }
 
-                      // Calculate interest paid on or before evaluation date
-                      const interestPaidUpToDate = sortedTransactions
-                        .filter(tx => new Date(tx.date) <= evaluationDate)
-                        .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                      // Calculate payments up to evaluation date
+                      const txUpToDate = sortedTransactions.filter(tx => new Date(tx.date) <= evaluationDate);
+                      const interestPaidUpToDate = txUpToDate.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                      const principalPaidUpToDate = txUpToDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+
+                      // Calculate outstanding principal
+                      const principalOutstanding = loan.principal_amount - principalPaidUpToDate;
 
                       // Cumulative interest variance (frozen for past dates, current for future dates)
                       const cumulativeBalance = interestPaidUpToDate - cumulativeInterestExpected;
@@ -625,8 +634,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell>{format(dueDate, 'MMM dd, yyyy')}</TableCell>
                             <TableCell className="text-right font-mono">{formatCurrency(row.total_due)}</TableCell>
                             <TableCell>{statusBadge}</TableCell>
+                            <TableCell className="text-right font-mono text-slate-600">
+                              {formatCurrency(principalPaidUpToDate)}
+                            </TableCell>
                             {showCumulativeColumns && (
                               <>
+                                <TableCell className="text-right font-mono text-slate-600">
+                                  {formatCurrency(principalOutstanding)}
+                                </TableCell>
                                 <TableCell className="text-right font-mono text-slate-600">
                                   {formatCurrency(cumulativeInterestExpected)}
                                 </TableCell>
