@@ -713,28 +713,86 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                     <TooltipTrigger asChild>
                                       <span className="cursor-help underline decoration-dotted">{notes}</span>
                                     </TooltipTrigger>
-                                    <TooltipContent className="max-w-sm">
-                                      {isPastDue ? (
-                                        cumulativeBalance < -0.01 ? (
-                                          recoveryTransactionDate ? (
-                                            <p>Interest was paid {daysLate} day{daysLate !== 1 ? 's' : ''} after the due date. The cumulative interest balance became positive on {format(recoveryTransactionDate, 'MMM dd, yyyy')}.</p>
+                                    <TooltipContent className="max-w-md">
+                                      <div className="space-y-2 text-xs">
+                                        <div className="font-semibold text-sm border-b pb-1">Period Analysis</div>
+
+                                        <div>
+                                          <p className="font-medium">Due Date: {format(dueDate, 'MMM dd, yyyy')}</p>
+                                          <p className="text-slate-600">Expected Interest: {formatCurrency(expectedInterestForPeriod)}</p>
+                                        </div>
+
+                                        <div>
+                                          <p className="font-medium">Cumulative Position (as of {isPastDue ? format(dueDate, 'MMM dd, yyyy') : format(today, 'MMM dd, yyyy')}):</p>
+                                          <p className="text-slate-600">• Interest Expected: {formatCurrency(cumulativeInterestExpected)}</p>
+                                          <p className="text-slate-600">• Interest Paid: {formatCurrency(interestPaidUpToDate)}</p>
+                                          <p className={`font-semibold ${cumulativeBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                            • Balance: {cumulativeBalance >= 0 ? '+' : ''}{formatCurrency(cumulativeBalance)}
+                                          </p>
+                                        </div>
+
+                                        {(() => {
+                                          const txUpToEvalDate = sortedTransactions.filter(tx => 
+                                            new Date(tx.date) <= (isPastDue ? dueDate : today)
+                                          );
+
+                                          if (txUpToEvalDate.length > 0) {
+                                            return (
+                                              <div>
+                                                <p className="font-medium">Payments Considered ({txUpToEvalDate.length}):</p>
+                                                <div className="space-y-1 mt-1 max-h-32 overflow-y-auto">
+                                                  {txUpToEvalDate.map((tx, i) => (
+                                                    <div key={i} className="text-slate-600 pl-2 border-l-2 border-slate-200">
+                                                      <p>• {format(new Date(tx.date), 'MMM dd, yyyy')}: {formatCurrency(tx.amount)}</p>
+                                                      <p className="pl-2 text-slate-500">
+                                                        Principal: {formatCurrency(tx.principal_applied || 0)} | 
+                                                        Interest: {formatCurrency(tx.interest_applied || 0)}
+                                                      </p>
+                                                    </div>
+                                                  ))}
+                                                </div>
+                                              </div>
+                                            );
+                                          }
+                                        })()}
+
+                                        <div className="border-t pt-2">
+                                          <p className="font-medium">Status Logic:</p>
+                                          {isPastDue ? (
+                                            cumulativeBalance < -0.01 ? (
+                                              recoveryTransactionDate ? (
+                                                <p className="text-slate-600">
+                                                  Interest shortfall of {formatCurrency(arrearsAtDueDate)} at due date was cleared {daysLate} day{daysLate !== 1 ? 's' : ''} late on {format(recoveryTransactionDate, 'MMM dd, yyyy')}.
+                                                </p>
+                                              ) : (
+                                                <p className="text-red-600">
+                                                  Interest shortfall of {formatCurrency(arrearsAtDueDate)} at due date remains unpaid.
+                                                </p>
+                                              )
+                                            ) : (
+                                              cumulativeBalance > 0.01 ? (
+                                                <p className="text-emerald-600">
+                                                  Interest obligations met by due date with surplus of {formatCurrency(cumulativeBalance)}.
+                                                </p>
+                                              ) : (
+                                                <p className="text-slate-600">
+                                                  Interest obligations met exactly by due date.
+                                                </p>
+                                              )
+                                            )
                                           ) : (
-                                            <p>Interest payment is overdue. As of the due date ({format(dueDate, 'MMM dd, yyyy')}), there was a shortfall of {formatCurrency(arrearsAtDueDate)}. This has not yet been recovered.</p>
-                                          )
-                                        ) : (
-                                          cumulativeBalance > 0.01 ? (
-                                            <p>Interest obligations were met by the due date. The account has a surplus of {formatCurrency(cumulativeBalance)} in interest payments.</p>
-                                          ) : (
-                                            <p>Interest obligations were met exactly by the due date ({format(dueDate, 'MMM dd, yyyy')}).</p>
-                                          )
-                                        )
-                                      ) : (
-                                        cumulativeBalance > 0.01 ? (
-                                          <p>This payment is upcoming in {daysUntilDue} day{daysUntilDue !== 1 ? 's' : ''}. The account currently has a surplus of {formatCurrency(cumulativeBalance)}, meaning interest payments are ahead of schedule.</p>
-                                        ) : (
-                                          <p>This payment is due in {daysUntilDue} day{daysUntilDue !== 1 ? 's' : ''} ({format(dueDate, 'MMM dd, yyyy')}).</p>
-                                        )
-                                      )}
+                                            cumulativeBalance > 0.01 ? (
+                                              <p className="text-emerald-600">
+                                                Upcoming in {daysUntilDue} day{daysUntilDue !== 1 ? 's' : ''}. Account has {formatCurrency(cumulativeBalance)} surplus - payments ahead of schedule.
+                                              </p>
+                                            ) : (
+                                              <p className="text-slate-600">
+                                                Upcoming in {daysUntilDue} day{daysUntilDue !== 1 ? 's' : ''}. No payments made yet.
+                                              </p>
+                                            )
+                                          )}
+                                        </div>
+                                      </div>
                                     </TooltipContent>
                                   </Tooltip>
                                 </TooltipProvider>
