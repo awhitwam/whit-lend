@@ -15,7 +15,7 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   // Fetch loan details
   const loans = await base44.entities.Loan.filter({ id: loanId });
   const loan = loans[0];
-  
+
   if (!loan) {
     throw new Error('Loan not found');
   }
@@ -23,7 +23,7 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   // Fetch product to get latest settings
   const products = await base44.entities.LoanProduct.filter({ id: loan.product_id });
   const product = products[0];
-  
+
   if (!product) {
     throw new Error('Loan product not found');
   }
@@ -37,6 +37,14 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     is_deleted: false,
     type: 'Repayment'
   }, '-date');
+
+  console.log('=== REGENERATE SCHEDULE DEBUG ===');
+  console.log('Loan ID:', loanId);
+  console.log('Loan Principal:', loan.principal_amount);
+  console.log('Interest Type:', product.interest_type);
+  console.log('Interest Rate:', product.interest_rate);
+  console.log('Period:', product.period);
+  console.log('Number of transactions:', transactions.length);
 
   if (transactions.length > 0 && (loan.auto_extend || !options.duration)) {
     const latestTx = transactions[0];
@@ -56,6 +64,15 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   // Calculate principal paid to date for reducing balance adjustment
   const principalPaidToDate = transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
 
+  console.log('Total principal paid (from transactions):', principalPaidToDate);
+  console.log('Duration:', duration);
+  console.log('Transactions:', transactions.map(t => ({
+    date: t.date,
+    amount: t.amount,
+    principal: t.principal_applied,
+    interest: t.interest_applied
+  })));
+
   // Generate new schedule
   const newSchedule = generateRepaymentSchedule({
     principal: loan.principal_amount,
@@ -70,6 +87,11 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     interestPaidInAdvance: product.interest_paid_in_advance || false,
     principalPaidToDate: principalPaidToDate,
     transactions: transactions
+  });
+
+  console.log('Generated schedule (first 5 rows):');
+  newSchedule.slice(0, 5).forEach(row => {
+    console.log(`  ${row.due_date}: Principal=${row.principal_amount}, Interest=${row.interest_amount}, Total=${row.total_due}`);
   });
 
   const summary = calculateLoanSummary(newSchedule);
