@@ -7,10 +7,10 @@ import ImportBorrowers from './pages/ImportBorrowers';
 import InvestorDetails from './pages/InvestorDetails';
 import Investors from './pages/Investors';
 import Ledger from './pages/Ledger';
-import LoanDetails from './pages/LoanDetails';
 import Loans from './pages/Loans';
 import NewLoan from './pages/NewLoan';
 import Products from './pages/Products';
+import LoanDetails from './pages/LoanDetails';
 import __Layout from './Layout.jsx';
 
 
@@ -24,10 +24,10 @@ export const PAGES = {
     "InvestorDetails": InvestorDetails,
     "Investors": Investors,
     "Ledger": Ledger,
-    "LoanDetails": LoanDetails,
     "Loans": Loans,
     "NewLoan": NewLoan,
     "Products": Products,
+    "LoanDetails": LoanDetails,
 }
 
 export const pagesConfig = {

@@ -741,33 +741,33 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
         </Card>
 
         {/* Financial Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
           <Card className="bg-gradient-to-br from-blue-50 to-blue-100/50 border-blue-200">
-            <CardContent className="p-3">
-              <p className="text-xs text-blue-600 font-medium">Total Repayable</p>
-              <p className="text-xl font-bold text-blue-900">{formatCurrency(loan.total_repayable)}</p>
+            <CardContent className="p-2">
+              <p className="text-xs text-blue-600 font-medium mb-0.5">Total Repayable</p>
+              <p className="text-lg font-bold text-blue-900">{formatCurrency(loan.total_repayable)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200">
-            <CardContent className="p-3">
-              <p className="text-xs text-amber-600 font-medium">Interest Received</p>
-              <p className="text-xl font-bold text-amber-900">{formatCurrency(actualInterestPaid)}</p>
+            <CardContent className="p-2">
+              <p className="text-xs text-amber-600 font-medium mb-0.5">Interest Received</p>
+              <p className="text-lg font-bold text-amber-900">{formatCurrency(actualInterestPaid)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border-emerald-200">
-            <CardContent className="p-3">
-              <p className="text-xs text-emerald-600 font-medium">Amount Paid</p>
-              <p className="text-xl font-bold text-emerald-900">
+            <CardContent className="p-2">
+              <p className="text-xs text-emerald-600 font-medium mb-0.5">Amount Paid</p>
+              <p className="text-lg font-bold text-emerald-900">
                 {formatCurrency(totalPaidFromSchedule)}
               </p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-red-50 to-red-100/50 border-red-200">
-            <CardContent className="p-3">
-              <p className="text-xs text-red-600 font-medium">Outstanding</p>
-              <p className="text-xl font-bold text-red-900">{formatCurrency(totalOutstanding)}</p>
+            <CardContent className="p-2">
+              <p className="text-xs text-red-600 font-medium mb-0.5">Outstanding</p>
+              <p className="text-lg font-bold text-red-900">{formatCurrency(totalOutstanding)}</p>
               {loan.overpayment_credit > 0 && (
-                <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
+                <p className="text-xs text-blue-600 mt-0.5 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
                   Credit: {formatCurrency(loan.overpayment_credit)}
                 </p>
@@ -776,14 +776,14 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
           </Card>
           {isLoanActive && (
             <Card className={`bg-gradient-to-br ${liveInterestOutstanding < 0 ? 'from-emerald-50 to-emerald-100/50 border-emerald-200' : 'from-purple-50 to-purple-100/50 border-purple-200'}`}>
-              <CardContent className="p-3">
-                <p className={`text-xs font-medium ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
+              <CardContent className="p-2">
+                <p className={`text-xs font-medium mb-0.5 ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
                   Live Interest {liveInterestOutstanding < 0 ? 'Overpaid' : 'Due'}
                 </p>
-                <p className={`text-xl font-bold ${liveInterestOutstanding < 0 ? 'text-emerald-900' : 'text-purple-900'}`}>
+                <p className={`text-lg font-bold ${liveInterestOutstanding < 0 ? 'text-emerald-900' : 'text-purple-900'}`}>
                   {liveInterestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(liveInterestOutstanding))}
                 </p>
-                <p className="text-xs text-slate-500 mt-1">As of today</p>
+                <p className="text-xs text-slate-500 mt-0.5">As of today</p>
               </CardContent>
             </Card>
           )}
