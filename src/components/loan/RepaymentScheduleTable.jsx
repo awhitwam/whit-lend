@@ -507,21 +507,25 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                     return displayRows.map((row, idx) => {
                       const dueDate = new Date(row.due_date);
-
-                      // Add this row's expected amount
-                      cumulativeExpected += row.total_due;
-
-                      // Calculate payments received on or before this due date (immutable snapshot)
-                      const paymentsUpToDueDate = sortedTransactions.filter(tx => 
-                        new Date(tx.date) <= dueDate
-                      );
-                      const cumulativePaidAtDueDate = paymentsUpToDueDate.reduce((sum, tx) => sum + tx.amount, 0);
-
-                      // Cumulative position at this due date (frozen at due date)
-                      const cumulativeBalance = cumulativePaidAtDueDate - cumulativeExpected;
-
-                      // Status determination - IMMUTABLE once due date passes
                       const isPastDue = today > dueDate;
+
+                      // For past dates: calculate cumulative up to due date
+                      // For future dates: calculate cumulative up to TODAY only
+                      const evaluationDate = isPastDue ? dueDate : today;
+
+                      // Add this row's expected amount only if due date has passed
+                      if (isPastDue) {
+                        cumulativeExpected += row.total_due;
+                      }
+
+                      // Calculate payments received on or before evaluation date
+                      const paymentsUpToDate = sortedTransactions.filter(tx => 
+                        new Date(tx.date) <= evaluationDate
+                      );
+                      const cumulativePaidAtDate = paymentsUpToDate.reduce((sum, tx) => sum + tx.amount, 0);
+
+                      // Cumulative position (frozen for past dates, current for future dates)
+                      const cumulativeBalance = cumulativePaidAtDate - cumulativeExpected;
                       let statusBadge;
                       let statusColor = '';
                       let notes = '';
@@ -576,7 +580,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               {formatCurrency(cumulativeExpected)}
                             </TableCell>
                             <TableCell className="text-right font-mono text-slate-600">
-                              {formatCurrency(cumulativePaidAtDueDate)}
+                              {formatCurrency(cumulativePaidAtDate)}
                             </TableCell>
                             <TableCell className={`text-right font-mono font-semibold ${cumulativeBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {cumulativeBalance >= 0 ? '+' : ''}{formatCurrency(cumulativeBalance)}
