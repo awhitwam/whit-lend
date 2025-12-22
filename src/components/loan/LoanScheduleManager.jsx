@@ -1,5 +1,6 @@
 import { base44 } from '@/api/base44Client';
 import { generateRepaymentSchedule, calculateLoanSummary } from './LoanCalculator';
+import { format } from 'date-fns';
 
 /**
  * Regenerates and applies a repayment schedule to a loan based on product settings
