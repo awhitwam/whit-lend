@@ -286,6 +286,8 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       }
     }
 
+    const totalDaysInPeriod = differenceInDays(periodEndDate, periodStartDate);
+    
     schedule.push({
       installment_number: i,
       due_date: format(periodEndDate, 'yyyy-MM-dd'),
@@ -295,7 +297,9 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       balance: Math.max(0, Math.round(principalAtEnd * 100) / 100),
       principal_paid: 0,
       interest_paid: 0,
-      status: 'Pending'
+      status: 'Pending',
+      calculation_days: totalDaysInPeriod,
+      calculation_principal_start: Math.round(principalAtStart * 100) / 100
     });
 
     console.log(`Period ${i} (${format(periodEndDate, 'yyyy-MM-dd')}): Interest=${totalInterestForPeriod.toFixed(2)}, Principal=${principalForPeriod.toFixed(2)}, Balance=${principalAtEnd.toFixed(2)}`);
@@ -380,6 +384,8 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
       totalInterest += calculateInterestForDays(segmentPrincipal, dailyRate, finalDays, product.interest_type, originalPrincipal);
     }
 
+    const daysInFirstPeriod = differenceInDays(endOfFirstMonth, startDate) + 1;
+    
     schedule.push({
       installment_number: installmentNum++,
       due_date: format(startDate, 'yyyy-MM-dd'),
@@ -389,7 +395,9 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
       balance: principalAtStart,
       principal_paid: 0,
       interest_paid: 0,
-      status: 'Pending'
+      status: 'Pending',
+      calculation_days: daysInFirstPeriod,
+      calculation_principal_start: Math.round(principalAtStart * 100) / 100
     });
   }
 
@@ -436,6 +444,8 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
       principalForPeriod = principalAtEnd;
     }
 
+    const daysInPeriod = differenceInDays(periodEnd, periodStart);
+    
     schedule.push({
       installment_number: installmentNum++,
       due_date: format(periodStart, 'yyyy-MM-dd'),
@@ -445,7 +455,9 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
       balance: Math.max(0, Math.round(principalAtEnd * 100) / 100),
       principal_paid: 0,
       interest_paid: 0,
-      status: 'Pending'
+      status: 'Pending',
+      calculation_days: daysInPeriod,
+      calculation_principal_start: Math.round(principalAtStart * 100) / 100
     });
   }
 }

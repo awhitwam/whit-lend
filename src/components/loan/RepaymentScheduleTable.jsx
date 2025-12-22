@@ -781,10 +781,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             {formatCurrency(row.expectedInterest)}
                             <div className="text-xs text-slate-500 mt-0.5">
                               {(() => {
-                                const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
-                                const daysPerPeriod = loan.period === 'Monthly' ? 30 : 7;
+                                const scheduleEntry = row.scheduleEntry;
+                                const actualDays = scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
                                 const dailyRate = (loan.interest_rate / 100 / 365);
-                                return `${daysPerPeriod}d @ ${(dailyRate * 100).toFixed(4)}%/day`;
+                                return `${actualDays}d @ ${(dailyRate * 100).toFixed(4)}%/day`;
                               })()}
                             </div>
                           </div>
@@ -794,9 +794,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <p className="font-semibold">Interest Calculation:</p>
                             <p>Annual Rate: {loan.interest_rate}%</p>
                             <p>Daily Rate: {(loan.interest_rate / 100 / 365 * 100).toFixed(4)}% per day</p>
-                            <p>Period: ~{loan.period === 'Monthly' ? '30' : '7'} days</p>
-                            <p>Principal: {formatCurrency(row.principalOutstanding)}</p>
+                            <p>Days in Period: {row.scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7)}</p>
+                            <p>Principal at Start: {formatCurrency(row.scheduleEntry?.calculation_principal_start || row.principalOutstanding)}</p>
                             <p className="pt-1 border-t">Formula: Principal × Daily Rate × Days</p>
+                            {row.scheduleEntry?.calculation_days && (
+                              <p className="text-amber-600 pt-1">
+                                = {formatCurrency(row.scheduleEntry.calculation_principal_start)} × {(loan.interest_rate / 100 / 365 * 100).toFixed(4)}% × {row.scheduleEntry.calculation_days}d
+                              </p>
+                            )}
                           </div>
                         </TooltipContent>
                       </Tooltip>
