@@ -254,7 +254,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 className="gap-1 h-8"
               >
                 <Split className="w-4 h-4" />
-                Separate
+                Schedule
               </Button>
             </div>
             {viewMode === 'separate' && (
