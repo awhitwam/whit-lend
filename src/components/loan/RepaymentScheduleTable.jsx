@@ -804,7 +804,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                   // No mid-period changes
                                   const principalStart = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
                                   const actualDays = scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
-                                  return `${actualDays}d × ${formatCurrency(principalStart)} × ${(dailyRate * 100).toFixed(4)}%`;
+                                  const dailyInterestAmount = principalStart * dailyRate;
+                                  return `${actualDays}d × ${formatCurrency(dailyInterestAmount)}/day`;
                                 } else {
                                   // Mid-period changes - show segments
                                   const segments = [];
@@ -814,7 +815,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                   for (const txRow of capitalTxInPeriod) {
                                     const daysInSegment = differenceInDays(txRow.date, segmentStart);
                                     if (daysInSegment > 0) {
-                                      segments.push(`${daysInSegment}d × ${formatCurrency(runningPrincipal)} × ${(dailyRate * 100).toFixed(4)}%`);
+                                      const dailyInterestAmount = runningPrincipal * dailyRate;
+                                      segments.push(`${daysInSegment}d × ${formatCurrency(dailyInterestAmount)}/day`);
                                     }
                                     
                                     const principalPaid = txRow.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
@@ -825,7 +827,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                   // Final segment
                                   const finalDays = differenceInDays(periodEnd, segmentStart);
                                   if (finalDays > 0) {
-                                    segments.push(`${finalDays}d × ${formatCurrency(runningPrincipal)} × ${(dailyRate * 100).toFixed(4)}%`);
+                                    const dailyInterestAmount = runningPrincipal * dailyRate;
+                                    segments.push(`${finalDays}d × ${formatCurrency(dailyInterestAmount)}/day`);
                                   }
                                   
                                   return segments.join(' + ');
