@@ -844,6 +844,10 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList>
             <TabsTrigger value="overview">Overview</TabsTrigger>
+            <TabsTrigger value="repayments">
+              Repayments
+              <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}</Badge>
+            </TabsTrigger>
             <TabsTrigger value="transactions">
               Transactions
               <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted).length}</Badge>
@@ -867,6 +871,94 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
               </div>
               <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
             </div>
+          </TabsContent>
+
+          <TabsContent value="repayments">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Repayment History</CardTitle>
+                  <Select 
+                    defaultValue="date-desc"
+                    onValueChange={(value) => {
+                      const sorted = [...transactions.filter(t => !t.is_deleted && t.type === 'Repayment')];
+                      if (value === 'date-desc') sorted.sort((a, b) => new Date(b.date) - new Date(a.date));
+                      if (value === 'date-asc') sorted.sort((a, b) => new Date(a.date) - new Date(b.date));
+                      if (value === 'amount-desc') sorted.sort((a, b) => b.amount - a.amount);
+                      if (value === 'amount-asc') sorted.sort((a, b) => a.amount - b.amount);
+                    }}
+                  >
+                    <SelectTrigger className="w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="date-desc">Date (Newest)</SelectItem>
+                      <SelectItem value="date-asc">Date (Oldest)</SelectItem>
+                      <SelectItem value="amount-desc">Amount (High-Low)</SelectItem>
+                      <SelectItem value="amount-asc">Amount (Low-High)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {(() => {
+                  const repayments = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
+                  const totalAmount = repayments.reduce((sum, t) => sum + t.amount, 0);
+                  const totalPrincipal = repayments.reduce((sum, t) => sum + (t.principal_applied || 0), 0);
+                  const totalInterest = repayments.reduce((sum, t) => sum + (t.interest_applied || 0), 0);
+
+                  return (
+                    <>
+                      <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-lg">
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">Total Repaid</p>
+                          <p className="text-xl font-bold text-slate-900">{formatCurrency(totalAmount)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">Principal Repaid</p>
+                          <p className="text-xl font-bold text-emerald-600">{formatCurrency(totalPrincipal)}</p>
+                        </div>
+                        <div>
+                          <p className="text-xs text-slate-500 mb-1">Interest Repaid</p>
+                          <p className="text-xl font-bold text-amber-600">{formatCurrency(totalInterest)}</p>
+                        </div>
+                      </div>
+
+                      {repayments.length === 0 ? (
+                        <div className="text-center py-12 text-slate-500">
+                          <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                          <p>No repayments recorded yet</p>
+                        </div>
+                      ) : (
+                        <div className="divide-y">
+                          {repayments.map((tx) => (
+                            <div key={tx.id} className="py-4 flex items-center justify-between hover:bg-slate-50 px-2 rounded">
+                              <div className="flex items-center gap-3 flex-1">
+                                <div className="p-2 rounded-lg bg-emerald-100">
+                                  <DollarSign className="w-5 h-5 text-emerald-600" />
+                                </div>
+                                <div className="flex-1">
+                                  <p className="font-medium">{format(new Date(tx.date), 'MMM dd, yyyy')}</p>
+                                  {tx.reference && <p className="text-sm text-slate-500">Ref: {tx.reference}</p>}
+                                  {tx.notes && <p className="text-xs text-slate-500 mt-1">{tx.notes}</p>}
+                                </div>
+                              </div>
+                              <div className="text-right">
+                                <p className="font-semibold text-lg text-emerald-600">{formatCurrency(tx.amount)}</p>
+                                <div className="flex gap-3 text-sm text-slate-600 mt-1">
+                                  <span>Principal: {formatCurrency(tx.principal_applied || 0)}</span>
+                                  <span>Interest: {formatCurrency(tx.interest_applied || 0)}</span>
+                                </div>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </>
+                  );
+                })()}
+              </CardContent>
+            </Card>
           </TabsContent>
 
           <TabsContent value="transactions">
