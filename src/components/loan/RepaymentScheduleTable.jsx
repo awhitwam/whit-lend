@@ -559,19 +559,28 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         // Check if balance was negative at due date
                         if (cumulativeBalance < -0.01) {
                           // Was in arrears at due date - check if it recovered later
-                          let recoveredDate = null;
-                          for (let i = actualIndex + 1; i < cumulativeBalances.length; i++) {
-                            if (cumulativeBalances[i].balance >= -0.01 && cumulativeBalances[i].isPastDue) {
-                              recoveredDate = cumulativeBalances[i].dueDate;
+                          const arrearsAtDueDate = Math.abs(cumulativeBalance);
+
+                          // Find the transaction that brought the balance back to positive
+                          let recoveryTransactionDate = null;
+                          let runningBalance = cumulativeBalance;
+
+                          // Check transactions after due date
+                          const laterTransactions = sortedTransactions.filter(tx => 
+                            new Date(tx.date) > dueDate
+                          ).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                          for (const tx of laterTransactions) {
+                            runningBalance += tx.amount;
+                            if (runningBalance >= -0.01) {
+                              recoveryTransactionDate = new Date(tx.date);
                               break;
                             }
                           }
 
-                          const arrearsAtDueDate = Math.abs(cumulativeBalance);
-
-                          if (recoveredDate) {
+                          if (recoveryTransactionDate) {
                             // Account recovered - show as paid but late
-                            const daysLate = differenceInDays(recoveredDate, dueDate);
+                            const daysLate = differenceInDays(recoveryTransactionDate, dueDate);
                             statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                             statusColor = 'bg-emerald-50/30';
                             notes = `Paid ${daysLate} day${daysLate !== 1 ? 's' : ''} late`;
