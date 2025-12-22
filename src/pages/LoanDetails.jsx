@@ -282,8 +282,9 @@ export default function LoanDetails() {
         await base44.entities.RepaymentSchedule.delete(row.id);
       }
     },
-    onSuccess: async () => {
-      await queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] });
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId], refetchType: 'active' });
+      queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId], type: 'active' });
       toast.success('Schedule cleared successfully', { id: 'clear-schedule' });
       setIsClearDialogOpen(false);
     },
@@ -329,12 +330,12 @@ export default function LoanDetails() {
         interest_paid: totalInterestPaid
       });
     },
-    onSuccess: async () => {
-      await Promise.all([
-        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
-        queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
-        queryClient.refetchQueries({ queryKey: ['loans'] })
-      ]);
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['loan', loanId], refetchType: 'active' });
+      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId], refetchType: 'active' });
+      queryClient.invalidateQueries({ queryKey: ['loans'], refetchType: 'active' });
+      queryClient.refetchQueries({ queryKey: ['loan', loanId], type: 'active' });
+      queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId], type: 'active' });
       toast.success('Schedule regenerated successfully', { id: 'regenerate-schedule' });
       setIsRegenerateDialogOpen(false);
     },
