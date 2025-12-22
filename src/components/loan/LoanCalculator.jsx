@@ -201,13 +201,15 @@ export function generateRepaymentSchedule({
       const interestForPeriod = principalOutstandingAtStart * r;
       const principalForPeriod = pmt - interestForPeriod;
       
+      const currentBalance = principalOutstandingAtStart - principalForPeriod;
+      
       schedule.push({
         installment_number: i,
         due_date: format(dueDate, 'yyyy-MM-dd'),
         principal_amount: Math.round(principalForPeriod * 100) / 100,
         interest_amount: Math.round(interestForPeriod * 100) / 100,
         total_due: Math.round(pmt * 100) / 100,
-        balance: Math.max(0, Math.round(remainingBalance * 100) / 100),
+        balance: Math.max(0, Math.round(currentBalance * 100) / 100),
         principal_paid: 0,
         interest_paid: 0,
         status: 'Pending'
