@@ -132,7 +132,6 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     interest_rate: product.interest_rate,
     interest_type: product.interest_type,
     period: product.period,
-    duration: scheduleDuration,
     total_interest: Math.round(totalInterest * 100) / 100,
     total_repayable: Math.round(totalRepayable * 100) / 100
   });
