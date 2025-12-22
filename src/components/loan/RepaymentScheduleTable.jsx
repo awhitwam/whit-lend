@@ -783,8 +783,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               {(() => {
                                 const scheduleEntry = row.scheduleEntry;
                                 const actualDays = scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
-                                const dailyRate = (loan.interest_rate / 100 / 365);
-                                return `${actualDays}d @ ${(dailyRate * 100).toFixed(4)}%/day`;
+                                const principalStart = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
+                                const dailyAmount = principalStart * (loan.interest_rate / 100 / 365);
+                                return `${actualDays}d × ${formatCurrency(dailyAmount)}/day`;
                               })()}
                             </span>
                           </div>
