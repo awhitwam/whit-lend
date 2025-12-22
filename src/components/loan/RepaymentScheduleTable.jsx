@@ -509,25 +509,41 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
                     const today = new Date();
+                    const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
+                    const periodRate = (loan.interest_rate / 100) / periodsPerYear;
 
                     // Calculate cumulative values up to before display window
                     let cumulativeInterestExpected = 0;
                     let cumulativeInterestPaid = 0;
-                    let cumulativePrincipalPaid = 0;
+                    let runningPrincipalOutstanding = loan.principal_amount;
 
                     for (let i = 0; i < startIndex; i++) {
                       const row = schedule[i];
                       const dueDate = new Date(row.due_date);
                       const isPastDue = today > dueDate;
 
+                      // Calculate principal paid up to this due date
+                      const txUpToDueDate = sortedTransactions.filter(tx => new Date(tx.date) <= dueDate);
+                      const principalPaidUpToDueDate = txUpToDueDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                      runningPrincipalOutstanding = loan.principal_amount - principalPaidUpToDueDate;
+
+                      // Calculate expected interest based on actual outstanding principal
+                      let expectedInterestForPeriod = 0;
+                      if (loan.interest_type === 'Flat') {
+                        expectedInterestForPeriod = loan.principal_amount * periodRate;
+                      } else if (loan.interest_type === 'Reducing') {
+                        expectedInterestForPeriod = runningPrincipalOutstanding * periodRate;
+                      } else if (loan.interest_type === 'Interest-Only') {
+                        expectedInterestForPeriod = loan.principal_amount * periodRate;
+                      }
+
                       if (isPastDue) {
-                        cumulativeInterestExpected += row.interest_amount;
+                        cumulativeInterestExpected += expectedInterestForPeriod;
                       }
 
                       const evaluationDate = isPastDue ? dueDate : today;
-                      const txUpToDate = sortedTransactions.filter(tx => new Date(tx.date) <= evaluationDate);
-                      cumulativeInterestPaid = txUpToDate.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-                      cumulativePrincipalPaid = txUpToDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                      const txUpToEval = sortedTransactions.filter(tx => new Date(tx.date) <= evaluationDate);
+                      cumulativeInterestPaid = txUpToEval.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
                     }
 
                     const displayRows = schedule.slice(startIndex, endIndex);
@@ -541,9 +557,26 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       // For future dates: calculate cumulative up to TODAY only
                       const evaluationDate = isPastDue ? dueDate : today;
 
-                      // Add this row's expected interest only if due date has passed
+                      // Calculate principal paid up to due date (before this payment is due)
+                      const txBeforeDueDate = sortedTransactions.filter(tx => new Date(tx.date) < dueDate);
+                      const principalPaidBeforeDueDate = txBeforeDueDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                      const principalOutstandingAtDueDate = loan.principal_amount - principalPaidBeforeDueDate;
+
+                      // Recalculate expected interest based on actual outstanding principal
+                      let expectedInterestForPeriod = 0;
+                      if (loan.interest_type === 'Flat') {
+                        expectedInterestForPeriod = loan.principal_amount * periodRate;
+                      } else if (loan.interest_type === 'Reducing') {
+                        expectedInterestForPeriod = principalOutstandingAtDueDate * periodRate;
+                      } else if (loan.interest_type === 'Interest-Only') {
+                        expectedInterestForPeriod = loan.principal_amount * periodRate;
+                      } else if (loan.interest_type === 'Rolled-Up') {
+                        expectedInterestForPeriod = principalOutstandingAtDueDate * periodRate;
+                      }
+
+                      // Add to cumulative expected if due date has passed
                       if (isPastDue) {
-                        cumulativeInterestExpected += row.interest_amount;
+                        cumulativeInterestExpected += expectedInterestForPeriod;
                       }
 
                       // Calculate payments up to evaluation date
@@ -551,7 +584,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       const interestPaidUpToDate = txUpToDate.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
                       const principalPaidUpToDate = txUpToDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
 
-                      // Calculate outstanding principal
+                      // Calculate outstanding principal as of evaluation date
                       const principalOutstanding = loan.principal_amount - principalPaidUpToDate;
 
                       // Cumulative interest variance (frozen for past dates, current for future dates)
@@ -632,7 +665,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               </div>
                             </TableCell>
                             <TableCell>{format(dueDate, 'MMM dd, yyyy')}</TableCell>
-                            <TableCell className="text-right font-mono">{formatCurrency(row.total_due)}</TableCell>
+                            <TableCell className="text-right font-mono">{formatCurrency(expectedInterestForPeriod)}</TableCell>
                             <TableCell>{statusBadge}</TableCell>
                             <TableCell className="text-right font-mono text-slate-600">
                               {formatCurrency(principalPaidUpToDate)}
