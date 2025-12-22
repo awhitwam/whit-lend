@@ -63,7 +63,8 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     startDate: loan.start_date,
     interestOnlyPeriod: product.interest_only_period || 0,
     interestAlignment: product.interest_alignment || 'period_based',
-    extendForFullPeriod: product.extend_for_full_period || false
+    extendForFullPeriod: product.extend_for_full_period || false,
+    interestPaidInAdvance: product.interest_paid_in_advance || false
   });
 
   const summary = calculateLoanSummary(newSchedule);
@@ -117,7 +118,8 @@ export async function applyScheduleToNewLoan(loanData, product, options = {}) {
     startDate: loanData.start_date,
     interestOnlyPeriod: product.interest_only_period || 0,
     interestAlignment: product.interest_alignment || 'period_based',
-    extendForFullPeriod: product.extend_for_full_period || false
+    extendForFullPeriod: product.extend_for_full_period || false,
+    interestPaidInAdvance: product.interest_paid_in_advance || false
   });
 
   const summary = calculateLoanSummary(schedule);
