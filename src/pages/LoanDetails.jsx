@@ -1002,34 +1002,23 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                           <table className="w-full">
                             <thead className="bg-slate-50 border-b border-slate-200">
                               <tr>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Period</th>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Due Date</th>
-                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Principal</th>
-                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Interest</th>
-                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Total Due</th>
-                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Balance</th>
-                                <th className="text-center py-3 px-4 text-sm font-semibold text-slate-700">Status</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Period</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Due Date</th>
+                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Principal</th>
+                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Interest</th>
+                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Total Due</th>
+                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Balance</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200">
                               {schedule.map((row) => (
                                 <tr key={row.id} className="hover:bg-slate-50">
-                                  <td className="py-3 px-4 text-sm font-medium">{row.installment_number}</td>
-                                  <td className="py-3 px-4 text-sm">{format(new Date(row.due_date), 'dd/MM/yy')}</td>
-                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(row.principal_amount)}</td>
-                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(row.interest_amount)}</td>
-                                  <td className="py-3 px-4 text-sm font-semibold text-right">{formatCurrency(row.total_due)}</td>
-                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(row.balance)}</td>
-                                  <td className="py-3 px-4 text-center">
-                                    <Badge className={
-                                      row.status === 'Paid' ? 'bg-emerald-500 text-white' :
-                                      row.status === 'Partial' ? 'bg-amber-500 text-white' :
-                                      row.status === 'Overdue' ? 'bg-red-500 text-white' :
-                                      'bg-blue-500 text-white'
-                                    }>
-                                      {row.status}
-                                    </Badge>
-                                  </td>
+                                  <td className="py-2 px-3 text-sm font-medium">{row.installment_number}</td>
+                                  <td className="py-2 px-3 text-sm">{format(new Date(row.due_date), 'dd/MM/yy')}</td>
+                                  <td className="py-2 px-3 text-sm text-slate-600 text-right">{formatCurrency(row.principal_amount)}</td>
+                                  <td className="py-2 px-3 text-sm text-slate-600 text-right">{formatCurrency(row.interest_amount)}</td>
+                                  <td className="py-2 px-3 text-sm font-semibold text-right">{formatCurrency(row.total_due)}</td>
+                                  <td className="py-2 px-3 text-sm text-slate-600 text-right">{formatCurrency(row.balance)}</td>
                                 </tr>
                               ))}
                             </tbody>
