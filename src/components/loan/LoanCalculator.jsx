@@ -110,6 +110,18 @@ export function generateRepaymentSchedule({
       
       const interestOnlyPayment = principalOutstandingAtStart * periodRate;
       
+      console.log(`Interest-Only Period ${i} (${format(dueDate, 'yyyy-MM-dd')}):`, {
+        dueDate: format(dueDate, 'yyyy-MM-dd'),
+        transactionsBeforeDueDate: transactions.filter(tx => new Date(tx.date) < dueDate).map(t => ({
+          date: t.date,
+          principal: t.principal_applied
+        })),
+        principalPaidBeforeDueDate,
+        principalOutstandingAtStart,
+        periodRate,
+        calculatedInterest: interestOnlyPayment
+      });
+      
       schedule.push({
         installment_number: i,
         due_date: format(dueDate, 'yyyy-MM-dd'),
