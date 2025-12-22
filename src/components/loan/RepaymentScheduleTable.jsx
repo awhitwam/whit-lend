@@ -536,7 +536,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     let cumulativeExpected = 0;
                     let cumulativePaid = 0;
 
-                    for (let i = 0; i < startIndex; i++) {
+                    for (let i = 0; i < startIndex && i < cumulativeBalances.length; i++) {
                       cumulativeExpected = cumulativeBalances[i].expected;
                       cumulativePaid = cumulativeBalances[i].paid;
                     }
@@ -547,6 +547,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       const actualIndex = startIndex + idx;
                       const dueDate = new Date(row.due_date);
                       const isPastDue = today > dueDate;
+
+                      // Ensure we have cumulative balance data for this index
+                      if (actualIndex >= cumulativeBalances.length) {
+                        return null;
+                      }
 
                       // For past dates: calculate cumulative up to due date
                       // For future dates: calculate cumulative up to TODAY only
