@@ -547,20 +547,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           notes = `${daysOverdue} days overdue • ${formatCurrency(arrearsAtDueDate)} in arrears at due date`;
                         }
                       } else {
-                        // Future obligation - status is current position
-                        if (cumulativeBalance >= row.total_due - 0.01) {
+                        // Future obligation - upcoming payment
+                        if (cumulativeBalance > 0.01) {
                           statusBadge = <Badge className="bg-emerald-500 text-white">Ahead</Badge>;
                           statusColor = 'bg-emerald-50/30';
                           notes = `Account in surplus: ${formatCurrency(cumulativeBalance)}`;
-                        } else if (cumulativeBalance >= -0.01 && cumulativeBalance < row.total_due - 0.01) {
-                          statusBadge = <Badge className="bg-blue-500 text-white">On Track</Badge>;
-                          statusColor = 'bg-blue-50/30';
-                          notes = 'Account current, payment pending';
                         } else {
-                          const currentArrears = Math.abs(cumulativeBalance);
-                          statusBadge = <Badge className="bg-amber-500 text-white">Behind</Badge>;
-                          statusColor = 'bg-amber-50/30';
-                          notes = `Current arrears: ${formatCurrency(currentArrears)}`;
+                          statusBadge = <Badge className="bg-blue-500 text-white">⏰ Upcoming</Badge>;
+                          statusColor = 'bg-blue-50/30';
+                          const daysUntilDue = differenceInDays(dueDate, today);
+                          notes = `Due in ${daysUntilDue} day${daysUntilDue !== 1 ? 's' : ''}`;
                         }
                       }
 
