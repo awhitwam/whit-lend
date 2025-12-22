@@ -82,6 +82,15 @@ export default function LoanDetails() {
     enabled: !!loanId
   });
 
+  const { data: product } = useQuery({
+    queryKey: ['product', loan?.product_id],
+    queryFn: async () => {
+      const products = await base44.entities.LoanProduct.filter({ id: loan.product_id });
+      return products[0];
+    },
+    enabled: !!loan?.product_id
+  });
+
   const { data: schedule = [], isLoading: scheduleLoading } = useQuery({
     queryKey: ['loan-schedule', loanId],
     queryFn: () => base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number'),
