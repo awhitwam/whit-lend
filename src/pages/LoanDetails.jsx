@@ -837,27 +837,6 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
           )}
         </div>
 
-        {/* Progress */}
-        {isLoanActive && (
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between mb-2">
-                <span className="font-medium">Principal Repayment Progress</span>
-                <span className="text-lg font-bold">{progressPercent.toFixed(1)}%</span>
-              </div>
-              <div className="h-3 bg-slate-100 rounded-full overflow-hidden">
-                <div 
-                  className="h-full bg-gradient-to-r from-emerald-500 to-emerald-400 rounded-full transition-all duration-500"
-                  style={{ width: `${Math.min(progressPercent, 100)}%` }}
-                />
-              </div>
-              <div className="flex justify-between mt-2 text-sm text-slate-500">
-                <span>{formatCurrency(actualPrincipalPaid)} / {formatCurrency(loan.principal_amount)}</span>
-              </div>
-            </CardContent>
-          </Card>
-        )}
-
         {/* Tabs for different views */}
         <Tabs defaultValue="overview" className="space-y-6">
           <TabsList>
