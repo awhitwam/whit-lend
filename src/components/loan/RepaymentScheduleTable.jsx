@@ -779,14 +779,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         <TooltipTrigger asChild>
                           <div className="cursor-help">
                             {formatCurrency(row.expectedInterest)}
-                            <div className="text-xs text-slate-500 mt-0.5">
+                            <span className="text-xs text-slate-500 ml-2">
                               {(() => {
                                 const scheduleEntry = row.scheduleEntry;
                                 const actualDays = scheduleEntry?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
                                 const dailyRate = (loan.interest_rate / 100 / 365);
                                 return `${actualDays}d @ ${(dailyRate * 100).toFixed(4)}%/day`;
                               })()}
-                            </div>
+                            </span>
                           </div>
                         </TooltipTrigger>
                         <TooltipContent className="max-w-xs">
