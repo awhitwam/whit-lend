@@ -1,33 +1,33 @@
-import Dashboard from './pages/Dashboard';
-import Borrowers from './pages/Borrowers';
 import BorrowerDetails from './pages/BorrowerDetails';
-import Loans from './pages/Loans';
-import NewLoan from './pages/NewLoan';
-import LoanDetails from './pages/LoanDetails';
-import Products from './pages/Products';
+import Borrowers from './pages/Borrowers';
+import Config from './pages/Config';
+import Dashboard from './pages/Dashboard';
 import Expenses from './pages/Expenses';
 import ImportBorrowers from './pages/ImportBorrowers';
-import Ledger from './pages/Ledger';
-import Investors from './pages/Investors';
 import InvestorDetails from './pages/InvestorDetails';
-import Config from './pages/Config';
+import Investors from './pages/Investors';
+import Ledger from './pages/Ledger';
+import LoanDetails from './pages/LoanDetails';
+import Loans from './pages/Loans';
+import NewLoan from './pages/NewLoan';
+import Products from './pages/Products';
 import __Layout from './Layout.jsx';
 
 
 export const PAGES = {
-    "Dashboard": Dashboard,
-    "Borrowers": Borrowers,
     "BorrowerDetails": BorrowerDetails,
-    "Loans": Loans,
-    "NewLoan": NewLoan,
-    "LoanDetails": LoanDetails,
-    "Products": Products,
+    "Borrowers": Borrowers,
+    "Config": Config,
+    "Dashboard": Dashboard,
     "Expenses": Expenses,
     "ImportBorrowers": ImportBorrowers,
-    "Ledger": Ledger,
-    "Investors": Investors,
     "InvestorDetails": InvestorDetails,
-    "Config": Config,
+    "Investors": Investors,
+    "Ledger": Ledger,
+    "LoanDetails": LoanDetails,
+    "Loans": Loans,
+    "NewLoan": NewLoan,
+    "Products": Products,
 }
 
 export const pagesConfig = {

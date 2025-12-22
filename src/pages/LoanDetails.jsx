@@ -282,8 +282,8 @@ export default function LoanDetails() {
         await base44.entities.RepaymentSchedule.delete(row.id);
       }
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] });
       toast.success('Schedule cleared successfully', { id: 'clear-schedule' });
       setIsClearDialogOpen(false);
     },
@@ -329,10 +329,12 @@ export default function LoanDetails() {
         interest_paid: totalInterestPaid
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loans'] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loans'] })
+      ]);
       toast.success('Schedule regenerated successfully', { id: 'regenerate-schedule' });
       setIsRegenerateDialogOpen(false);
     },
