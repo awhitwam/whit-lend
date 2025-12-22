@@ -172,12 +172,6 @@ export default function Products() {
                         </span>
                       </div>
                     )}
-                    {product.min_amount && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-slate-500">Min amount:</span>
-                        <span className="font-medium text-slate-700">{formatCurrency(product.min_amount)}</span>
-                      </div>
-                    )}
                   </div>
                 </CardContent>
               </Card>

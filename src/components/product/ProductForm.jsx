@@ -15,7 +15,6 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
     interest_alignment: product?.interest_alignment || 'period_based',
     extend_for_full_period: product?.extend_for_full_period || false,
     interest_paid_in_advance: product?.interest_paid_in_advance || false,
-    min_amount: product?.min_amount || '',
     interest_only_period: product?.interest_only_period || ''
   });
 
@@ -24,7 +23,6 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
     onSubmit({
       ...formData,
       interest_rate: parseFloat(formData.interest_rate),
-      min_amount: formData.min_amount ? parseFloat(formData.min_amount) : null,
       interest_only_period: formData.interest_only_period ? parseInt(formData.interest_only_period) : null
     });
   };
@@ -170,18 +168,6 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
           </div>
         </div>
       )}
-
-      <div className="space-y-2">
-        <Label htmlFor="min_amount">Minimum Amount</Label>
-        <Input
-          id="min_amount"
-          type="number"
-          value={formData.min_amount}
-          onChange={(e) => handleChange('min_amount', e.target.value)}
-          placeholder="e.g. 1000"
-          min={0}
-        />
-      </div>
 
       {formData.interest_type === 'Interest-Only' && (
         <div className="space-y-2">
