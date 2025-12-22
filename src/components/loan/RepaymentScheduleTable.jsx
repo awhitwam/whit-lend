@@ -27,6 +27,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     // SEPARATE VIEW: Show all schedule entries and all transactions separately
     // Every transaction gets its own row, every schedule entry gets its own row
     const allRows = [];
+    const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
+    const periodRate = (loan.interest_rate / 100) / periodsPerYear;
 
     // Add disbursement row
     if (loan) {
@@ -41,22 +43,48 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       });
     }
 
-    // Add ALL schedule entries as separate rows
+    // Get active repayment transactions
+    const repaymentTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
+
+    // Add ALL schedule entries as separate rows with dynamically calculated expected interest
     schedule.forEach(row => {
+      // Calculate principal outstanding at the start of this period
+      const dueDate = new Date(row.due_date);
+      const previousDueDate = schedule.findIndex(s => s.id === row.id) > 0 
+        ? new Date(schedule[schedule.findIndex(s => s.id === row.id) - 1].due_date)
+        : new Date(loan.start_date);
+
+      // Get all principal payments made up to the end of the previous period
+      const principalPaidBeforeThisPeriod = repaymentTransactions
+        .filter(tx => new Date(tx.date) <= previousDueDate)
+        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+
+      const principalOutstandingAtStart = loan.principal_amount - principalPaidBeforeThisPeriod;
+
+      // Calculate expected interest based on actual principal outstanding
+      let expectedInterestForPeriod = 0;
+      if (loan.interest_type === 'Flat') {
+        expectedInterestForPeriod = loan.principal_amount * periodRate;
+      } else if (loan.interest_type === 'Reducing') {
+        expectedInterestForPeriod = principalOutstandingAtStart * periodRate;
+      } else if (loan.interest_type === 'Interest-Only') {
+        expectedInterestForPeriod = loan.principal_amount * periodRate;
+      } else if (loan.interest_type === 'Rolled-Up') {
+        expectedInterestForPeriod = principalOutstandingAtStart * periodRate;
+      }
+
       allRows.push({
-        date: new Date(row.due_date),
-        dateStr: format(new Date(row.due_date), 'yyyy-MM-dd'),
+        date: dueDate,
+        dateStr: format(dueDate, 'yyyy-MM-dd'),
         isDisbursement: false,
         transactions: [],
         scheduleEntry: row,
         daysDifference: null,
-        rowType: 'schedule'
+        rowType: 'schedule',
+        expectedInterest: expectedInterestForPeriod
       });
     });
 
-    // Get active repayment transactions
-    const repaymentTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
-    
     // Add ALL transactions as separate rows
     repaymentTransactions.forEach(tx => {
       allRows.push({
@@ -76,7 +104,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     combinedRows = allRows.sort((a, b) => {
       const dateCompare = a.date - b.date;
       if (dateCompare !== 0) return dateCompare;
-      
+
       // On same date: disbursement first, then schedule, then transaction
       const typeOrder = { disbursement: 0, schedule: 1, transaction: 2 };
       return typeOrder[a.rowType] - typeOrder[b.rowType];
@@ -778,8 +806,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                 {/* Expected Schedule */}
                 <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200 py-2">
-                  {(viewMode === 'separate' && row.rowType === 'schedule' && row.scheduleEntry) ? (
-                    formatCurrency(row.scheduleEntry.interest_amount)
+                  {(viewMode === 'separate' && row.rowType === 'schedule' && row.expectedInterest !== undefined) ? (
+                    formatCurrency(row.expectedInterest)
                   ) : (viewMode === 'merged' && schedule.length > 0 && row.expectedInterest > 0) ? (
                     <div>
                       {formatCurrency(row.expectedInterest)}
