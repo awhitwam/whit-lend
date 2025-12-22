@@ -40,16 +40,22 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
 
   console.log('=== REGENERATE SCHEDULE DEBUG ===');
   console.log('Loan ID:', loanId);
+  console.log('Loan Start Date:', loan.start_date);
   console.log('Loan Principal:', loan.principal_amount);
   console.log('Interest Type:', product.interest_type);
   console.log('Interest Rate:', product.interest_rate);
   console.log('Period:', product.period);
   console.log('Number of transactions:', transactions.length);
+  console.log('Auto-extend?:', loan.auto_extend);
+  console.log('Original duration:', loan.duration);
 
   if (transactions.length > 0 && (loan.auto_extend || !options.duration)) {
     const latestTx = transactions[0];
     const loanStartDate = new Date(loan.start_date);
     const latestTxDate = new Date(latestTx.date);
+
+    console.log('Latest transaction date:', latestTx.date);
+    console.log('Days elapsed:', Math.ceil((latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24)));
 
     // Calculate periods needed to cover all transactions
     const daysElapsed = Math.ceil((latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24));
@@ -57,15 +63,18 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
       ? Math.ceil(daysElapsed / 30.44) 
       : Math.ceil(daysElapsed / 7);
 
+    console.log('Periods needed to cover all transactions:', periodsNeeded);
+
     // Ensure schedule covers all transaction dates plus a buffer
     duration = Math.max(periodsNeeded + 2, duration);
+    console.log('Extended duration to:', duration);
   }
 
   // Calculate principal paid to date for reducing balance adjustment
   const principalPaidToDate = transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
 
   console.log('Total principal paid (from transactions):', principalPaidToDate);
-  console.log('Duration:', duration);
+  console.log('Final duration for schedule generation:', duration);
   console.log('Transactions:', transactions.map(t => ({
     date: t.date,
     amount: t.amount,
@@ -89,9 +98,9 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     transactions: transactions
   });
 
-  console.log('Generated schedule (first 5 rows):');
-  newSchedule.slice(0, 5).forEach(row => {
-    console.log(`  ${row.due_date}: Principal=${row.principal_amount}, Interest=${row.interest_amount}, Total=${row.total_due}`);
+  console.log(`Generated schedule (${newSchedule.length} total rows):`);
+  newSchedule.forEach((row, idx) => {
+    console.log(`  [${idx+1}] ${row.due_date}: Principal=${row.principal_amount}, Interest=${row.interest_amount}, Total=${row.total_due}`);
   });
 
   const summary = calculateLoanSummary(newSchedule);
