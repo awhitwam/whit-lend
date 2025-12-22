@@ -53,6 +53,7 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   today.setHours(0, 0, 0, 0);
   
   let scheduleDuration = options.duration || loan.duration;
+  const explicitDuration = options.duration !== undefined;
   
   // Calculate dynamic principal outstanding from transactions
   const totalDisbursed = loan.principal_amount + transactions
@@ -71,8 +72,8 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     currentOutstanding: currentPrincipalOutstanding 
   });
 
-  // Dynamic duration: extend schedule until principal is fully repaid (or buffer for projections)
-  if (currentPrincipalOutstanding > 0.01 || loan.auto_extend) {
+  // Dynamic duration: extend schedule until principal is fully repaid (only if duration not explicitly set)
+  if (!explicitDuration && (currentPrincipalOutstanding > 0.01 || loan.auto_extend)) {
     const daysElapsed = Math.max(0, differenceInDays(today, loanStartDate));
     const periodsElapsed = product.period === 'Monthly' 
       ? Math.ceil(daysElapsed / 30.44) 
