@@ -49,24 +49,23 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   console.log('Auto-extend?:', loan.auto_extend);
   console.log('Original duration:', loan.duration);
 
-  if (transactions.length > 0 && (loan.auto_extend || !options.duration)) {
-    const latestTx = transactions[0];
+  if (loan.auto_extend || !options.duration) {
     const loanStartDate = new Date(loan.start_date);
-    const latestTxDate = new Date(latestTx.date);
+    const today = new Date();
 
-    console.log('Latest transaction date:', latestTx.date);
-    console.log('Days elapsed:', Math.ceil((latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24)));
+    console.log('Today:', format(today, 'yyyy-MM-dd'));
+    console.log('Days since loan start:', Math.ceil((today - loanStartDate) / (1000 * 60 * 60 * 24)));
 
-    // Calculate periods needed to cover all transactions
-    const daysElapsed = Math.ceil((latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24));
+    // For auto-extend loans, extend to cover period up to TODAY
+    const daysElapsed = Math.ceil((today - loanStartDate) / (1000 * 60 * 60 * 24));
     const periodsNeeded = product.period === 'Monthly' 
       ? Math.ceil(daysElapsed / 30.44) 
       : Math.ceil(daysElapsed / 7);
 
-    console.log('Periods needed to cover all transactions:', periodsNeeded);
+    console.log('Periods needed to cover up to today:', periodsNeeded);
 
-    // Ensure schedule covers all transaction dates plus a buffer
-    duration = Math.max(periodsNeeded + 2, duration);
+    // Ensure schedule covers up to today plus a buffer period
+    duration = Math.max(periodsNeeded + 1, duration);
     console.log('Extended duration to:', duration);
   }
 
