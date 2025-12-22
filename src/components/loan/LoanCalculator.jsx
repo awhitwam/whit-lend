@@ -61,20 +61,24 @@ export function generateRepaymentSchedule({
   
   if (interestType === 'Rolled-Up') {
     // Rolled-Up: No payments until the end, interest compounds on balance
-    let balance = principal;
-    
     for (let i = 1; i <= duration; i++) {
       const dueDate = period === 'Monthly' 
         ? addMonths(new Date(startDate), i)
         : addWeeks(new Date(startDate), i);
       
-      const interestForPeriod = balance * periodRate;
-      balance += interestForPeriod;
+      // Calculate principal outstanding at this point
+      const principalPaidBeforeDueDate = transactions
+        .filter(tx => new Date(tx.date) < dueDate)
+        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+      const principalOutstandingAtStart = principal - principalPaidBeforeDueDate;
+      
+      const interestForPeriod = principalOutstandingAtStart * periodRate;
+      const balance = principalOutstandingAtStart + interestForPeriod;
       
       const isLastPeriod = i === duration;
       const paymentDue = isLastPeriod ? balance : 0;
-      const principalDue = isLastPeriod ? adjustedPrincipal : 0;
-      const interestDue = isLastPeriod ? balance - principal : 0;
+      const principalDue = isLastPeriod ? principalOutstandingAtStart : 0;
+      const interestDue = isLastPeriod ? interestForPeriod : 0;
       
       schedule.push({
         installment_number: i,
@@ -90,7 +94,6 @@ export function generateRepaymentSchedule({
     }
   } else if (interestType === 'Interest-Only') {
     // Interest-Only: Pay only interest for a period, then principal + interest or balloon
-    const interestOnlyPayment = principal * periodRate;
     const effectiveInterestOnlyPeriod = interestOnlyPeriod > 0 ? interestOnlyPeriod : duration;
     
     // Interest-only periods
@@ -99,13 +102,21 @@ export function generateRepaymentSchedule({
         ? addMonths(new Date(startDate), i)
         : addWeeks(new Date(startDate), i);
       
+      // Calculate principal outstanding at START of this period
+      const principalPaidBeforeDueDate = transactions
+        .filter(tx => new Date(tx.date) < dueDate)
+        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+      const principalOutstandingAtStart = principal - principalPaidBeforeDueDate;
+      
+      const interestOnlyPayment = principalOutstandingAtStart * periodRate;
+      
       schedule.push({
         installment_number: i,
         due_date: format(dueDate, 'yyyy-MM-dd'),
         principal_amount: 0,
         interest_amount: Math.round(interestOnlyPayment * 100) / 100,
         total_due: Math.round(interestOnlyPayment * 100) / 100,
-        balance: principal,
+        balance: principalOutstandingAtStart,
         principal_paid: 0,
         interest_paid: 0,
         status: 'Pending'
@@ -117,18 +128,27 @@ export function generateRepaymentSchedule({
       const remainingPeriods = duration - interestOnlyPeriod;
       const r = periodRate;
       const n = remainingPeriods;
-      const pmt = principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
-      
-      let remainingBalance = principal;
       
       for (let i = 1; i <= remainingPeriods; i++) {
         const dueDate = period === 'Monthly'
           ? addMonths(new Date(startDate), effectiveInterestOnlyPeriod + i)
           : addWeeks(new Date(startDate), effectiveInterestOnlyPeriod + i);
         
-        const interestForPeriod = remainingBalance * r;
+        // Calculate principal outstanding at START of this period
+        const principalPaidBeforeDueDate = transactions
+          .filter(tx => new Date(tx.date) < dueDate)
+          .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+        const principalOutstandingAtStart = principal - principalPaidBeforeDueDate;
+        
+        // Recalculate payment based on remaining principal and periods
+        const periodsLeft = remainingPeriods - i + 1;
+        const pmt = principalOutstandingAtStart > 0 
+          ? principalOutstandingAtStart * (r * Math.pow(1 + r, periodsLeft)) / (Math.pow(1 + r, periodsLeft) - 1)
+          : 0;
+        
+        const interestForPeriod = principalOutstandingAtStart * r;
         const principalForPeriod = pmt - interestForPeriod;
-        remainingBalance -= principalForPeriod;
+        const currentBalance = principalOutstandingAtStart - principalForPeriod;
         
         schedule.push({
           installment_number: effectiveInterestOnlyPeriod + i,
@@ -136,7 +156,7 @@ export function generateRepaymentSchedule({
           principal_amount: Math.round(principalForPeriod * 100) / 100,
           interest_amount: Math.round(interestForPeriod * 100) / 100,
           total_due: Math.round(pmt * 100) / 100,
-          balance: Math.max(0, Math.round(remainingBalance * 100) / 100),
+          balance: Math.max(0, Math.round(currentBalance * 100) / 100),
           principal_paid: 0,
           interest_paid: 0,
           status: 'Pending'
@@ -144,9 +164,15 @@ export function generateRepaymentSchedule({
       }
     } else {
       // Entire term is interest-only, balloon payment at the end
-      schedule[schedule.length - 1].principal_amount = principal;
-      schedule[schedule.length - 1].total_due = Math.round((principal + interestOnlyPayment) * 100) / 100;
-      schedule[schedule.length - 1].balance = 0;
+      const lastEntry = schedule[schedule.length - 1];
+      const principalPaidBeforeLastDate = transactions
+        .filter(tx => new Date(tx.date) < new Date(lastEntry.due_date))
+        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+      const principalOutstanding = principal - principalPaidBeforeLastDate;
+      
+      lastEntry.principal_amount = principalOutstanding;
+      lastEntry.total_due = Math.round((principalOutstanding + lastEntry.interest_amount) * 100) / 100;
+      lastEntry.balance = 0;
     }
   } else if (interestType === 'Flat') {
     // Flat Rate: Interest calculated on original principal
