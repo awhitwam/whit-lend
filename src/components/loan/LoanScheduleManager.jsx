@@ -262,9 +262,9 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
         // Calculate average principal and apply monthly rate
         const avgPrincipal = totalDaysWithPrincipal > 0 ? weightedPrincipalDays / totalDaysWithPrincipal : principalAtStart;
         if (product.interest_type === 'Flat') {
-          totalInterestForPeriod = originalPrincipal * (annualRate / 12);
+          totalInterestForPeriod = originalPrincipal * (annualRate / 100 / 12);
         } else {
-          totalInterestForPeriod = avgPrincipal * (annualRate / 12);
+          totalInterestForPeriod = avgPrincipal * (annualRate / 100 / 12);
         }
       }
     } else {
