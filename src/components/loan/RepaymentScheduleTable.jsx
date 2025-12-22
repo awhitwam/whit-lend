@@ -311,8 +311,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <TableHead className="font-semibold bg-slate-50">Due Date</TableHead>
                 <TableHead className="font-semibold bg-slate-50 text-right">Expected Amt</TableHead>
                 <TableHead className="font-semibold bg-slate-50">Status</TableHead>
-                <TableHead className="font-semibold bg-slate-50">Date Paid</TableHead>
-                <TableHead className="font-semibold bg-slate-50 text-right">Amt Paid</TableHead>
+                {viewMode === 'detailed' && (
+                  <>
+                    <TableHead className="font-semibold bg-slate-50">Date Paid</TableHead>
+                    <TableHead className="font-semibold bg-slate-50 text-right">Amt Paid</TableHead>
+                  </>
+                )}
+                {viewMode === 'smartview2' && (
+                  <>
+                    <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Expected</TableHead>
+                    <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Paid</TableHead>
+                  </>
+                )}
                 <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Variance</TableHead>
                 <TableHead className="font-semibold bg-slate-50">Notes</TableHead>
               </TableRow>
@@ -471,7 +481,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   })()
                   ) : (
                     (() => {
-                    // SMARTVIEW2 - Cumulative balance reconciliation
+                    // SMARTVIEW2 - Cumulative balance reconciliation (immutable schedule rows)
                     const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
                     const sortedTransactions = transactions
                       .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
@@ -487,7 +497,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       const row = schedule[i];
                       cumulativeExpected += row.total_due;
 
-                      // Add all payments up to this due date
                       const paymentsUpToDueDate = sortedTransactions.filter(tx => 
                         new Date(tx.date) <= new Date(row.due_date)
                       );
@@ -502,91 +511,56 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       // Add this row's expected amount
                       cumulativeExpected += row.total_due;
 
-                      // Calculate payments received on or before this due date
+                      // Calculate payments received on or before this due date (immutable snapshot)
                       const paymentsUpToDueDate = sortedTransactions.filter(tx => 
                         new Date(tx.date) <= dueDate
                       );
-                      cumulativePaid = paymentsUpToDueDate.reduce((sum, tx) => sum + tx.amount, 0);
+                      const cumulativePaidAtDueDate = paymentsUpToDueDate.reduce((sum, tx) => sum + tx.amount, 0);
 
-                      // Cumulative position at this due date
-                      const cumulativeBalance = cumulativePaid - cumulativeExpected;
+                      // Cumulative position at this due date (frozen at due date)
+                      const cumulativeBalance = cumulativePaidAtDueDate - cumulativeExpected;
 
-                      // Presentation-only: find payments near this due date for display
-                      const nearbyPayments = sortedTransactions.filter(tx => {
-                        const txDate = new Date(tx.date);
-                        const daysDiff = differenceInDays(txDate, dueDate);
-                        return Math.abs(daysDiff) <= 15; // Within 15 days
-                      });
-
-                      const displayPayment = nearbyPayments.reduce((sum, tx) => sum + tx.amount, 0);
-
-                      // Determine status based on cumulative balance and whether due date has passed
+                      // Status determination - IMMUTABLE once due date passes
                       const isPastDue = today > dueDate;
                       let statusBadge;
                       let statusColor = '';
                       let notes = '';
-                      let datePaid = '';
 
-                      if (cumulativeBalance >= -0.01) {
-                        // Account is in surplus or fully paid
-                        if (displayPayment > 0) {
+                      if (isPastDue) {
+                        // Status is FROZEN based on what happened at the due date
+                        if (cumulativeBalance >= -0.01) {
+                          // Was paid or ahead at due date
                           statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                           statusColor = 'bg-emerald-50/30';
 
-                          if (nearbyPayments.length > 0) {
-                            const paymentDate = new Date(nearbyPayments[0].date);
-                            datePaid = format(paymentDate, 'MMM dd, yyyy');
-                            const daysDiff = differenceInDays(paymentDate, dueDate);
-
-                            if (daysDiff < 0) notes = 'Paid early';
-                            else if (daysDiff === 0) notes = 'On time';
-                            else notes = `${daysDiff} days late`;
-                          }
-
                           if (cumulativeBalance > 0.01) {
-                            notes += notes ? ` • Overpayment carried forward: ${formatCurrency(cumulativeBalance)}` : `Overpayment carried forward: ${formatCurrency(cumulativeBalance)}`;
-                          }
-                        } else if (isPastDue) {
-                          statusBadge = <Badge className="bg-blue-500 text-white">Ahead</Badge>;
-                          statusColor = 'bg-blue-50/30';
-                          notes = `Account in surplus: ${formatCurrency(cumulativeBalance)}`;
-                          datePaid = '—';
-                        } else {
-                          statusBadge = <Badge className="bg-blue-500 text-white">⏰ Upcoming</Badge>;
-                          statusColor = 'bg-blue-50/30';
-                          notes = `Account in surplus: ${formatCurrency(cumulativeBalance)}`;
-                          datePaid = '—';
-                        }
-                      } else {
-                        // Account is in arrears
-                        const arrears = Math.abs(cumulativeBalance);
-
-                        if (displayPayment > 0) {
-                          const coverage = (displayPayment / row.total_due) * 100;
-                          if (coverage >= 99) {
-                            statusBadge = <Badge className="bg-amber-500 text-white">Partial</Badge>;
-                            statusColor = 'bg-amber-50/30';
-                            notes = `Payment received but arrears remain: ${formatCurrency(arrears)}`;
+                            notes = `Account was in surplus at due date: ${formatCurrency(cumulativeBalance)}`;
                           } else {
-                            statusBadge = <Badge className="bg-amber-500 text-white">Partial ({Math.round(coverage)}%)</Badge>;
-                            statusColor = 'bg-amber-50/30';
-                            notes = `Underpaid • Arrears: ${formatCurrency(arrears)}`;
+                            notes = 'Obligations met at due date';
                           }
-
-                          if (nearbyPayments.length > 0) {
-                            datePaid = format(new Date(nearbyPayments[0].date), 'MMM dd, yyyy');
-                          }
-                        } else if (isPastDue) {
+                        } else {
+                          // Was in arrears at due date - REMAINS OVERDUE PERMANENTLY
+                          const arrearsAtDueDate = Math.abs(cumulativeBalance);
                           const daysOverdue = differenceInDays(today, dueDate);
                           statusBadge = <Badge className="bg-red-500 text-white">Overdue</Badge>;
                           statusColor = 'bg-red-50/30';
-                          notes = `${daysOverdue} days overdue • Total arrears: ${formatCurrency(arrears)}`;
-                          datePaid = '—';
-                        } else {
-                          statusBadge = <Badge className="bg-blue-500 text-white">⏰ Upcoming</Badge>;
+                          notes = `${daysOverdue} days overdue • ${formatCurrency(arrearsAtDueDate)} in arrears at due date`;
+                        }
+                      } else {
+                        // Future obligation - status is current position
+                        if (cumulativeBalance >= row.total_due - 0.01) {
+                          statusBadge = <Badge className="bg-emerald-500 text-white">Ahead</Badge>;
+                          statusColor = 'bg-emerald-50/30';
+                          notes = `Account in surplus: ${formatCurrency(cumulativeBalance)}`;
+                        } else if (cumulativeBalance >= -0.01 && cumulativeBalance < row.total_due - 0.01) {
+                          statusBadge = <Badge className="bg-blue-500 text-white">On Track</Badge>;
                           statusColor = 'bg-blue-50/30';
-                          notes = `Arrears to clear: ${formatCurrency(arrears)}`;
-                          datePaid = '—';
+                          notes = 'Account current, payment pending';
+                        } else {
+                          const currentArrears = Math.abs(cumulativeBalance);
+                          statusBadge = <Badge className="bg-amber-500 text-white">Behind</Badge>;
+                          statusColor = 'bg-amber-50/30';
+                          notes = `Current arrears: ${formatCurrency(currentArrears)}`;
                         }
                       }
 
@@ -602,9 +576,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell>{format(dueDate, 'MMM dd, yyyy')}</TableCell>
                             <TableCell className="text-right font-mono">{formatCurrency(row.total_due)}</TableCell>
                             <TableCell>{statusBadge}</TableCell>
-                            <TableCell>{datePaid}</TableCell>
-                            <TableCell className="text-right font-mono">
-                              {displayPayment > 0 ? formatCurrency(displayPayment) : '$0.00'}
+                            <TableCell className="text-right font-mono text-slate-600">
+                              {formatCurrency(cumulativeExpected)}
+                            </TableCell>
+                            <TableCell className="text-right font-mono text-slate-600">
+                              {formatCurrency(cumulativePaidAtDueDate)}
                             </TableCell>
                             <TableCell className={`text-right font-mono font-semibold ${cumulativeBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {cumulativeBalance >= 0 ? '+' : ''}{formatCurrency(cumulativeBalance)}
@@ -614,7 +590,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         </React.Fragment>
                       );
                     });
-                  })()
+                    })()
                   )}
                 </>
               )}
