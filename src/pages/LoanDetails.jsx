@@ -866,7 +866,7 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             {/* Combined Repayment View */}
             <div>
               <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-slate-900">Repayment Schedule & Transactions</h2>
+                <h2 className="text-xl font-semibold text-slate-900">Schedule</h2>
                 <Badge variant="outline">{schedule.length} periods</Badge>
               </div>
               <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />

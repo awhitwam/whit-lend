@@ -212,22 +212,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
               <Button
-                variant={viewMode === 'detailed' ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode('detailed')}
-                className="gap-1 h-8"
-              >
-                <List className="w-4 h-4" />
-                SmartView
-              </Button>
-              <Button
                 variant={viewMode === 'smartview2' ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setViewMode('smartview2')}
                 className="gap-1 h-8"
               >
                 <List className="w-4 h-4" />
-                SmartView2
+                SmartView
               </Button>
               <Button
                 variant={viewMode === 'separate' ? "default" : "ghost"}
@@ -236,7 +227,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 className="gap-1 h-8"
               >
                 <Split className="w-4 h-4" />
-                Schedule
+                Journal
               </Button>
             </div>
             {viewMode === 'separate' && (
