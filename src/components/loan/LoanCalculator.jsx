@@ -25,7 +25,9 @@ export function generateRepaymentSchedule({
   interestOnlyPeriod = 0,
   interestAlignment = 'period_based',
   extendForFullPeriod = false,
-  interestPaidInAdvance = false
+  interestPaidInAdvance = false,
+  principalPaidToDate = 0,
+  transactions = []
 }) {
   // If monthly_first alignment and Monthly period, use special logic
   if (interestAlignment === 'monthly_first' && period === 'Monthly') {
@@ -57,6 +59,11 @@ export function generateRepaymentSchedule({
   const periodsPerYear = period === 'Monthly' ? 12 : 52;
   const periodRate = interestRate / 100 / periodsPerYear;
   
+  // For Reducing/Rolled-Up loans with principal payments, recalculate based on remaining principal
+  const adjustedPrincipal = (interestType === 'Reducing' || interestType === 'Rolled-Up') && principalPaidToDate > 0
+    ? principal - principalPaidToDate
+    : principal;
+  
   if (interestType === 'Rolled-Up') {
     // Rolled-Up: No payments until the end, interest compounds on balance
     let balance = principal;
@@ -71,7 +78,7 @@ export function generateRepaymentSchedule({
       
       const isLastPeriod = i === duration;
       const paymentDue = isLastPeriod ? balance : 0;
-      const principalDue = isLastPeriod ? principal : 0;
+      const principalDue = isLastPeriod ? adjustedPrincipal : 0;
       const interestDue = isLastPeriod ? balance - principal : 0;
       
       schedule.push({
@@ -179,9 +186,9 @@ export function generateRepaymentSchedule({
     // PMT = P * [r(1+r)^n] / [(1+r)^n - 1]
     const r = periodRate;
     const n = duration;
-    const pmt = principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
+    const pmt = adjustedPrincipal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
     
-    let remainingBalance = principal;
+    let remainingBalance = adjustedPrincipal;
     
     for (let i = 1; i <= duration; i++) {
       const dueDate = period === 'Monthly'

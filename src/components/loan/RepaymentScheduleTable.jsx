@@ -58,33 +58,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
       const principalOutstandingAtStart = loan.principal_amount - principalPaidBeforeThisPeriod;
 
-      // DEBUG
-      if (format(dueDate, 'MMM dd, yyyy') === 'Oct 01, 2025') {
-        console.log('Oct 01 2025 calculation:');
-        console.log('- Principal amount:', loan.principal_amount);
-        console.log('- Principal paid before:', principalPaidBeforeThisPeriod);
-        console.log('- Principal outstanding at start:', principalOutstandingAtStart);
-        console.log('- Period rate:', periodRate);
-        console.log('- All transactions:', repaymentTransactions);
-        console.log('- Filtered transactions:', repaymentTransactions.filter(tx => new Date(tx.date) < dueDate));
-      }
-
-      // Calculate expected interest based on actual principal outstanding
-      let expectedInterestForPeriod = 0;
-      if (loan.interest_type === 'Flat') {
-        expectedInterestForPeriod = loan.principal_amount * periodRate;
-      } else if (loan.interest_type === 'Reducing') {
-        expectedInterestForPeriod = principalOutstandingAtStart * periodRate;
-      } else if (loan.interest_type === 'Interest-Only') {
-        expectedInterestForPeriod = loan.principal_amount * periodRate;
-      } else if (loan.interest_type === 'Rolled-Up') {
-        expectedInterestForPeriod = principalOutstandingAtStart * periodRate;
-      }
-
-      // DEBUG
-      if (format(dueDate, 'MMM dd, yyyy') === 'Oct 01, 2025') {
-        console.log('- Expected interest for period:', expectedInterestForPeriod);
-      }
+      // Use schedule entry's interest amount directly (it's already been generated correctly)
+      let expectedInterestForPeriod = row.interest_amount;
 
       allRows.push({
         date: dueDate,

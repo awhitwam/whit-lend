@@ -30,28 +30,31 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
 
   // Determine duration
   let duration = options.duration || loan.duration;
-  
+
   // For auto-extended loans or when recalculating, extend schedule to cover all transactions
   const transactions = await base44.entities.Transaction.filter({ 
     loan_id: loanId, 
     is_deleted: false,
     type: 'Repayment'
   }, '-date');
-  
+
   if (transactions.length > 0 && (loan.auto_extend || !options.duration)) {
     const latestTx = transactions[0];
     const loanStartDate = new Date(loan.start_date);
     const latestTxDate = new Date(latestTx.date);
-    
+
     // Calculate periods needed to cover all transactions
     const daysElapsed = Math.ceil((latestTxDate - loanStartDate) / (1000 * 60 * 60 * 24));
     const periodsNeeded = product.period === 'Monthly' 
       ? Math.ceil(daysElapsed / 30.44) 
       : Math.ceil(daysElapsed / 7);
-    
+
     // Ensure schedule covers all transaction dates plus a buffer
     duration = Math.max(periodsNeeded + 2, duration);
   }
+
+  // Calculate principal paid to date for reducing balance adjustment
+  const principalPaidToDate = transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
 
   // Generate new schedule
   const newSchedule = generateRepaymentSchedule({
@@ -64,7 +67,9 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     interestOnlyPeriod: product.interest_only_period || 0,
     interestAlignment: product.interest_alignment || 'period_based',
     extendForFullPeriod: product.extend_for_full_period || false,
-    interestPaidInAdvance: product.interest_paid_in_advance || false
+    interestPaidInAdvance: product.interest_paid_in_advance || false,
+    principalPaidToDate: principalPaidToDate,
+    transactions: transactions
   });
 
   const summary = calculateLoanSummary(newSchedule);
