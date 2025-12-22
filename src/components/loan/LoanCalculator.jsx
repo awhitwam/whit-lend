@@ -59,11 +59,6 @@ export function generateRepaymentSchedule({
   const periodsPerYear = period === 'Monthly' ? 12 : 52;
   const periodRate = interestRate / 100 / periodsPerYear;
   
-  // For Reducing/Rolled-Up loans with principal payments, recalculate based on remaining principal
-  const adjustedPrincipal = (interestType === 'Reducing' || interestType === 'Rolled-Up') && principalPaidToDate > 0
-    ? principal - principalPaidToDate
-    : principal;
-  
   if (interestType === 'Rolled-Up') {
     // Rolled-Up: No payments until the end, interest compounds on balance
     let balance = principal;
@@ -182,22 +177,29 @@ export function generateRepaymentSchedule({
       });
     }
   } else {
-    // Reducing Balance: Standard Amortization Formula
-    // PMT = P * [r(1+r)^n] / [(1+r)^n - 1]
-    const r = periodRate;
-    const n = duration;
-    const pmt = adjustedPrincipal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
-    
-    let remainingBalance = adjustedPrincipal;
-    
+    // Reducing Balance: Calculate interest based on running principal balance
     for (let i = 1; i <= duration; i++) {
       const dueDate = period === 'Monthly'
         ? addMonths(new Date(startDate), i)
         : addWeeks(new Date(startDate), i);
       
-      const interestForPeriod = remainingBalance * r;
+      // Calculate principal outstanding at START of this period (after any payments before this period)
+      const principalPaidBeforeDueDate = transactions
+        .filter(tx => new Date(tx.date) < dueDate)
+        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+      const principalOutstandingAtStart = principal - principalPaidBeforeDueDate;
+      
+      // Calculate interest on the actual outstanding principal
+      const r = periodRate;
+      const n = duration - i + 1; // Remaining periods
+      
+      // Recalculate payment based on remaining principal and periods
+      const pmt = principalOutstandingAtStart > 0 
+        ? principalOutstandingAtStart * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1)
+        : 0;
+      
+      const interestForPeriod = principalOutstandingAtStart * r;
       const principalForPeriod = pmt - interestForPeriod;
-      remainingBalance -= principalForPeriod;
       
       schedule.push({
         installment_number: i,
