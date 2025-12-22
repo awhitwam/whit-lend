@@ -103,86 +103,58 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   }
   
   if (loan) {
-    // Calculate running balances - principal outstanding should reflect transactions BEFORE current row
+    // Calculate running balances properly accounting for timing of transactions
     let principalOutstanding = loan.principal_amount;
-    let cumulativeInterestAccrued = 0;
-    let currentCumulativeInterestPaid = 0;
-    let lastInterestCalculationDate = new Date(loan.start_date);
+    let totalInterestAccrued = 0;
+    let totalInterestPaid = 0;
+    let lastCalculationDate = new Date(loan.start_date);
 
     combinedRows.forEach(row => {
       const currentDate = row.date;
+      const daysSinceLastCalculation = Math.max(0, differenceInDays(currentDate, lastCalculationDate));
 
-      // For schedule rows, calculate principal outstanding BEFORE this row (start of period)
-      // For transaction rows, apply the transaction first then show the result
-      
-      if (row.rowType === 'schedule') {
-        // Schedule row: show principal outstanding at START of period (before any transactions on this date)
-        // Calculate interest accrued since last date
-        const daysSinceLastCalculation = Math.max(0, differenceInDays(currentDate, lastInterestCalculationDate));
+      // Accrue interest on current principal balance for days elapsed
+      if (daysSinceLastCalculation > 0 && principalOutstanding > 0) {
+        const dailyRate = loan.interest_rate / 100 / 365;
+        const interestForPeriod = principalOutstanding * dailyRate * daysSinceLastCalculation;
+        totalInterestAccrued += interestForPeriod;
+      }
 
-        if (daysSinceLastCalculation > 0 && principalOutstanding > 0) {
-          const dailyRate = loan.interest_rate / 100 / 365;
-          let interestAccruedDaily = 0;
-
-          if (loan.interest_type === 'Flat' || loan.interest_type === 'Interest-Only') {
-            interestAccruedDaily = loan.principal_amount * dailyRate;
-          } else if (loan.interest_type === 'Reducing' || loan.interest_type === 'Rolled-Up') {
-            interestAccruedDaily = principalOutstanding * dailyRate;
-          }
-          
-          cumulativeInterestAccrued += interestAccruedDaily * daysSinceLastCalculation;
-        }
-
-        // Set values for schedule row - principal at START of period
+      if (row.rowType === 'disbursement') {
+        // Disbursement row - initial state
         row.principalOutstanding = principalOutstanding;
-        row.interestOutstanding = cumulativeInterestAccrued - currentCumulativeInterestPaid;
-        row.expectedInterest = row.scheduleEntry.interest_amount;
-        
-        lastInterestCalculationDate = currentDate;
+        row.interestOutstanding = 0;
+        row.expectedInterest = 0;
       } else if (row.rowType === 'transaction') {
-        // Transaction row: apply the transaction first, then show resulting balance
-        const daysSinceLastCalculation = Math.max(0, differenceInDays(currentDate, lastInterestCalculationDate));
-
-        if (daysSinceLastCalculation > 0 && principalOutstanding > 0) {
-          const dailyRate = loan.interest_rate / 100 / 365;
-          let interestAccruedDaily = 0;
-
-          if (loan.interest_type === 'Flat' || loan.interest_type === 'Interest-Only') {
-            interestAccruedDaily = loan.principal_amount * dailyRate;
-          } else if (loan.interest_type === 'Reducing' || loan.interest_type === 'Rolled-Up') {
-            interestAccruedDaily = principalOutstanding * dailyRate;
-          }
-          
-          cumulativeInterestAccrued += interestAccruedDaily * daysSinceLastCalculation;
-        }
-
-        // Apply transaction
+        // Apply transaction FIRST, then show resulting balances
         row.transactions.forEach(tx => {
           if (tx.principal_applied) {
             principalOutstanding -= tx.principal_applied;
           }
           if (tx.interest_applied) {
-            currentCumulativeInterestPaid += tx.interest_applied;
+            totalInterestPaid += tx.interest_applied;
           }
         });
 
         principalOutstanding = Math.max(0, principalOutstanding);
 
-        // Set values AFTER applying transaction
+        // Show state AFTER transaction
         row.principalOutstanding = principalOutstanding;
-        row.interestOutstanding = cumulativeInterestAccrued - currentCumulativeInterestPaid;
-        row.expectedInterest = 0; // Transactions don't have expected interest
-        
-        lastInterestCalculationDate = currentDate;
-      } else if (row.isDisbursement) {
-        // Disbursement row
-        row.principalOutstanding = principalOutstanding;
-        row.interestOutstanding = 0;
+        row.interestOutstanding = totalInterestAccrued - totalInterestPaid;
         row.expectedInterest = 0;
+        
+        lastCalculationDate = currentDate;
+      } else if (row.rowType === 'schedule') {
+        // Schedule row - show balances at this point in time (after accrual, before any payments)
+        row.principalOutstanding = principalOutstanding;
+        row.interestOutstanding = totalInterestAccrued - totalInterestPaid;
+        row.expectedInterest = row.scheduleEntry.interest_amount;
+        
+        lastCalculationDate = currentDate;
       }
     });
 
-    cumulativeInterestPaid = currentCumulativeInterestPaid;
+    cumulativeInterestPaid = totalInterestPaid;
     }
 
     // Pagination logic
