@@ -11,7 +11,7 @@ import { formatCurrency } from './LoanCalculator';
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  const [viewMode, setViewMode] = useState('detailed'); // 'separate', 'detailed', 'smartview2'
+  const [viewMode, setViewMode] = useState('separate'); // 'separate', 'detailed', 'smartview2'
   const [showCumulativeColumns, setShowCumulativeColumns] = useState(false);
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
