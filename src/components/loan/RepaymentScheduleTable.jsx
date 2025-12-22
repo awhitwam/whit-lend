@@ -492,15 +492,29 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     // Calculate cumulative balances up to before display window
                     let cumulativeExpected = 0;
                     let cumulativePaid = 0;
+                    let firstNegativeDate = null;
 
                     for (let i = 0; i < startIndex; i++) {
                       const row = schedule[i];
-                      cumulativeExpected += row.total_due;
+                      const dueDate = new Date(row.due_date);
+                      const isPastDue = today > dueDate;
 
-                      const paymentsUpToDueDate = sortedTransactions.filter(tx => 
-                        new Date(tx.date) <= new Date(row.due_date)
+                      if (isPastDue) {
+                        cumulativeExpected += row.total_due;
+                      }
+
+                      const evaluationDate = isPastDue ? dueDate : today;
+                      const paymentsUpToDate = sortedTransactions.filter(tx => 
+                        new Date(tx.date) <= evaluationDate
                       );
-                      cumulativePaid = paymentsUpToDueDate.reduce((sum, tx) => sum + tx.amount, 0);
+                      cumulativePaid = paymentsUpToDate.reduce((sum, tx) => sum + tx.amount, 0);
+
+                      const balance = cumulativePaid - cumulativeExpected;
+                      if (balance < -0.01 && !firstNegativeDate) {
+                        firstNegativeDate = dueDate;
+                      } else if (balance >= -0.01) {
+                        firstNegativeDate = null;
+                      }
                     }
 
                     const displayRows = schedule.slice(startIndex, endIndex);
@@ -526,6 +540,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                       // Cumulative position (frozen for past dates, current for future dates)
                       const cumulativeBalance = cumulativePaidAtDate - cumulativeExpected;
+
+                      // Track when balance first went negative
+                      if (cumulativeBalance < -0.01 && !firstNegativeDate) {
+                        firstNegativeDate = dueDate;
+                      } else if (cumulativeBalance >= -0.01 && isPastDue) {
+                        firstNegativeDate = null;
+                      }
+
                       let statusBadge;
                       let statusColor = '';
                       let notes = '';
@@ -545,7 +567,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         } else {
                           // Was in arrears at due date - REMAINS OVERDUE PERMANENTLY
                           const arrearsAtDueDate = Math.abs(cumulativeBalance);
-                          const daysOverdue = differenceInDays(today, dueDate);
+                          const daysOverdue = firstNegativeDate ? differenceInDays(today, firstNegativeDate) : differenceInDays(today, dueDate);
                           statusBadge = <Badge className="bg-red-500 text-white">Overdue</Badge>;
                           statusColor = 'bg-red-50/30';
                           notes = `${daysOverdue} days overdue • ${formatCurrency(arrearsAtDueDate)} in arrears at due date`;
