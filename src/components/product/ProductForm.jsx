@@ -13,6 +13,7 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
     period: product?.period || 'Monthly',
     interest_alignment: product?.interest_alignment || 'period_based',
     extend_for_full_period: product?.extend_for_full_period || false,
+    interest_paid_in_advance: product?.interest_paid_in_advance || false,
     min_amount: product?.min_amount || '',
     max_amount: product?.max_amount || '',
     max_duration: product?.max_duration || '',
@@ -124,17 +125,31 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
       </div>
 
       {formData.interest_type !== 'Rolled-Up' && (
-        <div className="flex items-center space-x-2">
-          <input
-            type="checkbox"
-            id="extend_for_full_period"
-            checked={formData.extend_for_full_period}
-            onChange={(e) => handleChange('extend_for_full_period', e.target.checked)}
-            className="rounded border-slate-300"
-          />
-          <Label htmlFor="extend_for_full_period" className="font-normal cursor-pointer">
-            Extend loan to complete full final period (no partial final payment)
-          </Label>
+        <div className="space-y-3">
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="extend_for_full_period"
+              checked={formData.extend_for_full_period}
+              onChange={(e) => handleChange('extend_for_full_period', e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            <Label htmlFor="extend_for_full_period" className="font-normal cursor-pointer">
+              Extend loan to complete full final period (no partial final payment)
+            </Label>
+          </div>
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="interest_paid_in_advance"
+              checked={formData.interest_paid_in_advance}
+              onChange={(e) => handleChange('interest_paid_in_advance', e.target.checked)}
+              className="rounded border-slate-300"
+            />
+            <Label htmlFor="interest_paid_in_advance" className="font-normal cursor-pointer">
+              Interest paid in advance (interest due at START of each period)
+            </Label>
+          </div>
         </div>
       )}
 
