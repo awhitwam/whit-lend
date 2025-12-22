@@ -47,7 +47,14 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   console.log('Product:', { type: product.interest_type, rate: product.interest_rate, period: product.period });
   console.log('Events:', transactions.map(t => ({ date: t.date, type: t.type, amount: t.amount, principal: t.principal_applied, interest: t.interest_applied })));
 
-  // Calculate current principal outstanding
+  // Determine schedule horizon - must ensure coverage of all outstanding amounts
+  const loanStartDate = new Date(loan.start_date);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  
+  let scheduleDuration = options.duration || loan.duration;
+  
+  // Calculate dynamic principal outstanding from transactions
   const totalDisbursed = loan.principal_amount + transactions
     .filter(t => t.type === 'Disbursement')
     .reduce((sum, t) => sum + t.amount, 0);
@@ -64,35 +71,38 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     currentOutstanding: currentPrincipalOutstanding 
   });
 
-  // Determine schedule horizon
-  const loanStartDate = new Date(loan.start_date);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  
-  let scheduleDuration = options.duration || loan.duration;
-  
-  // For auto-extend loans, extend to cover periods up to today + buffer
-  if (loan.auto_extend || currentPrincipalOutstanding > 0.01) {
+  // Dynamic duration: extend schedule until principal is fully repaid (or buffer for projections)
+  if (currentPrincipalOutstanding > 0.01 || loan.auto_extend) {
     const daysElapsed = Math.max(0, differenceInDays(today, loanStartDate));
     const periodsElapsed = product.period === 'Monthly' 
       ? Math.ceil(daysElapsed / 30.44) 
       : Math.ceil(daysElapsed / 7);
     
-    scheduleDuration = Math.max(periodsElapsed + 3, scheduleDuration);
+    // For Interest-Only and Rolled-Up, must extend to show full term
+    if (product.interest_type === 'Interest-Only' || product.interest_type === 'Rolled-Up') {
+      scheduleDuration = Math.max(periodsElapsed + 6, scheduleDuration);
+    } else {
+      // For amortizing loans, extend if principal still outstanding
+      scheduleDuration = Math.max(periodsElapsed + 3, scheduleDuration);
+    }
+    
+    // Never shorten auto-extend loans
+    if (loan.auto_extend) {
+      scheduleDuration = Math.max(scheduleDuration, loan.duration || 6);
+    }
   }
 
   console.log('Schedule Duration:', scheduleDuration, 'periods');
 
-  // Generate schedule based on alignment
+  // Generate schedule using event-driven approach
   const schedule = [];
-  const annualRate = product.interest_rate;
   
   if (product.interest_alignment === 'monthly_first' && product.period === 'Monthly') {
     // Special case: align all interest to 1st of month
-    generateMonthlyFirstSchedule(schedule, loan, product, scheduleDuration, currentPrincipalOutstanding, transactions);
+    generateMonthlyFirstSchedule(schedule, loan, product, scheduleDuration, transactions);
   } else {
-    // Standard: period-based from start date
-    generatePeriodBasedSchedule(schedule, loan, product, scheduleDuration, currentPrincipalOutstanding, transactions);
+    // Standard: period-based from start date with event-driven calculations
+    generatePeriodBasedSchedule(schedule, loan, product, scheduleDuration, transactions);
   }
 
   console.log(`Generated ${schedule.length} schedule entries`);
@@ -113,8 +123,9 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     });
   }
 
-  // Calculate totals
+  // Calculate totals from generated schedule
   const totalInterest = schedule.reduce((sum, row) => sum + row.interest_amount, 0);
+  const finalBalance = schedule.length > 0 ? schedule[schedule.length - 1].balance : currentPrincipalOutstanding;
   const totalRepayable = totalInterest + currentPrincipalOutstanding + (loan.exit_fee || 0);
 
   // Update loan
@@ -134,147 +145,304 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
 
 /**
  * Generate period-based schedule (standard alignment from loan start date)
+ * Event-driven approach: calculates interest dynamically based on actual principal at each point in time
  */
-function generatePeriodBasedSchedule(schedule, loan, product, duration, currentPrincipal, transactions) {
+function generatePeriodBasedSchedule(schedule, loan, product, duration, transactions) {
   const startDate = new Date(loan.start_date);
   const originalPrincipal = loan.principal_amount;
   const annualRate = product.interest_rate;
+  const dailyRate = annualRate / 100 / 365;
   const periodsPerYear = product.period === 'Monthly' ? 12 : 52;
   const periodRate = annualRate / 100 / periodsPerYear;
 
-  let runningPrincipalOutstanding = currentPrincipal;
+  // Build a complete event timeline: all transactions + all schedule due dates
+  const events = [];
+  
+  // Add all capital-affecting transactions as events
+  transactions.forEach(t => {
+    if (t.type === 'Repayment' && t.principal_applied > 0) {
+      events.push({
+        date: new Date(t.date),
+        type: 'capital_repayment',
+        amount: t.principal_applied
+      });
+    } else if (t.type === 'Disbursement') {
+      events.push({
+        date: new Date(t.date),
+        type: 'disbursement',
+        amount: t.amount
+      });
+    }
+  });
 
+  // Add all schedule due dates as events
   for (let i = 1; i <= duration; i++) {
     const dueDate = product.period === 'Monthly' 
       ? addMonths(startDate, i)
       : addWeeks(startDate, i);
+    events.push({
+      date: dueDate,
+      type: 'schedule_due',
+      periodNumber: i
+    });
+  }
 
-    // Calculate principal outstanding at START of this period
-    // This is based on all capital repayments that occurred BEFORE this due date
-    const capitalRepaymentsBeforeDueDate = transactions
-      .filter(t => t.type === 'Repayment' && new Date(t.date) < dueDate)
-      .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
-    
-    const principalAtStartOfPeriod = originalPrincipal - capitalRepaymentsBeforeDueDate;
+  // Sort all events chronologically
+  events.sort((a, b) => a.date - b.date);
 
-    // Calculate interest based on product type
-    let interestForPeriod = 0;
+  // Initialize running state
+  let runningPrincipal = originalPrincipal;
+  let lastEventDate = startDate;
+
+  console.log('Event Timeline:', events.map(e => ({ date: format(e.date, 'yyyy-MM-dd'), type: e.type, amount: e.amount })));
+
+  // Process each schedule period
+  for (let i = 1; i <= duration; i++) {
+    const periodStartDate = i === 1 ? startDate : (product.period === 'Monthly' ? addMonths(startDate, i - 1) : addWeeks(startDate, i - 1));
+    const periodEndDate = product.period === 'Monthly' ? addMonths(startDate, i) : addWeeks(startDate, i);
+
+    // Get all capital events within this period (between periodStartDate and periodEndDate)
+    const capitalEventsInPeriod = events.filter(e => 
+      (e.type === 'capital_repayment' || e.type === 'disbursement') &&
+      e.date >= periodStartDate && 
+      e.date < periodEndDate
+    );
+
+    // Calculate principal outstanding at START of period
+    const principalAtStart = calculatePrincipalAtDate(originalPrincipal, transactions, periodStartDate);
+
+    // Calculate pro-rated interest for this period, accounting for mid-period capital changes
+    let totalInterestForPeriod = 0;
+    let currentSegmentStart = periodStartDate;
+    let currentSegmentPrincipal = principalAtStart;
+
+    // Sort capital events within period
+    capitalEventsInPeriod.sort((a, b) => a.date - b.date);
+
+    // Process each segment between capital events
+    for (const event of capitalEventsInPeriod) {
+      // Calculate interest from segment start to this event
+      const daysInSegment = Math.max(0, differenceInDays(event.date, currentSegmentStart));
+      if (daysInSegment > 0 && currentSegmentPrincipal > 0) {
+        const segmentInterest = calculateInterestForDays(
+          currentSegmentPrincipal, 
+          dailyRate, 
+          daysInSegment, 
+          product.interest_type,
+          originalPrincipal
+        );
+        totalInterestForPeriod += segmentInterest;
+        console.log(`  Segment: ${format(currentSegmentStart, 'MMM dd')} to ${format(event.date, 'MMM dd')}, ${daysInSegment} days, Principal=${currentSegmentPrincipal.toFixed(2)}, Interest=${segmentInterest.toFixed(2)}`);
+      }
+
+      // Update principal for next segment
+      if (event.type === 'capital_repayment') {
+        currentSegmentPrincipal -= event.amount;
+      } else if (event.type === 'disbursement') {
+        currentSegmentPrincipal += event.amount;
+      }
+      currentSegmentPrincipal = Math.max(0, currentSegmentPrincipal);
+      currentSegmentStart = event.date;
+    }
+
+    // Calculate interest for final segment (from last event to period end)
+    const finalDays = Math.max(0, differenceInDays(periodEndDate, currentSegmentStart));
+    if (finalDays > 0 && currentSegmentPrincipal > 0) {
+      const finalSegmentInterest = calculateInterestForDays(
+        currentSegmentPrincipal, 
+        dailyRate, 
+        finalDays, 
+        product.interest_type,
+        originalPrincipal
+      );
+      totalInterestForPeriod += finalSegmentInterest;
+      console.log(`  Final Segment: ${format(currentSegmentStart, 'MMM dd')} to ${format(periodEndDate, 'MMM dd')}, ${finalDays} days, Principal=${currentSegmentPrincipal.toFixed(2)}, Interest=${finalSegmentInterest.toFixed(2)}`);
+    }
+
+    // Calculate principal portion for this period
     let principalForPeriod = 0;
+    const principalAtEnd = calculatePrincipalAtDate(originalPrincipal, transactions, periodEndDate);
 
     if (product.interest_type === 'Flat') {
-      // Flat: interest on original principal
-      interestForPeriod = calculatePeriodInterest(originalPrincipal, annualRate, product.period, 'Flat');
-      principalForPeriod = 0; // Interest-only unless specified
+      principalForPeriod = 0; // Interest-only for flat rate
     } else if (product.interest_type === 'Interest-Only') {
-      // Interest-Only: interest on current principal
-      interestForPeriod = calculatePeriodInterest(principalAtStartOfPeriod, annualRate, product.period, 'Interest-Only');
       principalForPeriod = 0;
-      
       // Balloon payment on last period
       if (i === duration) {
-        principalForPeriod = principalAtStartOfPeriod;
+        principalForPeriod = principalAtEnd;
       }
     } else if (product.interest_type === 'Reducing') {
-      // Reducing balance: calculate interest on outstanding, plus principal repayment
-      interestForPeriod = calculatePeriodInterest(principalAtStartOfPeriod, annualRate, product.period, 'Reducing');
-      
-      // Calculate principal portion (amortizing)
+      // Amortizing: calculate expected principal repayment
       const remainingPeriods = duration - i + 1;
-      const periodicPayment = principalAtStartOfPeriod * (periodRate * Math.pow(1 + periodRate, remainingPeriods)) / (Math.pow(1 + periodRate, remainingPeriods) - 1);
-      principalForPeriod = periodicPayment - interestForPeriod;
+      if (principalAtStart > 0 && remainingPeriods > 0) {
+        const periodicPayment = principalAtStart * (periodRate * Math.pow(1 + periodRate, remainingPeriods)) / (Math.pow(1 + periodRate, remainingPeriods) - 1);
+        principalForPeriod = Math.max(0, periodicPayment - totalInterestForPeriod);
+      }
     } else if (product.interest_type === 'Rolled-Up') {
-      // Rolled-up: interest compounds, no payments until end
-      interestForPeriod = calculatePeriodInterest(principalAtStartOfPeriod, annualRate, product.period, 'Rolled-Up');
       principalForPeriod = 0;
-      
       // Full settlement on last period
       if (i === duration) {
-        principalForPeriod = principalAtStartOfPeriod;
+        principalForPeriod = principalAtEnd;
       }
     }
 
-    const balanceAfterPeriod = principalAtStartOfPeriod - principalForPeriod;
-
     schedule.push({
       installment_number: i,
-      due_date: format(dueDate, 'yyyy-MM-dd'),
+      due_date: format(periodEndDate, 'yyyy-MM-dd'),
       principal_amount: Math.round(principalForPeriod * 100) / 100,
-      interest_amount: Math.round(interestForPeriod * 100) / 100,
-      total_due: Math.round((principalForPeriod + interestForPeriod) * 100) / 100,
-      balance: Math.max(0, Math.round(balanceAfterPeriod * 100) / 100),
+      interest_amount: Math.round(totalInterestForPeriod * 100) / 100,
+      total_due: Math.round((principalForPeriod + totalInterestForPeriod) * 100) / 100,
+      balance: Math.max(0, Math.round(principalAtEnd * 100) / 100),
       principal_paid: 0,
       interest_paid: 0,
       status: 'Pending'
     });
+
+    console.log(`Period ${i} (${format(periodEndDate, 'yyyy-MM-dd')}): Interest=${totalInterestForPeriod.toFixed(2)}, Principal=${principalForPeriod.toFixed(2)}, Balance=${principalAtEnd.toFixed(2)}`);
+  }
+}
+
+/**
+ * Calculate principal outstanding at a specific date
+ * Considers all transactions up to (but not including) that date
+ */
+function calculatePrincipalAtDate(initialPrincipal, transactions, date) {
+  const disbursements = transactions
+    .filter(t => t.type === 'Disbursement' && new Date(t.date) < date)
+    .reduce((sum, t) => sum + t.amount, 0);
+  
+  const repayments = transactions
+    .filter(t => t.type === 'Repayment' && new Date(t.date) < date)
+    .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
+  
+  return Math.max(0, initialPrincipal + disbursements - repayments);
+}
+
+/**
+ * Calculate interest for a specific number of days on a principal amount
+ * Handles different interest types appropriately
+ */
+function calculateInterestForDays(principal, dailyRate, days, interestType, originalPrincipal) {
+  if (principal <= 0 || days <= 0) return 0;
+  
+  if (interestType === 'Flat') {
+    // Flat rate: always based on original principal
+    return originalPrincipal * dailyRate * days;
+  } else {
+    // Reducing, Interest-Only, Rolled-Up: based on current principal
+    return principal * dailyRate * days;
   }
 }
 
 /**
  * Generate monthly-first aligned schedule (all interest on 1st of month)
+ * Event-driven approach with intra-period calculations
  */
-function generateMonthlyFirstSchedule(schedule, loan, product, duration, currentPrincipal, transactions) {
+function generateMonthlyFirstSchedule(schedule, loan, product, duration, transactions) {
   const startDate = new Date(loan.start_date);
   const originalPrincipal = loan.principal_amount;
   const annualRate = product.interest_rate;
   const dailyRate = annualRate / 100 / 365;
   const monthlyRate = annualRate / 100 / 12;
 
-  // First period: pro-rated from start date to end of month (if not already 1st)
-  let currentDate = startDate;
   let installmentNum = 1;
 
+  // First period: pro-rated from start date to end of month (if not already 1st)
   if (startDate.getDate() !== 1) {
     const endOfFirstMonth = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
-    const daysInFirstPeriod = differenceInDays(endOfFirstMonth, startDate) + 1;
+    const principalAtStart = calculatePrincipalAtDate(originalPrincipal, transactions, startDate);
     
-    const interestForFirstPeriod = calculatePeriodInterest(
-      currentPrincipal, 
-      annualRate, 
-      product.period, 
-      product.interest_type, 
-      daysInFirstPeriod
+    // Calculate pro-rated interest for first partial month with event-driven approach
+    const capitalEventsInPeriod = transactions.filter(t => 
+      (t.type === 'Repayment' && t.principal_applied > 0) &&
+      new Date(t.date) >= startDate && 
+      new Date(t.date) <= endOfFirstMonth
     );
+
+    let totalInterest = 0;
+    let segmentStart = startDate;
+    let segmentPrincipal = principalAtStart;
+
+    capitalEventsInPeriod.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    for (const event of capitalEventsInPeriod) {
+      const eventDate = new Date(event.date);
+      const daysInSegment = Math.max(0, differenceInDays(eventDate, segmentStart));
+      if (daysInSegment > 0 && segmentPrincipal > 0) {
+        totalInterest += calculateInterestForDays(segmentPrincipal, dailyRate, daysInSegment, product.interest_type, originalPrincipal);
+      }
+      segmentPrincipal -= event.principal_applied;
+      segmentStart = eventDate;
+    }
+
+    const finalDays = Math.max(0, differenceInDays(endOfFirstMonth, segmentStart) + 1);
+    if (finalDays > 0 && segmentPrincipal > 0) {
+      totalInterest += calculateInterestForDays(segmentPrincipal, dailyRate, finalDays, product.interest_type, originalPrincipal);
+    }
 
     schedule.push({
       installment_number: installmentNum++,
       due_date: format(startDate, 'yyyy-MM-dd'),
       principal_amount: 0,
-      interest_amount: Math.round(interestForFirstPeriod * 100) / 100,
-      total_due: Math.round(interestForFirstPeriod * 100) / 100,
-      balance: currentPrincipal,
+      interest_amount: Math.round(totalInterest * 100) / 100,
+      total_due: Math.round(totalInterest * 100) / 100,
+      balance: principalAtStart,
       principal_paid: 0,
       interest_paid: 0,
       status: 'Pending'
     });
   }
 
-  // Subsequent periods: aligned to 1st of each month
+  // Subsequent periods: aligned to 1st of each month with event-driven calculations
   for (let monthOffset = 1; monthOffset <= duration; monthOffset++) {
-    const dueDate = addMonths(startOfMonth(startDate), monthOffset);
+    const periodStart = monthOffset === 1 ? startOfMonth(addMonths(startDate, 1)) : addMonths(startOfMonth(startDate), monthOffset);
+    const periodEnd = addMonths(periodStart, 1);
     
-    // Calculate principal at start of this period
-    const capitalRepaymentsBeforeDueDate = transactions
-      .filter(t => t.type === 'Repayment' && new Date(t.date) < dueDate)
-      .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
-    
-    const principalAtStart = originalPrincipal - capitalRepaymentsBeforeDueDate;
+    const principalAtStart = calculatePrincipalAtDate(originalPrincipal, transactions, periodStart);
 
-    // Calculate interest and principal for this period
-    let interestForPeriod = calculatePeriodInterest(principalAtStart, annualRate, product.period, product.interest_type);
+    // Calculate pro-rated interest for this month with mid-period events
+    const capitalEventsInPeriod = transactions.filter(t => 
+      (t.type === 'Repayment' && t.principal_applied > 0) &&
+      new Date(t.date) >= periodStart && 
+      new Date(t.date) < periodEnd
+    );
+
+    let totalInterest = 0;
+    let segmentStart = periodStart;
+    let segmentPrincipal = principalAtStart;
+
+    capitalEventsInPeriod.sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    for (const event of capitalEventsInPeriod) {
+      const eventDate = new Date(event.date);
+      const daysInSegment = Math.max(0, differenceInDays(eventDate, segmentStart));
+      if (daysInSegment > 0 && segmentPrincipal > 0) {
+        totalInterest += calculateInterestForDays(segmentPrincipal, dailyRate, daysInSegment, product.interest_type, originalPrincipal);
+      }
+      segmentPrincipal -= event.principal_applied;
+      segmentStart = eventDate;
+    }
+
+    const finalDays = Math.max(0, differenceInDays(periodEnd, segmentStart));
+    if (finalDays > 0 && segmentPrincipal > 0) {
+      totalInterest += calculateInterestForDays(segmentPrincipal, dailyRate, finalDays, product.interest_type, originalPrincipal);
+    }
+
     let principalForPeriod = 0;
+    const principalAtEnd = calculatePrincipalAtDate(originalPrincipal, transactions, periodEnd);
 
     // Balloon payment on last period for interest-only/rolled-up
     if (monthOffset === duration && (product.interest_type === 'Interest-Only' || product.interest_type === 'Rolled-Up')) {
-      principalForPeriod = principalAtStart;
+      principalForPeriod = principalAtEnd;
     }
 
     schedule.push({
       installment_number: installmentNum++,
-      due_date: format(dueDate, 'yyyy-MM-dd'),
+      due_date: format(periodStart, 'yyyy-MM-dd'),
       principal_amount: Math.round(principalForPeriod * 100) / 100,
-      interest_amount: Math.round(interestForPeriod * 100) / 100,
-      total_due: Math.round((principalForPeriod + interestForPeriod) * 100) / 100,
-      balance: Math.max(0, principalAtStart - principalForPeriod),
+      interest_amount: Math.round(totalInterest * 100) / 100,
+      total_due: Math.round((principalForPeriod + totalInterest) * 100) / 100,
+      balance: Math.max(0, Math.round(principalAtEnd * 100) / 100),
       principal_paid: 0,
       interest_paid: 0,
       status: 'Pending'
@@ -292,8 +460,7 @@ export async function applyScheduleToNewLoan(loanData, product, options = {}) {
   generatePeriodBasedSchedule(schedule, 
     { ...loanData, product_id: product.id }, 
     product, 
-    duration, 
-    loanData.principal_amount,
+    duration,
     [] // No transactions yet
   );
 
