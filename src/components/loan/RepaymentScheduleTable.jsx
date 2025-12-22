@@ -50,13 +50,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     schedule.forEach(row => {
       // Calculate principal outstanding at the start of this period
       const dueDate = new Date(row.due_date);
-      const previousDueDate = schedule.findIndex(s => s.id === row.id) > 0 
-        ? new Date(schedule[schedule.findIndex(s => s.id === row.id) - 1].due_date)
-        : new Date(loan.start_date);
 
-      // Get all principal payments made up to the end of the previous period
+      // Get all principal payments made BEFORE this period starts (before due date)
       const principalPaidBeforeThisPeriod = repaymentTransactions
-        .filter(tx => new Date(tx.date) <= previousDueDate)
+        .filter(tx => new Date(tx.date) < dueDate)
         .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
 
       const principalOutstandingAtStart = loan.principal_amount - principalPaidBeforeThisPeriod;
