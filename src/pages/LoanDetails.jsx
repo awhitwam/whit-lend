@@ -64,6 +64,7 @@ export default function LoanDetails() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
   const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
+  const [regenerateEndDate, setRegenerateEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
@@ -308,11 +309,14 @@ export default function LoanDetails() {
   });
 
   const recalculateLoanMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (endDate) => {
       toast.loading('Regenerating repayment schedule...', { id: 'regenerate-schedule' });
 
-      // Use centralized schedule manager with current loan duration
-      await regenerateLoanSchedule(loanId, { duration: loan.duration });
+      // Use centralized schedule manager with end date for auto-extend loans
+      const options = loan.auto_extend 
+        ? { endDate } 
+        : { duration: loan.duration };
+      await regenerateLoanSchedule(loanId, options);
 
       toast.loading('Reapplying payments...', { id: 'regenerate-schedule' });
 
@@ -1104,13 +1108,32 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
               <AlertDialogDescription>
                 {recalculateLoanMutation.isPending 
                   ? 'Regenerating schedule and reapplying payments...' 
-                  : 'This will clear and recreate the schedule based on product settings, then reapply all payments. This action cannot be undone.'}
+                  : loan.auto_extend 
+                    ? 'This will regenerate the schedule up to the specified end date and reapply all payments.' 
+                    : 'This will clear and recreate the schedule based on product settings, then reapply all payments. This action cannot be undone.'}
               </AlertDialogDescription>
             </AlertDialogHeader>
+            {loan.auto_extend && !recalculateLoanMutation.isPending && (
+              <div className="px-6 py-2">
+                <Label htmlFor="regenerate-end-date" className="text-sm font-medium">
+                  Generate schedule up to:
+                </Label>
+                <Input
+                  id="regenerate-end-date"
+                  type="date"
+                  value={regenerateEndDate}
+                  onChange={(e) => setRegenerateEndDate(e.target.value)}
+                  className="mt-2"
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  Schedule will include all periods from loan start to this date
+                </p>
+              </div>
+            )}
             <AlertDialogFooter>
               <AlertDialogCancel disabled={recalculateLoanMutation.isPending}>Cancel</AlertDialogCancel>
               <AlertDialogAction
-                onClick={() => recalculateLoanMutation.mutate()}
+                onClick={() => recalculateLoanMutation.mutate(regenerateEndDate)}
                 disabled={recalculateLoanMutation.isPending}
                 className="bg-emerald-600 hover:bg-emerald-700"
               >

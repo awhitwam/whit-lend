@@ -52,9 +52,6 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
-  let scheduleDuration = options.duration || loan.duration;
-  const explicitDuration = options.duration !== undefined;
-  
   // Calculate dynamic principal outstanding from transactions
   const totalDisbursed = loan.principal_amount + transactions
     .filter(t => t.type === 'Disbursement')
@@ -72,28 +69,29 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     currentOutstanding: currentPrincipalOutstanding 
   });
 
-  // Dynamic duration: extend schedule until principal is fully repaid (only if duration not explicitly set)
-  if (!explicitDuration && (currentPrincipalOutstanding > 0.01 || loan.auto_extend)) {
-    const daysElapsed = Math.max(0, differenceInDays(today, loanStartDate));
-    const periodsElapsed = product.period === 'Monthly' 
-      ? Math.ceil(daysElapsed / 30.44) 
-      : Math.ceil(daysElapsed / 7);
+  // Determine schedule duration based on end date or auto-extend logic
+  let scheduleDuration;
+  let scheduleEndDate = options.endDate ? new Date(options.endDate) : today;
+  scheduleEndDate.setHours(0, 0, 0, 0);
+  
+  if (options.duration !== undefined) {
+    // Explicit duration provided (e.g., from edit loan modal)
+    scheduleDuration = options.duration;
+  } else if (loan.auto_extend || currentPrincipalOutstanding > 0.01) {
+    // Auto-extend or outstanding balance: calculate periods from start to end date
+    const daysToEndDate = Math.max(0, differenceInDays(scheduleEndDate, loanStartDate));
+    scheduleDuration = product.period === 'Monthly' 
+      ? Math.ceil(daysToEndDate / 30.44) 
+      : Math.ceil(daysToEndDate / 7);
     
-    // For Interest-Only and Rolled-Up, must extend to show full term
-    if (product.interest_type === 'Interest-Only' || product.interest_type === 'Rolled-Up') {
-      scheduleDuration = Math.max(periodsElapsed + 6, scheduleDuration);
-    } else {
-      // For amortizing loans, extend if principal still outstanding
-      scheduleDuration = Math.max(periodsElapsed + 3, scheduleDuration);
-    }
-    
-    // Never shorten auto-extend loans
-    if (loan.auto_extend) {
-      scheduleDuration = Math.max(scheduleDuration, loan.duration || 6);
-    }
+    // Ensure at least original duration
+    scheduleDuration = Math.max(scheduleDuration, loan.duration || 6);
+  } else {
+    // Use original loan duration
+    scheduleDuration = loan.duration;
   }
 
-  console.log('Schedule Duration:', scheduleDuration, 'periods');
+  console.log('Schedule Duration:', scheduleDuration, 'periods', `(End Date: ${format(scheduleEndDate, 'yyyy-MM-dd')})`);
 
   // Generate schedule using event-driven approach
   const schedule = [];
