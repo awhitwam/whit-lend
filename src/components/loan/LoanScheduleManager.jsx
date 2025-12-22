@@ -222,10 +222,10 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       if (capitalEventsInPeriod.length === 0) {
         // No mid-period changes: use fixed monthly interest
         if (product.interest_type === 'Flat') {
-          totalInterestForPeriod = originalPrincipal * (annualRate / 12);
+          totalInterestForPeriod = originalPrincipal * (annualRate / 100 / 12);
         } else {
           // Reducing, Interest-Only, Rolled-Up: based on current principal
-          totalInterestForPeriod = principalAtStart * (annualRate / 12);
+          totalInterestForPeriod = principalAtStart * (annualRate / 100 / 12);
         }
       } else {
         // Mid-period capital changes: calculate weighted average
