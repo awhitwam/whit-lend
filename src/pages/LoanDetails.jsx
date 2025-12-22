@@ -667,7 +667,7 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             </div>
           </div>
           <CardContent className="p-3">
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs mb-3">
               <div>
                 <p className="text-slate-500 mb-0.5">Principal</p>
                 <p className="font-bold">{formatCurrency(loan.principal_amount)}</p>
@@ -703,6 +703,40 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                 </div>
               )}
             </div>
+            {product && (
+              <div className="pt-3 border-t border-slate-200">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+                  <div>
+                    <p className="text-slate-500 mb-0.5">Calculation</p>
+                    <p className="font-medium text-slate-700">{product.interest_calculation_method === 'daily' ? 'Daily' : 'Monthly fixed'}</p>
+                  </div>
+                  {product.period === 'Monthly' && (
+                    <div>
+                      <p className="text-slate-500 mb-0.5">Alignment</p>
+                      <p className="font-medium text-slate-700">{product.interest_alignment === 'period_based' ? 'From start' : '1st of month'}</p>
+                    </div>
+                  )}
+                  {product.interest_only_period > 0 && (
+                    <div>
+                      <p className="text-slate-500 mb-0.5">Interest-Only</p>
+                      <p className="font-medium text-slate-700">{product.interest_only_period} periods</p>
+                    </div>
+                  )}
+                  {product.extend_for_full_period && (
+                    <div>
+                      <p className="text-slate-500 mb-0.5">Extension</p>
+                      <p className="font-medium text-slate-700">Full period required</p>
+                    </div>
+                  )}
+                  {product.interest_paid_in_advance && (
+                    <div>
+                      <p className="text-slate-500 mb-0.5">Payment</p>
+                      <p className="font-medium text-slate-700">Paid in advance</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
