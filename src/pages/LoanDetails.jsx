@@ -561,16 +561,16 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
 
         {/* Header */}
         <Card className="overflow-hidden">
-          <div className="bg-gradient-to-r from-slate-800 to-slate-700 p-6 text-white">
-            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+          <div className="bg-gradient-to-r from-slate-800 to-slate-700 p-4 text-white">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-3">
               <div>
-                <div className="flex items-center gap-3 mb-2">
-                  <FileText className="w-6 h-6" />
+                <div className="flex items-center gap-2">
+                  <FileText className="w-5 h-5" />
                   <div>
-                    <h1 className="text-2xl font-bold">
+                    <h1 className="text-xl font-bold">
                       {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`} - {loan.borrower_name}
                     </h1>
-                    <p className="text-sm text-slate-300 mt-1">{loan.product_name}</p>
+                    <p className="text-xs text-slate-300 mt-0.5">{loan.product_name}</p>
                   </div>
                 </div>
               </div>
@@ -662,67 +662,65 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                   </div>
                   </div>
                   </div>
-                  <CardContent className="p-6">
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-6">
+                  <CardContent className="p-4">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
-                <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
-                  <Banknote className="w-4 h-4" />
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                  <Banknote className="w-3.5 h-3.5" />
                   Principal
                 </div>
-                <p className="text-xl font-bold">{formatCurrency(loan.principal_amount)}</p>
+                <p className="text-lg font-bold">{formatCurrency(loan.principal_amount)}</p>
               </div>
               <div>
-                <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
-                  <TrendingUp className="w-4 h-4" />
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                  <TrendingUp className="w-3.5 h-3.5" />
                   Interest Rate
                 </div>
-                <p className="text-xl font-bold">{loan.interest_rate}%</p>
+                <p className="text-lg font-bold">{loan.interest_rate}%</p>
                 <p className="text-xs text-slate-500">{loan.interest_type}</p>
               </div>
               <div>
-                <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
-                  <Clock className="w-4 h-4" />
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                  <Clock className="w-3.5 h-3.5" />
                   Duration
                 </div>
-                <p className="text-xl font-bold">{loan.duration} {loan.period === 'Monthly' ? 'months' : 'weeks'}</p>
+                <p className="text-lg font-bold">{loan.duration} {loan.period === 'Monthly' ? 'months' : 'weeks'}</p>
                 {loan.auto_extend && (
-                  <div className="flex items-center gap-1 mt-1">
+                  <div className="flex items-center gap-1">
                     <Repeat className="w-3 h-3 text-blue-600" />
                     <p className="text-xs text-blue-600 font-medium">Auto-extending</p>
                   </div>
                 )}
               </div>
               <div>
-                <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
-                  <Calendar className="w-4 h-4" />
+                <div className="flex items-center gap-1.5 text-xs text-slate-500 mb-1">
+                  <Calendar className="w-3.5 h-3.5" />
                   Start Date
                 </div>
-                <p className="text-xl font-bold">{format(new Date(loan.start_date), 'MMM dd, yyyy')}</p>
+                <p className="text-lg font-bold">{format(new Date(loan.start_date), 'MMM dd, yyyy')}</p>
               </div>
             </div>
-            
+
             {(loan.arrangement_fee > 0 || loan.exit_fee > 0) && (
-              <div className="mt-6 pt-6 border-t border-slate-200">
-                <p className="text-sm font-medium text-slate-700 mb-3">Fees</p>
-                <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <p className="text-xs font-medium text-slate-700 mb-2">Fees</p>
+                <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
                   {loan.arrangement_fee > 0 && (
                     <div>
                       <p className="text-xs text-slate-500">Arrangement Fee</p>
-                      <p className="text-lg font-semibold text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">Deducted from disbursement</p>
+                      <p className="text-base font-semibold text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
                     </div>
                   )}
                   {loan.net_disbursed && (
                     <div>
                       <p className="text-xs text-slate-500">Net Disbursed</p>
-                      <p className="text-lg font-semibold text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
+                      <p className="text-base font-semibold text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
                     </div>
                   )}
                   {loan.exit_fee > 0 && (
                     <div>
                       <p className="text-xs text-slate-500">Exit Fee</p>
-                      <p className="text-lg font-semibold text-amber-600">{formatCurrency(loan.exit_fee)}</p>
-                      <p className="text-xs text-slate-500 mt-0.5">Added to repayment</p>
+                      <p className="text-base font-semibold text-amber-600">{formatCurrency(loan.exit_fee)}</p>
                     </div>
                   )}
                 </div>
@@ -730,14 +728,13 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             )}
 
             {loan.auto_extend && loan.status === 'Active' && (
-              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <div className="mt-3 p-2 bg-blue-50 border border-blue-200 rounded-lg">
                 <div className="flex items-start gap-2">
-                  <Repeat className="w-4 h-4 text-blue-600 mt-0.5" />
+                  <Repeat className="w-3.5 h-3.5 text-blue-600 mt-0.5" />
                   <div>
-                    <p className="text-sm font-medium text-blue-900">Auto-Extend Enabled</p>
+                    <p className="text-xs font-medium text-blue-900">Auto-Extend Enabled</p>
                     <p className="text-xs text-blue-700 mt-0.5">
-                      This loan will continue to accrue interest beyond the original duration until fully settled. 
-                      Use the settlement calculator for accurate payoff amounts.
+                      This loan will continue to accrue interest beyond the original duration until fully settled.
                     </p>
                   </div>
                 </div>
@@ -745,9 +742,9 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             )}
 
             {product && (
-              <div className="mt-6 pt-6 border-t border-slate-200">
-                <p className="text-sm font-medium text-slate-700 mb-3">Product Configuration</p>
-                <div className="grid grid-cols-2 gap-4">
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <p className="text-xs font-medium text-slate-700 mb-2">Product Configuration</p>
+                <div className="grid grid-cols-2 gap-3">
                   <div>
                     <p className="text-xs text-slate-500">Interest Calculation</p>
                     <p className="text-sm font-medium text-slate-800">
@@ -789,31 +786,31 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
         </Card>
 
         {/* Financial Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-3">
           <Card className="bg-gradient-to-br from-blue-50 to-blue-100/50 border-blue-200">
-            <CardContent className="p-5">
-              <p className="text-sm text-blue-600 font-medium">Total Repayable</p>
-              <p className="text-2xl font-bold text-blue-900">{formatCurrency(loan.total_repayable)}</p>
+            <CardContent className="p-3">
+              <p className="text-xs text-blue-600 font-medium">Total Repayable</p>
+              <p className="text-xl font-bold text-blue-900">{formatCurrency(loan.total_repayable)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200">
-            <CardContent className="p-5">
-              <p className="text-sm text-amber-600 font-medium">Interest Received</p>
-              <p className="text-2xl font-bold text-amber-900">{formatCurrency(actualInterestPaid)}</p>
+            <CardContent className="p-3">
+              <p className="text-xs text-amber-600 font-medium">Interest Received</p>
+              <p className="text-xl font-bold text-amber-900">{formatCurrency(actualInterestPaid)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border-emerald-200">
-            <CardContent className="p-5">
-              <p className="text-sm text-emerald-600 font-medium">Amount Paid</p>
-              <p className="text-2xl font-bold text-emerald-900">
+            <CardContent className="p-3">
+              <p className="text-xs text-emerald-600 font-medium">Amount Paid</p>
+              <p className="text-xl font-bold text-emerald-900">
                 {formatCurrency(totalPaidFromSchedule)}
               </p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-red-50 to-red-100/50 border-red-200">
-            <CardContent className="p-5">
-              <p className="text-sm text-red-600 font-medium">Outstanding</p>
-              <p className="text-2xl font-bold text-red-900">{formatCurrency(totalOutstanding)}</p>
+            <CardContent className="p-3">
+              <p className="text-xs text-red-600 font-medium">Outstanding</p>
+              <p className="text-xl font-bold text-red-900">{formatCurrency(totalOutstanding)}</p>
               {loan.overpayment_credit > 0 && (
                 <p className="text-xs text-blue-600 mt-1 flex items-center gap-1">
                   <CheckCircle2 className="w-3 h-3" />
@@ -824,11 +821,11 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
           </Card>
           {isLoanActive && (
             <Card className={`bg-gradient-to-br ${liveInterestOutstanding < 0 ? 'from-emerald-50 to-emerald-100/50 border-emerald-200' : 'from-purple-50 to-purple-100/50 border-purple-200'}`}>
-              <CardContent className="p-5">
-                <p className={`text-sm font-medium ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
+              <CardContent className="p-3">
+                <p className={`text-xs font-medium ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
                   Live Interest {liveInterestOutstanding < 0 ? 'Overpaid' : 'Due'}
                 </p>
-                <p className={`text-2xl font-bold ${liveInterestOutstanding < 0 ? 'text-emerald-900' : 'text-purple-900'}`}>
+                <p className={`text-xl font-bold ${liveInterestOutstanding < 0 ? 'text-emerald-900' : 'text-purple-900'}`}>
                   {liveInterestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(liveInterestOutstanding))}
                 </p>
                 <p className="text-xs text-slate-500 mt-1">As of today</p>
