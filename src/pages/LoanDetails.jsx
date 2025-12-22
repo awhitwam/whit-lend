@@ -666,72 +666,72 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
               </div>
             </div>
           </div>
-          <CardContent className="p-3">
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs mb-3">
+          <CardContent className="p-2">
+            <div className="grid grid-cols-3 md:grid-cols-7 gap-2 text-[10px] mb-2">
               <div>
-                <p className="text-slate-500 mb-0.5">Principal</p>
-                <p className="font-bold">{formatCurrency(loan.principal_amount)}</p>
+                <p className="text-slate-500 mb-0">Principal</p>
+                <p className="font-bold text-[11px]">{formatCurrency(loan.principal_amount)}</p>
               </div>
               <div>
-                <p className="text-slate-500 mb-0.5">Rate</p>
-                <p className="font-bold">{loan.interest_rate}% {loan.interest_type}</p>
+                <p className="text-slate-500 mb-0">Rate</p>
+                <p className="font-bold text-[11px]">{loan.interest_rate}% {loan.interest_type}</p>
               </div>
               <div>
-                <p className="text-slate-500 mb-0.5">Duration</p>
-                <p className="font-bold">{loan.duration} {loan.period === 'Monthly' ? 'mo' : 'wk'}{loan.auto_extend && ' (ext)'}</p>
+                <p className="text-slate-500 mb-0">Duration</p>
+                <p className="font-bold text-[11px]">{loan.duration} {loan.period === 'Monthly' ? 'mo' : 'wk'}{loan.auto_extend && ' (ext)'}</p>
               </div>
               <div>
-                <p className="text-slate-500 mb-0.5">Start Date</p>
-                <p className="font-bold">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
+                <p className="text-slate-500 mb-0">Start</p>
+                <p className="font-bold text-[11px]">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
               </div>
               {loan.arrangement_fee > 0 && (
                 <div>
-                  <p className="text-slate-500 mb-0.5">Arr. Fee</p>
-                  <p className="font-bold text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
+                  <p className="text-slate-500 mb-0">Arr. Fee</p>
+                  <p className="font-bold text-[11px] text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
                 </div>
               )}
               {loan.exit_fee > 0 && (
                 <div>
-                  <p className="text-slate-500 mb-0.5">Exit Fee</p>
-                  <p className="font-bold text-amber-600">{formatCurrency(loan.exit_fee)}</p>
+                  <p className="text-slate-500 mb-0">Exit Fee</p>
+                  <p className="font-bold text-[11px] text-amber-600">{formatCurrency(loan.exit_fee)}</p>
                 </div>
               )}
               {loan.net_disbursed && (
                 <div>
-                  <p className="text-slate-500 mb-0.5">Net Disbursed</p>
-                  <p className="font-bold text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
+                  <p className="text-slate-500 mb-0">Net Disb.</p>
+                  <p className="font-bold text-[11px] text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
                 </div>
               )}
             </div>
             {product && (
-              <div className="pt-3 border-t border-slate-200">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
+              <div className="pt-2 border-t border-slate-200">
+                <div className="grid grid-cols-3 md:grid-cols-5 gap-2 text-[10px]">
                   <div>
-                    <p className="text-slate-500 mb-0.5">Calculation</p>
-                    <p className="font-medium text-slate-700">{product.interest_calculation_method === 'daily' ? 'Daily' : 'Monthly fixed'}</p>
+                    <p className="text-slate-500 mb-0">Calc</p>
+                    <p className="font-medium text-[11px] text-slate-700">{product.interest_calculation_method === 'daily' ? 'Daily' : 'Monthly'}</p>
                   </div>
                   {product.period === 'Monthly' && (
                     <div>
-                      <p className="text-slate-500 mb-0.5">Alignment</p>
-                      <p className="font-medium text-slate-700">{product.interest_alignment === 'period_based' ? 'From start' : '1st of month'}</p>
+                      <p className="text-slate-500 mb-0">Align</p>
+                      <p className="font-medium text-[11px] text-slate-700">{product.interest_alignment === 'period_based' ? 'Start' : '1st'}</p>
                     </div>
                   )}
                   {product.interest_only_period > 0 && (
                     <div>
-                      <p className="text-slate-500 mb-0.5">Interest-Only</p>
-                      <p className="font-medium text-slate-700">{product.interest_only_period} periods</p>
+                      <p className="text-slate-500 mb-0">Int-Only</p>
+                      <p className="font-medium text-[11px] text-slate-700">{product.interest_only_period}p</p>
                     </div>
                   )}
                   {product.extend_for_full_period && (
                     <div>
-                      <p className="text-slate-500 mb-0.5">Extension</p>
-                      <p className="font-medium text-slate-700">Full period required</p>
+                      <p className="text-slate-500 mb-0">Ext</p>
+                      <p className="font-medium text-[11px] text-slate-700">Full</p>
                     </div>
                   )}
                   {product.interest_paid_in_advance && (
                     <div>
-                      <p className="text-slate-500 mb-0.5">Payment</p>
-                      <p className="font-medium text-slate-700">Paid in advance</p>
+                      <p className="text-slate-500 mb-0">Payment</p>
+                      <p className="font-medium text-[11px] text-slate-700">Advance</p>
                     </div>
                   )}
                 </div>
