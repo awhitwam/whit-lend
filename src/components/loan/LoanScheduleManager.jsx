@@ -154,6 +154,8 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
   const dailyRate = annualRate / 100 / 365;
   const periodsPerYear = product.period === 'Monthly' ? 12 : 52;
   const periodRate = annualRate / 100 / periodsPerYear;
+  const useMonthlyFixedInterest = product.interest_calculation_method === 'monthly' && product.period === 'Monthly';
+  const fixedMonthlyDays = 365 / 12; // 30.4167 days per month
 
   // Build a complete event timeline: all transactions + all schedule due dates
   const events = [];
@@ -211,52 +213,112 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
     // Calculate principal outstanding at START of period
     const principalAtStart = calculatePrincipalAtDate(originalPrincipal, transactions, periodStartDate);
 
-    // Calculate pro-rated interest for this period, accounting for mid-period capital changes
+    // Calculate interest for this period
     let totalInterestForPeriod = 0;
-    let currentSegmentStart = periodStartDate;
-    let currentSegmentPrincipal = principalAtStart;
+    let totalDaysInPeriod = 0;
 
-    // Sort capital events within period
-    capitalEventsInPeriod.sort((a, b) => a.date - b.date);
+    if (useMonthlyFixedInterest && i > 1) {
+      // For monthly fixed: use fixed days (365/12) for all periods after the first
+      totalDaysInPeriod = Math.round(fixedMonthlyDays);
 
-    // Process each segment between capital events
-    for (const event of capitalEventsInPeriod) {
-      // Calculate interest from segment start to this event
-      const daysInSegment = Math.max(0, differenceInDays(event.date, currentSegmentStart));
-      if (daysInSegment > 0 && currentSegmentPrincipal > 0) {
-        const segmentInterest = calculateInterestForDays(
+      // Still need to account for mid-period capital changes
+      let currentSegmentStart = periodStartDate;
+      let currentSegmentPrincipal = principalAtStart;
+
+      capitalEventsInPeriod.sort((a, b) => a.date - b.date);
+
+      // Calculate weighted interest based on capital changes
+      for (const event of capitalEventsInPeriod) {
+        const daysInSegment = Math.max(0, differenceInDays(event.date, currentSegmentStart));
+        if (daysInSegment > 0 && currentSegmentPrincipal > 0) {
+          const segmentInterest = calculateInterestForDays(
+            currentSegmentPrincipal, 
+            dailyRate, 
+            daysInSegment, 
+            product.interest_type,
+            originalPrincipal
+          );
+          totalInterestForPeriod += segmentInterest;
+        }
+
+        if (event.type === 'capital_repayment') {
+          currentSegmentPrincipal -= event.amount;
+        } else if (event.type === 'disbursement') {
+          currentSegmentPrincipal += event.amount;
+        }
+        currentSegmentPrincipal = Math.max(0, currentSegmentPrincipal);
+        currentSegmentStart = event.date;
+      }
+
+      // Final segment to period end
+      const finalDays = Math.max(0, differenceInDays(periodEndDate, currentSegmentStart));
+      if (finalDays > 0 && currentSegmentPrincipal > 0) {
+        const finalSegmentInterest = calculateInterestForDays(
           currentSegmentPrincipal, 
           dailyRate, 
-          daysInSegment, 
+          finalDays, 
           product.interest_type,
           originalPrincipal
         );
-        totalInterestForPeriod += segmentInterest;
-        console.log(`  Segment: ${format(currentSegmentStart, 'MMM dd')} to ${format(event.date, 'MMM dd')}, ${daysInSegment} days, Principal=${currentSegmentPrincipal.toFixed(2)}, Interest=${segmentInterest.toFixed(2)}`);
+        totalInterestForPeriod += finalSegmentInterest;
       }
 
-      // Update principal for next segment
-      if (event.type === 'capital_repayment') {
-        currentSegmentPrincipal -= event.amount;
-      } else if (event.type === 'disbursement') {
-        currentSegmentPrincipal += event.amount;
+      // Override total interest with fixed calculation if no mid-period changes
+      if (capitalEventsInPeriod.length === 0) {
+        totalInterestForPeriod = calculateInterestForDays(
+          principalAtStart,
+          dailyRate,
+          totalDaysInPeriod,
+          product.interest_type,
+          originalPrincipal
+        );
       }
-      currentSegmentPrincipal = Math.max(0, currentSegmentPrincipal);
-      currentSegmentStart = event.date;
-    }
+    } else {
+      // Daily interest calculation (original logic)
+      totalDaysInPeriod = differenceInDays(periodEndDate, periodStartDate);
+      let currentSegmentStart = periodStartDate;
+      let currentSegmentPrincipal = principalAtStart;
 
-    // Calculate interest for final segment (from last event to period end)
-    const finalDays = Math.max(0, differenceInDays(periodEndDate, currentSegmentStart));
-    if (finalDays > 0 && currentSegmentPrincipal > 0) {
-      const finalSegmentInterest = calculateInterestForDays(
-        currentSegmentPrincipal, 
-        dailyRate, 
-        finalDays, 
-        product.interest_type,
-        originalPrincipal
-      );
-      totalInterestForPeriod += finalSegmentInterest;
-      console.log(`  Final Segment: ${format(currentSegmentStart, 'MMM dd')} to ${format(periodEndDate, 'MMM dd')}, ${finalDays} days, Principal=${currentSegmentPrincipal.toFixed(2)}, Interest=${finalSegmentInterest.toFixed(2)}`);
+      capitalEventsInPeriod.sort((a, b) => a.date - b.date);
+
+      // Process each segment between capital events
+      for (const event of capitalEventsInPeriod) {
+        const daysInSegment = Math.max(0, differenceInDays(event.date, currentSegmentStart));
+        if (daysInSegment > 0 && currentSegmentPrincipal > 0) {
+          const segmentInterest = calculateInterestForDays(
+            currentSegmentPrincipal, 
+            dailyRate, 
+            daysInSegment, 
+            product.interest_type,
+            originalPrincipal
+          );
+          totalInterestForPeriod += segmentInterest;
+          console.log(`  Segment: ${format(currentSegmentStart, 'MMM dd')} to ${format(event.date, 'MMM dd')}, ${daysInSegment} days, Principal=${currentSegmentPrincipal.toFixed(2)}, Interest=${segmentInterest.toFixed(2)}`);
+        }
+
+        // Update principal for next segment
+        if (event.type === 'capital_repayment') {
+          currentSegmentPrincipal -= event.amount;
+        } else if (event.type === 'disbursement') {
+          currentSegmentPrincipal += event.amount;
+        }
+        currentSegmentPrincipal = Math.max(0, currentSegmentPrincipal);
+        currentSegmentStart = event.date;
+      }
+
+      // Calculate interest for final segment (from last event to period end)
+      const finalDays = Math.max(0, differenceInDays(periodEndDate, currentSegmentStart));
+      if (finalDays > 0 && currentSegmentPrincipal > 0) {
+        const finalSegmentInterest = calculateInterestForDays(
+          currentSegmentPrincipal, 
+          dailyRate, 
+          finalDays, 
+          product.interest_type,
+          originalPrincipal
+        );
+        totalInterestForPeriod += finalSegmentInterest;
+        console.log(`  Final Segment: ${format(currentSegmentStart, 'MMM dd')} to ${format(periodEndDate, 'MMM dd')}, ${finalDays} days, Principal=${currentSegmentPrincipal.toFixed(2)}, Interest=${finalSegmentInterest.toFixed(2)}`);
+      }
     }
 
     // Calculate principal portion for this period
@@ -286,8 +348,6 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       }
     }
 
-    const totalDaysInPeriod = differenceInDays(periodEndDate, periodStartDate);
-    
     schedule.push({
       installment_number: i,
       due_date: format(periodEndDate, 'yyyy-MM-dd'),

@@ -11,6 +11,7 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
     interest_rate: product?.interest_rate || '',
     interest_type: product?.interest_type || 'Reducing',
     period: product?.period || 'Monthly',
+    interest_calculation_method: product?.interest_calculation_method || 'daily',
     interest_alignment: product?.interest_alignment || 'period_based',
     extend_for_full_period: product?.extend_for_full_period || false,
     interest_paid_in_advance: product?.interest_paid_in_advance || false,
@@ -100,29 +101,50 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
           </Select>
         </div>
 
-        {formData.interest_type !== 'Rolled-Up' && (
-          <div className="space-y-2">
-            <Label htmlFor="interest_alignment">Interest Payment Schedule</Label>
-            <Select 
-              value={formData.interest_alignment} 
-              onValueChange={(value) => handleChange('interest_alignment', value)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select alignment" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="period_based">Period-Based (from start date)</SelectItem>
-                <SelectItem value="monthly_first">Align to 1st of Month</SelectItem>
-              </SelectContent>
-            </Select>
-            {formData.interest_alignment === 'monthly_first' && (
-              <p className="text-xs text-slate-500 mt-1">
-                First payment: partial interest to month-end. Subsequent payments on 1st of each month.
-              </p>
-            )}
-          </div>
-        )}
+        <div className="space-y-2">
+          <Label htmlFor="interest_calculation_method">Interest Calculation Method *</Label>
+          <Select 
+            value={formData.interest_calculation_method} 
+            onValueChange={(value) => handleChange('interest_calculation_method', value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select method" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="daily">Daily (variable payments)</SelectItem>
+              <SelectItem value="monthly">Monthly (fixed 365/12)</SelectItem>
+            </SelectContent>
+          </Select>
+          <p className="text-xs text-slate-500">
+            {formData.interest_calculation_method === 'daily' 
+              ? 'Interest calculated daily - payments vary by days in month (28-31 days)'
+              : 'Fixed monthly interest based on 365÷12 days. First payment still calculated daily.'}
+          </p>
+        </div>
       </div>
+
+      {formData.interest_type !== 'Rolled-Up' && formData.period === 'Monthly' && (
+        <div className="space-y-2">
+          <Label htmlFor="interest_alignment">Interest Payment Schedule</Label>
+          <Select 
+            value={formData.interest_alignment} 
+            onValueChange={(value) => handleChange('interest_alignment', value)}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder="Select alignment" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="period_based">Period-Based (from start date)</SelectItem>
+              <SelectItem value="monthly_first">Align to 1st of Month</SelectItem>
+            </SelectContent>
+          </Select>
+          {formData.interest_alignment === 'monthly_first' && (
+            <p className="text-xs text-slate-500 mt-1">
+              First payment: partial interest to month-end. Subsequent payments on 1st of each month.
+            </p>
+          )}
+        </div>
+      )}
 
       {formData.interest_type !== 'Rolled-Up' && (
         <div className="space-y-3">
