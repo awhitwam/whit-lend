@@ -774,7 +774,33 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 {/* Expected Schedule */}
                 <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200 py-2">
                   {(viewMode === 'separate' && row.rowType === 'schedule' && row.expectedInterest !== undefined) ? (
-                    formatCurrency(row.expectedInterest)
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="cursor-help">
+                            {formatCurrency(row.expectedInterest)}
+                            <div className="text-xs text-slate-500 mt-0.5">
+                              {(() => {
+                                const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
+                                const daysPerPeriod = loan.period === 'Monthly' ? 30 : 7;
+                                const dailyRate = (loan.interest_rate / 100 / 365);
+                                return `${daysPerPeriod}d @ ${(dailyRate * 100).toFixed(4)}%/day`;
+                              })()}
+                            </div>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent className="max-w-xs">
+                          <div className="space-y-1 text-xs">
+                            <p className="font-semibold">Interest Calculation:</p>
+                            <p>Annual Rate: {loan.interest_rate}%</p>
+                            <p>Daily Rate: {(loan.interest_rate / 100 / 365 * 100).toFixed(4)}% per day</p>
+                            <p>Period: ~{loan.period === 'Monthly' ? '30' : '7'} days</p>
+                            <p>Principal: {formatCurrency(row.principalOutstanding)}</p>
+                            <p className="pt-1 border-t">Formula: Principal × Daily Rate × Days</p>
+                          </div>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   ) : (viewMode === 'merged' && schedule.length > 0 && row.expectedInterest > 0) ? (
                     <div>
                       {formatCurrency(row.expectedInterest)}
