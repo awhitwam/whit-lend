@@ -216,60 +216,56 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
     let totalDaysInPeriod = 0;
 
     if (useMonthlyFixedInterest && i > 1) {
-      // For monthly fixed: use fixed days (365/12) for all periods after the first
+      // For monthly fixed: use fixed monthly calculation (Principal × Annual Rate / 12)
       totalDaysInPeriod = Math.round(fixedMonthlyDays);
 
-      // Still need to account for mid-period capital changes
-      let currentSegmentStart = periodStartDate;
-      let currentSegmentPrincipal = principalAtStart;
-
-      capitalEventsInPeriod.sort((a, b) => a.date - b.date);
-
-      // Calculate weighted interest based on capital changes
-      for (const event of capitalEventsInPeriod) {
-        const daysInSegment = Math.max(0, differenceInDays(event.date, currentSegmentStart));
-        if (daysInSegment > 0 && currentSegmentPrincipal > 0) {
-          const segmentInterest = calculateInterestForDays(
-            currentSegmentPrincipal, 
-            dailyRate, 
-            daysInSegment, 
-            product.interest_type,
-            originalPrincipal
-          );
-          totalInterestForPeriod += segmentInterest;
-        }
-
-        if (event.type === 'capital_repayment') {
-          currentSegmentPrincipal -= event.amount;
-        } else if (event.type === 'disbursement') {
-          currentSegmentPrincipal += event.amount;
-        }
-        currentSegmentPrincipal = Math.max(0, currentSegmentPrincipal);
-        currentSegmentStart = event.date;
-      }
-
-      // Final segment to period end
-      const finalDays = Math.max(0, differenceInDays(periodEndDate, currentSegmentStart));
-      if (finalDays > 0 && currentSegmentPrincipal > 0) {
-        const finalSegmentInterest = calculateInterestForDays(
-          currentSegmentPrincipal, 
-          dailyRate, 
-          finalDays, 
-          product.interest_type,
-          originalPrincipal
-        );
-        totalInterestForPeriod += finalSegmentInterest;
-      }
-
-      // Override total interest with fixed calculation if no mid-period changes
       if (capitalEventsInPeriod.length === 0) {
-        totalInterestForPeriod = calculateInterestForDays(
-          principalAtStart,
-          dailyRate,
-          totalDaysInPeriod,
-          product.interest_type,
-          originalPrincipal
-        );
+        // No mid-period changes: use fixed monthly interest
+        if (product.interest_type === 'Flat') {
+          totalInterestForPeriod = originalPrincipal * (annualRate / 12);
+        } else {
+          // Reducing, Interest-Only, Rolled-Up: based on current principal
+          totalInterestForPeriod = principalAtStart * (annualRate / 12);
+        }
+      } else {
+        // Mid-period capital changes: calculate weighted average
+        let currentSegmentStart = periodStartDate;
+        let currentSegmentPrincipal = principalAtStart;
+        let totalDaysWithPrincipal = 0;
+        let weightedPrincipalDays = 0;
+
+        capitalEventsInPeriod.sort((a, b) => a.date - b.date);
+
+        for (const event of capitalEventsInPeriod) {
+          const daysInSegment = Math.max(0, differenceInDays(event.date, currentSegmentStart));
+          if (daysInSegment > 0) {
+            totalDaysWithPrincipal += daysInSegment;
+            weightedPrincipalDays += currentSegmentPrincipal * daysInSegment;
+          }
+
+          if (event.type === 'capital_repayment') {
+            currentSegmentPrincipal -= event.amount;
+          } else if (event.type === 'disbursement') {
+            currentSegmentPrincipal += event.amount;
+          }
+          currentSegmentPrincipal = Math.max(0, currentSegmentPrincipal);
+          currentSegmentStart = event.date;
+        }
+
+        // Final segment to period end
+        const finalDays = Math.max(0, differenceInDays(periodEndDate, currentSegmentStart));
+        if (finalDays > 0) {
+          totalDaysWithPrincipal += finalDays;
+          weightedPrincipalDays += currentSegmentPrincipal * finalDays;
+        }
+
+        // Calculate average principal and apply monthly rate
+        const avgPrincipal = totalDaysWithPrincipal > 0 ? weightedPrincipalDays / totalDaysWithPrincipal : principalAtStart;
+        if (product.interest_type === 'Flat') {
+          totalInterestForPeriod = originalPrincipal * (annualRate / 12);
+        } else {
+          totalInterestForPeriod = avgPrincipal * (annualRate / 12);
+        }
       }
     } else {
       // Daily interest calculation (original logic)
