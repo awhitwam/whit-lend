@@ -496,7 +496,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   })()
                   ) : (
                     (() => {
-                    // SMARTVIEW2 - Cumulative balance reconciliation (immutable schedule rows)
+                    // SMARTVIEW2 - Interest-focused cumulative tracking with principal reduction
                     const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
                     const sortedTransactions = transactions
                       .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
@@ -504,41 +504,24 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                     const today = new Date();
 
-                    // Pre-calculate all cumulative balances for the entire schedule
-                    const cumulativeBalances = [];
-                    let runningExpected = 0;
+                    // Calculate cumulative interest expected and paid up to before display window
+                    let cumulativeInterestExpected = 0;
+                    let cumulativeInterestPaid = 0;
 
-                    for (let i = 0; i < sortedSchedule.length; i++) {
-                      const row = sortedSchedule[i];
+                    for (let i = 0; i < startIndex; i++) {
+                      const row = schedule[i];
                       const dueDate = new Date(row.due_date);
                       const isPastDue = today > dueDate;
 
                       if (isPastDue) {
-                        runningExpected += row.total_due;
+                        cumulativeInterestExpected += row.interest_amount;
                       }
 
                       const evaluationDate = isPastDue ? dueDate : today;
-                      const paymentsUpToDate = sortedTransactions.filter(tx => 
-                        new Date(tx.date) <= evaluationDate
-                      );
-                      const cumulativePaid = paymentsUpToDate.reduce((sum, tx) => sum + tx.amount, 0);
-
-                      cumulativeBalances.push({
-                        expected: runningExpected,
-                        paid: cumulativePaid,
-                        balance: cumulativePaid - runningExpected,
-                        dueDate: dueDate,
-                        isPastDue: isPastDue
-                      });
-                    }
-
-                    // Calculate cumulative balances up to before display window
-                    let cumulativeExpected = 0;
-                    let cumulativePaid = 0;
-
-                    for (let i = 0; i < startIndex && i < cumulativeBalances.length; i++) {
-                      cumulativeExpected = cumulativeBalances[i].expected;
-                      cumulativePaid = cumulativeBalances[i].paid;
+                      const interestPaidUpToDate = sortedTransactions
+                        .filter(tx => new Date(tx.date) <= evaluationDate)
+                        .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                      cumulativeInterestPaid = interestPaidUpToDate;
                     }
 
                     const displayRows = schedule.slice(startIndex, endIndex);
@@ -548,42 +531,36 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       const dueDate = new Date(row.due_date);
                       const isPastDue = today > dueDate;
 
-                      // Ensure we have cumulative balance data for this index
-                      if (actualIndex >= cumulativeBalances.length) {
-                        return null;
-                      }
-
                       // For past dates: calculate cumulative up to due date
                       // For future dates: calculate cumulative up to TODAY only
                       const evaluationDate = isPastDue ? dueDate : today;
 
-                      // Add this row's expected amount only if due date has passed
+                      // Add this row's expected interest only if due date has passed
                       if (isPastDue) {
-                        cumulativeExpected += row.total_due;
+                        cumulativeInterestExpected += row.interest_amount;
                       }
 
-                      // Calculate payments received on or before evaluation date
-                      const paymentsUpToDate = sortedTransactions.filter(tx => 
-                        new Date(tx.date) <= evaluationDate
-                      );
-                      const cumulativePaidAtDate = paymentsUpToDate.reduce((sum, tx) => sum + tx.amount, 0);
+                      // Calculate interest paid on or before evaluation date
+                      const interestPaidUpToDate = sortedTransactions
+                        .filter(tx => new Date(tx.date) <= evaluationDate)
+                        .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
 
-                      // Cumulative position (frozen for past dates, current for future dates)
-                      const cumulativeBalance = cumulativePaidAtDate - cumulativeExpected;
+                      // Cumulative interest variance (frozen for past dates, current for future dates)
+                      const cumulativeBalance = interestPaidUpToDate - cumulativeInterestExpected;
 
                       let statusBadge;
                       let statusColor = '';
                       let notes = '';
 
                       if (isPastDue) {
-                        // Check if balance was negative at due date
+                        // Check if interest was paid by due date
                         if (cumulativeBalance < -0.01) {
-                          // Was in arrears at due date - check if it recovered later
+                          // Interest in arrears at due date - check if it recovered later
                           const arrearsAtDueDate = Math.abs(cumulativeBalance);
 
-                          // Find the transaction that brought the balance back to positive
+                          // Find the transaction that brought the interest balance back to positive
                           let recoveryTransactionDate = null;
-                          let runningBalance = cumulativeBalance;
+                          let runningInterestBalance = cumulativeBalance;
 
                           // Check transactions after due date
                           const laterTransactions = sortedTransactions.filter(tx => 
@@ -591,35 +568,35 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           ).sort((a, b) => new Date(a.date) - new Date(b.date));
 
                           for (const tx of laterTransactions) {
-                            runningBalance += tx.amount;
-                            if (runningBalance >= -0.01) {
+                            runningInterestBalance += (tx.interest_applied || 0);
+                            if (runningInterestBalance >= -0.01) {
                               recoveryTransactionDate = new Date(tx.date);
                               break;
                             }
                           }
 
                           if (recoveryTransactionDate) {
-                            // Account recovered - show as paid but late
+                            // Interest paid late
                             const daysLate = differenceInDays(recoveryTransactionDate, dueDate);
                             statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                             statusColor = 'bg-emerald-50/30';
                             notes = `Paid ${daysLate} day${daysLate !== 1 ? 's' : ''} late`;
                           } else {
-                            // Still in arrears - show as overdue
+                            // Interest still in arrears
                             const daysOverdue = differenceInDays(today, dueDate);
                             statusBadge = <Badge className="bg-red-500 text-white">Overdue</Badge>;
                             statusColor = 'bg-red-50/30';
-                            notes = `${daysOverdue} days overdue • ${formatCurrency(arrearsAtDueDate)} in arrears`;
+                            notes = `${daysOverdue} days overdue • ${formatCurrency(arrearsAtDueDate)} interest in arrears`;
                           }
                         } else {
-                          // Was paid or ahead at due date
+                          // Interest was paid by due date
                           statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                           statusColor = 'bg-emerald-50/30';
 
                           if (cumulativeBalance > 0.01) {
-                            notes = `Account in surplus: ${formatCurrency(cumulativeBalance)}`;
+                            notes = `Interest overpaid by ${formatCurrency(cumulativeBalance)}`;
                           } else {
-                            notes = 'Obligations met at due date';
+                            notes = 'Interest obligations met at due date';
                           }
                         }
                       } else {
@@ -651,10 +628,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             {showCumulativeColumns && (
                               <>
                                 <TableCell className="text-right font-mono text-slate-600">
-                                  {formatCurrency(cumulativeExpected)}
+                                  {formatCurrency(cumulativeInterestExpected)}
                                 </TableCell>
                                 <TableCell className="text-right font-mono text-slate-600">
-                                  {formatCurrency(cumulativePaidAtDate)}
+                                  {formatCurrency(interestPaidUpToDate)}
                                 </TableCell>
                               </>
                             )}
