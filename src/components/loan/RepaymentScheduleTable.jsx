@@ -489,37 +489,47 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                     const today = new Date();
 
-                    // Calculate cumulative balances up to before display window
-                    let cumulativeExpected = 0;
-                    let cumulativePaid = 0;
-                    let firstNegativeDate = null;
+                    // Pre-calculate all cumulative balances for the entire schedule
+                    const cumulativeBalances = [];
+                    let runningExpected = 0;
 
-                    for (let i = 0; i < startIndex; i++) {
-                      const row = schedule[i];
+                    for (let i = 0; i < sortedSchedule.length; i++) {
+                      const row = sortedSchedule[i];
                       const dueDate = new Date(row.due_date);
                       const isPastDue = today > dueDate;
 
                       if (isPastDue) {
-                        cumulativeExpected += row.total_due;
+                        runningExpected += row.total_due;
                       }
 
                       const evaluationDate = isPastDue ? dueDate : today;
                       const paymentsUpToDate = sortedTransactions.filter(tx => 
                         new Date(tx.date) <= evaluationDate
                       );
-                      cumulativePaid = paymentsUpToDate.reduce((sum, tx) => sum + tx.amount, 0);
+                      const cumulativePaid = paymentsUpToDate.reduce((sum, tx) => sum + tx.amount, 0);
 
-                      const balance = cumulativePaid - cumulativeExpected;
-                      if (balance < -0.01 && !firstNegativeDate) {
-                        firstNegativeDate = dueDate;
-                      } else if (balance >= -0.01) {
-                        firstNegativeDate = null;
-                      }
+                      cumulativeBalances.push({
+                        expected: runningExpected,
+                        paid: cumulativePaid,
+                        balance: cumulativePaid - runningExpected,
+                        dueDate: dueDate,
+                        isPastDue: isPastDue
+                      });
+                    }
+
+                    // Calculate cumulative balances up to before display window
+                    let cumulativeExpected = 0;
+                    let cumulativePaid = 0;
+
+                    for (let i = 0; i < startIndex; i++) {
+                      cumulativeExpected = cumulativeBalances[i].expected;
+                      cumulativePaid = cumulativeBalances[i].paid;
                     }
 
                     const displayRows = schedule.slice(startIndex, endIndex);
 
                     return displayRows.map((row, idx) => {
+                      const actualIndex = startIndex + idx;
                       const dueDate = new Date(row.due_date);
                       const isPastDue = today > dueDate;
 
@@ -541,36 +551,47 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       // Cumulative position (frozen for past dates, current for future dates)
                       const cumulativeBalance = cumulativePaidAtDate - cumulativeExpected;
 
-                      // Track when balance first went negative
-                      if (cumulativeBalance < -0.01 && !firstNegativeDate) {
-                        firstNegativeDate = dueDate;
-                      } else if (cumulativeBalance >= -0.01 && isPastDue) {
-                        firstNegativeDate = null;
-                      }
-
                       let statusBadge;
                       let statusColor = '';
                       let notes = '';
 
                       if (isPastDue) {
-                        // Status is FROZEN based on what happened at the due date
-                        if (cumulativeBalance >= -0.01) {
+                        // Check if balance was negative at due date
+                        if (cumulativeBalance < -0.01) {
+                          // Was in arrears at due date - check if it recovered later
+                          let recoveredDate = null;
+                          for (let i = actualIndex + 1; i < cumulativeBalances.length; i++) {
+                            if (cumulativeBalances[i].balance >= -0.01 && cumulativeBalances[i].isPastDue) {
+                              recoveredDate = cumulativeBalances[i].dueDate;
+                              break;
+                            }
+                          }
+
+                          const arrearsAtDueDate = Math.abs(cumulativeBalance);
+
+                          if (recoveredDate) {
+                            // Account recovered - show as paid but late
+                            const daysLate = differenceInDays(recoveredDate, dueDate);
+                            statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
+                            statusColor = 'bg-emerald-50/30';
+                            notes = `Paid ${daysLate} day${daysLate !== 1 ? 's' : ''} late`;
+                          } else {
+                            // Still in arrears - show as overdue
+                            const daysOverdue = differenceInDays(today, dueDate);
+                            statusBadge = <Badge className="bg-red-500 text-white">Overdue</Badge>;
+                            statusColor = 'bg-red-50/30';
+                            notes = `${daysOverdue} days overdue • ${formatCurrency(arrearsAtDueDate)} in arrears`;
+                          }
+                        } else {
                           // Was paid or ahead at due date
                           statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                           statusColor = 'bg-emerald-50/30';
 
                           if (cumulativeBalance > 0.01) {
-                            notes = `Account was in surplus at due date: ${formatCurrency(cumulativeBalance)}`;
+                            notes = `Account in surplus: ${formatCurrency(cumulativeBalance)}`;
                           } else {
                             notes = 'Obligations met at due date';
                           }
-                        } else {
-                          // Was in arrears at due date - REMAINS OVERDUE PERMANENTLY
-                          const arrearsAtDueDate = Math.abs(cumulativeBalance);
-                          const daysOverdue = firstNegativeDate ? differenceInDays(today, firstNegativeDate) : differenceInDays(today, dueDate);
-                          statusBadge = <Badge className="bg-red-500 text-white">Overdue</Badge>;
-                          statusColor = 'bg-red-50/30';
-                          notes = `${daysOverdue} days overdue • ${formatCurrency(arrearsAtDueDate)} in arrears at due date`;
                         }
                       } else {
                         // Future obligation - upcoming payment
