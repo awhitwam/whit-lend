@@ -653,6 +653,28 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         }
                       }
 
+                      const recoveryTransactionDate = (() => {
+                        if (isPastDue && cumulativeBalance < -0.01) {
+                          const arrearsAtDueDate = Math.abs(cumulativeBalance);
+                          let runningInterestBalance = cumulativeBalance;
+                          const laterTransactions = sortedTransactions.filter(tx => 
+                            new Date(tx.date) > dueDate
+                          ).sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                          for (const tx of laterTransactions) {
+                            runningInterestBalance += (tx.interest_applied || 0);
+                            if (runningInterestBalance >= -0.01) {
+                              return new Date(tx.date);
+                            }
+                          }
+                        }
+                        return null;
+                      })();
+
+                      const arrearsAtDueDate = isPastDue && cumulativeBalance < -0.01 ? Math.abs(cumulativeBalance) : 0;
+                      const daysLate = recoveryTransactionDate ? differenceInDays(recoveryTransactionDate, dueDate) : 0;
+                      const daysUntilDue = !isPastDue ? differenceInDays(dueDate, today) : 0;
+
                       return (
                         <React.Fragment key={row.id}>
                           <TableRow className={statusColor}>
@@ -684,7 +706,40 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell className={`text-right font-mono font-semibold ${cumulativeBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {cumulativeBalance >= 0 ? '+' : ''}{formatCurrency(cumulativeBalance)}
                             </TableCell>
-                            <TableCell className="text-slate-600 text-sm">{notes}</TableCell>
+                            <TableCell className="text-slate-600 text-sm">
+                              {notes && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="cursor-help underline decoration-dotted">{notes}</span>
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-sm">
+                                      {isPastDue ? (
+                                        cumulativeBalance < -0.01 ? (
+                                          recoveryTransactionDate ? (
+                                            <p>Interest was paid {daysLate} day{daysLate !== 1 ? 's' : ''} after the due date. The cumulative interest balance became positive on {format(recoveryTransactionDate, 'MMM dd, yyyy')}.</p>
+                                          ) : (
+                                            <p>Interest payment is overdue. As of the due date ({format(dueDate, 'MMM dd, yyyy')}), there was a shortfall of {formatCurrency(arrearsAtDueDate)}. This has not yet been recovered.</p>
+                                          )
+                                        ) : (
+                                          cumulativeBalance > 0.01 ? (
+                                            <p>Interest obligations were met by the due date. The account has a surplus of {formatCurrency(cumulativeBalance)} in interest payments.</p>
+                                          ) : (
+                                            <p>Interest obligations were met exactly by the due date ({format(dueDate, 'MMM dd, yyyy')}).</p>
+                                          )
+                                        )
+                                      ) : (
+                                        cumulativeBalance > 0.01 ? (
+                                          <p>This payment is upcoming in {daysUntilDue} day{daysUntilDue !== 1 ? 's' : ''}. The account currently has a surplus of {formatCurrency(cumulativeBalance)}, meaning interest payments are ahead of schedule.</p>
+                                        ) : (
+                                          <p>This payment is due in {daysUntilDue} day{daysUntilDue !== 1 ? 's' : ''} ({format(dueDate, 'MMM dd, yyyy')}).</p>
+                                        )
+                                      )}
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </TableCell>
                           </TableRow>
                         </React.Fragment>
                       );
