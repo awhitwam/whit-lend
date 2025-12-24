@@ -115,6 +115,32 @@ function createEntityHandler(tableName) {
 
       if (error) throw error;
       return true;
+    },
+
+    // Batch create multiple records at once (much faster than individual creates)
+    async createMany(records) {
+      if (!records || records.length === 0) return [];
+
+      const { data: created, error } = await supabase
+        .from(tableName)
+        .insert(records)
+        .select();
+
+      if (error) throw error;
+      return created || [];
+    },
+
+    // Batch delete by condition (much faster than individual deletes)
+    async deleteWhere(conditions) {
+      let query = supabase.from(tableName).delete();
+
+      for (const [key, value] of Object.entries(conditions)) {
+        query = query.eq(key, value);
+      }
+
+      const { error } = await query;
+      if (error) throw error;
+      return true;
     }
   };
 }

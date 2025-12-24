@@ -76,6 +76,8 @@ export default function LoanDetails() {
   const [txPerPage, setTxPerPage] = useState(25);
   const [aiSummary, setAiSummary] = useState('');
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [processingMessage, setProcessingMessage] = useState('');
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -116,27 +118,36 @@ export default function LoanDetails() {
 
   const editLoanMutation = useMutation({
     mutationFn: async (updatedData) => {
+      setIsProcessing(true);
+      setProcessingMessage('Updating loan...');
       toast.loading('Updating loan...', { id: 'edit-loan' });
-      
+
       // Fetch the product to get its settings
       const products = await base44.entities.LoanProduct.filter({ id: updatedData.product_id });
       const product = products[0];
-      
+
       if (!product) throw new Error('Product not found');
 
       // Update loan with new parameters
       await base44.entities.Loan.update(loanId, updatedData);
-      
+
       toast.loading('Regenerating schedule...', { id: 'edit-loan' });
-      
+
       // Delete old schedule
       const oldSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
       for (const row of oldSchedule) {
         await base44.entities.RepaymentSchedule.delete(row.id);
       }
-      
+
       // Use centralized schedule manager to regenerate
-      await regenerateLoanSchedule(loanId, { duration: updatedData.duration });
+      // Use same logic as Regenerate Schedule: respect auto_extend setting
+      const today = new Date();
+      const isAutoExtend = updatedData.auto_extend !== undefined ? updatedData.auto_extend : loan.auto_extend;
+      const loanDuration = updatedData.duration || loan.duration;
+      const options = isAutoExtend
+        ? { endDate: format(today, 'yyyy-MM-dd'), duration: loanDuration }
+        : { duration: loanDuration };
+      await regenerateLoanSchedule(loanId, options);
       
       toast.loading('Reapplying payments...', { id: 'edit-loan' });
       
@@ -167,15 +178,20 @@ export default function LoanDetails() {
         interest_paid: totalInterestPaid
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loans'] });
+    onSuccess: async () => {
+      setProcessingMessage('Refreshing data...');
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
+      setIsProcessing(false);
       toast.success('Loan updated successfully', { id: 'edit-loan' });
       setIsEditOpen(false);
     },
     onError: () => {
+      setIsProcessing(false);
       toast.error('Failed to update loan', { id: 'edit-loan' });
     }
   });
@@ -244,11 +260,13 @@ export default function LoanDetails() {
         }
       }
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loans'] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
       toast.success('Transaction deleted', { id: 'delete-transaction' });
     },
     onError: () => {
@@ -261,9 +279,11 @@ export default function LoanDetails() {
       toast.loading('Updating loan status...', { id: 'update-status' });
       return base44.entities.Loan.update(loanId, { status });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loans'] });
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
       toast.success('Loan status updated', { id: 'update-status' });
     },
     onError: () => {
@@ -276,8 +296,8 @@ export default function LoanDetails() {
       toast.loading('Updating auto-extend...', { id: 'auto-extend' });
       return base44.entities.Loan.update(loanId, { auto_extend: !loan.auto_extend });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['loan', loanId] });
       toast.success(`Auto-extend ${loan.auto_extend ? 'disabled' : 'enabled'}`, { id: 'auto-extend' });
     },
     onError: () => {
@@ -293,9 +313,8 @@ export default function LoanDetails() {
         await base44.entities.RepaymentSchedule.delete(row.id);
       }
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId], refetchType: 'active' });
-      queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId], type: 'active' });
+    onSuccess: async () => {
+      await queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] });
       toast.success('Schedule cleared successfully', { id: 'clear-schedule' });
       setIsClearDialogOpen(false);
     },
@@ -307,11 +326,14 @@ export default function LoanDetails() {
 
   const recalculateLoanMutation = useMutation({
     mutationFn: async (endDate) => {
+      setIsProcessing(true);
+      setProcessingMessage('Regenerating schedule...');
       toast.loading('Regenerating repayment schedule...', { id: 'regenerate-schedule' });
 
       // Use centralized schedule manager with end date for auto-extend loans
-      const options = loan.auto_extend 
-        ? { endDate } 
+      // Always pass duration for consistency between Edit Loan and Regenerate Schedule
+      const options = loan.auto_extend
+        ? { endDate, duration: loan.duration }
         : { duration: loan.duration };
       await regenerateLoanSchedule(loanId, options);
 
@@ -344,16 +366,19 @@ export default function LoanDetails() {
         interest_paid: totalInterestPaid
       });
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan', loanId], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId], refetchType: 'active' });
-      queryClient.invalidateQueries({ queryKey: ['loans'], refetchType: 'active' });
-      queryClient.refetchQueries({ queryKey: ['loan', loanId], type: 'active' });
-      queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId], type: 'active' });
+    onSuccess: async () => {
+      setProcessingMessage('Refreshing data...');
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
+      setIsProcessing(false);
       toast.success('Schedule regenerated successfully', { id: 'regenerate-schedule' });
       setIsRegenerateDialogOpen(false);
     },
     onError: () => {
+      setIsProcessing(false);
       toast.error('Failed to regenerate schedule', { id: 'regenerate-schedule' });
       setIsRegenerateDialogOpen(false);
     }
@@ -415,6 +440,8 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
 
   const paymentMutation = useMutation({
     mutationFn: async (paymentData) => {
+      setIsProcessing(true);
+      setProcessingMessage('Processing payment...');
       toast.loading('Processing payment...', { id: 'payment' });
       
       // Check if this is a settlement payment
@@ -476,15 +503,20 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
       
       return { totalPrincipalApplied, totalInterestApplied, principalReduction, creditAmount };
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
-      queryClient.invalidateQueries({ queryKey: ['loans'] });
+    onSuccess: async () => {
+      setProcessingMessage('Refreshing data...');
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
+      setIsProcessing(false);
       toast.success('Payment recorded successfully', { id: 'payment' });
       setIsPaymentOpen(false);
     },
     onError: () => {
+      setIsProcessing(false);
       toast.error('Failed to record payment', { id: 'payment' });
     }
   });
@@ -550,7 +582,17 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
   const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 relative">
+        {/* Processing Overlay */}
+        {isProcessing && (
+          <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
+            <div className="bg-white rounded-xl shadow-2xl p-6 flex flex-col items-center gap-4 min-w-[200px]">
+              <Loader2 className="w-8 h-8 text-emerald-600 animate-spin" />
+              <p className="text-sm font-medium text-slate-700">{processingMessage}</p>
+            </div>
+          </div>
+        )}
+
         <div className="max-w-6xl mx-auto p-6 space-y-6">
         {/* Back Button */}
         <Link to={createPageUrl('Loans')}>

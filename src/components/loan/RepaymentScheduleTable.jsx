@@ -13,6 +13,19 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('separate'); // 'separate', 'detailed', 'smartview2', 'nested'
   const [showCumulativeColumns, setShowCumulativeColumns] = useState(false);
+
+  // Helper to format installment label for Rolled-Up loans
+  const formatInstallmentLabel = (row) => {
+    if (loan?.interest_type === 'Rolled-Up') {
+      if (row.installment_number === 1) {
+        return 'Roll-up Interest';
+      } else if (row.is_extension_period) {
+        return `Interest ${row.installment_number - 1}`;
+      }
+    }
+    return row.installment_number;
+  };
+
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
   
@@ -479,7 +492,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell className="font-medium">
                               <div className="flex items-center gap-2">
                                 <span className="text-slate-400">📄</span>
-                                {row.installment_number}
+                                {formatInstallmentLabel(row)}
                               </div>
                             </TableCell>
                             <TableCell>{format(new Date(row.due_date), 'MMM dd, yyyy')}</TableCell>
@@ -684,7 +697,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell className="font-medium">
                               <div className="flex items-center gap-2">
                                 <span className="text-slate-400">📄</span>
-                                {row.installment_number}
+                                {formatInstallmentLabel(row)}
                               </div>
                             </TableCell>
                             <TableCell>{format(dueDate, 'MMM dd, yyyy')}</TableCell>
@@ -931,11 +944,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     }
 
                     // Add HEADER ROW for the schedule period
+                    const installmentLabel = loan?.interest_type === 'Rolled-Up'
+                      ? (scheduleRow.installment_number === 1 ? 'Roll-up Interest' : `Interest ${scheduleRow.installment_number - 1}`)
+                      : `Instalment ${scheduleRow.installment_number}`;
                     rows.push({
                       type: 'schedule_header',
                       scheduleRow,
                       date: dueDate,
-                      description: `Instalment ${scheduleRow.installment_number}`,
+                      description: installmentLabel,
                       principal: scheduleRow.principal_amount || 0,
                       interest: expectedInterest,
                       balance: runningInterestAccrued - runningInterestPaid,

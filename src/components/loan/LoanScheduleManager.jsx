@@ -73,19 +73,22 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   let scheduleDuration;
   let scheduleEndDate = options.endDate ? new Date(options.endDate) : today;
   scheduleEndDate.setHours(0, 0, 0, 0);
-  
-  if (options.duration !== undefined) {
-    // Explicit duration provided (e.g., from edit loan modal)
-    scheduleDuration = options.duration;
-  } else if (loan.auto_extend || currentPrincipalOutstanding > 0.01) {
-    // Auto-extend or outstanding balance: calculate periods from start to end date
+
+  // Base duration from options or loan
+  const baseDuration = options.duration !== undefined ? options.duration : loan.duration;
+
+  if (options.endDate && (loan.auto_extend || currentPrincipalOutstanding > 0.01)) {
+    // Auto-extend with end date: calculate periods from start to end date
     const daysToEndDate = Math.max(0, differenceInDays(scheduleEndDate, loanStartDate));
-    scheduleDuration = product.period === 'Monthly' 
-      ? Math.ceil(daysToEndDate / 30.44) 
+    const calculatedDuration = product.period === 'Monthly'
+      ? Math.ceil(daysToEndDate / 30.44)
       : Math.ceil(daysToEndDate / 7);
-    
-    // Ensure at least original duration
-    scheduleDuration = Math.max(scheduleDuration, loan.duration || 6);
+
+    // Use the larger of calculated duration or base duration
+    scheduleDuration = Math.max(calculatedDuration, baseDuration || 6);
+  } else if (options.duration !== undefined) {
+    // Explicit duration provided without auto-extend
+    scheduleDuration = options.duration;
   } else {
     // Use original loan duration
     scheduleDuration = loan.duration;
@@ -95,13 +98,13 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
 
   // Generate schedule using event-driven approach
   const schedule = [];
-  
+
   if (product.interest_alignment === 'monthly_first' && product.period === 'Monthly') {
     // Special case: align all interest to 1st of month
     generateMonthlyFirstSchedule(schedule, loan, product, scheduleDuration, transactions);
   } else {
     // Standard: period-based from start date with event-driven calculations
-    generatePeriodBasedSchedule(schedule, loan, product, scheduleDuration, transactions);
+    generatePeriodBasedSchedule(schedule, loan, product, scheduleDuration, transactions, scheduleEndDate, options);
   }
 
   console.log(`Generated ${schedule.length} schedule entries`);
@@ -109,18 +112,15 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     console.log(`  [${idx + 1}] ${row.due_date}: Principal=${row.principal_amount}, Interest=${row.interest_amount}, Balance=${row.balance}`);
   });
 
-  // Delete old schedule and create new one
-  const oldSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
-  for (const row of oldSchedule) {
-    await base44.entities.RepaymentSchedule.delete(row.id);
-  }
+  // Delete old schedule and create new one (using batch operations for speed)
+  await base44.entities.RepaymentSchedule.deleteWhere({ loan_id: loanId });
 
-  for (const row of schedule) {
-    await base44.entities.RepaymentSchedule.create({
-      loan_id: loanId,
-      ...row
-    });
-  }
+  // Batch create all schedule rows at once
+  const scheduleWithLoanId = schedule.map(row => ({
+    loan_id: loanId,
+    ...row
+  }));
+  await base44.entities.RepaymentSchedule.createMany(scheduleWithLoanId);
 
   // Calculate totals from generated schedule
   const totalInterest = schedule.reduce((sum, row) => sum + row.interest_amount, 0);
@@ -145,7 +145,7 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
  * Generate period-based schedule (standard alignment from loan start date)
  * Event-driven approach: calculates interest dynamically based on actual principal at each point in time
  */
-function generatePeriodBasedSchedule(schedule, loan, product, duration, transactions) {
+function generatePeriodBasedSchedule(schedule, loan, product, duration, transactions, scheduleEndDate, options = {}) {
   const startDate = new Date(loan.start_date);
   const originalPrincipal = loan.principal_amount;
   const annualRate = product.interest_rate;
@@ -198,11 +198,15 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
 
   // Handle Rolled-Up loans separately - only show end of loan period + monthly interest after
   if (product.interest_type === 'Rolled-Up') {
+    // Use the ORIGINAL loan duration for the roll-up period, not the extended duration
+    const originalDuration = loan.duration || options.duration || duration;
     let totalRolledUpInterest = 0;
     let finalPrincipal = originalPrincipal;
 
-    // Calculate total rolled-up interest across all periods
-    for (let i = 1; i <= duration; i++) {
+    console.log('Rolled-Up: Using original duration:', originalDuration, 'vs extended duration:', duration);
+
+    // Calculate total rolled-up interest across the ORIGINAL loan duration
+    for (let i = 1; i <= originalDuration; i++) {
       const periodStartDate = i === 1 ? startDate : (product.period === 'Monthly' ? addMonths(startDate, i - 1) : addWeeks(startDate, i - 1));
       const periodEndDate = product.period === 'Monthly' ? addMonths(startDate, i) : addWeeks(startDate, i);
       const principalAtStart = calculatePrincipalAtDate(originalPrincipal, transactions, periodStartDate);
@@ -213,8 +217,8 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       finalPrincipal = principalAtStart;
     }
 
-    // Single entry at end of loan period
-    const loanEndDate = product.period === 'Monthly' ? addMonths(startDate, duration) : addWeeks(startDate, duration);
+    // Single entry at end of ORIGINAL loan period (not extended)
+    const loanEndDate = product.period === 'Monthly' ? addMonths(startDate, originalDuration) : addWeeks(startDate, originalDuration);
     schedule.push({
       installment_number: 1,
       due_date: format(loanEndDate, 'yyyy-MM-dd'),
@@ -227,8 +231,18 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       status: 'Pending'
     });
 
-    // Add 12 months of interest-only payments after loan period ends
-    for (let i = 1; i <= 12; i++) {
+    // Calculate how many extension periods are needed
+    // If auto-extend is on, extend up to the schedule end date; otherwise add 12 months
+    let extensionMonths = 12;
+    if (options.endDate || loan.auto_extend) {
+      const monthsFromLoanEnd = product.period === 'Monthly'
+        ? Math.ceil(differenceInDays(scheduleEndDate, loanEndDate) / 30.44)
+        : Math.ceil(differenceInDays(scheduleEndDate, loanEndDate) / 7);
+      extensionMonths = Math.max(12, monthsFromLoanEnd);
+    }
+
+    // Add interest-only payments after loan period ends
+    for (let i = 1; i <= extensionMonths; i++) {
       const dueDate = addMonths(loanEndDate, i);
       const monthlyInterest = finalPrincipal * (annualRate / 100 / 12);
 
@@ -389,9 +403,13 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       }
     }
 
+    // Determine due date based on interest_paid_in_advance setting
+    // If paid in advance, interest is due at START of period; otherwise at END
+    const dueDate = product.interest_paid_in_advance ? periodStartDate : periodEndDate;
+
     schedule.push({
       installment_number: i,
-      due_date: format(periodEndDate, 'yyyy-MM-dd'),
+      due_date: format(dueDate, 'yyyy-MM-dd'),
       principal_amount: Math.round(principalForPeriod * 100) / 100,
       interest_amount: Math.round(totalInterestForPeriod * 100) / 100,
       total_due: Math.round((principalForPeriod + totalInterestForPeriod) * 100) / 100,
@@ -403,7 +421,7 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       calculation_principal_start: Math.round(principalAtStart * 100) / 100
     });
 
-    console.log(`Period ${i} (${format(periodEndDate, 'yyyy-MM-dd')}): Interest=${totalInterestForPeriod.toFixed(2)}, Principal=${principalForPeriod.toFixed(2)}, Balance=${principalAtEnd.toFixed(2)}`);
+    console.log(`Period ${i} (${format(dueDate, 'yyyy-MM-dd')}): Interest=${totalInterestForPeriod.toFixed(2)}, Principal=${principalForPeriod.toFixed(2)}, Balance=${principalAtEnd.toFixed(2)}`);
   }
 }
 
@@ -486,10 +504,14 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
     }
 
     const daysInFirstPeriod = differenceInDays(endOfFirstMonth, startDate) + 1;
-    
+
+    // Determine due date based on interest_paid_in_advance setting
+    // If paid in advance, interest is due at START of period; otherwise at END
+    const firstPeriodDueDate = product.interest_paid_in_advance ? startDate : endOfFirstMonth;
+
     schedule.push({
       installment_number: installmentNum++,
-      due_date: format(startDate, 'yyyy-MM-dd'),
+      due_date: format(firstPeriodDueDate, 'yyyy-MM-dd'),
       principal_amount: 0,
       interest_amount: Math.round(totalInterest * 100) / 100,
       total_due: Math.round(totalInterest * 100) / 100,
@@ -546,10 +568,14 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
     }
 
     const daysInPeriod = differenceInDays(periodEnd, periodStart);
-    
+
+    // Determine due date based on interest_paid_in_advance setting
+    // If paid in advance, interest is due at START of period (1st of month); otherwise at END (last day or 1st of next)
+    const dueDate = product.interest_paid_in_advance ? periodStart : periodEnd;
+
     schedule.push({
       installment_number: installmentNum++,
-      due_date: format(periodStart, 'yyyy-MM-dd'),
+      due_date: format(dueDate, 'yyyy-MM-dd'),
       principal_amount: Math.round(principalForPeriod * 100) / 100,
       interest_amount: Math.round(totalInterest * 100) / 100,
       total_due: Math.round((principalForPeriod + totalInterest) * 100) / 100,
