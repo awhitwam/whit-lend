@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Plus, Package, MoreHorizontal, Edit, Trash2, TrendingUp, Clock, Banknote } from 'lucide-react';
+import { Plus, Package, MoreHorizontal, Edit, Trash2, TrendingUp, Clock, Banknote, Copy } from 'lucide-react';
 import ProductForm from '@/components/product/ProductForm';
 import EmptyState from '@/components/ui/EmptyState';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -55,6 +55,17 @@ export default function Products() {
 
   const handleEdit = (product) => {
     setEditingProduct(product);
+    setIsFormOpen(true);
+  };
+
+  const handleDuplicate = (product) => {
+    const duplicatedProduct = {
+      ...product,
+      name: `${product.name} (Copy)`,
+    };
+    delete duplicatedProduct.id;
+    delete duplicatedProduct.created_date;
+    setEditingProduct(duplicatedProduct);
     setIsFormOpen(true);
   };
 
@@ -125,7 +136,11 @@ export default function Products() {
                         <Edit className="w-4 h-4 mr-2" />
                         Edit
                       </DropdownMenuItem>
-                      <DropdownMenuItem 
+                      <DropdownMenuItem onClick={() => handleDuplicate(product)}>
+                        <Copy className="w-4 h-4 mr-2" />
+                        Duplicate
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
                         onClick={() => deleteMutation.mutate(product.id)}
                         className="text-red-600"
                       >

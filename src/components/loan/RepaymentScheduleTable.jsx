@@ -5,13 +5,13 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Split, List, Download } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, List, Download, Layers } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
-export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan }) {
+export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  const [viewMode, setViewMode] = useState('separate'); // 'separate', 'detailed', 'smartview2'
+  const [viewMode, setViewMode] = useState('separate'); // 'separate', 'detailed', 'smartview2', 'nested'
   const [showCumulativeColumns, setShowCumulativeColumns] = useState(false);
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
@@ -228,6 +228,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               >
                 <Split className="w-4 h-4" />
                 Journal
+              </Button>
+              <Button
+                variant={viewMode === 'nested' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => setViewMode('nested')}
+                className="gap-1 h-8"
+              >
+                <Layers className="w-4 h-4" />
+                Nested
               </Button>
             </div>
             {viewMode === 'separate' && (
@@ -799,6 +808,342 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     })()
                   )}
                 </>
+              )}
+            </TableBody>
+          </Table>
+        ) : viewMode === 'nested' ? (
+          <Table>
+            <TableHeader>
+              <TableRow className="bg-slate-50 sticky top-0 z-20">
+                <TableHead className="font-semibold bg-slate-50 w-24">Date</TableHead>
+                <TableHead className="font-semibold bg-slate-50">Description</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Principal</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Interest</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Interest Balance</TableHead>
+                <TableHead className="font-semibold bg-slate-50 w-28">Status</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {isLoading ? (
+                Array(6).fill(0).map((_, i) => (
+                  <TableRow key={i}>
+                    <TableCell colSpan={6} className="h-14">
+                      <div className="h-4 bg-slate-100 rounded animate-pulse w-full"></div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              ) : schedule.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center py-12 text-slate-500">
+                    No schedule available
+                  </TableCell>
+                </TableRow>
+              ) : (
+                (() => {
+                  // NESTED VIEW: Group transactions under schedule periods
+                  const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+                  const repaymentTransactions = transactions
+                    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+                    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                  const today = new Date();
+                  const dailyRate = loan.interest_rate / 100 / 365;
+
+                  // Assign each transaction to exactly ONE schedule period (closest due date)
+                  const txAssignments = new Map();
+                  repaymentTransactions.forEach(tx => {
+                    const txDate = new Date(tx.date);
+                    let closestSchedule = null;
+                    let closestDiff = Infinity;
+
+                    sortedSchedule.forEach(scheduleRow => {
+                      const dueDate = new Date(scheduleRow.due_date);
+                      const diff = Math.abs(txDate - dueDate);
+                      if (diff < closestDiff) {
+                        closestDiff = diff;
+                        closestSchedule = scheduleRow;
+                      }
+                    });
+
+                    if (closestSchedule) {
+                      if (!txAssignments.has(closestSchedule.id)) {
+                        txAssignments.set(closestSchedule.id, []);
+                      }
+                      txAssignments.get(closestSchedule.id).push(tx);
+                    }
+                  });
+
+                  // Build rows with running balances
+                  const rows = [];
+                  let runningPrincipalBalance = loan.principal_amount;
+                  let runningInterestAccrued = 0;
+                  let runningInterestPaid = 0;
+
+                  // Add disbursement row
+                  rows.push({
+                    type: 'disbursement',
+                    date: new Date(loan.start_date),
+                    description: 'Loan Disbursement',
+                    principal: loan.principal_amount,
+                    interest: 0,
+                    balance: 0
+                  });
+
+                  // Process each schedule period
+                  sortedSchedule.forEach((scheduleRow, idx) => {
+                    const dueDate = new Date(scheduleRow.due_date);
+                    const expectedInterest = scheduleRow.interest_amount || 0;
+                    const periodTransactions = txAssignments.get(scheduleRow.id) || [];
+
+                    // Accrue interest for this period
+                    runningInterestAccrued += expectedInterest;
+
+                    // Calculate period payments
+                    const periodInterestPaid = periodTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                    const periodPrincipalPaid = periodTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+
+                    // Determine status
+                    const isPastDue = today > dueDate;
+                    let status = 'upcoming';
+                    let statusVariance = 0;
+
+                    if (isPastDue) {
+                      if (periodInterestPaid >= expectedInterest - 0.01) {
+                        if (periodInterestPaid > expectedInterest + 0.01) {
+                          status = 'overpaid';
+                          statusVariance = periodInterestPaid - expectedInterest;
+                        } else {
+                          status = 'paid';
+                          // Check if paid early
+                          if (periodTransactions.length > 0) {
+                            const lastPaymentDate = new Date(periodTransactions[periodTransactions.length - 1].date);
+                            if (lastPaymentDate < dueDate) {
+                              status = 'paid_early';
+                            }
+                          }
+                        }
+                      } else if (periodInterestPaid > 0.01) {
+                        status = 'underpaid';
+                        statusVariance = periodInterestPaid - expectedInterest;
+                      } else {
+                        status = 'overdue';
+                      }
+                    }
+
+                    // Add HEADER ROW for the schedule period
+                    rows.push({
+                      type: 'schedule_header',
+                      scheduleRow,
+                      date: dueDate,
+                      description: `Instalment ${scheduleRow.installment_number}`,
+                      principal: scheduleRow.principal_amount || 0,
+                      interest: expectedInterest,
+                      balance: runningInterestAccrued - runningInterestPaid,
+                      status,
+                      statusVariance,
+                      periodInterestPaid,
+                      periodPrincipalPaid,
+                      expectedInterest,
+                      isPastDue
+                    });
+
+                    // Add CHILD ROWS for each transaction in this period
+                    const txCount = periodTransactions.length;
+                    periodTransactions.forEach((tx, txIdx) => {
+                      const txDate = new Date(tx.date);
+                      runningPrincipalBalance -= (tx.principal_applied || 0);
+                      runningPrincipalBalance = Math.max(0, runningPrincipalBalance);
+                      runningInterestPaid += (tx.interest_applied || 0);
+
+                      // Calculate status text for the last transaction in this period
+                      let txStatusText = null;
+                      if (txIdx === txCount - 1) {
+                        if (status === 'overpaid') {
+                          txStatusText = `Overpaid +${formatCurrency(statusVariance)}`;
+                        } else if (status === 'paid') {
+                          const daysDiff = differenceInDays(txDate, dueDate);
+                          if (daysDiff < 0) txStatusText = `${Math.abs(daysDiff)}d early`;
+                          else if (daysDiff === 0) txStatusText = 'On time';
+                          else txStatusText = `${daysDiff}d late`;
+                        } else if (status === 'underpaid') {
+                          txStatusText = `Short ${formatCurrency(Math.abs(statusVariance))}`;
+                        } else if (status === 'paid_early') {
+                          const daysDiff = differenceInDays(txDate, dueDate);
+                          txStatusText = `${Math.abs(daysDiff)}d early`;
+                        }
+                      }
+
+                      rows.push({
+                        type: 'transaction_child',
+                        transaction: tx,
+                        date: txDate,
+                        description: `${tx.reference || 'Payment'}`,
+                        principal: tx.principal_applied || 0,
+                        interest: tx.interest_applied || 0,
+                        balance: runningInterestAccrued - runningInterestPaid,
+                        parentScheduleId: scheduleRow.id,
+                        txStatusText,
+                        status: txIdx === txCount - 1 ? status : null,
+                        expectedInterest,
+                        dueDate
+                      });
+                    });
+                  });
+
+                  return rows.map((row, idx) => {
+                    if (row.type === 'disbursement') {
+                      return (
+                        <TableRow key={`disbursement-${idx}`} className="bg-red-50/50 border-l-4 border-red-500">
+                          <TableCell className="py-1 font-medium text-sm">
+                            {format(row.date, 'dd/MM/yy')}
+                          </TableCell>
+                          <TableCell className="py-1 font-semibold text-red-700 text-sm">
+                            {row.description}
+                          </TableCell>
+                          <TableCell className="py-1 text-right font-mono text-red-600 font-semibold text-sm">
+                            {formatCurrency(row.principal)}
+                          </TableCell>
+                          <TableCell className="py-1 text-right font-mono text-sm">—</TableCell>
+                          <TableCell className="py-1 text-right font-mono font-semibold text-sm">
+                            {formatCurrency(row.balance)}
+                          </TableCell>
+                          <TableCell className="py-1">—</TableCell>
+                        </TableRow>
+                      );
+                    }
+
+                    if (row.type === 'schedule_header') {
+                      const statusColors = {
+                        paid: 'bg-emerald-500',
+                        overpaid: 'bg-blue-500',
+                        underpaid: 'bg-amber-500',
+                        overdue: 'bg-red-500',
+                        upcoming: 'bg-slate-400',
+                        paid_early: 'bg-emerald-500'
+                      };
+                      const statusLabels = {
+                        paid: 'Paid',
+                        overpaid: 'Overpaid',
+                        underpaid: 'Partial',
+                        overdue: 'Overdue',
+                        upcoming: 'Upcoming',
+                        paid_early: 'Paid Early'
+                      };
+
+                      return (
+                        <TableRow
+                          key={`header-${row.scheduleRow.id}`}
+                          className="bg-slate-100/80 border-t border-slate-300"
+                        >
+                          <TableCell className="py-1.5 font-semibold text-slate-700 text-sm">
+                            {format(row.date, 'dd/MM/yy')}
+                          </TableCell>
+                          <TableCell className="py-1.5 font-semibold text-slate-800 text-sm">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-help">
+                                    {row.description}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-md">
+                                  <div className="space-y-1 text-xs">
+                                    <p className="font-semibold">Interest Calculation:</p>
+                                    <p>Annual Rate: {loan.interest_rate}%</p>
+                                    <p>Daily Rate: {(dailyRate * 100).toFixed(4)}%/day</p>
+                                    <p>Expected Interest: {formatCurrency(row.expectedInterest)}</p>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </TableCell>
+                          <TableCell className="py-1.5 text-right font-mono text-slate-500 text-sm">
+                            {row.principal > 0 ? formatCurrency(row.principal) : '—'}
+                          </TableCell>
+                          <TableCell className="py-1.5 text-right font-mono font-semibold text-slate-700 text-sm">
+                            ({formatCurrency(row.interest)})
+                          </TableCell>
+                          <TableCell className="py-1.5 text-right font-mono text-slate-600 text-sm">
+                            {formatCurrency(row.balance)}
+                          </TableCell>
+                          <TableCell className="py-1.5">
+                            <Badge className={`${statusColors[row.status]} text-white text-xs`}>
+                              {statusLabels[row.status]}
+                            </Badge>
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+
+                    if (row.type === 'transaction_child') {
+                      const statusTextColors = {
+                        paid: 'text-emerald-600',
+                        overpaid: 'text-blue-600',
+                        underpaid: 'text-amber-600',
+                        overdue: 'text-red-600',
+                        upcoming: 'text-slate-500',
+                        paid_early: 'text-emerald-600'
+                      };
+
+                      return (
+                        <TableRow
+                          key={`tx-${row.transaction.id}`}
+                          className="bg-white hover:bg-emerald-50/30"
+                        >
+                          <TableCell className="py-1 pl-6 text-slate-600 text-sm">
+                            <div className="flex items-center gap-1">
+                              <span className="text-emerald-600 text-xs">↳</span>
+                              {format(row.date, 'dd/MM/yy')}
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-1 text-slate-600 pl-6 text-sm">
+                            <TooltipProvider>
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="cursor-help">
+                                    {row.description}
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent className="max-w-md">
+                                  <div className="space-y-1 text-xs">
+                                    <p className="font-semibold">Payment Details:</p>
+                                    <p>Date: {format(row.date, 'dd MMM yyyy')}</p>
+                                    <p>Principal Applied: {formatCurrency(row.principal)}</p>
+                                    <p>Interest Applied: {formatCurrency(row.interest)}</p>
+                                    {row.transaction.reference && (
+                                      <p>Reference: {row.transaction.reference}</p>
+                                    )}
+                                    {row.expectedInterest && (
+                                      <p className="pt-1 border-t">Period Expected: {formatCurrency(row.expectedInterest)}</p>
+                                    )}
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            </TooltipProvider>
+                          </TableCell>
+                          <TableCell className="py-1 text-right font-mono text-emerald-600 text-sm">
+                            {row.principal > 0 ? formatCurrency(row.principal) : '—'}
+                          </TableCell>
+                          <TableCell className="py-1 text-right font-mono text-emerald-600 text-sm">
+                            {formatCurrency(row.interest)}
+                          </TableCell>
+                          <TableCell className="py-1 text-right font-mono text-slate-600 text-sm">
+                            {formatCurrency(row.balance)}
+                          </TableCell>
+                          <TableCell className="py-1 text-xs">
+                            {row.txStatusText && (
+                              <span className={`font-medium ${statusTextColors[row.status] || 'text-slate-600'}`}>
+                                {row.txStatusText}
+                              </span>
+                            )}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    }
+
+                    return null;
+                  });
+                })()
               )}
             </TableBody>
           </Table>

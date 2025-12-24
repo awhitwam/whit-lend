@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
+import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -62,6 +63,7 @@ export default function LoanDetails() {
   const urlParams = new URLSearchParams(window.location.search);
   const loanId = urlParams.get('id');
   const navigate = useNavigate();
+  const { user } = useAuth();
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
@@ -184,11 +186,9 @@ export default function LoanDetails() {
 
   const deleteLoanMutation = useMutation({
     mutationFn: async (reason) => {
-      const user = await base44.auth.me();
-      
       await base44.entities.Loan.update(loanId, {
         is_deleted: true,
-        deleted_by: user.email,
+        deleted_by: user?.email || 'unknown',
         deleted_date: new Date().toISOString(),
         deleted_reason: reason
       });
@@ -203,12 +203,11 @@ export default function LoanDetails() {
     mutationFn: async ({ transactionId, reason }) => {
       toast.loading('Deleting transaction...', { id: 'delete-transaction' });
       const transaction = transactions.find(t => t.id === transactionId);
-      const user = await base44.auth.me();
-      
+
       // Mark transaction as deleted (audit trail)
       await base44.entities.Transaction.update(transactionId, {
         is_deleted: true,
-        deleted_by: user.email,
+        deleted_by: user?.email || 'unknown',
         deleted_date: new Date().toISOString(),
         deleted_reason: reason
       });
@@ -1088,6 +1087,7 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
           isOpen={isSettleOpen}
           onClose={() => setIsSettleOpen(false)}
           loan={loan}
+          transactions={transactions}
           onSubmit={(data) => {
             paymentMutation.mutate(data);
             setIsSettleOpen(false);

@@ -9,143 +9,100 @@ import { formatCurrency } from './LoanCalculator';
 import { generateSettlementStatementPDF } from './LoanPDFGenerator';
 import { format, differenceInDays } from 'date-fns';
 
-function calculateSettlementAmount(loan, settlementDate) {
+function calculateSettlementAmount(loan, settlementDate, transactions = []) {
   const startDate = new Date(loan.start_date);
   const settleDate = new Date(settlementDate);
   settleDate.setHours(0, 0, 0, 0);
   startDate.setHours(0, 0, 0, 0);
-  
+
   const daysElapsed = Math.max(0, differenceInDays(settleDate, startDate));
   const principal = loan.principal_amount;
-  const principalPaid = loan.principal_paid || 0;
-  const interestPaid = loan.interest_paid || 0;
   const annualRate = loan.interest_rate / 100;
   const dailyRate = annualRate / 365;
-  
-  const principalRemaining = principal - principalPaid;
-  
-  let totalInterestDue = 0;
+
+  // Get repayment transactions sorted by date
+  const repayments = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // Calculate totals from actual transactions
+  const totalPrincipalPaid = repayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+  const totalInterestPaid = repayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+  const principalRemaining = principal - totalPrincipalPaid;
+
+  // Calculate interest day by day, adjusting principal when payments occur
+  let totalInterestAccrued = 0;
+  let runningPrincipal = principal;
   const dailyBreakdown = [];
-  
-  if (loan.interest_type === 'Flat') {
-    const totalInterest = loan.total_interest;
-    const interestPerDay = totalInterest / (loan.duration * (loan.period === 'Monthly' ? 30.417 : 7));
-    totalInterestDue = Math.min(interestPerDay * daysElapsed, totalInterest);
-    
-    for (let day = 1; day <= Math.min(daysElapsed, 14); day++) {
+
+  // Create a map of principal payments by date
+  const principalPaymentsByDate = {};
+  repayments.forEach(tx => {
+    if (tx.principal_applied > 0) {
+      const dateKey = format(new Date(tx.date), 'yyyy-MM-dd');
+      principalPaymentsByDate[dateKey] = (principalPaymentsByDate[dateKey] || 0) + tx.principal_applied;
+    }
+  });
+
+  // Calculate interest day by day
+  for (let day = 0; day < daysElapsed; day++) {
+    const currentDate = new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000);
+    const dateKey = format(currentDate, 'yyyy-MM-dd');
+
+    // Check if principal was reduced on this day
+    if (principalPaymentsByDate[dateKey]) {
+      runningPrincipal -= principalPaymentsByDate[dateKey];
+      runningPrincipal = Math.max(0, runningPrincipal);
+    }
+
+    // Calculate interest for this day based on current principal
+    const dayInterest = runningPrincipal * dailyRate;
+    totalInterestAccrued += dayInterest;
+
+    // Store first 14 days for breakdown display
+    if (day < 14) {
       dailyBreakdown.push({
-        day,
-        date: new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000),
-        balance: principal,
-        dailyInterest: interestPerDay
-      });
-    }
-    
-  } else if (loan.interest_type === 'Reducing') {
-    const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
-    const daysPerPeriod = loan.period === 'Monthly' ? 30.417 : 7;
-    const periodRate = annualRate / periodsPerYear;
-    const periodsCompleted = Math.min(Math.floor(daysElapsed / daysPerPeriod), loan.duration);
-    
-    let remainingBalance = principal;
-    const pmt = principal * (periodRate * Math.pow(1 + periodRate, loan.duration)) / (Math.pow(1 + periodRate, loan.duration) - 1);
-    
-    for (let i = 0; i < periodsCompleted; i++) {
-      const interestForPeriod = remainingBalance * periodRate;
-      totalInterestDue += interestForPeriod;
-      const principalForPeriod = pmt - interestForPeriod;
-      remainingBalance -= principalForPeriod;
-    }
-    
-    if (daysElapsed > periodsCompleted * daysPerPeriod && remainingBalance > 0) {
-      const daysInPartialPeriod = daysElapsed - (periodsCompleted * daysPerPeriod);
-      totalInterestDue += remainingBalance * dailyRate * daysInPartialPeriod;
-    }
-    
-    let trackBalance = principal;
-    for (let day = 1; day <= Math.min(daysElapsed, 14); day++) {
-      const dayInterest = trackBalance * dailyRate;
-      dailyBreakdown.push({
-        day,
-        date: new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000),
-        balance: trackBalance,
+        day: day + 1,
+        date: currentDate,
+        balance: runningPrincipal,
         dailyInterest: dayInterest
       });
-      
-      if (day % daysPerPeriod === 0 && day / daysPerPeriod <= loan.duration) {
-        const periodNum = day / daysPerPeriod;
-        const interestForPeriod = trackBalance * periodRate;
-        const principalForPeriod = pmt - interestForPeriod;
-        trackBalance -= principalForPeriod;
-      }
-    }
-    
-  } else if (loan.interest_type === 'Interest-Only') {
-    const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
-    const periodRate = annualRate / periodsPerYear;
-    const interestOnlyPeriod = loan.interest_only_period || loan.duration;
-    const daysPerPeriod = loan.period === 'Monthly' ? 30.417 : 7;
-    const periodsCompleted = Math.min(Math.floor(daysElapsed / daysPerPeriod), interestOnlyPeriod);
-    
-    totalInterestDue = periodsCompleted * (principal * periodRate);
-    
-    if (daysElapsed > periodsCompleted * daysPerPeriod && daysElapsed <= interestOnlyPeriod * daysPerPeriod) {
-      const partialDays = daysElapsed - (periodsCompleted * daysPerPeriod);
-      totalInterestDue += principal * dailyRate * partialDays;
-    }
-    
-    for (let day = 1; day <= Math.min(daysElapsed, 14); day++) {
-      dailyBreakdown.push({
-        day,
-        date: new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000),
-        balance: principal,
-        dailyInterest: principal * dailyRate
-      });
-    }
-    
-  } else if (loan.interest_type === 'Rolled-Up') {
-    totalInterestDue = principal * (Math.pow(1 + dailyRate, daysElapsed) - 1);
-    
-    let compoundBalance = principal;
-    for (let day = 1; day <= Math.min(daysElapsed, 14); day++) {
-      const dayInterest = compoundBalance * dailyRate;
-      dailyBreakdown.push({
-        day,
-        date: new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000),
-        balance: compoundBalance,
-        dailyInterest: dayInterest
-      });
-      compoundBalance += dayInterest;
     }
   }
-  
-  const interestRemaining = Math.max(0, totalInterestDue - interestPaid);
+
+  const interestRemaining = Math.max(0, totalInterestAccrued - totalInterestPaid);
   const exitFee = loan.exit_fee || 0;
   const settlementAmount = principalRemaining + interestRemaining + exitFee;
-  
+
   return {
+    originalPrincipal: principal,
+    principalPaid: totalPrincipalPaid,
     principalRemaining,
+    interestAccrued: totalInterestAccrued,
+    interestPaid: totalInterestPaid,
     interestRemaining,
     exitFee,
     settlementAmount,
     daysElapsed,
-    dailyBreakdown: dailyBreakdown.slice(0, 14)
+    dailyRate,
+    dailyBreakdown
   };
 }
 
-export default function SettleLoanModal({ 
-  isOpen, 
-  onClose, 
+export default function SettleLoanModal({
+  isOpen,
+  onClose,
   loan,
-  onSubmit, 
-  isLoading 
+  transactions = [],
+  onSubmit,
+  isLoading
 }) {
   const [settlementDate, setSettlementDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [settlementAmount, setSettlementAmount] = useState('');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
 
-  const settlement = loan ? calculateSettlementAmount(loan, settlementDate) : null;
+  const settlement = loan ? calculateSettlementAmount(loan, settlementDate, transactions) : null;
 
   // Update settlement amount when calculation changes
   useState(() => {
@@ -232,34 +189,76 @@ export default function SettleLoanModal({
               Settlement Breakdown
             </h3>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            {/* Principal Section */}
+            <div className="grid grid-cols-3 gap-3">
               <Card>
-                <CardContent className="p-4">
-                  <p className="text-xs text-slate-500 mb-1">Principal Remaining</p>
-                  <p className="text-xl font-bold text-slate-900">
+                <CardContent className="p-3">
+                  <p className="text-xs text-slate-500 mb-1">Original Principal</p>
+                  <p className="text-lg font-bold text-slate-900">
+                    {formatCurrency(settlement.originalPrincipal)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-3">
+                  <p className="text-xs text-slate-500 mb-1">Principal Paid</p>
+                  <p className="text-lg font-bold text-emerald-600">
+                    {formatCurrency(settlement.principalPaid)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="border-slate-400">
+                <CardContent className="p-3">
+                  <p className="text-xs text-slate-500 mb-1">Principal Outstanding</p>
+                  <p className="text-lg font-bold text-slate-900">
                     {formatCurrency(settlement.principalRemaining)}
                   </p>
                 </CardContent>
               </Card>
+            </div>
+
+            {/* Interest Section */}
+            <div className="grid grid-cols-3 gap-3">
               <Card>
-                <CardContent className="p-4">
-                  <p className="text-xs text-slate-500 mb-1">Interest Due to Date</p>
-                  <p className="text-xl font-bold text-amber-600">
+                <CardContent className="p-3">
+                  <p className="text-xs text-slate-500 mb-1">Interest Accrued</p>
+                  <p className="text-lg font-bold text-amber-600">
+                    {formatCurrency(settlement.interestAccrued)}
+                  </p>
+                  <p className="text-xs text-slate-400">
+                    @ {(settlement.dailyRate * 100).toFixed(4)}%/day
+                  </p>
+                </CardContent>
+              </Card>
+              <Card>
+                <CardContent className="p-3">
+                  <p className="text-xs text-slate-500 mb-1">Interest Paid</p>
+                  <p className="text-lg font-bold text-emerald-600">
+                    {formatCurrency(settlement.interestPaid)}
+                  </p>
+                </CardContent>
+              </Card>
+              <Card className="border-amber-400">
+                <CardContent className="p-3">
+                  <p className="text-xs text-slate-500 mb-1">Interest Outstanding</p>
+                  <p className="text-lg font-bold text-amber-600">
                     {formatCurrency(settlement.interestRemaining)}
                   </p>
                 </CardContent>
               </Card>
-              {settlement.exitFee > 0 && (
-                <Card>
-                  <CardContent className="p-4">
-                    <p className="text-xs text-slate-500 mb-1">Exit Fee</p>
-                    <p className="text-xl font-bold text-blue-600">
-                      {formatCurrency(settlement.exitFee)}
-                    </p>
-                  </CardContent>
-                </Card>
-              )}
             </div>
+
+            {/* Exit Fee */}
+            {settlement.exitFee > 0 && (
+              <Card>
+                <CardContent className="p-3">
+                  <p className="text-xs text-slate-500 mb-1">Exit Fee</p>
+                  <p className="text-lg font-bold text-blue-600">
+                    {formatCurrency(settlement.exitFee)}
+                  </p>
+                </CardContent>
+              </Card>
+            )}
 
             <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100 border-emerald-200">
               <CardContent className="p-5">

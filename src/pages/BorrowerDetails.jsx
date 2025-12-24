@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
+import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -33,6 +34,7 @@ export default function BorrowerDetails() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { user } = useAuth();
 
   const { data: borrower, isLoading: borrowerLoading } = useQuery({
     queryKey: ['borrower', borrowerId],
@@ -68,8 +70,6 @@ export default function BorrowerDetails() {
 
   const deleteOrArchiveMutation = useMutation({
     mutationFn: async () => {
-      const user = await base44.auth.me();
-      
       if (loans.length === 0) {
         // Delete if no loans
         await base44.entities.Borrower.delete(borrowerId);
@@ -78,7 +78,7 @@ export default function BorrowerDetails() {
         // Archive if has loans
         await base44.entities.Borrower.update(borrowerId, {
           is_archived: true,
-          archived_by: user.email,
+          archived_by: user?.email || 'unknown',
           archived_date: new Date().toISOString()
         });
         return { action: 'archived' };
