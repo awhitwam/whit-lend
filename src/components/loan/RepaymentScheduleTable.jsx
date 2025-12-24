@@ -43,11 +43,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     // SEPARATE VIEW: Show all schedule entries and all transactions separately
     // Every transaction gets its own row, every schedule entry gets its own row
     const allRows = [];
-    const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
-    const periodRate = (loan.interest_rate / 100) / periodsPerYear;
 
-    // Add disbursement row
-    if (loan) {
+    // Early return if loan is not available
+    if (!loan) {
+      combinedRows = [];
+    } else {
+      const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
+      const periodRate = (loan.interest_rate / 100) / periodsPerYear;
+
+      // Add disbursement row
       allRows.push({
         date: new Date(loan.start_date),
         dateStr: format(new Date(loan.start_date), 'yyyy-MM-dd'),
@@ -57,62 +61,62 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         daysDifference: null,
         rowType: 'disbursement'
       });
+
+      // Get active repayment transactions
+      const repaymentTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
+
+      // Add ALL schedule entries as separate rows with dynamically calculated expected interest
+      schedule.forEach(row => {
+        // Calculate principal outstanding at the start of this period
+        const dueDate = new Date(row.due_date);
+
+        // Get all principal payments made BEFORE this period starts (before due date)
+        const principalPaidBeforeThisPeriod = repaymentTransactions
+          .filter(tx => new Date(tx.date) < dueDate)
+          .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+
+        const principalOutstandingAtStart = loan.principal_amount - principalPaidBeforeThisPeriod;
+
+        // Use schedule entry's interest amount directly (it's already been generated correctly)
+        let expectedInterestForPeriod = row.interest_amount;
+
+        allRows.push({
+          date: dueDate,
+          dateStr: format(dueDate, 'yyyy-MM-dd'),
+          isDisbursement: false,
+          transactions: [],
+          scheduleEntry: row,
+          daysDifference: null,
+          rowType: 'schedule',
+          expectedInterest: expectedInterestForPeriod
+        });
+      });
+
+      // Add ALL transactions as separate rows
+      repaymentTransactions.forEach(tx => {
+        allRows.push({
+          date: new Date(tx.date),
+          dateStr: format(new Date(tx.date), 'yyyy-MM-dd'),
+          isDisbursement: false,
+          transactions: [tx],
+          scheduleEntry: null,
+          daysDifference: null,
+          rowType: 'transaction'
+        });
+      });
+
+
+
+      // Sort by date, then by type (schedule before transaction on same date)
+      combinedRows = allRows.sort((a, b) => {
+        const dateCompare = a.date - b.date;
+        if (dateCompare !== 0) return dateCompare;
+
+        // On same date: disbursement first, then schedule, then transaction
+        const typeOrder = { disbursement: 0, schedule: 1, transaction: 2 };
+        return typeOrder[a.rowType] - typeOrder[b.rowType];
+      });
     }
-
-    // Get active repayment transactions
-    const repaymentTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
-
-    // Add ALL schedule entries as separate rows with dynamically calculated expected interest
-    schedule.forEach(row => {
-      // Calculate principal outstanding at the start of this period
-      const dueDate = new Date(row.due_date);
-
-      // Get all principal payments made BEFORE this period starts (before due date)
-      const principalPaidBeforeThisPeriod = repaymentTransactions
-        .filter(tx => new Date(tx.date) < dueDate)
-        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-
-      const principalOutstandingAtStart = loan.principal_amount - principalPaidBeforeThisPeriod;
-
-      // Use schedule entry's interest amount directly (it's already been generated correctly)
-      let expectedInterestForPeriod = row.interest_amount;
-
-      allRows.push({
-        date: dueDate,
-        dateStr: format(dueDate, 'yyyy-MM-dd'),
-        isDisbursement: false,
-        transactions: [],
-        scheduleEntry: row,
-        daysDifference: null,
-        rowType: 'schedule',
-        expectedInterest: expectedInterestForPeriod
-      });
-    });
-
-    // Add ALL transactions as separate rows
-    repaymentTransactions.forEach(tx => {
-      allRows.push({
-        date: new Date(tx.date),
-        dateStr: format(new Date(tx.date), 'yyyy-MM-dd'),
-        isDisbursement: false,
-        transactions: [tx],
-        scheduleEntry: null,
-        daysDifference: null,
-        rowType: 'transaction'
-      });
-    });
-
-
-
-    // Sort by date, then by type (schedule before transaction on same date)
-    combinedRows = allRows.sort((a, b) => {
-      const dateCompare = a.date - b.date;
-      if (dateCompare !== 0) return dateCompare;
-
-      // On same date: disbursement first, then schedule, then transaction
-      const typeOrder = { disbursement: 0, schedule: 1, transaction: 2 };
-      return typeOrder[a.rowType] - typeOrder[b.rowType];
-    });
   } else {
     // DETAILED VIEW: Show schedule with nested transaction splits
     combinedRows = [];
