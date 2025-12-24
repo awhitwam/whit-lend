@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
@@ -14,6 +14,7 @@ import { formatCurrency } from '@/components/loan/LoanCalculator';
 import EmptyState from '@/components/ui/EmptyState';
 
 export default function Loans() {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
   const [activeTab, setActiveTab] = useState('active');
@@ -269,7 +270,11 @@ export default function Loans() {
                       const totalOutstanding = principalRemaining + interestRemaining;
                       
                       return (
-                        <TableRow key={loan.id} className="hover:bg-slate-50">
+                        <TableRow
+                          key={loan.id}
+                          className="hover:bg-slate-50 cursor-pointer"
+                          onClick={() => navigate(createPageUrl(`LoanDetails?id=${loan.id}`))}
+                        >
                           <TableCell className="font-mono font-semibold text-slate-700">
                             {loan.loan_number || '-'}
                           </TableCell>
@@ -290,11 +295,7 @@ export default function Loans() {
                             </Badge>
                           </TableCell>
                           <TableCell>
-                            <Link to={createPageUrl(`LoanDetails?id=${loan.id}`)}>
-                              <Button variant="ghost" size="icon" className="h-8 w-8">
-                                <ChevronRight className="w-4 h-4" />
-                              </Button>
-                            </Link>
+                            <ChevronRight className="w-4 h-4 text-slate-400" />
                           </TableCell>
                         </TableRow>
                       );

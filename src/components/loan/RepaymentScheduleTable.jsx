@@ -225,69 +225,63 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
     return (
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <div className="flex items-center justify-between p-4 border-b border-slate-200">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-1 bg-slate-100 rounded-lg p-1">
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50">
+          <div className="flex items-center gap-2">
+            <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
               <Button
                 variant={viewMode === 'smartview2' ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setViewMode('smartview2')}
-                className="gap-1 h-8"
+                className="gap-1 h-6 text-xs px-2"
               >
-                <List className="w-4 h-4" />
-                SmartView
+                <List className="w-3 h-3" />
+                Smart
               </Button>
               <Button
                 variant={viewMode === 'separate' ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setViewMode('separate')}
-                className="gap-1 h-8"
+                className="gap-1 h-6 text-xs px-2"
               >
-                <Split className="w-4 h-4" />
+                <Split className="w-3 h-3" />
                 Journal
               </Button>
               <Button
                 variant={viewMode === 'nested' ? "default" : "ghost"}
                 size="sm"
                 onClick={() => setViewMode('nested')}
-                className="gap-1 h-8"
+                className="gap-1 h-6 text-xs px-2"
               >
-                <Layers className="w-4 h-4" />
+                <Layers className="w-3 h-3" />
                 Nested
               </Button>
             </div>
             {viewMode === 'separate' && (
-              <>
-                <div className="h-4 w-px bg-slate-300" />
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={exportToCSV}
-                  className="gap-1 h-8"
-                >
-                  <Download className="w-4 h-4" />
-                  Export CSV
-                </Button>
-              </>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={exportToCSV}
+                className="gap-1 h-6 text-xs px-2"
+              >
+                <Download className="w-3 h-3" />
+                CSV
+              </Button>
             )}
             {viewMode === 'smartview2' && (
-              <>
-                <div className="h-4 w-px bg-slate-300" />
-                <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showCumulativeColumns}
-                    onChange={(e) => setShowCumulativeColumns(e.target.checked)}
-                    className="w-4 h-4 rounded border-slate-300"
-                  />
-                  Show Cumulative
-                </label>
-              </>
+              <label className="flex items-center gap-1.5 text-xs cursor-pointer text-slate-600">
+                <input
+                  type="checkbox"
+                  checked={showCumulativeColumns}
+                  onChange={(e) => setShowCumulativeColumns(e.target.checked)}
+                  className="w-3 h-3 rounded border-slate-300"
+                />
+                Cumulative
+              </label>
             )}
-            <div className="h-4 w-px bg-slate-300" />
-            <span className="text-sm text-slate-600">Show</span>
+          </div>
+          <div className="flex items-center gap-1.5">
             <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
-              <SelectTrigger className="w-20">
+              <SelectTrigger className="w-16 h-6 text-xs">
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
@@ -298,38 +292,34 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <SelectItem value={combinedRows.length.toString()}>All</SelectItem>
               </SelectContent>
             </Select>
-            <span className="text-sm text-slate-600">entries</span>
-            {!isLoading && itemCount > 0 && (
-              <>
-                <div className="h-4 w-px bg-slate-300 mx-1" />
-                <div className="flex items-center gap-2">
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePageChange(currentPage - 1)}
-                    disabled={currentPage === 1}
-                  >
-                    <ChevronLeft className="w-4 h-4 mr-1" />
-                    Previous
-                  </Button>
-                  <span className="text-sm text-slate-600">
-                    Page {currentPage} of {totalPages}
-                  </span>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={() => handlePageChange(currentPage + 1)}
-                    disabled={currentPage === totalPages}
-                  >
-                    Next
-                    <ChevronRight className="w-4 h-4 ml-1" />
-                  </Button>
-                </div>
-              </>
+            {!isLoading && itemCount > 0 && totalPages > 1 && (
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage - 1)}
+                  disabled={currentPage === 1}
+                  className="h-6 w-6 p-0"
+                >
+                  <ChevronLeft className="w-3 h-3" />
+                </Button>
+                <span className="text-xs text-slate-500">
+                  {currentPage}/{totalPages}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => handlePageChange(currentPage + 1)}
+                  disabled={currentPage === totalPages}
+                  className="h-6 w-6 p-0"
+                >
+                  <ChevronRight className="w-3 h-3" />
+                </Button>
+              </div>
             )}
-          </div>
-          <div className="text-sm text-slate-600">
-            Showing {startIndex + 1} to {Math.min(endIndex, itemCount)} of {itemCount}
+            <span className="text-xs text-slate-500">
+              ({itemCount})
+            </span>
           </div>
         </div>
         <div className="overflow-hidden">
@@ -509,7 +499,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell className={`text-right font-mono font-semibold ${cumulativeVariance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {cumulativeVariance >= 0 ? '+' : ''}{formatCurrency(cumulativeVariance)}
                             </TableCell>
-                            <TableCell className="text-slate-600 text-sm">{notes}</TableCell>
+                            <TableCell className="text-slate-600 text-xs">{notes}</TableCell>
                           </TableRow>
                         </React.Fragment>
                       );
@@ -726,7 +716,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell className={`text-right font-mono font-semibold ${cumulativeBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {cumulativeBalance >= 0 ? '+' : ''}{formatCurrency(cumulativeBalance)}
                             </TableCell>
-                            <TableCell className="text-slate-600 text-sm">
+                            <TableCell className="text-slate-600 text-xs">
                               {notes && (
                                 <TooltipProvider>
                                   <Tooltip>
@@ -735,7 +725,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                     </TooltipTrigger>
                                     <TooltipContent className="max-w-md">
                                       <div className="space-y-2 text-xs">
-                                        <div className="font-semibold text-sm border-b pb-1">Period Analysis</div>
+                                        <div className="font-semibold text-xs border-b pb-1">Period Analysis</div>
 
                                         <div>
                                           <p className="font-medium">Due Date: {format(dueDate, 'MMM dd, yyyy')}</p>
@@ -1014,20 +1004,20 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     if (row.type === 'disbursement') {
                       return (
                         <TableRow key={`disbursement-${idx}`} className="bg-red-50/50 border-l-4 border-red-500">
-                          <TableCell className="py-1 font-medium text-sm">
+                          <TableCell className="py-0.5 font-medium text-xs">
                             {format(row.date, 'dd/MM/yy')}
                           </TableCell>
-                          <TableCell className="py-1 font-semibold text-red-700 text-sm">
+                          <TableCell className="py-0.5 font-semibold text-red-700 text-xs">
                             {row.description}
                           </TableCell>
-                          <TableCell className="py-1 text-right font-mono text-red-600 font-semibold text-sm">
+                          <TableCell className="py-0.5 text-right font-mono text-red-600 font-semibold text-xs">
                             {formatCurrency(row.principal)}
                           </TableCell>
-                          <TableCell className="py-1 text-right font-mono text-sm">—</TableCell>
-                          <TableCell className="py-1 text-right font-mono font-semibold text-sm">
+                          <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono font-semibold text-xs">
                             {formatCurrency(row.balance)}
                           </TableCell>
-                          <TableCell className="py-1">—</TableCell>
+                          <TableCell className="py-0.5">—</TableCell>
                         </TableRow>
                       );
                     }
@@ -1055,10 +1045,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           key={`header-${row.scheduleRow.id}`}
                           className="bg-slate-100/80 border-t border-slate-300"
                         >
-                          <TableCell className="py-1.5 font-semibold text-slate-700 text-sm">
+                          <TableCell className="py-0.5 font-semibold text-slate-700 text-xs">
                             {format(row.date, 'dd/MM/yy')}
                           </TableCell>
-                          <TableCell className="py-1.5 font-semibold text-slate-800 text-sm">
+                          <TableCell className="py-0.5 font-semibold text-slate-800 text-xs">
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1077,16 +1067,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               </Tooltip>
                             </TooltipProvider>
                           </TableCell>
-                          <TableCell className="py-1.5 text-right font-mono text-slate-500 text-sm">
+                          <TableCell className="py-0.5 text-right font-mono text-slate-500 text-xs">
                             {row.principal > 0 ? formatCurrency(row.principal) : '—'}
                           </TableCell>
-                          <TableCell className="py-1.5 text-right font-mono font-semibold text-slate-700 text-sm">
+                          <TableCell className="py-0.5 text-right font-mono font-semibold text-slate-700 text-xs">
                             ({formatCurrency(row.interest)})
                           </TableCell>
-                          <TableCell className="py-1.5 text-right font-mono text-slate-600 text-sm">
+                          <TableCell className="py-0.5 text-right font-mono text-slate-600 text-xs">
                             {formatCurrency(row.balance)}
                           </TableCell>
-                          <TableCell className="py-1.5">
+                          <TableCell className="py-0.5">
                             <Badge className={`${statusColors[row.status]} text-white text-xs`}>
                               {statusLabels[row.status]}
                             </Badge>
@@ -1110,13 +1100,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           key={`tx-${row.transaction.id}`}
                           className="bg-white hover:bg-emerald-50/30"
                         >
-                          <TableCell className="py-1 pl-6 text-slate-600 text-sm">
+                          <TableCell className="py-0.5 pl-6 text-slate-600 text-xs">
                             <div className="flex items-center gap-1">
-                              <span className="text-emerald-600 text-xs">↳</span>
+                              <span className="text-emerald-600 text-[10px]">↳</span>
                               {format(row.date, 'dd/MM/yy')}
                             </div>
                           </TableCell>
-                          <TableCell className="py-1 text-slate-600 pl-6 text-sm">
+                          <TableCell className="py-0.5 text-slate-600 pl-6 text-xs">
                             <TooltipProvider>
                               <Tooltip>
                                 <TooltipTrigger asChild>
@@ -1141,16 +1131,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               </Tooltip>
                             </TooltipProvider>
                           </TableCell>
-                          <TableCell className="py-1 text-right font-mono text-emerald-600 text-sm">
+                          <TableCell className="py-0.5 text-right font-mono text-emerald-600 text-xs">
                             {row.principal > 0 ? formatCurrency(row.principal) : '—'}
                           </TableCell>
-                          <TableCell className="py-1 text-right font-mono text-emerald-600 text-sm">
+                          <TableCell className="py-0.5 text-right font-mono text-emerald-600 text-xs">
                             {formatCurrency(row.interest)}
                           </TableCell>
-                          <TableCell className="py-1 text-right font-mono text-slate-600 text-sm">
+                          <TableCell className="py-0.5 text-right font-mono text-slate-600 text-xs">
                             {formatCurrency(row.balance)}
                           </TableCell>
-                          <TableCell className="py-1 text-xs">
+                          <TableCell className="py-0.5 text-[10px]">
                             {row.txStatusText && (
                               <span className={`font-medium ${statusTextColors[row.status] || 'text-slate-600'}`}>
                                 {row.txStatusText}
@@ -1226,12 +1216,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     : ''
                 }
               >
-                <TableCell className="py-2">
-                  <p className="font-medium">{format(row.date, 'MMM dd, yyyy')}</p>
+                <TableCell className="py-1">
+                  <p className="font-medium text-xs">{format(row.date, 'dd/MM/yy')}</p>
                 </TableCell>
-                
+
                 {/* Actual Transactions */}
-                <TableCell className="text-right font-mono text-sm py-2">
+                <TableCell className="text-right font-mono text-xs py-1">
                   {row.isDisbursement ? (
                     <span className="text-red-600 font-semibold">{formatCurrency(loan.principal_amount)}</span>
                   ) : (viewMode === 'separate' && row.rowType === 'transaction') ? (
@@ -1240,7 +1230,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0))
                   ) : '-'}
                 </TableCell>
-                <TableCell className="text-right font-mono text-sm py-2">
+                <TableCell className="text-right font-mono text-xs py-1">
                   {(viewMode === 'separate' && row.rowType === 'transaction') ? (
                     <span className="text-emerald-600">{formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0))}</span>
                   ) : (viewMode === 'merged' && row.transactions.length > 0) ? (
@@ -1249,14 +1239,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 </TableCell>
 
                 {/* Expected Schedule */}
-                <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200 py-2">
+                <TableCell className="text-right font-mono text-xs border-l-2 border-slate-200 py-1">
                   {(viewMode === 'separate' && row.rowType === 'schedule' && row.expectedInterest !== undefined) ? (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <div className="cursor-help">
+                          <div className="cursor-help text-xs">
                             {formatCurrency(row.expectedInterest)}
-                            <span className="text-xs text-slate-500 ml-2">
+                            <span className="text-[10px] text-slate-500 ml-1">
                               {(() => {
                                 const scheduleEntry = row.scheduleEntry;
                                 const dailyRate = loan.interest_rate / 100 / 365;
@@ -1444,7 +1434,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     </div>
                   ) : ''}
                 </TableCell>
-                <TableCell className="text-right font-mono text-sm font-semibold py-2">
+                <TableCell className="text-right font-mono text-xs font-semibold py-1">
                   {(viewMode === 'merged' && schedule.length > 0) ? formatCurrency(row.principalOutstanding + row.interestOutstanding) : 
                    (viewMode === 'separate' && row.rowType === 'schedule') ? formatCurrency(row.principalOutstanding + row.interestOutstanding) : ''}
                 </TableCell>

@@ -574,21 +574,15 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
           </div>
         )}
 
-        <div className="max-w-6xl mx-auto p-6 space-y-6">
-        {/* Back Button */}
-        <Link to={createPageUrl('Loans')}>
-          <Button variant="ghost" size="sm">
-            <ArrowLeft className="w-4 h-4 mr-2" />
-            Back to Loans
-          </Button>
-        </Link>
-
+        <div className="max-w-6xl mx-auto p-6 space-y-4">
         {/* Header */}
         <Card className="overflow-hidden">
           <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-4 py-2 text-white">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <FileText className="w-4 h-4" />
+                <Link to={createPageUrl('Loans')} className="text-slate-300 hover:text-white transition-colors">
+                  <ArrowLeft className="w-4 h-4" />
+                </Link>
                 <div>
                   <h1 className="text-base font-bold">
                     {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`} - {loan.borrower_name}
@@ -676,40 +670,40 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
               </div>
             </div>
           </div>
-          <CardContent className="p-3">
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-3 text-xs mb-3">
+          <CardContent className="p-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-sm mb-4">
               <div>
-                <p className="text-slate-500 mb-0.5">Principal</p>
-                <p className="font-bold">{formatCurrency(loan.principal_amount)}</p>
+                <p className="text-slate-500 mb-0.5 text-xs">Principal</p>
+                <p className="font-bold text-base">{formatCurrency(loan.principal_amount)}</p>
               </div>
               <div>
-                <p className="text-slate-500 mb-0.5">Rate</p>
-                <p className="font-bold">{loan.interest_rate}% {loan.interest_type}</p>
+                <p className="text-slate-500 mb-0.5 text-xs">Rate</p>
+                <p className="font-bold text-base">{loan.interest_rate}% {loan.interest_type}</p>
               </div>
               <div>
-                <p className="text-slate-500 mb-0.5">Duration</p>
-                <p className="font-bold">{loan.duration} {loan.period === 'Monthly' ? 'mo' : 'wk'}{loan.auto_extend && ' (ext)'}</p>
+                <p className="text-slate-500 mb-0.5 text-xs">Duration</p>
+                <p className="font-bold text-base">{loan.duration} {loan.period === 'Monthly' ? 'mo' : 'wk'}{loan.auto_extend && ' (ext)'}</p>
               </div>
               <div>
-                <p className="text-slate-500 mb-0.5">Start Date</p>
-                <p className="font-bold">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
+                <p className="text-slate-500 mb-0.5 text-xs">Start Date</p>
+                <p className="font-bold text-base">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
               </div>
               {loan.arrangement_fee > 0 && (
                 <div>
-                  <p className="text-slate-500 mb-0.5">Arr. Fee</p>
-                  <p className="font-bold text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
+                  <p className="text-slate-500 mb-0.5 text-xs">Arr. Fee</p>
+                  <p className="font-bold text-base text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
                 </div>
               )}
               {loan.exit_fee > 0 && (
                 <div>
-                  <p className="text-slate-500 mb-0.5">Exit Fee</p>
-                  <p className="font-bold text-amber-600">{formatCurrency(loan.exit_fee)}</p>
+                  <p className="text-slate-500 mb-0.5 text-xs">Exit Fee</p>
+                  <p className="font-bold text-base text-amber-600">{formatCurrency(loan.exit_fee)}</p>
                 </div>
               )}
               {loan.net_disbursed && (
                 <div>
-                  <p className="text-slate-500 mb-0.5">Net Disbursed</p>
-                  <p className="font-bold text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
+                  <p className="text-slate-500 mb-0.5 text-xs">Net Disbursed</p>
+                  <p className="font-bold text-base text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
                 </div>
               )}
             </div>
@@ -819,15 +813,9 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="space-y-6">
+          <TabsContent value="overview" className="space-y-4">
             {/* Combined Repayment View */}
-            <div>
-              <div className="flex items-center justify-between mb-4">
-                <h2 className="text-xl font-semibold text-slate-900">Status View</h2>
-                <Badge variant="outline">{schedule.length} periods</Badge>
-              </div>
-              <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
-            </div>
+            <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
           </TabsContent>
 
           <TabsContent value="repayments">
@@ -999,18 +987,18 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
 
                   return (
                     <>
-                      <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-lg">
+                      <div className="grid grid-cols-3 gap-3 mb-4 p-3 bg-slate-50 rounded-lg">
                         <div>
-                          <p className="text-xs text-slate-500 mb-1">Total Credits (Disbursed)</p>
-                          <p className="text-lg font-bold text-emerald-600">{formatCurrency(totalCredits)}</p>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Total Credits (Disbursed)</p>
+                          <p className="text-sm font-bold text-emerald-600">{formatCurrency(totalCredits)}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500 mb-1">Total Debits (Repaid)</p>
-                          <p className="text-lg font-bold text-red-600">{formatCurrency(totalDebits)}</p>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Total Debits (Repaid)</p>
+                          <p className="text-sm font-bold text-red-600">{formatCurrency(totalDebits)}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500 mb-1">Principal Outstanding</p>
-                          <p className="text-lg font-bold text-slate-900">{formatCurrency(netBalance)}</p>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Principal Outstanding</p>
+                          <p className="text-sm font-bold text-slate-900">{formatCurrency(netBalance)}</p>
                         </div>
                       </div>
 
@@ -1024,34 +1012,34 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                           <table className="w-full">
                             <thead className="bg-slate-50 border-b border-slate-200">
                               <tr>
-                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Date</th>
-                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Type</th>
-                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Description</th>
-                                <th className="text-right py-2 px-3 text-sm font-semibold text-emerald-700">Credit</th>
-                                <th className="text-right py-2 px-3 text-sm font-semibold text-red-700">Debit</th>
-                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Balance</th>
+                                <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Type</th>
+                                <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Description</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-emerald-700">Credit</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-red-700">Debit</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Balance</th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-200">
+                            <tbody className="divide-y divide-slate-100">
                               {sortedEntries.map((entry) => (
                                 <tr key={entry.id} className="hover:bg-slate-50">
-                                  <td className="py-2 px-3 text-sm">{format(entry.date, 'dd/MM/yy')}</td>
-                                  <td className="py-2 px-3">
-                                    <Badge variant={entry.type === 'credit' ? 'default' : 'destructive'} className="text-xs">
+                                  <td className="py-1 px-2 text-xs">{format(entry.date, 'dd/MM/yy')}</td>
+                                  <td className="py-1 px-2">
+                                    <Badge variant={entry.type === 'credit' ? 'default' : 'destructive'} className="text-[10px] px-1.5 py-0">
                                       {entry.type === 'credit' ? 'Credit' : 'Debit'}
                                     </Badge>
                                   </td>
-                                  <td className="py-2 px-3 text-sm">
+                                  <td className="py-1 px-2 text-xs">
                                     {entry.description}
-                                    {entry.notes && <span className="text-slate-400 ml-2">({entry.notes})</span>}
+                                    {entry.notes && <span className="text-slate-400 ml-1 text-[10px]">({entry.notes})</span>}
                                   </td>
-                                  <td className="py-2 px-3 text-sm text-emerald-600 text-right font-medium">
+                                  <td className="py-1 px-2 text-xs text-emerald-600 text-right font-medium">
                                     {entry.type === 'credit' ? formatCurrency(entry.amount) : '-'}
                                   </td>
-                                  <td className="py-2 px-3 text-sm text-red-600 text-right font-medium">
+                                  <td className="py-1 px-2 text-xs text-red-600 text-right font-medium">
                                     {entry.type === 'debit' ? formatCurrency(entry.amount) : '-'}
                                   </td>
-                                  <td className="py-2 px-3 text-sm text-slate-700 text-right font-semibold">
+                                  <td className="py-1 px-2 text-xs text-slate-700 text-right font-semibold">
                                     {formatCurrency(balanceMap[entry.id])}
                                   </td>
                                 </tr>
