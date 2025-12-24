@@ -619,7 +619,13 @@ export default function Config() {
         transactions: txCount,
         expenses: expenseCount
       });
-      
+
+      // If importing a specific loan, clear the loan number but keep the file
+      // so user can import another loan from the same file
+      if (specificLoanNumber) {
+        setSpecificLoanNumber('');
+      }
+
     } catch (err) {
       console.error('Import error:', err);
       addLog(`❌ Import failed: ${err.message}`);
@@ -715,10 +721,10 @@ export default function Config() {
                     <label htmlFor="file-upload-specific" className="cursor-pointer">
                       <Upload className="w-10 h-10 mx-auto text-slate-400 mb-3" />
                       <p className="text-sm text-slate-600 mb-1">
-                        {file && specificLoanNumber ? file.name : 'Click to upload CSV file'}
+                        {file ? file.name : 'Click to upload CSV file'}
                       </p>
                       <p className="text-xs text-slate-400">
-                        Import single loan data
+                        {file ? 'Click to change file' : 'Import single loan data'}
                       </p>
                     </label>
                   </div>
@@ -737,8 +743,12 @@ export default function Config() {
                     />
                   </div>
 
-                  {file && specificLoanNumber && !importing && !result && (
-                    <Button onClick={handleImport} className="w-full bg-emerald-600 hover:bg-emerald-700">
+                  {file && specificLoanNumber && !importing && (
+                    <Button onClick={() => {
+                      setResult(null);
+                      setError(null);
+                      handleImport();
+                    }} className="w-full bg-emerald-600 hover:bg-emerald-700">
                       <FileText className="w-4 h-4 mr-2" />
                       Import Loan #{specificLoanNumber}
                     </Button>
