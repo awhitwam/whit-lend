@@ -77,6 +77,7 @@ export default function LoanDetails() {
   const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingMessage, setProcessingMessage] = useState('');
+  const [disbursementSort, setDisbursementSort] = useState('date-desc');
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -750,34 +751,32 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
         </Card>
 
         {/* Financial Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-5 gap-2">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-1.5">
           <Card className="bg-gradient-to-br from-blue-50 to-blue-100/50 border-blue-200">
-            <CardContent className="p-2">
-              <p className="text-xs text-blue-600 font-medium mb-0.5">Total Repayable</p>
-              <p className="text-lg font-bold text-blue-900">{formatCurrency(loan.total_repayable)}</p>
+            <CardContent className="px-2 py-1.5">
+              <p className="text-[10px] text-blue-600 font-medium">Total Repayable</p>
+              <p className="text-sm font-bold text-blue-900">{formatCurrency(loan.total_repayable)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200">
-            <CardContent className="p-2">
-              <p className="text-xs text-amber-600 font-medium mb-0.5">Interest Received</p>
-              <p className="text-lg font-bold text-amber-900">{formatCurrency(actualInterestPaid)}</p>
+            <CardContent className="px-2 py-1.5">
+              <p className="text-[10px] text-amber-600 font-medium">Interest Received</p>
+              <p className="text-sm font-bold text-amber-900">{formatCurrency(actualInterestPaid)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border-emerald-200">
-            <CardContent className="p-2">
-              <p className="text-xs text-emerald-600 font-medium mb-0.5">Amount Paid</p>
-              <p className="text-lg font-bold text-emerald-900">
-                {formatCurrency(totalPaidFromSchedule)}
-              </p>
+            <CardContent className="px-2 py-1.5">
+              <p className="text-[10px] text-emerald-600 font-medium">Amount Paid</p>
+              <p className="text-sm font-bold text-emerald-900">{formatCurrency(totalPaidFromSchedule)}</p>
             </CardContent>
           </Card>
           <Card className="bg-gradient-to-br from-red-50 to-red-100/50 border-red-200">
-            <CardContent className="p-2">
-              <p className="text-xs text-red-600 font-medium mb-0.5">Outstanding</p>
-              <p className="text-lg font-bold text-red-900">{formatCurrency(totalOutstanding)}</p>
+            <CardContent className="px-2 py-1.5">
+              <p className="text-[10px] text-red-600 font-medium">Outstanding</p>
+              <p className="text-sm font-bold text-red-900">{formatCurrency(totalOutstanding)}</p>
               {loan.overpayment_credit > 0 && (
-                <p className="text-xs text-blue-600 mt-0.5 flex items-center gap-1">
-                  <CheckCircle2 className="w-3 h-3" />
+                <p className="text-[10px] text-blue-600 flex items-center gap-0.5">
+                  <CheckCircle2 className="w-2.5 h-2.5" />
                   Credit: {formatCurrency(loan.overpayment_credit)}
                 </p>
               )}
@@ -785,14 +784,14 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
           </Card>
           {isLoanActive && (
             <Card className={`bg-gradient-to-br ${liveInterestOutstanding < 0 ? 'from-emerald-50 to-emerald-100/50 border-emerald-200' : 'from-purple-50 to-purple-100/50 border-purple-200'}`}>
-              <CardContent className="p-2">
-                <p className={`text-xs font-medium mb-0.5 ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
+              <CardContent className="px-2 py-1.5">
+                <p className={`text-[10px] font-medium ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
                   Live Interest {liveInterestOutstanding < 0 ? 'Overpaid' : 'Due'}
                 </p>
-                <p className={`text-lg font-bold ${liveInterestOutstanding < 0 ? 'text-emerald-900' : 'text-purple-900'}`}>
+                <p className={`text-sm font-bold ${liveInterestOutstanding < 0 ? 'text-emerald-900' : 'text-purple-900'}`}>
                   {liveInterestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(liveInterestOutstanding))}
                 </p>
-                <p className="text-xs text-slate-500 mt-0.5">As of today</p>
+                <p className="text-[10px] text-slate-500">As of today</p>
               </CardContent>
             </Card>
           )}
@@ -806,9 +805,9 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
               Repayments
               <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="schedule">
-              Schedule
-              <Badge variant="secondary" className="ml-2">{schedule.length}</Badge>
+            <TabsTrigger value="disbursements">
+              Disbursements
+              <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.principal_applied !== 0).length + 1}</Badge>
             </TabsTrigger>
             <TabsTrigger value="expenses">
               Expenses
@@ -922,61 +921,139 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
             </Card>
           </TabsContent>
 
-          <TabsContent value="schedule">
+          <TabsContent value="disbursements">
             <Card>
               <CardHeader>
-                <CardTitle>Repayment Schedule</CardTitle>
+                <div className="flex items-center justify-between">
+                  <CardTitle>Capital Movements</CardTitle>
+                  <Select
+                    value={disbursementSort}
+                    onValueChange={setDisbursementSort}
+                  >
+                    <SelectTrigger className="w-40">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="date-desc">Date (Newest)</SelectItem>
+                      <SelectItem value="date-asc">Date (Oldest)</SelectItem>
+                      <SelectItem value="amount-desc">Amount (High-Low)</SelectItem>
+                      <SelectItem value="amount-asc">Amount (Low-High)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
               </CardHeader>
               <CardContent>
                 {(() => {
-                  const totalPrincipal = schedule.reduce((sum, s) => sum + s.principal_amount, 0);
-                  const totalInterest = schedule.reduce((sum, s) => sum + s.interest_amount, 0);
-                  const totalDue = schedule.reduce((sum, s) => sum + s.total_due, 0);
+                  // Build disbursement entries: initial disbursement + all capital transactions
+                  const capitalTransactions = transactions
+                    .filter(t => !t.is_deleted && (t.principal_applied > 0 || t.type === 'Disbursement'))
+                    .map(t => ({
+                      id: t.id,
+                      date: new Date(t.date),
+                      type: t.type === 'Disbursement' ? 'credit' : 'debit',
+                      description: t.type === 'Disbursement' ? 'Additional Drawdown' : 'Capital Repayment',
+                      amount: t.type === 'Disbursement' ? t.amount : t.principal_applied,
+                      notes: t.notes || ''
+                    }));
+
+                  // Add initial disbursement
+                  const allEntries = [
+                    {
+                      id: 'initial',
+                      date: new Date(loan.start_date),
+                      type: 'credit',
+                      description: 'Initial Disbursement',
+                      amount: loan.principal_amount,
+                      notes: 'Loan originated'
+                    },
+                    ...capitalTransactions
+                  ];
+
+                  // Sort based on selection
+                  const sortedEntries = [...allEntries].sort((a, b) => {
+                    switch (disbursementSort) {
+                      case 'date-asc': return a.date - b.date;
+                      case 'date-desc': return b.date - a.date;
+                      case 'amount-asc': return a.amount - b.amount;
+                      case 'amount-desc': return b.amount - a.amount;
+                      default: return b.date - a.date;
+                    }
+                  });
+
+                  // Calculate running balance (always in date order for balance)
+                  const dateOrderedEntries = [...allEntries].sort((a, b) => a.date - b.date);
+                  let runningBalance = 0;
+                  const balanceMap = {};
+                  dateOrderedEntries.forEach(entry => {
+                    if (entry.type === 'credit') {
+                      runningBalance += entry.amount;
+                    } else {
+                      runningBalance -= entry.amount;
+                    }
+                    balanceMap[entry.id] = runningBalance;
+                  });
+
+                  const totalCredits = allEntries.filter(e => e.type === 'credit').reduce((sum, e) => sum + e.amount, 0);
+                  const totalDebits = allEntries.filter(e => e.type === 'debit').reduce((sum, e) => sum + e.amount, 0);
+                  const netBalance = totalCredits - totalDebits;
 
                   return (
                     <>
                       <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-lg">
                         <div>
-                          <p className="text-xs text-slate-500 mb-1">Total Principal</p>
-                          <p className="text-xl font-bold text-slate-900">{formatCurrency(totalPrincipal)}</p>
+                          <p className="text-xs text-slate-500 mb-1">Total Credits (Disbursed)</p>
+                          <p className="text-lg font-bold text-emerald-600">{formatCurrency(totalCredits)}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500 mb-1">Total Interest</p>
-                          <p className="text-xl font-bold text-amber-600">{formatCurrency(totalInterest)}</p>
+                          <p className="text-xs text-slate-500 mb-1">Total Debits (Repaid)</p>
+                          <p className="text-lg font-bold text-red-600">{formatCurrency(totalDebits)}</p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-500 mb-1">Total Due</p>
-                          <p className="text-xl font-bold text-emerald-600">{formatCurrency(totalDue)}</p>
+                          <p className="text-xs text-slate-500 mb-1">Principal Outstanding</p>
+                          <p className="text-lg font-bold text-slate-900">{formatCurrency(netBalance)}</p>
                         </div>
                       </div>
 
-                      {schedule.length === 0 ? (
+                      {sortedEntries.length === 0 ? (
                         <div className="text-center py-12 text-slate-500">
                           <FileText className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-                          <p>No schedule entries yet</p>
+                          <p>No capital movements yet</p>
                         </div>
                       ) : (
                         <div className="overflow-x-auto">
                           <table className="w-full">
                             <thead className="bg-slate-50 border-b border-slate-200">
                               <tr>
-                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Period</th>
-                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Due Date</th>
-                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Principal</th>
-                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Interest</th>
-                                <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Total Due</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Type</th>
+                                <th className="text-left py-2 px-3 text-sm font-semibold text-slate-700">Description</th>
+                                <th className="text-right py-2 px-3 text-sm font-semibold text-emerald-700">Credit</th>
+                                <th className="text-right py-2 px-3 text-sm font-semibold text-red-700">Debit</th>
                                 <th className="text-right py-2 px-3 text-sm font-semibold text-slate-700">Balance</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200">
-                              {schedule.map((row) => (
-                                <tr key={row.id} className="hover:bg-slate-50">
-                                  <td className="py-2 px-3 text-sm font-medium">{row.installment_number}</td>
-                                  <td className="py-2 px-3 text-sm">{format(new Date(row.due_date), 'dd/MM/yy')}</td>
-                                  <td className="py-2 px-3 text-sm text-slate-600 text-right">{formatCurrency(row.principal_amount)}</td>
-                                  <td className="py-2 px-3 text-sm text-slate-600 text-right">{formatCurrency(row.interest_amount)}</td>
-                                  <td className="py-2 px-3 text-sm font-semibold text-right">{formatCurrency(row.total_due)}</td>
-                                  <td className="py-2 px-3 text-sm text-slate-600 text-right">{formatCurrency(row.balance)}</td>
+                              {sortedEntries.map((entry) => (
+                                <tr key={entry.id} className="hover:bg-slate-50">
+                                  <td className="py-2 px-3 text-sm">{format(entry.date, 'dd/MM/yy')}</td>
+                                  <td className="py-2 px-3">
+                                    <Badge variant={entry.type === 'credit' ? 'default' : 'destructive'} className="text-xs">
+                                      {entry.type === 'credit' ? 'Credit' : 'Debit'}
+                                    </Badge>
+                                  </td>
+                                  <td className="py-2 px-3 text-sm">
+                                    {entry.description}
+                                    {entry.notes && <span className="text-slate-400 ml-2">({entry.notes})</span>}
+                                  </td>
+                                  <td className="py-2 px-3 text-sm text-emerald-600 text-right font-medium">
+                                    {entry.type === 'credit' ? formatCurrency(entry.amount) : '-'}
+                                  </td>
+                                  <td className="py-2 px-3 text-sm text-red-600 text-right font-medium">
+                                    {entry.type === 'debit' ? formatCurrency(entry.amount) : '-'}
+                                  </td>
+                                  <td className="py-2 px-3 text-sm text-slate-700 text-right font-semibold">
+                                    {formatCurrency(balanceMap[entry.id])}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
