@@ -60,36 +60,65 @@ export function generateRepaymentSchedule({
   const periodRate = interestRate / 100 / periodsPerYear;
   
   if (interestType === 'Rolled-Up') {
-    // Rolled-Up: No payments until the end, interest compounds on balance
+    // Rolled-Up: Only show entry at end of loan period (principal + rolled-up interest),
+    // followed by monthly interest-only payments
+
+    // Calculate total rolled-up interest for the entire loan period
+    let totalRolledUpInterest = 0;
+    let finalPrincipal = principal;
+
     for (let i = 1; i <= duration; i++) {
-      const dueDate = period === 'Monthly' 
+      const dueDate = period === 'Monthly'
         ? addMonths(new Date(startDate), i)
         : addWeeks(new Date(startDate), i);
-      
+
       // Calculate principal outstanding at this point
       const principalPaidBeforeDueDate = transactions
         .filter(tx => new Date(tx.date) < dueDate)
         .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
       const principalOutstandingAtStart = principal - principalPaidBeforeDueDate;
-      
+
       const interestForPeriod = principalOutstandingAtStart * periodRate;
-      const balance = principalOutstandingAtStart + interestForPeriod;
-      
-      const isLastPeriod = i === duration;
-      const paymentDue = isLastPeriod ? balance : 0;
-      const principalDue = isLastPeriod ? principalOutstandingAtStart : 0;
-      const interestDue = isLastPeriod ? interestForPeriod : 0;
-      
+      totalRolledUpInterest += interestForPeriod;
+      finalPrincipal = principalOutstandingAtStart;
+    }
+
+    // Single entry at end of loan period: Principal due + ALL rolled-up interest
+    const loanEndDate = period === 'Monthly'
+      ? addMonths(new Date(startDate), duration)
+      : addWeeks(new Date(startDate), duration);
+
+    schedule.push({
+      installment_number: 1,
+      due_date: format(loanEndDate, 'yyyy-MM-dd'),
+      principal_amount: Math.round(finalPrincipal * 100) / 100,
+      interest_amount: Math.round(totalRolledUpInterest * 100) / 100,
+      total_due: Math.round((finalPrincipal + totalRolledUpInterest) * 100) / 100,
+      balance: Math.round(finalPrincipal * 100) / 100,
+      principal_paid: 0,
+      interest_paid: 0,
+      status: 'Pending'
+    });
+
+    // After loan period - monthly interest-only payments (show 12 months)
+    const additionalMonths = 12;
+    for (let i = 1; i <= additionalMonths; i++) {
+      const dueDate = addMonths(loanEndDate, i);
+
+      // Monthly interest on remaining principal
+      const monthlyInterest = finalPrincipal * (interestRate / 100 / 12);
+
       schedule.push({
-        installment_number: i,
+        installment_number: 1 + i,
         due_date: format(dueDate, 'yyyy-MM-dd'),
-        principal_amount: Math.round(principalDue * 100) / 100,
-        interest_amount: Math.round(interestDue * 100) / 100,
-        total_due: Math.round(paymentDue * 100) / 100,
-        balance: isLastPeriod ? 0 : Math.round(balance * 100) / 100,
+        principal_amount: 0,
+        interest_amount: Math.round(monthlyInterest * 100) / 100,
+        total_due: Math.round(monthlyInterest * 100) / 100,
+        balance: Math.round(finalPrincipal * 100) / 100,
         principal_paid: 0,
         interest_paid: 0,
-        status: 'Pending'
+        status: 'Pending',
+        is_extension_period: true
       });
     }
   } else if (interestType === 'Interest-Only') {

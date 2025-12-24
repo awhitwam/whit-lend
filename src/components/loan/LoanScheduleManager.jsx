@@ -196,7 +196,60 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
 
   console.log('Event Timeline:', events.map(e => ({ date: format(e.date, 'yyyy-MM-dd'), type: e.type, amount: e.amount })));
 
-  // Process each schedule period
+  // Handle Rolled-Up loans separately - only show end of loan period + monthly interest after
+  if (product.interest_type === 'Rolled-Up') {
+    let totalRolledUpInterest = 0;
+    let finalPrincipal = originalPrincipal;
+
+    // Calculate total rolled-up interest across all periods
+    for (let i = 1; i <= duration; i++) {
+      const periodStartDate = i === 1 ? startDate : (product.period === 'Monthly' ? addMonths(startDate, i - 1) : addWeeks(startDate, i - 1));
+      const periodEndDate = product.period === 'Monthly' ? addMonths(startDate, i) : addWeeks(startDate, i);
+      const principalAtStart = calculatePrincipalAtDate(originalPrincipal, transactions, periodStartDate);
+
+      const daysInPeriod = differenceInDays(periodEndDate, periodStartDate);
+      const interestForPeriod = principalAtStart * dailyRate * daysInPeriod;
+      totalRolledUpInterest += interestForPeriod;
+      finalPrincipal = principalAtStart;
+    }
+
+    // Single entry at end of loan period
+    const loanEndDate = product.period === 'Monthly' ? addMonths(startDate, duration) : addWeeks(startDate, duration);
+    schedule.push({
+      installment_number: 1,
+      due_date: format(loanEndDate, 'yyyy-MM-dd'),
+      principal_amount: Math.round(finalPrincipal * 100) / 100,
+      interest_amount: Math.round(totalRolledUpInterest * 100) / 100,
+      total_due: Math.round((finalPrincipal + totalRolledUpInterest) * 100) / 100,
+      balance: Math.round(finalPrincipal * 100) / 100,
+      principal_paid: 0,
+      interest_paid: 0,
+      status: 'Pending'
+    });
+
+    // Add 12 months of interest-only payments after loan period ends
+    for (let i = 1; i <= 12; i++) {
+      const dueDate = addMonths(loanEndDate, i);
+      const monthlyInterest = finalPrincipal * (annualRate / 100 / 12);
+
+      schedule.push({
+        installment_number: 1 + i,
+        due_date: format(dueDate, 'yyyy-MM-dd'),
+        principal_amount: 0,
+        interest_amount: Math.round(monthlyInterest * 100) / 100,
+        total_due: Math.round(monthlyInterest * 100) / 100,
+        balance: Math.round(finalPrincipal * 100) / 100,
+        principal_paid: 0,
+        interest_paid: 0,
+        status: 'Pending',
+        is_extension_period: true
+      });
+    }
+
+    return; // Exit early for Rolled-Up loans
+  }
+
+  // Process each schedule period (for non-Rolled-Up loans)
   for (let i = 1; i <= duration; i++) {
     const periodStartDate = i === 1 ? startDate : (product.period === 'Monthly' ? addMonths(startDate, i - 1) : addWeeks(startDate, i - 1));
     const periodEndDate = product.period === 'Monthly' ? addMonths(startDate, i) : addWeeks(startDate, i);
@@ -333,12 +386,6 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
       if (principalAtStart > 0 && remainingPeriods > 0) {
         const periodicPayment = principalAtStart * (periodRate * Math.pow(1 + periodRate, remainingPeriods)) / (Math.pow(1 + periodRate, remainingPeriods) - 1);
         principalForPeriod = Math.max(0, periodicPayment - totalInterestForPeriod);
-      }
-    } else if (product.interest_type === 'Rolled-Up') {
-      principalForPeriod = 0;
-      // Full settlement on last period
-      if (i === duration) {
-        principalForPeriod = principalAtEnd;
       }
     }
 
