@@ -1329,20 +1329,40 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <p>Daily Rate: {(loan.interest_rate / 100 / 365 * 100).toFixed(4)}% per day</p>
                             {(() => {
                               const scheduleEntry = row.scheduleEntry;
+                              const dailyRate = loan.interest_rate / 100 / 365;
+
+                              // Special case for Rolled-Up loans: first installment is rolled-up interest
+                              if (loan.interest_type === 'Rolled-Up' && scheduleEntry.installment_number === 1) {
+                                const totalDays = differenceInDays(new Date(scheduleEntry.due_date), new Date(loan.start_date));
+                                const principalStart = loan.principal_amount;
+                                const calculatedInterest = principalStart * dailyRate * totalDays;
+                                return (
+                                  <>
+                                    <p className="font-semibold text-blue-600">Rolled-Up Interest</p>
+                                    <p>Loan Duration: {loan.duration} months</p>
+                                    <p>Days from Start to Due: {totalDays} days</p>
+                                    <p>Principal: {formatCurrency(principalStart)}</p>
+                                    <p className="pt-1 border-t">Formula: Principal × Daily Rate × Days</p>
+                                    <p className="pl-2">{formatCurrency(principalStart)} × {(dailyRate * 100).toFixed(4)}% × {totalDays}d</p>
+                                    <p className="pt-1 border-t font-semibold">= {formatCurrency(calculatedInterest)}</p>
+                                  </>
+                                );
+                              }
+
                               const currentIndex = combinedRows.findIndex(r => r.scheduleEntry?.id === scheduleEntry.id);
                               const previousScheduleRows = combinedRows.slice(0, currentIndex).filter(r => r.rowType === 'schedule');
-                              const periodStart = previousScheduleRows.length > 0 
+                              const periodStart = previousScheduleRows.length > 0
                                 ? new Date(previousScheduleRows[previousScheduleRows.length - 1].scheduleEntry.due_date)
                                 : new Date(loan.start_date);
                               const periodEnd = new Date(scheduleEntry.due_date);
-                              
-                              const capitalTxInPeriod = combinedRows.filter(r => 
-                                r.rowType === 'transaction' && 
-                                r.date > periodStart && 
+
+                              const capitalTxInPeriod = combinedRows.filter(r =>
+                                r.rowType === 'transaction' &&
+                                r.date > periodStart &&
                                 r.date <= periodEnd &&
                                 r.transactions.some(tx => tx.principal_applied > 0)
                               ).sort((a, b) => a.date - b.date);
-                              
+
                               if (capitalTxInPeriod.length === 0) {
                                 return (
                                   <>
@@ -1352,11 +1372,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                   </>
                                 );
                               } else {
-                                const dailyRate = loan.interest_rate / 100 / 365;
                                 let segmentStart = periodStart;
                                 let runningPrincipal = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
                                 const segments = [];
-                                
+
                                 for (const txRow of capitalTxInPeriod) {
                                   const daysInSegment = differenceInDays(txRow.date, segmentStart);
                                   if (daysInSegment > 0) {
@@ -1368,12 +1387,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                       endDate: format(txRow.date, 'MMM dd')
                                     });
                                   }
-                                  
+
                                   const principalPaid = txRow.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
                                   runningPrincipal = Math.max(0, runningPrincipal - principalPaid);
                                   segmentStart = txRow.date;
                                 }
-                                
+
                                 const finalDays = differenceInDays(periodEnd, segmentStart);
                                 if (finalDays > 0) {
                                   const interestForSegment = runningPrincipal * dailyRate * finalDays;
@@ -1384,7 +1403,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                     endDate: format(periodEnd, 'MMM dd')
                                   });
                                 }
-                                
+
                                 return (
                                   <>
                                     <p className="font-semibold text-amber-600">Mid-Period Principal Change</p>

@@ -69,7 +69,6 @@ export default function LoanDetails() {
   const [isSettleOpen, setIsSettleOpen] = useState(false);
   const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
   const [regenerateEndDate, setRegenerateEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [isClearDialogOpen, setIsClearDialogOpen] = useState(false);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [txPage, setTxPage] = useState(1);
@@ -302,25 +301,6 @@ export default function LoanDetails() {
     },
     onError: () => {
       toast.error('Failed to update auto-extend', { id: 'auto-extend' });
-    }
-  });
-
-  const clearScheduleMutation = useMutation({
-    mutationFn: async () => {
-      toast.loading('Clearing repayment schedule...', { id: 'clear-schedule' });
-      const scheduleRows = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
-      for (const row of scheduleRows) {
-        await base44.entities.RepaymentSchedule.delete(row.id);
-      }
-    },
-    onSuccess: async () => {
-      await queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] });
-      toast.success('Schedule cleared successfully', { id: 'clear-schedule' });
-      setIsClearDialogOpen(false);
-    },
-    onError: () => {
-      toast.error('Failed to clear schedule', { id: 'clear-schedule' });
-      setIsClearDialogOpen(false);
     }
   });
 
@@ -662,20 +642,12 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                     </DropdownMenuItem>
                     {loan.status !== 'Closed' && (
                       <>
-                        <DropdownMenuItem 
+                        <DropdownMenuItem
                           onClick={() => setIsRegenerateDialogOpen(true)}
                           disabled={recalculateLoanMutation.isPending}
                         >
                           <Repeat className="w-4 h-4 mr-2" />
                           Regenerate Schedule
-                        </DropdownMenuItem>
-                        <DropdownMenuItem 
-                          onClick={() => setIsClearDialogOpen(true)}
-                          disabled={clearScheduleMutation.isPending}
-                          className="text-red-600"
-                        >
-                          <Trash2 className="w-4 h-4 mr-2" />
-                          Clear Schedule
                         </DropdownMenuItem>
                       </>
                     )}
@@ -1171,30 +1143,6 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
                 className="bg-emerald-600 hover:bg-emerald-700"
               >
                 {recalculateLoanMutation.isPending ? 'Processing...' : 'Regenerate'}
-              </AlertDialogAction>
-            </AlertDialogFooter>
-          </AlertDialogContent>
-        </AlertDialog>
-
-        {/* Clear Schedule Dialog */}
-        <AlertDialog open={isClearDialogOpen} onOpenChange={setIsClearDialogOpen}>
-          <AlertDialogContent>
-            <AlertDialogHeader>
-              <AlertDialogTitle>Clear Repayment Schedule?</AlertDialogTitle>
-              <AlertDialogDescription>
-                {clearScheduleMutation.isPending
-                  ? 'Clearing repayment schedule...'
-                  : 'This will remove all scheduled payments but keep transaction history. This action cannot be undone.'}
-              </AlertDialogDescription>
-            </AlertDialogHeader>
-            <AlertDialogFooter>
-              <AlertDialogCancel disabled={clearScheduleMutation.isPending}>Cancel</AlertDialogCancel>
-              <AlertDialogAction
-                onClick={() => clearScheduleMutation.mutate()}
-                disabled={clearScheduleMutation.isPending}
-                className="bg-red-600 hover:bg-red-700"
-              >
-                {clearScheduleMutation.isPending ? 'Processing...' : 'Clear Schedule'}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
