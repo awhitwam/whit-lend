@@ -1,11 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { format, differenceInDays, addMonths, addWeeks } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Split, List, Download, Layers } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, List, Download, Layers, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product }) {
@@ -13,6 +13,21 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('separate'); // 'separate', 'detailed', 'smartview2', 'nested'
   const [showCumulativeColumns, setShowCumulativeColumns] = useState(false);
+
+  // Load nested sort order from localStorage, default to 'asc' (oldest first)
+  const [nestedSortOrder, setNestedSortOrder] = useState(() => {
+    const saved = localStorage.getItem('nestedScheduleSortOrder');
+    return saved || 'asc';
+  });
+
+  // Save sort order to localStorage whenever it changes
+  useEffect(() => {
+    localStorage.setItem('nestedScheduleSortOrder', nestedSortOrder);
+  }, [nestedSortOrder]);
+
+  const toggleNestedSortOrder = () => {
+    setNestedSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+  };
 
   // Helper to format installment label for Rolled-Up loans
   const formatInstallmentLabel = (row) => {
@@ -822,7 +837,32 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           <Table>
             <TableHeader>
               <TableRow className="bg-slate-50 sticky top-0 z-20">
-                <TableHead className="font-semibold bg-slate-50 w-24">Date</TableHead>
+                <TableHead className="font-semibold bg-slate-50 w-24">
+                  <div className="flex items-center gap-1">
+                    Date
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={toggleNestedSortOrder}
+                            className="h-5 w-5 p-0 hover:bg-slate-200"
+                          >
+                            {nestedSortOrder === 'asc' ? (
+                              <ArrowUp className="w-3 h-3" />
+                            ) : (
+                              <ArrowDown className="w-3 h-3" />
+                            )}
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{nestedSortOrder === 'asc' ? 'Oldest first (click for newest first)' : 'Newest first (click for oldest first)'}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                </TableHead>
                 <TableHead className="font-semibold bg-slate-50">Description</TableHead>
                 <TableHead className="font-semibold bg-slate-50 text-right">Principal</TableHead>
                 <TableHead className="font-semibold bg-slate-50 text-right">Interest</TableHead>
@@ -896,7 +936,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     balance: 0
                   });
 
-                  // Process each schedule period
+                  // Process each schedule period (will be sorted later based on user preference)
                   sortedSchedule.forEach((scheduleRow, idx) => {
                     const dueDate = new Date(scheduleRow.due_date);
                     const expectedInterest = scheduleRow.interest_amount || 0;
@@ -1000,7 +1040,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     });
                   });
 
-                  return rows.map((row, idx) => {
+                  // Apply sorting based on user preference
+                  const sortedRows = [...rows];
+
+                  if (nestedSortOrder === 'desc') {
+                    // Newest first (reverse chronological)
+                    sortedRows.reverse();
+                  }
+                  // else: keep 'asc' (oldest first, default chronological order)
+
+                  return sortedRows.map((row, idx) => {
                     if (row.type === 'disbursement') {
                       return (
                         <TableRow key={`disbursement-${idx}`} className="bg-red-50/50 border-l-4 border-red-500">
