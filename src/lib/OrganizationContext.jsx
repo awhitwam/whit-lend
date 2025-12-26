@@ -14,13 +14,9 @@ export const OrganizationProvider = ({ children }) => {
 
   // Fetch user's organizations
   useEffect(() => {
-    console.log('[OrganizationContext] Auth state:', { isAuthenticated, hasUser: !!user, userId: user?.id });
-
     if (isAuthenticated && user) {
-      console.log('[OrganizationContext] Calling fetchOrganizations');
       fetchOrganizations();
     } else {
-      console.log('[OrganizationContext] Not authenticated or no user, skipping fetch');
       setOrganizations([]);
       setCurrentOrganization(null);
       setMemberRole(null);
@@ -30,13 +26,14 @@ export const OrganizationProvider = ({ children }) => {
 
   // Provide organization ID to base44Client
   useEffect(() => {
-    setOrganizationIdGetter(() => currentOrganization?.id || null);
+    setOrganizationIdGetter(() => {
+      return currentOrganization?.id || localStorage.getItem('currentOrganizationId');
+    });
   }, [currentOrganization]);
 
   const fetchOrganizations = async () => {
     try {
       setIsLoadingOrgs(true);
-      console.log('[OrganizationContext] Fetching organizations for user:', user?.id);
 
       // First, fetch memberships
       const { data: memberships, error: memberError } = await supabase
@@ -45,15 +42,12 @@ export const OrganizationProvider = ({ children }) => {
         .eq('user_id', user.id)
         .eq('is_active', true);
 
-      console.log('[OrganizationContext] Memberships query result:', { memberships, memberError });
-
       if (memberError) {
-        console.error('[OrganizationContext] Memberships error:', memberError);
+        console.error('Error fetching memberships:', memberError);
         throw memberError;
       }
 
       if (!memberships || memberships.length === 0) {
-        console.warn('[OrganizationContext] No memberships found - user has no organizations');
         setOrganizations([]);
         setIsLoadingOrgs(false);
         return;
@@ -61,17 +55,14 @@ export const OrganizationProvider = ({ children }) => {
 
       // Then, fetch organization details separately
       const orgIds = memberships.map(m => m.organization_id);
-      console.log('[OrganizationContext] Fetching org details for IDs:', orgIds);
 
       const { data: organizations, error: orgError } = await supabase
         .from('organizations')
         .select('id, name, slug, description, logo_url, settings')
         .in('id', orgIds);
 
-      console.log('[OrganizationContext] Organizations query result:', { organizations, orgError });
-
       if (orgError) {
-        console.error('[OrganizationContext] Organizations error:', orgError);
+        console.error('Error fetching organizations:', orgError);
         throw orgError;
       }
 
@@ -84,7 +75,6 @@ export const OrganizationProvider = ({ children }) => {
         };
       }).filter(o => o.id); // Filter out any that didn't match
 
-      console.log('[OrganizationContext] Final combined orgs:', orgs);
       setOrganizations(orgs);
 
       // Set current organization from localStorage or default to first

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { base44 } from '@/api/base44Client';
 import { useQuery } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import StatCard from '@/components/ui/StatCard';
@@ -23,27 +24,33 @@ import {
 import { isPast, isToday } from 'date-fns';
 
 export default function Dashboard() {
+  const { currentOrganization, isLoadingOrgs } = useOrganization();
+
   const { data: loans = [], isLoading: loansLoading } = useQuery({
     queryKey: ['loans'],
     queryFn: async () => {
       const allLoans = await base44.entities.Loan.list('-created_date');
       return allLoans.filter(loan => !loan.is_deleted);
-    }
+    },
+    enabled: !!currentOrganization
   });
 
   const { data: borrowers = [], isLoading: borrowersLoading } = useQuery({
     queryKey: ['borrowers'],
-    queryFn: () => base44.entities.Borrower.list()
+    queryFn: () => base44.entities.Borrower.list(),
+    enabled: !!currentOrganization
   });
 
   const { data: schedules = [], isLoading: schedulesLoading } = useQuery({
     queryKey: ['schedules'],
-    queryFn: () => base44.entities.RepaymentSchedule.list('-due_date', 1000)
+    queryFn: () => base44.entities.RepaymentSchedule.list('-due_date', 1000),
+    enabled: !!currentOrganization
   });
 
   const { data: transactions = [] } = useQuery({
     queryKey: ['transactions'],
-    queryFn: () => base44.entities.Transaction.list('-date', 100)
+    queryFn: () => base44.entities.Transaction.list('-date', 100),
+    enabled: !!currentOrganization
   });
 
   // Calculate metrics
@@ -80,7 +87,7 @@ export default function Dashboard() {
     }, 0);
 
   const recentLoans = loans.slice(0, 6);
-  const isLoading = loansLoading || borrowersLoading || schedulesLoading;
+  const isLoading = isLoadingOrgs || loansLoading || borrowersLoading || schedulesLoading;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">

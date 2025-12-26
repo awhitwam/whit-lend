@@ -1,8 +1,12 @@
 import { supabase } from '@/lib/supabaseClient';
 
-// Get current organization ID from context
-// This will be set by OrganizationContext
-let getCurrentOrganizationId = () => null;
+// Get current organization ID from context or localStorage
+// This will be set by OrganizationContext, but fallback to localStorage
+let getCurrentOrganizationId = () => {
+  // Try to get from localStorage as fallback
+  // This ensures we have the org ID even before OrganizationContext loads
+  return localStorage.getItem('currentOrganizationId');
+};
 
 export const setOrganizationIdGetter = (getter) => {
   getCurrentOrganizationId = getter;
