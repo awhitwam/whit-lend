@@ -152,7 +152,7 @@ export default function ImportBorrowers() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <div className="max-w-4xl mx-auto p-6 space-y-6">
+      <div className="p-4 md:p-6 space-y-6">
         <Link to={createPageUrl('Borrowers')}>
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-2" />

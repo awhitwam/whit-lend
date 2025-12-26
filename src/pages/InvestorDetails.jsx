@@ -106,18 +106,16 @@ export default function InvestorDetails() {
 
   if (investorLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-        <div className="max-w-6xl mx-auto">
-          <div className="h-64 bg-white rounded-2xl animate-pulse" />
-        </div>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-6">
+        <div className="h-64 bg-white rounded-2xl animate-pulse" />
       </div>
     );
   }
 
   if (!investor) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-        <div className="max-w-6xl mx-auto text-center py-20">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-6">
+        <div className="text-center py-20">
           <h2 className="text-2xl font-bold text-slate-900">Investor not found</h2>
           <Link to={createPageUrl('Investors')}>
             <Button className="mt-4">
@@ -153,7 +151,7 @@ export default function InvestorDetails() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="p-4 md:p-6 space-y-6">
         <Link to={createPageUrl('Investors')}>
           <Button variant="ghost" size="sm">
             <ArrowLeft className="w-4 h-4 mr-2" />

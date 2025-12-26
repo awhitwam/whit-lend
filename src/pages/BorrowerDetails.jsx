@@ -103,18 +103,16 @@ export default function BorrowerDetails() {
 
   if (borrowerLoading) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-        <div className="max-w-6xl mx-auto">
-          <div className="h-64 bg-white rounded-2xl animate-pulse" />
-        </div>
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-6">
+        <div className="h-64 bg-white rounded-2xl animate-pulse" />
       </div>
     );
   }
 
   if (!borrower) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-6">
-        <div className="max-w-6xl mx-auto text-center py-20">
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-6">
+        <div className="text-center py-20">
           <h2 className="text-2xl font-bold text-slate-900">Borrower not found</h2>
           <Link to={createPageUrl('Borrowers')}>
             <Button className="mt-4">
@@ -133,7 +131,7 @@ export default function BorrowerDetails() {
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
-      <div className="max-w-6xl mx-auto p-6 space-y-6">
+      <div className="p-4 md:p-6 space-y-6">
         {/* Back Button */}
         <Link to={createPageUrl('Borrowers')}>
           <Button variant="ghost" size="sm">
