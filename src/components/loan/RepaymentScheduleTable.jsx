@@ -831,6 +831,40 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   )}
                 </>
               )}
+              {/* Totals Row for Smart/Detailed Views */}
+              {!isLoading && schedule.length > 0 && (() => {
+                const allTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
+                const totalPrincipalPaid = allTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                const totalInterestPaid = allTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                const totalExpectedInterest = schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
+                const totalExpectedPrincipal = loan.principal_amount;
+                const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
+                const interestOutstanding = totalExpectedInterest - totalInterestPaid;
+
+                return (
+                  <TableRow className="bg-slate-100 border-t-2 border-slate-300">
+                    <TableCell colSpan={viewMode === 'smartview2' && showCumulativeColumns ? 8 : viewMode === 'smartview2' ? 5 : 6} className="text-right font-semibold text-sm py-2">
+                      Totals
+                    </TableCell>
+                    <TableCell colSpan={2} className="py-2">
+                      <div className="text-xs space-y-1">
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Principal:</span>
+                          <span className="font-mono">{formatCurrency(totalExpectedPrincipal)} owed - {formatCurrency(totalPrincipalPaid)} paid = <span className="font-bold text-red-600">{formatCurrency(principalOutstanding)}</span></span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span className="text-slate-600">Interest:</span>
+                          <span className="font-mono">{formatCurrency(totalExpectedInterest)} owed - {formatCurrency(totalInterestPaid)} paid = <span className="font-bold text-red-600">{formatCurrency(interestOutstanding)}</span></span>
+                        </div>
+                        <div className="flex justify-between border-t pt-1">
+                          <span className="text-slate-700 font-semibold">Total Outstanding:</span>
+                          <span className="font-mono font-bold text-red-600 text-base">{formatCurrency(principalOutstanding + interestOutstanding)}</span>
+                        </div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })()}
             </TableBody>
           </Table>
         ) : viewMode === 'nested' ? (
@@ -1204,6 +1238,44 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   });
                 })()
               )}
+              {/* Totals Row for Nested View */}
+              {!isLoading && schedule.length > 0 && (() => {
+                const allTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
+                const totalPrincipalPaid = allTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                const totalInterestPaid = allTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                const totalExpectedInterest = schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
+                const totalExpectedPrincipal = loan.principal_amount;
+                const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
+                const interestOutstanding = totalExpectedInterest - totalInterestPaid;
+
+                return (
+                  <TableRow className="bg-slate-100 border-t-2 border-slate-300">
+                    <TableCell colSpan={2} className="text-right font-semibold text-sm py-2">
+                      Totals
+                    </TableCell>
+                    <TableCell className="text-right py-2">
+                      <div className="text-xs space-y-0.5">
+                        <div className="font-mono text-slate-600">{formatCurrency(totalExpectedPrincipal)} owed</div>
+                        <div className="font-mono text-emerald-600">-{formatCurrency(totalPrincipalPaid)} paid</div>
+                        <div className="font-mono font-bold text-red-600 border-t pt-0.5">{formatCurrency(principalOutstanding)}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell className="text-right py-2">
+                      <div className="text-xs space-y-0.5">
+                        <div className="font-mono text-slate-600">{formatCurrency(totalExpectedInterest)} owed</div>
+                        <div className="font-mono text-emerald-600">-{formatCurrency(totalInterestPaid)} paid</div>
+                        <div className="font-mono font-bold text-red-600 border-t pt-0.5">{formatCurrency(interestOutstanding)}</div>
+                      </div>
+                    </TableCell>
+                    <TableCell colSpan={2} className="text-right py-2">
+                      <div className="text-xs">
+                        <div className="text-slate-700 font-semibold">Total Outstanding:</div>
+                        <div className="font-mono font-bold text-red-600 text-base">{formatCurrency(principalOutstanding + interestOutstanding)}</div>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                );
+              })()}
             </TableBody>
           </Table>
         ) : (
@@ -1334,7 +1406,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                   // Mid-period changes - show segments
                                   const segments = [];
                                   let segmentStart = periodStart;
-                                  let runningPrincipal = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
+
+                                  // Calculate principal at start of THIS period (before any transactions in this period)
+                                  const principalPaidBeforePeriodStart = transactions
+                                    .filter(tx => !tx.is_deleted && tx.type === 'Repayment' && new Date(tx.date) <= periodStart)
+                                    .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                                  let runningPrincipal = loan.principal_amount - principalPaidBeforePeriodStart;
 
                                   for (const txRow of capitalTxInPeriod) {
                                     const daysInSegment = differenceInDays(txRow.date, segmentStart);
@@ -1412,7 +1489,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                 );
                               } else {
                                 let segmentStart = periodStart;
-                                let runningPrincipal = scheduleEntry?.calculation_principal_start || row.principalOutstanding;
+
+                                // Calculate principal at start of THIS period (before any transactions in this period)
+                                const principalPaidBeforePeriodStart = transactions
+                                  .filter(tx => !tx.is_deleted && tx.type === 'Repayment' && new Date(tx.date) <= periodStart)
+                                  .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                                let runningPrincipal = loan.principal_amount - principalPaidBeforePeriodStart;
                                 const segments = [];
 
                                 for (const txRow of capitalTxInPeriod) {
@@ -1489,15 +1571,44 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 </TableCell>
               </TableRow>
             ))}
-            {/* Total Row */}
-            <TableRow className="bg-slate-100 font-bold border-t-2 border-slate-300">
-              <TableCell colSpan={4} className="text-right">
-                {schedule.length > 0 && 'Total Outstanding:'}
-              </TableCell>
-              <TableCell className="text-right font-mono text-lg text-red-600">
-                {schedule.length > 0 && formatCurrency(combinedRows.length > 0 ? (combinedRows[combinedRows.length - 1].principalOutstanding + combinedRows[combinedRows.length - 1].interestOutstanding) : 0)}
-              </TableCell>
-            </TableRow>
+            {/* Totals Row for Journal View */}
+            {!isLoading && schedule.length > 0 && (() => {
+              const allTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
+              const totalPrincipalPaid = allTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+              const totalInterestPaid = allTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+              const totalExpectedInterest = schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
+              const totalExpectedPrincipal = loan.principal_amount;
+              const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
+              const interestOutstanding = totalExpectedInterest - totalInterestPaid;
+
+              return (
+                <TableRow className="bg-slate-100 border-t-2 border-slate-300">
+                  <TableCell className="text-right font-semibold text-sm py-2">
+                    Totals
+                  </TableCell>
+                  <TableCell className="text-right py-2">
+                    <div className="text-xs space-y-0.5">
+                      <div className="font-mono text-slate-600">{formatCurrency(totalExpectedPrincipal)} owed</div>
+                      <div className="font-mono text-emerald-600">-{formatCurrency(totalPrincipalPaid)} paid</div>
+                      <div className="font-mono font-bold text-red-600 border-t pt-0.5">{formatCurrency(principalOutstanding)}</div>
+                    </div>
+                  </TableCell>
+                  <TableCell className="text-right py-2">
+                    <div className="text-xs space-y-0.5">
+                      <div className="font-mono text-slate-600">{formatCurrency(totalExpectedInterest)} owed</div>
+                      <div className="font-mono text-emerald-600">-{formatCurrency(totalInterestPaid)} paid</div>
+                      <div className="font-mono font-bold text-red-600 border-t pt-0.5">{formatCurrency(interestOutstanding)}</div>
+                    </div>
+                  </TableCell>
+                  <TableCell colSpan={2} className="text-right py-2">
+                    <div className="text-xs">
+                      <div className="text-slate-700 font-semibold">Total Outstanding:</div>
+                      <div className="font-mono font-bold text-red-600 text-base">{formatCurrency(principalOutstanding + interestOutstanding)}</div>
+                    </div>
+                  </TableCell>
+                </TableRow>
+              );
+            })()}
             </>
           )}
         </TableBody>

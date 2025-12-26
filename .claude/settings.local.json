@@ -2,7 +2,11 @@
   "permissions": {
     "allow": [
       "Bash(npx eslint:*)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(dir:*)",
+      "Bash(findstr:*)",
+      "Bash(more:*)",
+      "Bash(cat:*)"
     ]
   }
 }

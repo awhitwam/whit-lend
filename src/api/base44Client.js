@@ -1,5 +1,13 @@
 import { supabase } from '@/lib/supabaseClient';
 
+// Get current organization ID from context
+// This will be set by OrganizationContext
+let getCurrentOrganizationId = () => null;
+
+export const setOrganizationIdGetter = (getter) => {
+  getCurrentOrganizationId = getter;
+};
+
 // Map entity names to Supabase table names (matching actual database schema)
 const tableMap = {
   Borrower: 'borrowers',
@@ -10,8 +18,25 @@ const tableMap = {
   Expense: 'expenses',
   ExpenseType: 'expense_types',
   Investor: 'Investor',  // PascalCase in database
-  InvestorTransaction: 'InvestorTransaction'  // PascalCase in database
+  InvestorTransaction: 'InvestorTransaction',  // PascalCase in database
+  Organization: 'organizations',
+  OrganizationMember: 'organization_members',
+  Invitation: 'invitations',
+  UserProfile: 'user_profiles'
 };
+
+// Tables that should have organization_id filter applied
+const orgScopedTables = [
+  'borrowers',
+  'loans',
+  'loan_products',
+  'transactions',
+  'repayment_schedules',
+  'expenses',
+  'expense_types',
+  'Investor',
+  'InvestorTransaction'
+];
 
 // Map column names that differ between code and database
 // Format: { tableName: { codeColumnName: dbColumnName } }
@@ -41,12 +66,26 @@ function parseOrder(orderStr, tableName) {
   return { column, ascending };
 }
 
+// Helper to apply organization filter to queries
+function applyOrgFilter(query, tableName) {
+  if (orgScopedTables.includes(tableName)) {
+    const orgId = getCurrentOrganizationId();
+    if (orgId) {
+      return query.eq('organization_id', orgId);
+    }
+  }
+  return query;
+}
+
 // Create an entity handler for a specific table
 function createEntityHandler(tableName) {
   return {
     // List all records with optional ordering and limit
     async list(orderBy, limit) {
       let query = supabase.from(tableName).select('*');
+
+      // Apply organization filter
+      query = applyOrgFilter(query, tableName);
 
       const order = parseOrder(orderBy, tableName);
       if (order) {
@@ -66,6 +105,9 @@ function createEntityHandler(tableName) {
     async filter(conditions, orderBy) {
       let query = supabase.from(tableName).select('*');
 
+      // Apply organization filter
+      query = applyOrgFilter(query, tableName);
+
       // Apply filter conditions
       for (const [key, value] of Object.entries(conditions)) {
         query = query.eq(key, value);
@@ -76,13 +118,21 @@ function createEntityHandler(tableName) {
         query = query.order(order.column, { ascending: order.ascending });
       }
 
-      const { data, error } = await query;
+      const { data, error} = await query;
       if (error) throw error;
       return data || [];
     },
 
     // Create a new record
     async create(data) {
+      // Auto-inject organization_id for scoped tables
+      if (orgScopedTables.includes(tableName)) {
+        const orgId = getCurrentOrganizationId();
+        if (orgId) {
+          data = { ...data, organization_id: orgId };
+        }
+      }
+
       const { data: created, error } = await supabase
         .from(tableName)
         .insert(data)
@@ -95,12 +145,15 @@ function createEntityHandler(tableName) {
 
     // Update a record by ID
     async update(id, data) {
-      const { data: updated, error } = await supabase
+      let query = supabase
         .from(tableName)
         .update(data)
-        .eq('id', id)
-        .select()
-        .single();
+        .eq('id', id);
+
+      // Apply organization filter for security
+      query = applyOrgFilter(query, tableName);
+
+      const { data: updated, error } = await query.select().single();
 
       if (error) throw error;
       return updated;
@@ -108,10 +161,15 @@ function createEntityHandler(tableName) {
 
     // Delete a record by ID
     async delete(id) {
-      const { error } = await supabase
+      let query = supabase
         .from(tableName)
         .delete()
         .eq('id', id);
+
+      // Apply organization filter for security
+      query = applyOrgFilter(query, tableName);
+
+      const { error } = await query;
 
       if (error) throw error;
       return true;
@@ -120,6 +178,14 @@ function createEntityHandler(tableName) {
     // Batch create multiple records at once (much faster than individual creates)
     async createMany(records) {
       if (!records || records.length === 0) return [];
+
+      // Auto-inject organization_id for scoped tables
+      if (orgScopedTables.includes(tableName)) {
+        const orgId = getCurrentOrganizationId();
+        if (orgId) {
+          records = records.map(r => ({ ...r, organization_id: orgId }));
+        }
+      }
 
       const { data: created, error } = await supabase
         .from(tableName)
@@ -133,6 +199,9 @@ function createEntityHandler(tableName) {
     // Batch delete by condition (much faster than individual deletes)
     async deleteWhere(conditions) {
       let query = supabase.from(tableName).delete();
+
+      // Apply organization filter
+      query = applyOrgFilter(query, tableName);
 
       for (const [key, value] of Object.entries(conditions)) {
         query = query.eq(key, value);

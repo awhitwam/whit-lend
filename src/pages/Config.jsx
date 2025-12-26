@@ -5,10 +5,12 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2, StopCircle } from 'lucide-react';
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2, StopCircle, Users } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
 import { applyScheduleToNewLoan } from '@/components/loan/LoanScheduleManager';
+import UserManagement from '@/components/organization/UserManagement';
+import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
 
 export default function Config() {
   const [file, setFile] = useState(null);
@@ -20,6 +22,7 @@ export default function Config() {
   const [logs, setLogs] = useState([]);
   const [specificLoanNumber, setSpecificLoanNumber] = useState('');
   const cancelImport = useRef(false);
+  const [isCreateOrgOpen, setIsCreateOrgOpen] = useState(false);
   
   const [selectedTables, setSelectedTables] = useState({
     RepaymentSchedule: false,
@@ -645,8 +648,12 @@ export default function Config() {
           <p className="text-slate-500 mt-1">Manage system configuration and data imports</p>
         </div>
 
-        <Tabs defaultValue="import" className="space-y-6">
+        <Tabs defaultValue="team" className="space-y-6">
           <TabsList>
+            <TabsTrigger value="team">
+              <Users className="w-4 h-4 mr-2" />
+              Team
+            </TabsTrigger>
             <TabsTrigger value="import">
               <Database className="w-4 h-4 mr-2" />
               Import Data
@@ -656,6 +663,15 @@ export default function Config() {
               General
             </TabsTrigger>
           </TabsList>
+
+          <TabsContent value="team" className="space-y-6">
+            <div className="flex justify-end">
+              <Button onClick={() => setIsCreateOrgOpen(true)}>
+                Create Organization
+              </Button>
+            </div>
+            <UserManagement />
+          </TabsContent>
 
           <TabsContent value="import" className="space-y-6">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -937,6 +953,11 @@ export default function Config() {
             </Card>
           </TabsContent>
         </Tabs>
+
+        <CreateOrganizationDialog
+          open={isCreateOrgOpen}
+          onClose={() => setIsCreateOrgOpen(false)}
+        />
       </div>
     </div>
   );

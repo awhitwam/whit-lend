@@ -11,6 +11,8 @@ import Loans from './pages/Loans';
 import NewLoan from './pages/NewLoan';
 import Products from './pages/Products';
 import LoanDetails from './pages/LoanDetails';
+import AcceptInvitation from './pages/AcceptInvitation';
+import Login from './pages/Login';
 import __Layout from './Layout.jsx';
 
 
@@ -28,6 +30,8 @@ export const PAGES = {
     "NewLoan": NewLoan,
     "Products": Products,
     "LoanDetails": LoanDetails,
+    "AcceptInvitation": AcceptInvitation,
+    "Login": Login,
 }
 
 export const pagesConfig = {

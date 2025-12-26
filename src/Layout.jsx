@@ -1,10 +1,10 @@
 import { Link, useLocation } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { Button } from "@/components/ui/button";
-import { 
-  LayoutDashboard, 
-  Users, 
-  FileText, 
+import {
+  LayoutDashboard,
+  Users,
+  FileText,
   Package,
   Menu,
   X,
@@ -13,6 +13,7 @@ import {
   TrendingUp
 } from 'lucide-react';
 import { useState } from 'react';
+import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
 
 const navigation = [
   { name: 'Dashboard', href: 'Dashboard', icon: LayoutDashboard },
@@ -44,6 +45,11 @@ export default function Layout({ children, currentPageName }) {
               <Building2 className="w-5 h-5 text-white" />
             </div>
             <span className="text-xl font-bold text-white tracking-tight">WhitLend</span>
+          </div>
+
+          {/* Organization Switcher */}
+          <div className="px-3 py-4 border-b border-slate-800">
+            <OrganizationSwitcher />
           </div>
 
           {/* Navigation */}
