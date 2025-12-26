@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -20,11 +20,11 @@ export default function Investors() {
 
   const { data: investors = [], isLoading } = useQuery({
     queryKey: ['investors'],
-    queryFn: () => base44.entities.Investor.list('-created_date')
+    queryFn: () => api.entities.Investor.list('-created_date')
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.Investor.create(data),
+    mutationFn: (data) => api.entities.Investor.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investors'] });
       setIsFormOpen(false);
@@ -33,7 +33,7 @@ export default function Investors() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Investor.update(id, data),
+    mutationFn: ({ id, data }) => api.entities.Investor.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investors'] });
       setIsFormOpen(false);

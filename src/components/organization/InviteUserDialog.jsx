@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -37,7 +37,7 @@ export default function InviteUserDialog({ open, onClose }) {
       const expiresAt = new Date();
       expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
 
-      const invitation = await base44.entities.Invitation.create({
+      const invitation = await api.entities.Invitation.create({
         organization_id: currentOrganization.id,
         email: email.toLowerCase().trim(),
         role,

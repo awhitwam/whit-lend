@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -239,12 +239,12 @@ export default function Config() {
 
       for (const table of deleteOrder) {
         if (selectedTables[table]) {
-          const records = await base44.entities[table].list();
+          const records = await api.entities[table].list();
           deleteCounts[table] = records.length;
 
           // Delete all records one by one
           for (const record of records) {
-            await base44.entities[table].delete(record.id);
+            await api.entities[table].delete(record.id);
           }
         }
       }
@@ -306,12 +306,12 @@ export default function Config() {
         }
         try {
           // Check if product already exists
-          const existing = await base44.entities.LoanProduct.filter({ name: category });
+          const existing = await api.entities.LoanProduct.filter({ name: category });
           if (existing.length > 0) {
             productMap[category] = existing[0];
             addLog(`  → Product already exists: ${category}`);
           } else {
-            const product = await base44.entities.LoanProduct.create({
+            const product = await api.entities.LoanProduct.create({
               name: category,
               interest_rate: 15,
               interest_type: 'Interest-Only',
@@ -354,7 +354,7 @@ export default function Config() {
           return;
         }
         try {
-          const expenseType = await base44.entities.ExpenseType.create({
+          const expenseType = await api.entities.ExpenseType.create({
             name: category,
             description: `Imported from transactions`
           });
@@ -362,7 +362,7 @@ export default function Config() {
           addLog(`  ✓ Created expense type: ${category}`);
           await delay(800);
         } catch (err) {
-          const existing = await base44.entities.ExpenseType.filter({ name: category });
+          const existing = await api.entities.ExpenseType.filter({ name: category });
           if (existing.length > 0) {
             expenseTypeMap[category] = existing[0];
           }
@@ -419,7 +419,7 @@ export default function Config() {
           
           let borrower = borrowerMap[borrowerInfo.fullName];
           if (!borrower) {
-            const existing = await base44.entities.Borrower.filter({ 
+            const existing = await api.entities.Borrower.filter({ 
               first_name: borrowerInfo.firstName,
               last_name: borrowerInfo.lastName
             });
@@ -427,7 +427,7 @@ export default function Config() {
             if (existing.length > 0) {
               borrower = existing[0];
             } else {
-              borrower = await base44.entities.Borrower.create({
+              borrower = await api.entities.Borrower.create({
                 first_name: borrowerInfo.firstName,
                 last_name: borrowerInfo.lastName,
                 full_name: borrowerInfo.fullName,
@@ -523,7 +523,7 @@ export default function Config() {
           for (const tx of loanTxs) {
             const isPrincipal = tx.type === 'Principal Collections';
 
-            await base44.entities.Transaction.create({
+            await api.entities.Transaction.create({
               loan_id: loan.id,
               borrower_id: borrower.id,
               amount: tx.amount,
@@ -540,7 +540,7 @@ export default function Config() {
           }
 
           // Keep loan status as Live (don't mark as closed during import)
-          await base44.entities.Loan.update(loan.id, {
+          await api.entities.Loan.update(loan.id, {
             principal_paid: 0,
             interest_paid: 0,
             status: 'Live'
@@ -590,7 +590,7 @@ export default function Config() {
             
             if (expBatch.length >= expBatchSize) {
               for (const exp of expBatch) {
-                await base44.entities.Expense.create(exp);
+                await api.entities.Expense.create(exp);
                 expenseCount++;
                 await delay(300);
               }
@@ -604,7 +604,7 @@ export default function Config() {
       
       // Process remaining expenses
       for (const exp of expBatch) {
-        await base44.entities.Expense.create(exp);
+        await api.entities.Expense.create(exp);
         expenseCount++;
       }
       if (expBatch.length > 0) {

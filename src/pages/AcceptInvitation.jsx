@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useSearchParams, useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabaseClient';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -68,7 +68,7 @@ export default function AcceptInvitation() {
       setStatus('loading');
 
       // Create organization member
-      await base44.entities.OrganizationMember.create({
+      await api.entities.OrganizationMember.create({
         organization_id: invitation.organization.id,
         user_id: user.id,
         role: invitation.role,

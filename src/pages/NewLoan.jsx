@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -17,17 +17,17 @@ export default function NewLoan() {
 
   const { data: borrowers = [], isLoading: borrowersLoading } = useQuery({
     queryKey: ['borrowers'],
-    queryFn: () => base44.entities.Borrower.list()
+    queryFn: () => api.entities.Borrower.list()
   });
 
   const { data: products = [], isLoading: productsLoading } = useQuery({
     queryKey: ['products'],
-    queryFn: () => base44.entities.LoanProduct.list()
+    queryFn: () => api.entities.LoanProduct.list()
   });
 
   const createLoanMutation = useMutation({
     mutationFn: async ({ loanData, schedule }) => {
-      const loan = await base44.entities.Loan.create(loanData);
+      const loan = await api.entities.Loan.create(loanData);
       
       // Create repayment schedule entries
       const scheduleWithLoanId = schedule.map(row => ({
@@ -35,7 +35,7 @@ export default function NewLoan() {
         loan_id: loan.id
       }));
       
-      await base44.entities.RepaymentSchedule.bulkCreate(scheduleWithLoanId);
+      await api.entities.RepaymentSchedule.bulkCreate(scheduleWithLoanId);
       
       return loan;
     },

@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -29,7 +29,7 @@ export default function Dashboard() {
   const { data: loans = [], isLoading: loansLoading } = useQuery({
     queryKey: ['loans'],
     queryFn: async () => {
-      const allLoans = await base44.entities.Loan.list('-created_date');
+      const allLoans = await api.entities.Loan.list('-created_date');
       return allLoans.filter(loan => !loan.is_deleted);
     },
     enabled: !!currentOrganization
@@ -37,19 +37,19 @@ export default function Dashboard() {
 
   const { data: borrowers = [], isLoading: borrowersLoading } = useQuery({
     queryKey: ['borrowers'],
-    queryFn: () => base44.entities.Borrower.list(),
+    queryFn: () => api.entities.Borrower.list(),
     enabled: !!currentOrganization
   });
 
   const { data: schedules = [], isLoading: schedulesLoading } = useQuery({
     queryKey: ['schedules'],
-    queryFn: () => base44.entities.RepaymentSchedule.list('-due_date', 1000),
+    queryFn: () => api.entities.RepaymentSchedule.list('-due_date', 1000),
     enabled: !!currentOrganization
   });
 
   const { data: transactions = [] } = useQuery({
     queryKey: ['transactions'],
-    queryFn: () => base44.entities.Transaction.list('-date', 100),
+    queryFn: () => api.entities.Transaction.list('-date', 100),
     enabled: !!currentOrganization
   });
 

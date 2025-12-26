@@ -218,12 +218,12 @@ function createEntityHandler(tableName) {
   };
 }
 
-// Create the base44-compatible client
+// Create the data client
 const entities = {};
 for (const [entityName, tableName] of Object.entries(tableMap)) {
   entities[entityName] = createEntityHandler(tableName);
 }
 
-export const base44 = {
+export const api = {
   entities
 };

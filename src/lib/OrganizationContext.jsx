@@ -1,7 +1,7 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
-import { setOrganizationIdGetter } from '@/api/base44Client';
+import { setOrganizationIdGetter } from '@/api/dataClient';
 
 const OrganizationContext = createContext();
 
@@ -24,7 +24,7 @@ export const OrganizationProvider = ({ children }) => {
     }
   }, [user, isAuthenticated]);
 
-  // Provide organization ID to base44Client
+  // Provide organization ID to dataClient
   useEffect(() => {
     setOrganizationIdGetter(() => {
       return currentOrganization?.id || localStorage.getItem('currentOrganizationId');

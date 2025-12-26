@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, AlertTriangle } from 'lucide-react';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 
 export default function EditLoanModal({ 
@@ -30,7 +30,7 @@ export default function EditLoanModal({
 
   const { data: products = [] } = useQuery({
     queryKey: ['loan-products'],
-    queryFn: () => base44.entities.LoanProduct.list()
+    queryFn: () => api.entities.LoanProduct.list()
   });
 
   const handleSubmit = (e) => {

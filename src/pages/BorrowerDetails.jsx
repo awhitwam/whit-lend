@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,7 @@ export default function BorrowerDetails() {
   const { data: borrower, isLoading: borrowerLoading } = useQuery({
     queryKey: ['borrower', borrowerId],
     queryFn: async () => {
-      const borrowers = await base44.entities.Borrower.filter({ id: borrowerId });
+      const borrowers = await api.entities.Borrower.filter({ id: borrowerId });
       return borrowers[0];
     },
     enabled: !!borrowerId
@@ -48,7 +48,7 @@ export default function BorrowerDetails() {
   const { data: loans = [], isLoading: loansLoading } = useQuery({
     queryKey: ['borrower-loans', borrowerId],
     queryFn: async () => {
-      const allLoans = await base44.entities.Loan.filter({ borrower_id: borrowerId }, '-created_date');
+      const allLoans = await api.entities.Loan.filter({ borrower_id: borrowerId }, '-created_date');
       return allLoans.filter(loan => !loan.is_deleted);
     },
     enabled: !!borrowerId
@@ -56,12 +56,12 @@ export default function BorrowerDetails() {
 
   const { data: transactions = [] } = useQuery({
     queryKey: ['borrower-transactions', borrowerId],
-    queryFn: () => base44.entities.Transaction.filter({ borrower_id: borrowerId }, '-date'),
+    queryFn: () => api.entities.Transaction.filter({ borrower_id: borrowerId }, '-date'),
     enabled: !!borrowerId
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data) => base44.entities.Borrower.update(borrowerId, data),
+    mutationFn: (data) => api.entities.Borrower.update(borrowerId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['borrower', borrowerId] });
       setIsEditOpen(false);
@@ -72,11 +72,11 @@ export default function BorrowerDetails() {
     mutationFn: async () => {
       if (loans.length === 0) {
         // Delete if no loans
-        await base44.entities.Borrower.delete(borrowerId);
+        await api.entities.Borrower.delete(borrowerId);
         return { action: 'deleted' };
       } else {
         // Archive if has loans
-        await base44.entities.Borrower.update(borrowerId, {
+        await api.entities.Borrower.update(borrowerId, {
           is_archived: true,
           archived_by: user?.email || 'unknown',
           archived_date: new Date().toISOString()

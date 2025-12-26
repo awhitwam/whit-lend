@@ -1,4 +1,4 @@
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { addMonths, addWeeks, format, differenceInDays, startOfMonth } from 'date-fns';
 
 /**
@@ -29,15 +29,15 @@ function calculatePeriodInterest(principal, annualRate, period, interestType, da
  */
 export async function regenerateLoanSchedule(loanId, options = {}) {
   // Fetch loan, product, and all transactions
-  const loans = await base44.entities.Loan.filter({ id: loanId });
+  const loans = await api.entities.Loan.filter({ id: loanId });
   const loan = loans[0];
   if (!loan) throw new Error('Loan not found');
 
-  const products = await base44.entities.LoanProduct.filter({ id: loan.product_id });
+  const products = await api.entities.LoanProduct.filter({ id: loan.product_id });
   const product = products[0];
   if (!product) throw new Error('Loan product not found');
 
-  const transactions = await base44.entities.Transaction.filter({ 
+  const transactions = await api.entities.Transaction.filter({ 
     loan_id: loanId, 
     is_deleted: false 
   }, 'date'); // Sorted by date ascending
@@ -113,14 +113,14 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   });
 
   // Delete old schedule and create new one (using batch operations for speed)
-  await base44.entities.RepaymentSchedule.deleteWhere({ loan_id: loanId });
+  await api.entities.RepaymentSchedule.deleteWhere({ loan_id: loanId });
 
   // Batch create all schedule rows at once
   const scheduleWithLoanId = schedule.map(row => ({
     loan_id: loanId,
     ...row
   }));
-  await base44.entities.RepaymentSchedule.createMany(scheduleWithLoanId);
+  await api.entities.RepaymentSchedule.createMany(scheduleWithLoanId);
 
   // Calculate totals from generated schedule
   const totalInterest = schedule.reduce((sum, row) => sum + row.interest_amount, 0);
@@ -128,7 +128,7 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   const totalRepayable = totalInterest + currentPrincipalOutstanding + (loan.exit_fee || 0);
 
   // Update loan
-  await base44.entities.Loan.update(loanId, {
+  await api.entities.Loan.update(loanId, {
     interest_rate: product.interest_rate,
     interest_type: product.interest_type,
     period: product.period,
@@ -606,7 +606,7 @@ export async function applyScheduleToNewLoan(loanData, product, options = {}) {
   const totalInterest = schedule.reduce((sum, row) => sum + row.interest_amount, 0);
   const totalRepayable = totalInterest + loanData.principal_amount + (loanData.exit_fee || 0);
 
-  const loan = await base44.entities.Loan.create({
+  const loan = await api.entities.Loan.create({
     ...loanData,
     interest_rate: product.interest_rate,
     interest_type: product.interest_type,
@@ -620,7 +620,7 @@ export async function applyScheduleToNewLoan(loanData, product, options = {}) {
   });
 
   for (const row of schedule) {
-    await base44.entities.RepaymentSchedule.create({
+    await api.entities.RepaymentSchedule.create({
       loan_id: loan.id,
       ...row
     });

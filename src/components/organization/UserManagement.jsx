@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { supabase } from '@/lib/supabaseClient';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -88,7 +88,7 @@ export default function UserManagement() {
 
   const updateRoleMutation = useMutation({
     mutationFn: async ({ memberId, role }) => {
-      return base44.entities.OrganizationMember.update(memberId, { role });
+      return api.entities.OrganizationMember.update(memberId, { role });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
@@ -106,7 +106,7 @@ export default function UserManagement() {
 
   const removeMemberMutation = useMutation({
     mutationFn: async (memberId) => {
-      return base44.entities.OrganizationMember.update(memberId, {
+      return api.entities.OrganizationMember.update(memberId, {
         is_active: false
       });
     },

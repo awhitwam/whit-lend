@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { supabase } from '@/lib/supabaseClient';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';

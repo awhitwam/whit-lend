@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -20,22 +20,22 @@ export default function Ledger() {
 
   const { data: transactions = [], isLoading: transactionsLoading } = useQuery({
     queryKey: ['transactions'],
-    queryFn: () => base44.entities.Transaction.list('-date')
+    queryFn: () => api.entities.Transaction.list('-date')
   });
 
   const { data: loans = [], isLoading: loansLoading } = useQuery({
     queryKey: ['loans'],
-    queryFn: () => base44.entities.Loan.list('-created_date')
+    queryFn: () => api.entities.Loan.list('-created_date')
   });
 
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
     queryKey: ['expenses'],
-    queryFn: () => base44.entities.Expense.list('-date')
+    queryFn: () => api.entities.Expense.list('-date')
   });
 
   const { data: investorTransactions = [], isLoading: investorTxLoading } = useQuery({
     queryKey: ['investor-transactions'],
-    queryFn: () => base44.entities.InvestorTransaction.list('-date')
+    queryFn: () => api.entities.InvestorTransaction.list('-date')
   });
 
   const isLoading = transactionsLoading || loansLoading || expensesLoading || investorTxLoading;

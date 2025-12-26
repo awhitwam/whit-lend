@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -17,13 +17,13 @@ export default function Borrowers() {
 
   const { data: allBorrowers = [], isLoading } = useQuery({
     queryKey: ['borrowers'],
-    queryFn: () => base44.entities.Borrower.list('-created_date')
+    queryFn: () => api.entities.Borrower.list('-created_date')
   });
 
   const borrowers = allBorrowers.filter(b => !b.is_archived);
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.Borrower.create(data),
+    mutationFn: (data) => api.entities.Borrower.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['borrowers'] });
       setIsFormOpen(false);
@@ -31,7 +31,7 @@ export default function Borrowers() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Borrower.update(id, data),
+    mutationFn: ({ id, data }) => api.entities.Borrower.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['borrowers'] });
       setIsFormOpen(false);
@@ -45,7 +45,7 @@ export default function Borrowers() {
     } else {
       // Auto-generate unique_number if not provided
       if (!data.unique_number) {
-        const allBorrowers = await base44.entities.Borrower.list();
+        const allBorrowers = await api.entities.Borrower.list();
         const highestNumber = allBorrowers.reduce((max, b) => {
           const num = parseInt(b.unique_number) || 0;
           return num > max ? num : max;

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,7 +23,7 @@ export default function Loans() {
 
   const { data: allLoans = [], isLoading } = useQuery({
     queryKey: ['loans'],
-    queryFn: () => base44.entities.Loan.list('-created_date')
+    queryFn: () => api.entities.Loan.list('-created_date')
   });
 
   const loans = allLoans.filter(loan => !loan.is_deleted);

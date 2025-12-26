@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,7 +24,7 @@ export default function InvestorDetails() {
   const { data: investor, isLoading: investorLoading } = useQuery({
     queryKey: ['investor', investorId],
     queryFn: async () => {
-      const investors = await base44.entities.Investor.filter({ id: investorId });
+      const investors = await api.entities.Investor.filter({ id: investorId });
       return investors[0];
     },
     enabled: !!investorId
@@ -32,12 +32,12 @@ export default function InvestorDetails() {
 
   const { data: transactions = [] } = useQuery({
     queryKey: ['investor-transactions', investorId],
-    queryFn: () => base44.entities.InvestorTransaction.filter({ investor_id: investorId }, '-date'),
+    queryFn: () => api.entities.InvestorTransaction.filter({ investor_id: investorId }, '-date'),
     enabled: !!investorId
   });
 
   const updateMutation = useMutation({
-    mutationFn: (data) => base44.entities.Investor.update(investorId, data),
+    mutationFn: (data) => api.entities.Investor.update(investorId, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
       setIsEditOpen(false);
@@ -46,7 +46,7 @@ export default function InvestorDetails() {
 
   const createTransactionMutation = useMutation({
     mutationFn: async (data) => {
-      await base44.entities.InvestorTransaction.create({
+      await api.entities.InvestorTransaction.create({
         ...data,
         investor_id: investorId,
         investor_name: investor.name
@@ -60,7 +60,7 @@ export default function InvestorDetails() {
       }
 
       if (capitalChange !== 0) {
-        await base44.entities.Investor.update(investorId, {
+        await api.entities.Investor.update(investorId, {
           current_capital_balance: (investor.current_capital_balance || 0) + capitalChange,
           total_capital_contributed: data.type === 'capital_in' 
             ? (investor.total_capital_contributed || 0) + data.amount 
@@ -79,7 +79,7 @@ export default function InvestorDetails() {
   const deleteTransactionMutation = useMutation({
     mutationFn: async (transactionId) => {
       const transaction = transactions.find(t => t.id === transactionId);
-      await base44.entities.InvestorTransaction.delete(transactionId);
+      await api.entities.InvestorTransaction.delete(transactionId);
 
       let capitalChange = 0;
       if (transaction.type === 'capital_in') {
@@ -89,7 +89,7 @@ export default function InvestorDetails() {
       }
 
       if (capitalChange !== 0) {
-        await base44.entities.Investor.update(investorId, {
+        await api.entities.Investor.update(investorId, {
           current_capital_balance: (investor.current_capital_balance || 0) + capitalChange,
           total_capital_contributed: transaction.type === 'capital_in'
             ? (investor.total_capital_contributed || 0) - transaction.amount

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
@@ -83,7 +83,7 @@ export default function LoanDetails() {
   const { data: loan, isLoading: loanLoading } = useQuery({
     queryKey: ['loan', loanId],
     queryFn: async () => {
-      const loans = await base44.entities.Loan.filter({ id: loanId });
+      const loans = await api.entities.Loan.filter({ id: loanId });
       return loans[0];
     },
     enabled: !!loanId
@@ -92,7 +92,7 @@ export default function LoanDetails() {
   const { data: product } = useQuery({
     queryKey: ['product', loan?.product_id],
     queryFn: async () => {
-      const products = await base44.entities.LoanProduct.filter({ id: loan.product_id });
+      const products = await api.entities.LoanProduct.filter({ id: loan.product_id });
       return products[0];
     },
     enabled: !!loan?.product_id
@@ -100,19 +100,19 @@ export default function LoanDetails() {
 
   const { data: schedule = [], isLoading: scheduleLoading } = useQuery({
     queryKey: ['loan-schedule', loanId],
-    queryFn: () => base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number'),
+    queryFn: () => api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number'),
     enabled: !!loanId
   });
 
   const { data: transactions = [] } = useQuery({
     queryKey: ['loan-transactions', loanId],
-    queryFn: () => base44.entities.Transaction.filter({ loan_id: loanId }, '-date'),
+    queryFn: () => api.entities.Transaction.filter({ loan_id: loanId }, '-date'),
     enabled: !!loanId
   });
 
   const { data: expenses = [] } = useQuery({
     queryKey: ['loan-expenses', loanId],
-    queryFn: () => base44.entities.Expense.filter({ loan_id: loanId }, '-date'),
+    queryFn: () => api.entities.Expense.filter({ loan_id: loanId }, '-date'),
     enabled: !!loanId
   });
 
@@ -123,20 +123,20 @@ export default function LoanDetails() {
       toast.loading('Updating loan...', { id: 'edit-loan' });
 
       // Fetch the product to get its settings
-      const products = await base44.entities.LoanProduct.filter({ id: updatedData.product_id });
+      const products = await api.entities.LoanProduct.filter({ id: updatedData.product_id });
       const product = products[0];
 
       if (!product) throw new Error('Product not found');
 
       // Update loan with new parameters
-      await base44.entities.Loan.update(loanId, updatedData);
+      await api.entities.Loan.update(loanId, updatedData);
 
       toast.loading('Regenerating schedule...', { id: 'edit-loan' });
 
       // Delete old schedule
-      const oldSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId });
+      const oldSchedule = await api.entities.RepaymentSchedule.filter({ loan_id: loanId });
       for (const row of oldSchedule) {
-        await base44.entities.RepaymentSchedule.delete(row.id);
+        await api.entities.RepaymentSchedule.delete(row.id);
       }
 
       // Use centralized schedule manager to regenerate
@@ -153,7 +153,7 @@ export default function LoanDetails() {
       
       // Reapply all non-deleted payments
       const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
-      const newScheduleRows = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
+      const newScheduleRows = await api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
       
       let totalPrincipalPaid = 0;
       let totalInterestPaid = 0;
@@ -162,7 +162,7 @@ export default function LoanDetails() {
         const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
         
         for (const update of updates) {
-          await base44.entities.RepaymentSchedule.update(update.id, {
+          await api.entities.RepaymentSchedule.update(update.id, {
             interest_paid: update.interest_paid,
             principal_paid: update.principal_paid,
             status: update.status
@@ -173,7 +173,7 @@ export default function LoanDetails() {
       }
       
       // Update loan payment totals
-      await base44.entities.Loan.update(loanId, {
+      await api.entities.Loan.update(loanId, {
         principal_paid: totalPrincipalPaid,
         interest_paid: totalInterestPaid
       });
@@ -198,7 +198,7 @@ export default function LoanDetails() {
 
   const deleteLoanMutation = useMutation({
     mutationFn: async (reason) => {
-      await base44.entities.Loan.update(loanId, {
+      await api.entities.Loan.update(loanId, {
         is_deleted: true,
         deleted_by: user?.email || 'unknown',
         deleted_date: new Date().toISOString(),
@@ -217,7 +217,7 @@ export default function LoanDetails() {
       const transaction = transactions.find(t => t.id === transactionId);
 
       // Mark transaction as deleted (audit trail)
-      await base44.entities.Transaction.update(transactionId, {
+      await api.entities.Transaction.update(transactionId, {
         is_deleted: true,
         deleted_by: user?.email || 'unknown',
         deleted_date: new Date().toISOString(),
@@ -228,18 +228,18 @@ export default function LoanDetails() {
       const newPrincipalPaid = (loan.principal_paid || 0) - (transaction.principal_applied || 0);
       const newInterestPaid = (loan.interest_paid || 0) - (transaction.interest_applied || 0);
       
-      await base44.entities.Loan.update(loanId, {
+      await api.entities.Loan.update(loanId, {
         principal_paid: Math.max(0, newPrincipalPaid),
         interest_paid: Math.max(0, newInterestPaid),
         status: 'Live' // Reopen if was closed
       });
       
       // Reverse schedule updates - recalculate from all non-deleted transactions
-      const allSchedule = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
+      const allSchedule = await api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
       
       // Reset all schedule rows
       for (const row of allSchedule) {
-        await base44.entities.RepaymentSchedule.update(row.id, {
+        await api.entities.RepaymentSchedule.update(row.id, {
           principal_paid: 0,
           interest_paid: 0,
           status: 'Pending'
@@ -252,7 +252,7 @@ export default function LoanDetails() {
         const { updates } = applyPaymentWaterfall(tx.amount, allSchedule, 0, 'credit');
         for (const update of updates) {
           const currentRow = allSchedule.find(r => r.id === update.id);
-          await base44.entities.RepaymentSchedule.update(update.id, {
+          await api.entities.RepaymentSchedule.update(update.id, {
             interest_paid: update.interest_paid,
             principal_paid: update.principal_paid,
             status: update.status
@@ -277,7 +277,7 @@ export default function LoanDetails() {
   const updateStatusMutation = useMutation({
     mutationFn: (status) => {
       toast.loading('Updating loan status...', { id: 'update-status' });
-      return base44.entities.Loan.update(loanId, { status });
+      return api.entities.Loan.update(loanId, { status });
     },
     onSuccess: async () => {
       await Promise.all([
@@ -294,7 +294,7 @@ export default function LoanDetails() {
   const toggleAutoExtendMutation = useMutation({
     mutationFn: () => {
       toast.loading('Updating auto-extend...', { id: 'auto-extend' });
-      return base44.entities.Loan.update(loanId, { auto_extend: !loan.auto_extend });
+      return api.entities.Loan.update(loanId, { auto_extend: !loan.auto_extend });
     },
     onSuccess: async () => {
       await queryClient.refetchQueries({ queryKey: ['loan', loanId] });
@@ -322,7 +322,7 @@ export default function LoanDetails() {
 
       // Reapply all non-deleted payments
       const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
-      const newScheduleRows = await base44.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
+      const newScheduleRows = await api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
 
       let totalPrincipalPaid = 0;
       let totalInterestPaid = 0;
@@ -331,7 +331,7 @@ export default function LoanDetails() {
         const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
 
         for (const update of updates) {
-          await base44.entities.RepaymentSchedule.update(update.id, {
+          await api.entities.RepaymentSchedule.update(update.id, {
             interest_paid: update.interest_paid,
             principal_paid: update.principal_paid,
             status: update.status
@@ -342,7 +342,7 @@ export default function LoanDetails() {
       }
 
       // Update loan payment totals
-      await base44.entities.Loan.update(loanId, {
+      await api.entities.Loan.update(loanId, {
         principal_paid: totalPrincipalPaid,
         interest_paid: totalInterestPaid
       });
@@ -372,46 +372,9 @@ export default function LoanDetails() {
   const generateAISummary = async () => {
     setIsLoadingSummary(true);
     try {
-      const result = await base44.integrations.Core.InvokeLLM({
-        prompt: `You are a loan analyst. Analyze this loan repayment data and provide a clear, concise summary.
-
-Loan Details:
-- Borrower: ${loan.borrower_name}
-- Principal: ${formatCurrency(loan.principal_amount)}
-- Interest Rate: ${loan.interest_rate}% ${loan.interest_type}
-- Duration: ${loan.duration} ${loan.period === 'Monthly' ? 'months' : 'weeks'}
-- Start Date: ${format(new Date(loan.start_date), 'MMM dd, yyyy')}
-- Status: ${loan.status}
-
-Financial Summary:
-- Total Repayable: ${formatCurrency(loan.total_repayable)}
-- Principal Paid: ${formatCurrency(actualPrincipalPaid)} / ${formatCurrency(loan.principal_amount)}
-- Interest Paid: ${formatCurrency(actualInterestPaid)} / ${formatCurrency(loan.total_interest)}
-- Outstanding: ${formatCurrency(totalOutstanding)}
-
-Schedule Progress:
-- Total Installments: ${schedule.length}
-- Paid: ${schedule.filter(s => s.status === 'Paid').length}
-- Partial: ${schedule.filter(s => s.status === 'Partial').length}
-- Pending: ${schedule.filter(s => s.status === 'Pending').length}
-- Overdue: ${schedule.filter(s => s.status === 'Overdue').length}
-
-Recent Transactions (last 5):
-${transactions.filter(t => !t.is_deleted).slice(0, 5).map(t => 
-  `- ${format(new Date(t.date), 'MMM dd, yyyy')}: ${formatCurrency(t.amount)} (Principal: ${formatCurrency(t.principal_applied || 0)}, Interest: ${formatCurrency(t.interest_applied || 0)})`
-).join('\n')}
-
-Please provide:
-1. A brief overall assessment of the loan status
-2. Payment performance (on time, behind, ahead)
-3. Any concerns or positive observations
-4. Next steps or recommendations
-
-Keep it concise and actionable. Use bullet points where appropriate.`,
-        add_context_from_internet: false
-      });
-      
-      setAiSummary(result);
+      // AI summary feature requires external LLM integration
+      // TODO: Integrate with OpenAI or other LLM provider
+      setAiSummary("AI summary feature is currently not available. This feature requires LLM integration to be configured.");
     } catch (error) {
       toast.error('Failed to generate AI summary');
     } finally {
@@ -441,7 +404,7 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
       
       // Update schedule rows
       for (const update of updates) {
-        await base44.entities.RepaymentSchedule.update(update.id, {
+        await api.entities.RepaymentSchedule.update(update.id, {
           interest_paid: update.interest_paid,
           principal_paid: update.principal_paid,
           status: update.status
@@ -454,12 +417,12 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
       if (isSettlement) {
         const remainingInstallments = schedule.filter(row => row.status === 'Pending');
         for (const row of remainingInstallments) {
-          await base44.entities.RepaymentSchedule.delete(row.id);
+          await api.entities.RepaymentSchedule.delete(row.id);
         }
       }
       
       // Create transaction
-      await base44.entities.Transaction.create({
+      await api.entities.Transaction.create({
         ...paymentData,
         principal_applied: totalPrincipalApplied,
         interest_applied: totalInterestApplied
@@ -480,7 +443,7 @@ Keep it concise and actionable. Use bullet points where appropriate.`,
         updateData.status = 'Closed';
       }
       
-      await base44.entities.Loan.update(loanId, updateData);
+      await api.entities.Loan.update(loanId, updateData);
       
       return { totalPrincipalApplied, totalInterestApplied, principalReduction, creditAmount };
     },

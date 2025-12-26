@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,11 +18,11 @@ export default function Products() {
 
   const { data: products = [], isLoading } = useQuery({
     queryKey: ['products'],
-    queryFn: () => base44.entities.LoanProduct.list('-created_date')
+    queryFn: () => api.entities.LoanProduct.list('-created_date')
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => base44.entities.LoanProduct.create(data),
+    mutationFn: (data) => api.entities.LoanProduct.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       setIsFormOpen(false);
@@ -30,7 +30,7 @@ export default function Products() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.LoanProduct.update(id, data),
+    mutationFn: ({ id, data }) => api.entities.LoanProduct.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
       setIsFormOpen(false);
@@ -39,7 +39,7 @@ export default function Products() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => base44.entities.LoanProduct.delete(id),
+    mutationFn: (id) => api.entities.LoanProduct.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['products'] });
     }

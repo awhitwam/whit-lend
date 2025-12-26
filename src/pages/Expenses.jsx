@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -37,21 +37,21 @@ export default function Expenses() {
 
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
     queryKey: ['expenses'],
-    queryFn: () => base44.entities.Expense.list('-date')
+    queryFn: () => api.entities.Expense.list('-date')
   });
 
   const { data: expenseTypes = [], isLoading: typesLoading } = useQuery({
     queryKey: ['expense-types'],
-    queryFn: () => base44.entities.ExpenseType.list('name')
+    queryFn: () => api.entities.ExpenseType.list('name')
   });
 
   const { data: loans = [] } = useQuery({
     queryKey: ['loans'],
-    queryFn: () => base44.entities.Loan.list('-created_date')
+    queryFn: () => api.entities.Loan.list('-created_date')
   });
 
   const createExpenseMutation = useMutation({
-    mutationFn: (data) => base44.entities.Expense.create(data),
+    mutationFn: (data) => api.entities.Expense.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       setIsExpenseDialogOpen(false);
@@ -60,7 +60,7 @@ export default function Expenses() {
   });
 
   const updateExpenseMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Expense.update(id, data),
+    mutationFn: ({ id, data }) => api.entities.Expense.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       setIsExpenseDialogOpen(false);
@@ -69,14 +69,14 @@ export default function Expenses() {
   });
 
   const deleteExpenseMutation = useMutation({
-    mutationFn: (id) => base44.entities.Expense.delete(id),
+    mutationFn: (id) => api.entities.Expense.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
     }
   });
 
   const createTypeMutation = useMutation({
-    mutationFn: (data) => base44.entities.ExpenseType.create(data),
+    mutationFn: (data) => api.entities.ExpenseType.create(data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expense-types'] });
       setTypeName('');
@@ -85,7 +85,7 @@ export default function Expenses() {
   });
 
   const updateTypeMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.ExpenseType.update(id, data),
+    mutationFn: ({ id, data }) => api.entities.ExpenseType.update(id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expense-types'] });
       setIsTypeDialogOpen(false);
@@ -96,7 +96,7 @@ export default function Expenses() {
   });
 
   const deleteTypeMutation = useMutation({
-    mutationFn: (id) => base44.entities.ExpenseType.delete(id),
+    mutationFn: (id) => api.entities.ExpenseType.delete(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expense-types'] });
     }

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
-import { base44 } from '@/api/base44Client';
+import { api } from '@/api/dataClient';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -91,7 +91,7 @@ export default function ImportBorrowers() {
       const rows = parseCSV(text);
       
       // Fetch existing borrowers
-      const existingBorrowers = await base44.entities.Borrower.list();
+      const existingBorrowers = await api.entities.Borrower.list();
       
       let created = 0;
       let updated = 0;
@@ -116,11 +116,11 @@ export default function ImportBorrowers() {
 
           if (existing) {
             // Update existing
-            await base44.entities.Borrower.update(existing.id, borrowerData);
+            await api.entities.Borrower.update(existing.id, borrowerData);
             updated++;
           } else {
             // Create new
-            await base44.entities.Borrower.create(borrowerData);
+            await api.entities.Borrower.create(borrowerData);
             created++;
           }
         } catch (error) {

@@ -38,7 +38,7 @@ export default function NavigationTracker() {
             pageName = matchedKey || null;
         }
 
-        // Navigation logging removed - base44.appLogs no longer available
+        // Navigation logging can be added here if needed
     }, [location, isAuthenticated, Pages, mainPageKey]);
 
     return null;
