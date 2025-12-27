@@ -4,6 +4,7 @@ import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { logLoanEvent, logTransactionEvent, AuditAction } from '@/lib/auditLog';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -53,7 +54,7 @@ import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanModal from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
-import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding, calculateAccruedInterest } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import { format } from 'date-fns';
@@ -71,6 +72,8 @@ export default function LoanDetails() {
   const [regenerateEndDate, setRegenerateEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [deleteAuthorized, setDeleteAuthorized] = useState(false);
   const [txPage, setTxPage] = useState(1);
   const [txPerPage, setTxPerPage] = useState(25);
   const [aiSummary, setAiSummary] = useState('');
@@ -128,8 +131,20 @@ export default function LoanDetails() {
 
       if (!product) throw new Error('Product not found');
 
+      // Capture previous values for audit
+      const previousValues = {
+        principal_amount: loan.principal_amount,
+        interest_rate: loan.interest_rate,
+        duration: loan.duration,
+        start_date: loan.start_date,
+        auto_extend: loan.auto_extend
+      };
+
       // Update loan with new parameters
       await api.entities.Loan.update(loanId, updatedData);
+
+      // Log loan update to audit trail
+      await logLoanEvent(AuditAction.LOAN_UPDATE, loan, updatedData, previousValues);
 
       toast.loading('Regenerating schedule...', { id: 'edit-loan' });
 
@@ -204,6 +219,14 @@ export default function LoanDetails() {
         deleted_date: new Date().toISOString(),
         deleted_reason: reason
       });
+      // Log loan deletion to audit trail
+      await logLoanEvent(AuditAction.LOAN_DELETE, loan, {
+        reason,
+        deleted_by: user?.email || 'unknown',
+        principal_amount: loan.principal_amount,
+        borrower_name: loan.borrower_name,
+        status_at_deletion: loan.status
+      });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['loans'] });
@@ -222,6 +245,15 @@ export default function LoanDetails() {
         deleted_by: user?.email || 'unknown',
         deleted_date: new Date().toISOString(),
         deleted_reason: reason
+      });
+
+      // Log transaction deletion to audit trail
+      await logTransactionEvent(AuditAction.TRANSACTION_DELETE, transaction, loan, {
+        reason,
+        deleted_by: user?.email || 'unknown',
+        amount: transaction.amount,
+        principal_applied: transaction.principal_applied,
+        interest_applied: transaction.interest_applied
       });
       
       // Reverse the transaction effects
@@ -422,24 +454,42 @@ export default function LoanDetails() {
       }
       
       // Create transaction
-      await api.entities.Transaction.create({
+      const createdTransaction = await api.entities.Transaction.create({
         ...paymentData,
         principal_applied: totalPrincipalApplied,
         interest_applied: totalInterestApplied
+      });
+
+      // Log payment to audit trail
+      await logTransactionEvent(AuditAction.TRANSACTION_CREATE, {
+        id: createdTransaction?.id || 'unknown',
+        type: paymentData.type || 'Repayment',
+        amount: paymentData.amount
+      }, loan, {
+        principal_applied: totalPrincipalApplied,
+        interest_applied: totalInterestApplied,
+        is_settlement: isSettlement,
+        reference: paymentData.reference || null
       });
       
       // Update loan totals
       const newPrincipalPaid = (loan.principal_paid || 0) + totalPrincipalApplied;
       const newInterestPaid = (loan.interest_paid || 0) + totalInterestApplied;
-      
+
+      // Calculate total principal including disbursements
+      const disbursementTotal = transactions
+        .filter(t => !t.is_deleted && t.type === 'Disbursement')
+        .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+      const loanTotalPrincipal = loan.principal_amount + disbursementTotal;
+
       const updateData = {
         principal_paid: newPrincipalPaid,
         interest_paid: newInterestPaid,
         overpayment_credit: creditAmount
       };
-      
+
       // Check if loan is fully paid or settled
-      if (isSettlement || (newPrincipalPaid >= loan.principal_amount && newInterestPaid >= loan.total_interest)) {
+      if (isSettlement || (newPrincipalPaid >= loanTotalPrincipal && newInterestPaid >= loan.total_interest)) {
         updateData.status = 'Closed';
       }
       
@@ -510,17 +560,28 @@ export default function LoanDetails() {
   const actualInterestPaid = transactions
     .filter(t => !t.is_deleted && t.type === 'Repayment')
     .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-  
+
+  // Calculate total disbursements (further advances)
+  const totalDisbursements = transactions
+    .filter(t => !t.is_deleted && t.type === 'Disbursement')
+    .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+
+  // Total principal = initial amount + all disbursements
+  const totalPrincipal = loan.principal_amount + totalDisbursements;
+
   // Calculate totals from repayment schedule
   const schedulePrincipalPaid = schedule.reduce((sum, row) => sum + (row.principal_paid || 0), 0);
   const scheduleInterestPaid = schedule.reduce((sum, row) => sum + (row.interest_paid || 0), 0);
   const totalPaidFromSchedule = actualPrincipalPaid + actualInterestPaid;
-  
-  const principalRemaining = loan.principal_amount - actualPrincipalPaid;
+
+  const principalRemaining = totalPrincipal - actualPrincipalPaid;
   const interestRemaining = loan.total_interest - actualInterestPaid;
   const totalOutstanding = principalRemaining + interestRemaining;
-  const progressPercent = (actualPrincipalPaid / loan.principal_amount) * 100;
-  const liveInterestOutstanding = calculateLiveInterestOutstanding(loan);
+  const progressPercent = (actualPrincipalPaid / totalPrincipal) * 100;
+
+  // Calculate live interest using actual paid from transactions
+  const accruedInterestToday = calculateAccruedInterest(loan);
+  const liveInterestOutstanding = accruedInterestToday - actualInterestPaid;
   const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
 
     return (
@@ -544,12 +605,14 @@ export default function LoanDetails() {
                 <Link to={createPageUrl('Loans')} className="text-slate-300 hover:text-white transition-colors">
                   <ArrowLeft className="w-4 h-4" />
                 </Link>
-                <div>
-                  <h1 className="text-base font-bold">
-                    {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`} - {loan.borrower_name}
-                  </h1>
-                  <p className="text-xs text-slate-300">{loan.product_name}</p>
-                </div>
+                <h1 className="text-base font-bold">
+                  {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`}
+                  {loan.description && <span className="font-normal text-slate-300"> - {loan.description}</span>}
+                  <span className="font-normal text-slate-400">, </span>
+                  <span className="font-normal">{loan.borrower_name}</span>
+                  <span className="font-normal text-slate-400">, </span>
+                  <span className="font-normal text-slate-300">{loan.product_name}</span>
+                </h1>
               </div>
               <div className="flex items-center gap-2">
                 <Badge className={`${getStatusColor(loan.status)} text-xs px-2 py-0.5`}>
@@ -635,7 +698,7 @@ export default function LoanDetails() {
             <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-sm mb-4">
               <div>
                 <p className="text-slate-500 mb-0.5 text-xs">Principal</p>
-                <p className="font-bold text-base">{formatCurrency(loan.principal_amount)}</p>
+                <p className="font-bold text-base">{formatCurrency(totalPrincipal)}</p>
               </div>
               <div>
                 <p className="text-slate-500 mb-0.5 text-xs">Rate</p>
@@ -706,50 +769,135 @@ export default function LoanDetails() {
         </Card>
 
         {/* Financial Summary */}
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-1.5">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+          {/* Principal Outstanding */}
           <Card className="bg-gradient-to-br from-blue-50 to-blue-100/50 border-blue-200">
-            <CardContent className="px-2 py-1.5">
-              <p className="text-[10px] text-blue-600 font-medium">Total Repayable</p>
-              <p className="text-sm font-bold text-blue-900">{formatCurrency(loan.total_repayable)}</p>
+            <CardContent className="px-3 py-2">
+              <div className="flex justify-between items-baseline mb-1">
+                <span className="text-sm text-blue-600 font-medium">Principal Outstanding</span>
+                <span className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</span>
+              </div>
+              <div className="text-xs text-slate-600 space-y-0.5">
+                <div className="flex justify-between">
+                  <span>Initial:</span>
+                  <span className="font-mono">{formatCurrency(loan.principal_amount)}</span>
+                </div>
+                {totalDisbursements > 0 && (
+                  <div className="flex justify-between text-orange-600">
+                    <span>Further advances:</span>
+                    <span className="font-mono">+{formatCurrency(totalDisbursements)}</span>
+                  </div>
+                )}
+                {actualPrincipalPaid > 0 && (
+                  <div className="flex justify-between text-emerald-600">
+                    <span>Repaid:</span>
+                    <span className="font-mono">-{formatCurrency(actualPrincipalPaid)}</span>
+                  </div>
+                )}
+                {isLoanActive && (() => {
+                  // If net_disbursed exists and is less than principal, arrangement fee was paid in advance
+                  const arrangementFeePaidInAdvance = loan.net_disbursed && loan.net_disbursed < loan.principal_amount;
+                  const outstandingArrangementFee = arrangementFeePaidInAdvance ? 0 : (loan.arrangement_fee || 0);
+                  const outstandingFees = outstandingArrangementFee + (loan.exit_fee || 0);
+                  const settlementTotal = principalRemaining + Math.max(0, liveInterestOutstanding) + outstandingFees;
+
+                  return (
+                    <div className="pt-1 mt-1 border-t border-blue-200 space-y-0.5">
+                      <div className="flex justify-between text-slate-500">
+                        <span>Principal:</span>
+                        <span className="font-mono">{formatCurrency(principalRemaining)}</span>
+                      </div>
+                      <div className="flex justify-between text-slate-500">
+                        <span>Interest (live):</span>
+                        <span className="font-mono">{formatCurrency(Math.max(0, liveInterestOutstanding))}</span>
+                      </div>
+                      {outstandingFees > 0 && (
+                        <div className="flex justify-between text-slate-500">
+                          <span>Fees:</span>
+                          <span className="font-mono">{formatCurrency(outstandingFees)}</span>
+                        </div>
+                      )}
+                      <div className="flex justify-between font-semibold text-blue-800 pt-0.5">
+                        <span>Settlement today:</span>
+                        <span className="font-mono">{formatCurrency(settlementTotal)}</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
             </CardContent>
           </Card>
+
+          {/* Interest */}
           <Card className="bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200">
-            <CardContent className="px-2 py-1.5">
-              <p className="text-[10px] text-amber-600 font-medium">Interest Received</p>
-              <p className="text-sm font-bold text-amber-900">{formatCurrency(actualInterestPaid)}</p>
+            <CardContent className="px-3 py-2">
+              <div className="flex justify-between items-baseline mb-1">
+                <span className="text-sm text-amber-600 font-medium">Interest Outstanding</span>
+                <span className="text-xl font-bold text-amber-900">{formatCurrency(interestRemaining)}</span>
+              </div>
+              <div className="text-xs text-slate-600 space-y-0.5">
+                <div className="flex justify-between">
+                  <span>Expected (schedule):</span>
+                  <span className="font-mono">{formatCurrency(loan.total_interest)}</span>
+                </div>
+                <div className="flex justify-between text-emerald-600">
+                  <span>Received:</span>
+                  <span className="font-mono">-{formatCurrency(actualInterestPaid)}</span>
+                </div>
+                {isLoanActive && (
+                  <>
+                    <div className="flex justify-between pt-0.5 border-t border-slate-200">
+                      <span>Accrued to today:</span>
+                      <span className="font-mono">{formatCurrency(accruedInterestToday)}</span>
+                    </div>
+                    <div className={`flex justify-between ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                      <span>Settlement balance:</span>
+                      <span className="font-mono">{liveInterestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(liveInterestOutstanding))}</span>
+                    </div>
+                  </>
+                )}
+              </div>
             </CardContent>
           </Card>
-          <Card className="bg-gradient-to-br from-emerald-50 to-emerald-100/50 border-emerald-200">
-            <CardContent className="px-2 py-1.5">
-              <p className="text-[10px] text-emerald-600 font-medium">Amount Paid</p>
-              <p className="text-sm font-bold text-emerald-900">{formatCurrency(totalPaidFromSchedule)}</p>
-            </CardContent>
-          </Card>
-          <Card className="bg-gradient-to-br from-red-50 to-red-100/50 border-red-200">
-            <CardContent className="px-2 py-1.5">
-              <p className="text-[10px] text-red-600 font-medium">Outstanding</p>
-              <p className="text-sm font-bold text-red-900">{formatCurrency(totalOutstanding)}</p>
-              {loan.overpayment_credit > 0 && (
-                <p className="text-[10px] text-blue-600 flex items-center gap-0.5">
-                  <CheckCircle2 className="w-2.5 h-2.5" />
-                  Credit: {formatCurrency(loan.overpayment_credit)}
-                </p>
-              )}
-            </CardContent>
-          </Card>
-          {isLoanActive && (
-            <Card className={`bg-gradient-to-br ${liveInterestOutstanding < 0 ? 'from-emerald-50 to-emerald-100/50 border-emerald-200' : 'from-purple-50 to-purple-100/50 border-purple-200'}`}>
-              <CardContent className="px-2 py-1.5">
-                <p className={`text-[10px] font-medium ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-purple-600'}`}>
-                  Live Interest {liveInterestOutstanding < 0 ? 'Overpaid' : 'Due'}
-                </p>
-                <p className={`text-sm font-bold ${liveInterestOutstanding < 0 ? 'text-emerald-900' : 'text-purple-900'}`}>
-                  {liveInterestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(liveInterestOutstanding))}
-                </p>
-                <p className="text-[10px] text-slate-500">As of today</p>
-              </CardContent>
-            </Card>
-          )}
+
+          {/* Fees Outstanding */}
+          {(() => {
+            const arrangementFeePaidInAdvance = loan.net_disbursed && loan.net_disbursed < loan.principal_amount;
+            const outstandingArrangementFee = arrangementFeePaidInAdvance ? 0 : (loan.arrangement_fee || 0);
+            const totalFeesOutstanding = outstandingArrangementFee + (loan.exit_fee || 0);
+
+            return (
+              <Card className="bg-gradient-to-br from-purple-50 to-purple-100/50 border-purple-200">
+                <CardContent className="px-3 py-2">
+                  <div className="flex justify-between items-baseline mb-1">
+                    <span className="text-sm text-purple-600 font-medium">Fees Outstanding</span>
+                    <span className="text-xl font-bold text-purple-900">{formatCurrency(totalFeesOutstanding)}</span>
+                  </div>
+                  <div className="text-xs text-slate-600 space-y-0.5">
+                    {loan.arrangement_fee > 0 && (
+                      <div className="flex justify-between">
+                        <span>Arrangement fee:</span>
+                        {arrangementFeePaidInAdvance ? (
+                          <span className="font-mono text-emerald-600">{formatCurrency(loan.arrangement_fee)} (paid)</span>
+                        ) : (
+                          <span className="font-mono">{formatCurrency(loan.arrangement_fee)}</span>
+                        )}
+                      </div>
+                    )}
+                    {loan.exit_fee > 0 && (
+                      <div className="flex justify-between">
+                        <span>Exit fee:</span>
+                        <span className="font-mono">{formatCurrency(loan.exit_fee)}</span>
+                      </div>
+                    )}
+                    {!loan.arrangement_fee && !loan.exit_fee && (
+                      <div className="text-slate-400">No fees on this loan</div>
+                    )}
+                  </div>
+                </CardContent>
+              </Card>
+            );
+          })()}
         </div>
 
         {/* Tabs for different views */}
@@ -1175,35 +1323,125 @@ export default function LoanDetails() {
         </AlertDialog>
 
         {/* Delete Loan Dialog */}
-        <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
-          <AlertDialogContent>
+        <AlertDialog open={isDeleteDialogOpen} onOpenChange={(open) => {
+          setIsDeleteDialogOpen(open);
+          if (!open) {
+            setDeleteReason('');
+            setDeleteConfirmation('');
+            setDeleteAuthorized(false);
+          }
+        }}>
+          <AlertDialogContent className="max-w-lg">
             <AlertDialogHeader>
-              <AlertDialogTitle>Delete Loan?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Please provide a reason for deleting this loan. This action marks the loan as deleted but preserves the record for audit purposes.
+              <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                <AlertTriangle className="w-5 h-5" />
+                Delete Loan - Requires Authorization
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-left">
+                This action will mark the loan as deleted. The record is preserved for audit purposes but will no longer appear in active views.
               </AlertDialogDescription>
             </AlertDialogHeader>
-            <div className="py-4">
-              <textarea
-                className="w-full min-h-[100px] px-3 py-2 border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-emerald-500"
-                placeholder="Enter reason for deletion..."
-                value={deleteReason}
-                onChange={(e) => setDeleteReason(e.target.value)}
-              />
+
+            <div className="space-y-4 py-2">
+              {/* Warning about payments */}
+              {transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length > 0 && (
+                <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                  <div className="flex items-start gap-2">
+                    <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                    <div className="text-sm">
+                      <p className="font-medium text-amber-800">This loan has received payments</p>
+                      <p className="text-amber-700 mt-1">
+                        {transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length} repayment(s) totaling {formatCurrency(transactions.filter(t => !t.is_deleted && t.type === 'Repayment').reduce((sum, t) => sum + t.amount, 0))} have been recorded against this loan.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Loan Summary */}
+              <div className="bg-slate-50 rounded-lg p-3 text-sm">
+                <p className="font-medium text-slate-700 mb-2">Loan Details</p>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-slate-500">Loan Number:</span>
+                    <span className="ml-1 font-mono font-semibold">{loan.loan_number || 'N/A'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Borrower:</span>
+                    <span className="ml-1 font-medium">{loan.borrower_name}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Principal:</span>
+                    <span className="ml-1 font-mono">{formatCurrency(totalPrincipal)}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500">Status:</span>
+                    <span className="ml-1">{loan.status}</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Reason for deletion */}
+              <div className="space-y-2">
+                <Label htmlFor="delete-reason" className="text-sm font-medium">
+                  Reason for Deletion <span className="text-red-500">*</span>
+                </Label>
+                <textarea
+                  id="delete-reason"
+                  className="w-full min-h-[80px] px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                  placeholder="Provide a detailed reason for deleting this loan (e.g., duplicate entry, data error, customer request)..."
+                  value={deleteReason}
+                  onChange={(e) => setDeleteReason(e.target.value)}
+                />
+              </div>
+
+              {/* Confirmation input */}
+              <div className="space-y-2">
+                <Label htmlFor="delete-confirm" className="text-sm font-medium">
+                  Type <span className="font-mono bg-slate-100 px-1 rounded">{loan.loan_number || loan.id.slice(0, 8)}</span> to confirm <span className="text-red-500">*</span>
+                </Label>
+                <Input
+                  id="delete-confirm"
+                  className="font-mono"
+                  placeholder={loan.loan_number || loan.id.slice(0, 8)}
+                  value={deleteConfirmation}
+                  onChange={(e) => setDeleteConfirmation(e.target.value)}
+                />
+              </div>
+
+              {/* Authorization checkbox */}
+              <div className="flex items-start gap-2 p-3 bg-red-50 border border-red-200 rounded-lg">
+                <input
+                  type="checkbox"
+                  id="delete-authorized"
+                  checked={deleteAuthorized}
+                  onChange={(e) => setDeleteAuthorized(e.target.checked)}
+                  className="mt-1 w-4 h-4 rounded border-red-300 text-red-600 focus:ring-red-500"
+                />
+                <label htmlFor="delete-authorized" className="text-sm text-red-800">
+                  I confirm I am authorized to delete this loan record and understand this action will be logged for audit purposes.
+                </label>
+              </div>
             </div>
+
             <AlertDialogFooter>
-              <AlertDialogCancel onClick={() => setDeleteReason('')}>Cancel</AlertDialogCancel>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 onClick={() => {
-                  if (deleteReason.trim()) {
-                    deleteLoanMutation.mutate(deleteReason);
-                    setIsDeleteDialogOpen(false);
-                    setDeleteReason('');
-                  }
+                  deleteLoanMutation.mutate(deleteReason);
+                  setIsDeleteDialogOpen(false);
+                  setDeleteReason('');
+                  setDeleteConfirmation('');
+                  setDeleteAuthorized(false);
                 }}
-                disabled={!deleteReason.trim()}
-                className="bg-red-600 hover:bg-red-700"
+                disabled={
+                  !deleteReason.trim() ||
+                  deleteConfirmation !== (loan.loan_number || loan.id.slice(0, 8)) ||
+                  !deleteAuthorized
+                }
+                className="bg-red-600 hover:bg-red-700 disabled:opacity-50"
               >
+                <Trash2 className="w-4 h-4 mr-2" />
                 Delete Loan
               </AlertDialogAction>
             </AlertDialogFooter>

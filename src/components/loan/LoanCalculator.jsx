@@ -714,12 +714,12 @@ export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0,
 }
 
 /**
- * Calculate live interest outstanding based on daily accrual
+ * Calculate accrued interest to date (what would be owed if settled today)
  * @param {Object} loan - Loan object
  * @param {Date} asOfDate - Date to calculate as of (defaults to today)
- * @returns {number} Live interest outstanding (negative if overpaid)
+ * @returns {number} Total accrued interest (not reduced by payments)
  */
- export function calculateLiveInterestOutstanding(loan, asOfDate = new Date()) {
+export function calculateAccruedInterest(loan, asOfDate = new Date()) {
   if (!loan || loan.status === 'Pending') {
     return 0;
   }
@@ -728,89 +728,90 @@ export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0,
   const today = new Date(asOfDate);
   today.setHours(0, 0, 0, 0);
   startDate.setHours(0, 0, 0, 0);
-  
+
   // Days elapsed since loan start
   const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)));
-  
+
   const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
   const daysPerPeriod = loan.period === 'Monthly' ? 30.417 : 7; // Average days
   const periodsElapsed = daysElapsed / daysPerPeriod;
   const principal = loan.principal_amount;
   const annualRate = loan.interest_rate / 100;
   const periodRate = annualRate / periodsPerYear;
-  
+
   let accruedInterest = 0;
-  
+
   if (loan.interest_type === 'Flat') {
     // Flat rate: total interest spread evenly
     const totalInterest = loan.total_interest;
     const interestPerDay = totalInterest / (loan.duration * daysPerPeriod);
     accruedInterest = Math.min(interestPerDay * daysElapsed, totalInterest);
-    
+
   } else if (loan.interest_type === 'Reducing') {
     // Reducing balance: calculate based on what should have been paid by now
     const periodsCompleted = Math.min(Math.floor(periodsElapsed), loan.duration);
     const dailyRate = annualRate / 365;
-    
+
     // Simple approximation: use reducing balance formula for periods completed
     let remainingBalance = principal;
     const r = periodRate;
     const n = loan.duration;
     const pmt = principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
-    
+
     for (let i = 0; i < periodsCompleted; i++) {
       const interestForPeriod = remainingBalance * r;
       accruedInterest += interestForPeriod;
       const principalForPeriod = pmt - interestForPeriod;
       remainingBalance -= principalForPeriod;
     }
-    
+
     // Add partial period interest
     if (periodsElapsed > periodsCompleted && remainingBalance > 0) {
       const daysInPartialPeriod = daysElapsed - (periodsCompleted * daysPerPeriod);
       accruedInterest += remainingBalance * dailyRate * daysInPartialPeriod;
     }
-    
+
   } else if (loan.interest_type === 'Interest-Only') {
-    const interestOnlyPeriod = loan.interest_only_period || loan.duration;
-    const periodsCompleted = Math.min(Math.floor(periodsElapsed), interestOnlyPeriod);
+    // For Interest-Only loans, interest accrues continuously at the period rate
+    // Don't cap based on interest_only_period as loans may be extended
     const interestPerPeriod = principal * periodRate;
-    
+    const periodsCompleted = Math.floor(periodsElapsed);
+
     accruedInterest = periodsCompleted * interestPerPeriod;
-    
-    // Partial period
-    if (periodsElapsed > periodsCompleted && periodsElapsed <= interestOnlyPeriod) {
-      const partialPeriod = periodsElapsed - periodsCompleted;
+
+    // Add partial period interest
+    const partialPeriod = periodsElapsed - periodsCompleted;
+    if (partialPeriod > 0) {
       accruedInterest += partialPeriod * interestPerPeriod;
     }
-    
-    // If past interest-only period, add reducing balance calculation
-    if (periodsElapsed > interestOnlyPeriod) {
-      const remainingPeriods = loan.duration - interestOnlyPeriod;
-      const r = periodRate;
-      const pmt = principal * (r * Math.pow(1 + r, remainingPeriods)) / (Math.pow(1 + r, remainingPeriods) - 1);
-      
-      let balance = principal;
-      const periodsInRepayment = Math.min(Math.floor(periodsElapsed - interestOnlyPeriod), remainingPeriods);
-      
-      for (let i = 0; i < periodsInRepayment; i++) {
-        const interestForPeriod = balance * r;
-        accruedInterest += interestForPeriod;
-        const principalForPeriod = pmt - interestForPeriod;
-        balance -= principalForPeriod;
-      }
-    }
-    
+
   } else if (loan.interest_type === 'Rolled-Up') {
     // Rolled-up: compound interest daily
     const dailyRate = annualRate / 365;
     accruedInterest = principal * (Math.pow(1 + dailyRate, daysElapsed) - 1);
+  } else {
+    // Fallback: use simple daily accrual based on total scheduled interest
+    // This handles unknown interest types or missing data
+    const totalDays = loan.duration * daysPerPeriod;
+    const interestPerDay = (loan.total_interest || 0) / totalDays;
+    accruedInterest = Math.min(interestPerDay * daysElapsed, loan.total_interest || 0);
   }
-  
-  // Subtract what's already been paid
-  const interestPaid = loan.interest_paid || 0;
+
+  return Math.round(accruedInterest * 100) / 100;
+}
+
+/**
+ * Calculate live interest outstanding based on daily accrual
+ * @param {Object} loan - Loan object
+ * @param {number} actualInterestPaid - Actual interest paid from transactions (optional, defaults to loan.interest_paid)
+ * @param {Date} asOfDate - Date to calculate as of (defaults to today)
+ * @returns {number} Live interest outstanding (negative if overpaid)
+ */
+export function calculateLiveInterestOutstanding(loan, actualInterestPaid = null, asOfDate = new Date()) {
+  const accruedInterest = calculateAccruedInterest(loan, asOfDate);
+  const interestPaid = actualInterestPaid !== null ? actualInterestPaid : (loan.interest_paid || 0);
   const liveOutstanding = accruedInterest - interestPaid;
-  
+
   return Math.round(liveOutstanding * 100) / 100;
 }
 

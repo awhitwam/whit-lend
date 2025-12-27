@@ -5,12 +5,17 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2, StopCircle, Users } from 'lucide-react';
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2, StopCircle, Users, History, ChevronLeft, ChevronRight, RefreshCw, Calendar } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
-import { applyScheduleToNewLoan } from '@/components/loan/LoanScheduleManager';
+import { applyScheduleToNewLoan, regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
+import { runAutoExtend, checkLoansNeedingExtension } from '@/lib/autoExtendService';
 import UserManagement from '@/components/organization/UserManagement';
 import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
+import { useQuery } from '@tanstack/react-query';
+import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { format } from 'date-fns';
 
 export default function Config() {
   const [file, setFile] = useState(null);
@@ -38,7 +43,46 @@ export default function Config() {
   const [deleting, setDeleting] = useState(false);
   const [deleteResult, setDeleteResult] = useState(null);
   const [deleteError, setDeleteError] = useState(null);
-  
+
+  // Purge deleted loans state
+  const [purgeLoanNumber, setPurgeLoanNumber] = useState('');
+  const [purging, setPurging] = useState(false);
+  const [purgeResult, setPurgeResult] = useState(null);
+  const [purgeError, setPurgeError] = useState(null);
+  const [deletedLoans, setDeletedLoans] = useState([]);
+  const [loadingDeletedLoans, setLoadingDeletedLoans] = useState(false);
+
+  // Audit log state
+  const [auditPage, setAuditPage] = useState(1);
+  const [auditFilter, setAuditFilter] = useState('all');
+  const auditPerPage = 25;
+
+  // Auto-extend state
+  const [autoExtending, setAutoExtending] = useState(false);
+  const [autoExtendProgress, setAutoExtendProgress] = useState(null);
+  const [autoExtendResult, setAutoExtendResult] = useState(null);
+  const [autoExtendError, setAutoExtendError] = useState(null);
+  const [loansNeedingExtension, setLoansNeedingExtension] = useState(null);
+
+  // Fetch audit logs
+  const { data: auditLogs = [], isLoading: auditLoading } = useQuery({
+    queryKey: ['audit-logs'],
+    queryFn: () => api.entities.AuditLog.list('-created_at', 500)
+  });
+
+  // Fetch user profiles to display names in audit log
+  const { data: userProfiles = [] } = useQuery({
+    queryKey: ['user-profiles'],
+    queryFn: () => api.entities.UserProfile.list()
+  });
+
+  // Create a lookup map for user IDs to names/emails
+  // Note: user_profiles.id matches auth.users.id (which is stored as user_id in audit_logs)
+  const userLookup = userProfiles.reduce((acc, profile) => {
+    acc[profile.id] = profile.full_name || profile.email || profile.id?.slice(0, 8);
+    return acc;
+  }, {});
+
   const logEndRef = useRef(null);
   
   // Load logs from localStorage on mount
@@ -271,6 +315,118 @@ export default function Config() {
     setSelectedTables(newState);
   };
 
+  // Load deleted loans for purge dropdown
+  const loadDeletedLoans = async () => {
+    setLoadingDeletedLoans(true);
+    try {
+      const allLoans = await api.entities.Loan.list('-deleted_date');
+      const deleted = allLoans.filter(l => l.is_deleted);
+      setDeletedLoans(deleted);
+    } catch (err) {
+      console.error('Error loading deleted loans:', err);
+    } finally {
+      setLoadingDeletedLoans(false);
+    }
+  };
+
+  // Purge a deleted loan permanently
+  const handlePurgeLoan = async () => {
+    if (!purgeLoanNumber) {
+      setPurgeError('Please select a loan to purge');
+      return;
+    }
+
+    const loan = deletedLoans.find(l => l.loan_number === purgeLoanNumber);
+    if (!loan) {
+      setPurgeError('Selected loan not found');
+      return;
+    }
+
+    const confirmMessage = `Are you sure you want to PERMANENTLY delete Loan #${purgeLoanNumber} (${loan.borrower_name})?\n\nThis will also delete:\n- All repayment schedule entries\n- All transactions\n\nThis action CANNOT be undone.`;
+    if (!confirm(confirmMessage)) return;
+
+    setPurging(true);
+    setPurgeError(null);
+    setPurgeResult(null);
+
+    try {
+      let scheduleCount = 0;
+      let transactionCount = 0;
+
+      // Delete repayment schedule entries
+      const schedules = await api.entities.RepaymentSchedule.filter({ loan_id: loan.id });
+      for (const schedule of schedules) {
+        await api.entities.RepaymentSchedule.delete(schedule.id);
+        scheduleCount++;
+      }
+
+      // Delete transactions
+      const transactions = await api.entities.Transaction.filter({ loan_id: loan.id });
+      for (const tx of transactions) {
+        await api.entities.Transaction.delete(tx.id);
+        transactionCount++;
+      }
+
+      // Delete the loan itself
+      await api.entities.Loan.delete(loan.id);
+
+      setPurgeResult({
+        loanNumber: purgeLoanNumber,
+        borrowerName: loan.borrower_name,
+        scheduleCount,
+        transactionCount
+      });
+      setPurgeLoanNumber('');
+
+      // Refresh the deleted loans list
+      await loadDeletedLoans();
+    } catch (err) {
+      console.error('Purge error:', err);
+      setPurgeError(err.message);
+    } finally {
+      setPurging(false);
+    }
+  };
+
+  // Check for loans needing extension
+  const checkExtensionStatus = async () => {
+    try {
+      const result = await checkLoansNeedingExtension();
+      setLoansNeedingExtension(result);
+    } catch (err) {
+      console.error('Error checking extension status:', err);
+    }
+  };
+
+  // Run auto-extend for all eligible loans
+  const handleAutoExtend = async () => {
+    const confirmMessage = `This will automatically extend schedules for all loans with auto-extend enabled.\n\nContinue?`;
+    if (!confirm(confirmMessage)) return;
+
+    setAutoExtending(true);
+    setAutoExtendError(null);
+    setAutoExtendResult(null);
+    setAutoExtendProgress({ current: 0, total: 0, percent: 0 });
+
+    try {
+      const result = await runAutoExtend({
+        onProgress: (progress) => {
+          setAutoExtendProgress(progress);
+        }
+      });
+
+      setAutoExtendResult(result);
+      // Refresh the extension status
+      await checkExtensionStatus();
+    } catch (err) {
+      console.error('Auto-extend error:', err);
+      setAutoExtendError(err.message);
+    } finally {
+      setAutoExtending(false);
+      setAutoExtendProgress(null);
+    }
+  };
+
   const handleImport = async () => {
     if (!file) return;
 
@@ -411,9 +567,27 @@ export default function Config() {
         try {
           const loanRelease = transactions.find(t => t.Type === 'Loan Released');
           const deductableFee = transactions.find(t => t.Type === 'Deductable Fee');
-          
-          if (!loanRelease) continue;
-          
+
+          // If no Loan Released row, check if loan already exists in database
+          if (!loanRelease) {
+            const existingLoans = await api.entities.Loan.filter({ loan_number: loanNum });
+            // Find first non-deleted loan
+            const existingLoan = existingLoans.find(l => !l.is_deleted);
+            if (existingLoan) {
+              // Find the borrower
+              const borrowers = await api.entities.Borrower.filter({ id: existingLoan.borrower_id });
+              const borrower = borrowers[0];
+              if (borrower) {
+                loanMap[loanNum] = { loan: existingLoan, borrower, transactions: [] };
+                addLog(`  → Loan #${loanNum}: Found existing loan for ${borrower.full_name || 'Unknown'}`);
+              }
+            } else if (existingLoans.length > 0) {
+              // Loan exists but is deleted
+              addLog(`  ⚠ Loan #${loanNum}: Skipped (loan was deleted)`);
+            }
+            continue;
+          }
+
           const borrowerInfo = extractBorrowerInfo(loanRelease['Transaction Details']);
           if (!borrowerInfo) continue;
           
@@ -443,10 +617,24 @@ export default function Config() {
           const product = productMap[loanRelease.Category];
           
           if (!product) continue;
-          
+
+          // Check if loan with this number already exists (including deleted)
+          const existingLoans = await api.entities.Loan.filter({ loan_number: loanNum });
+          if (existingLoans.length > 0) {
+            const existingLoan = existingLoans[0];
+            if (existingLoan.is_deleted) {
+              addLog(`  ⚠ Loan #${loanNum}: Skipped (loan was previously deleted)`);
+            } else {
+              // Use existing loan for transaction import
+              loanMap[loanNum] = { loan: existingLoan, borrower, transactions: [] };
+              addLog(`  → Loan #${loanNum}: Already exists, will import transactions only`);
+            }
+            continue;
+          }
+
           // Use default 6 month duration for all imported loans
           const calculatedDuration = 6;
-          
+
           // Use centralized schedule manager
           const { loan } = await applyScheduleToNewLoan({
             loan_number: loanNum,
@@ -484,12 +672,12 @@ export default function Config() {
 
       const repaymentTypes = ['Interest Collections', 'Principal Collections', 'Fee Collections'];
 
-      // Group transactions by loan
+      // Group transactions by loan (repayments and disbursements)
       for (const row of rows) {
-        if (repaymentTypes.includes(row.Type)) {
-          const borrowerInfo = extractBorrowerInfo(row['Transaction Details']);
-          if (!borrowerInfo || !loanMap[borrowerInfo.loanNumber]) continue;
+        const borrowerInfo = extractBorrowerInfo(row['Transaction Details']);
+        if (!borrowerInfo || !loanMap[borrowerInfo.loanNumber]) continue;
 
+        if (repaymentTypes.includes(row.Type)) {
           const amount = parseFloat(row.In);
           if (amount > 0) {
             loanMap[borrowerInfo.loanNumber].transactions.push({
@@ -499,11 +687,23 @@ export default function Config() {
               details: row['Transaction Details']
             });
           }
+        } else if (row.Type === 'Disbursement') {
+          // Further advance/drawdown on existing loan
+          const amount = parseFloat(row.Out);
+          if (amount > 0) {
+            loanMap[borrowerInfo.loanNumber].transactions.push({
+              date: parseDate(row.Date),
+              amount: amount,
+              type: 'Disbursement',
+              details: row['Transaction Details']
+            });
+          }
         }
       }
 
       // Create transaction records (without applying to schedule)
       let txCount = 0;
+      let disbursementCount = 0;
       let loanCount = 0;
 
       for (const [loanNum, loanData] of Object.entries(loanMap)) {
@@ -519,35 +719,69 @@ export default function Config() {
           // Sort transactions by date
           loanTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
 
+          // Track total disbursements for this loan to update principal
+          let totalDisbursements = 0;
+          let hasDisbursements = false;
+
           // Create transaction records with raw data
           for (const tx of loanTxs) {
-            const isPrincipal = tx.type === 'Principal Collections';
-
-            await api.entities.Transaction.create({
-              loan_id: loan.id,
-              borrower_id: borrower.id,
-              amount: tx.amount,
-              date: tx.date,
-              type: 'Repayment',
-              principal_applied: isPrincipal ? tx.amount : 0,
-              interest_applied: isPrincipal ? 0 : tx.amount,
-              reference: tx.type,
-              notes: `Imported: ${tx.details}`
-            });
+            if (tx.type === 'Disbursement') {
+              // Further advance/drawdown - create Disbursement transaction
+              await api.entities.Transaction.create({
+                loan_id: loan.id,
+                borrower_id: borrower.id,
+                amount: tx.amount,
+                date: tx.date,
+                type: 'Disbursement',
+                principal_applied: 0,
+                interest_applied: 0,
+                reference: 'Further Advance',
+                notes: `Imported disbursement: ${tx.details}`
+              });
+              totalDisbursements += tx.amount;
+              hasDisbursements = true;
+              disbursementCount++;
+              addLog(`    → Disbursement: ${formatCurrency(tx.amount)} on ${tx.date}`);
+            } else {
+              // Regular repayment
+              const isPrincipal = tx.type === 'Principal Collections';
+              await api.entities.Transaction.create({
+                loan_id: loan.id,
+                borrower_id: borrower.id,
+                amount: tx.amount,
+                date: tx.date,
+                type: 'Repayment',
+                principal_applied: isPrincipal ? tx.amount : 0,
+                interest_applied: isPrincipal ? 0 : tx.amount,
+                reference: tx.type,
+                notes: `Imported: ${tx.details}`
+              });
+            }
 
             txCount++;
             await delay(200);
           }
 
           // Keep loan status as Live (don't mark as closed during import)
+          // Note: principal_amount stays as initial disbursement only
+          // The schedule manager calculates total disbursed dynamically by adding Disbursement transactions
           await api.entities.Loan.update(loan.id, {
             principal_paid: 0,
             interest_paid: 0,
             status: 'Live'
           });
 
+          // Regenerate schedule if there were disbursements to sync repayment dates
+          if (hasDisbursements) {
+            const totalPrincipal = loan.principal_amount + totalDisbursements;
+            addLog(`    → Regenerating schedule (total disbursed: ${formatCurrency(totalPrincipal)})`);
+            await regenerateLoanSchedule(loan.id);
+          }
+
           loanCount++;
-          addLog(`  ✓ Loan #${loanNum}: Created ${loanTxs.length} transaction records`);
+          const repaymentCount = loanTxs.filter(t => t.type !== 'Disbursement').length;
+          const loanDisbursements = loanTxs.filter(t => t.type === 'Disbursement').length;
+          addLog(`  ✓ Loan #${loanNum}: ${repaymentCount} repayments, ${loanDisbursements} disbursements`);
           setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
           await delay(1000);
         } catch (err) {
@@ -555,7 +789,7 @@ export default function Config() {
         }
       }
 
-      addLog(`Total: ${txCount} transactions imported as raw data`);
+      addLog(`Total: ${txCount} transactions imported (${disbursementCount} disbursements)`);
       
       setProgress(90);
       setStatus('Creating expenses...');
@@ -620,6 +854,7 @@ export default function Config() {
         borrowers: Object.keys(borrowerMap).length,
         loans: Object.keys(loanMap).length,
         transactions: txCount,
+        disbursements: disbursementCount,
         expenses: expenseCount
       });
 
@@ -661,6 +896,10 @@ export default function Config() {
             <TabsTrigger value="general">
               <Settings className="w-4 h-4 mr-2" />
               General
+            </TabsTrigger>
+            <TabsTrigger value="audit">
+              <History className="w-4 h-4 mr-2" />
+              Audit Log
             </TabsTrigger>
           </TabsList>
 
@@ -816,6 +1055,7 @@ export default function Config() {
                           <li>• {result.borrowers} borrowers created</li>
                           <li>• {result.loans} loans created</li>
                           <li>• {result.transactions} transactions imported</li>
+                          {result.disbursements > 0 && <li>• {result.disbursements} disbursements (further advances)</li>}
                           <li>• {result.expenses} expenses imported</li>
                         </ul>
                       </div>
@@ -940,8 +1180,8 @@ export default function Config() {
                   </Alert>
                 )}
 
-                <Button 
-                  variant="destructive" 
+                <Button
+                  variant="destructive"
                   onClick={handleDeleteData}
                   disabled={deleting || Object.values(selectedTables).every(v => !v)}
                   className="w-full"
@@ -949,6 +1189,385 @@ export default function Config() {
                   <Trash2 className="w-4 h-4 mr-2" />
                   Delete Selected Data
                 </Button>
+              </CardContent>
+            </Card>
+
+            {/* Purge Deleted Loans */}
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle>Purge Deleted Loans</CardTitle>
+                <CardDescription>Permanently remove soft-deleted loans from the database</CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Alert>
+                  <AlertCircle className="w-4 h-4" />
+                  <AlertDescription>
+                    This permanently removes loans that were previously deleted. Use this to allow re-importing a loan with the same loan number.
+                  </AlertDescription>
+                </Alert>
+
+                <div className="space-y-3">
+                  <div className="flex items-center gap-3">
+                    <Select
+                      value={purgeLoanNumber}
+                      onValueChange={setPurgeLoanNumber}
+                      onOpenChange={(open) => open && loadDeletedLoans()}
+                    >
+                      <SelectTrigger className="flex-1">
+                        <SelectValue placeholder={loadingDeletedLoans ? "Loading..." : "Select a deleted loan to purge"} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {deletedLoans.length === 0 ? (
+                          <SelectItem value="_none" disabled>No deleted loans found</SelectItem>
+                        ) : (
+                          deletedLoans.map(loan => (
+                            <SelectItem key={loan.id} value={loan.loan_number}>
+                              #{loan.loan_number} - {loan.borrower_name} (deleted {loan.deleted_date ? format(new Date(loan.deleted_date), 'dd/MM/yyyy') : 'unknown'})
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+
+                {purging && (
+                  <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                    <Loader2 className="w-5 h-5 animate-spin text-amber-600" />
+                    <span className="text-sm font-medium text-amber-900">Purging loan data...</span>
+                  </div>
+                )}
+
+                {purgeResult && (
+                  <Alert className="border-emerald-200 bg-emerald-50">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <AlertDescription>
+                      <div className="space-y-1">
+                        <p className="font-semibold text-emerald-900">Loan #{purgeResult.loanNumber} purged successfully!</p>
+                        <ul className="text-sm text-emerald-800">
+                          <li>• {purgeResult.scheduleCount} schedule entries deleted</li>
+                          <li>• {purgeResult.transactionCount} transactions deleted</li>
+                          <li>• Loan record permanently removed</li>
+                        </ul>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {purgeError && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="w-4 h-4" />
+                    <AlertDescription>{purgeError}</AlertDescription>
+                  </Alert>
+                )}
+
+                <Button
+                  variant="destructive"
+                  onClick={handlePurgeLoan}
+                  disabled={purging || !purgeLoanNumber}
+                  className="w-full"
+                >
+                  <Trash2 className="w-4 h-4 mr-2" />
+                  Purge Selected Loan
+                </Button>
+              </CardContent>
+            </Card>
+
+            {/* Auto-Extend Loans */}
+            <Card className="mt-6">
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <RefreshCw className="w-5 h-5 text-blue-600" />
+                  Auto-Extend Loan Schedules
+                </CardTitle>
+                <CardDescription>
+                  Automatically extend repayment schedules for loans with auto-extend enabled
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <Alert>
+                  <Calendar className="w-4 h-4" />
+                  <AlertDescription>
+                    This will extend schedules up to today's date for all loans with <strong>auto-extend enabled</strong> and status <strong>Live</strong>.
+                    Payments will be re-applied after regenerating schedules.
+                  </AlertDescription>
+                </Alert>
+
+                {loansNeedingExtension && loansNeedingExtension.count > 0 && (
+                  <Alert className="border-amber-200 bg-amber-50">
+                    <AlertCircle className="w-4 h-4 text-amber-600" />
+                    <AlertDescription>
+                      <p className="font-semibold text-amber-900">{loansNeedingExtension.count} loan(s) need schedule extension:</p>
+                      <ul className="text-sm text-amber-800 mt-1 space-y-0.5">
+                        {loansNeedingExtension.loans.slice(0, 5).map(loan => (
+                          <li key={loan.id}>
+                            • #{loan.loanNumber} - {loan.borrowerName} ({loan.daysOverdue} days overdue)
+                          </li>
+                        ))}
+                        {loansNeedingExtension.loans.length > 5 && (
+                          <li>• ...and {loansNeedingExtension.loans.length - 5} more</li>
+                        )}
+                      </ul>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {autoExtending && autoExtendProgress && (
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                      <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                      <div className="flex-1">
+                        <span className="text-sm font-medium text-blue-900">
+                          Processing loan {autoExtendProgress.current} of {autoExtendProgress.total}...
+                        </span>
+                        {autoExtendProgress.loan && (
+                          <span className="text-sm text-blue-700 ml-2">({autoExtendProgress.loan})</span>
+                        )}
+                      </div>
+                    </div>
+                    <Progress value={autoExtendProgress.percent} className="h-2" />
+                  </div>
+                )}
+
+                {autoExtendResult && (
+                  <Alert className="border-emerald-200 bg-emerald-50">
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                    <AlertDescription>
+                      <div className="space-y-2">
+                        <p className="font-semibold text-emerald-900">Auto-extend complete!</p>
+                        <div className="grid grid-cols-3 gap-4 text-sm">
+                          <div className="text-center p-2 bg-emerald-100 rounded">
+                            <p className="text-lg font-bold text-emerald-700">{autoExtendResult.succeeded}</p>
+                            <p className="text-emerald-600">Extended</p>
+                          </div>
+                          <div className="text-center p-2 bg-slate-100 rounded">
+                            <p className="text-lg font-bold text-slate-700">{autoExtendResult.skipped}</p>
+                            <p className="text-slate-600">Skipped</p>
+                          </div>
+                          <div className="text-center p-2 bg-red-100 rounded">
+                            <p className="text-lg font-bold text-red-700">{autoExtendResult.failed}</p>
+                            <p className="text-red-600">Failed</p>
+                          </div>
+                        </div>
+                        <p className="text-xs text-emerald-700">
+                          Completed in {(autoExtendResult.duration / 1000).toFixed(1)}s
+                        </p>
+                      </div>
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {autoExtendError && (
+                  <Alert variant="destructive">
+                    <AlertCircle className="w-4 h-4" />
+                    <AlertDescription>{autoExtendError}</AlertDescription>
+                  </Alert>
+                )}
+
+                <div className="flex gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={checkExtensionStatus}
+                    disabled={autoExtending}
+                    className="flex-1"
+                  >
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Check Status
+                  </Button>
+                  <Button
+                    onClick={handleAutoExtend}
+                    disabled={autoExtending}
+                    className="flex-1 bg-blue-600 hover:bg-blue-700"
+                  >
+                    {autoExtending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Extending...
+                      </>
+                    ) : (
+                      <>
+                        <RefreshCw className="w-4 h-4 mr-2" />
+                        Run Auto-Extend Now
+                      </>
+                    )}
+                  </Button>
+                </div>
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          <TabsContent value="audit" className="space-y-6">
+            <Card>
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <CardTitle className="flex items-center gap-2">
+                      <History className="w-5 h-5 text-slate-600" />
+                      Audit Trail
+                    </CardTitle>
+                    <CardDescription>Complete history of all system activities and changes</CardDescription>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Select value={auditFilter} onValueChange={(v) => { setAuditFilter(v); setAuditPage(1); }}>
+                      <SelectTrigger className="w-40">
+                        <SelectValue placeholder="Filter by type" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Events</SelectItem>
+                        <SelectItem value="login">Authentication</SelectItem>
+                        <SelectItem value="loan">Loans</SelectItem>
+                        <SelectItem value="transaction">Transactions</SelectItem>
+                        <SelectItem value="borrower">Borrowers</SelectItem>
+                        <SelectItem value="product">Products</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                </div>
+              </CardHeader>
+              <CardContent>
+                {auditLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                  </div>
+                ) : auditLogs.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <History className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                    <p>No audit events recorded yet</p>
+                    <p className="text-xs text-slate-400 mt-1">Events will appear here as actions are performed</p>
+                  </div>
+                ) : (
+                  <>
+                    {/* Filter and paginate */}
+                    {(() => {
+                      const filtered = auditFilter === 'all'
+                        ? auditLogs
+                        : auditLogs.filter(log => {
+                            if (auditFilter === 'login') return log.action?.startsWith('login') || log.action?.startsWith('logout');
+                            if (auditFilter === 'loan') return log.entity_type === 'loan';
+                            if (auditFilter === 'transaction') return log.entity_type === 'transaction';
+                            if (auditFilter === 'borrower') return log.entity_type === 'borrower';
+                            if (auditFilter === 'product') return log.entity_type === 'loan_product';
+                            return true;
+                          });
+
+                      const totalPages = Math.ceil(filtered.length / auditPerPage);
+                      const paginated = filtered.slice((auditPage - 1) * auditPerPage, auditPage * auditPerPage);
+
+                      const getActionBadge = (action) => {
+                        if (action?.includes('create')) return <Badge className="bg-emerald-100 text-emerald-700">Create</Badge>;
+                        if (action?.includes('update')) return <Badge className="bg-blue-100 text-blue-700">Update</Badge>;
+                        if (action?.includes('delete')) return <Badge className="bg-red-100 text-red-700">Delete</Badge>;
+                        if (action?.includes('login')) return <Badge className="bg-purple-100 text-purple-700">Login</Badge>;
+                        if (action?.includes('logout')) return <Badge className="bg-slate-100 text-slate-700">Logout</Badge>;
+                        return <Badge variant="outline">{action}</Badge>;
+                      };
+
+                      const getEntityIcon = (entityType) => {
+                        switch (entityType) {
+                          case 'loan': return '💰';
+                          case 'transaction': return '💳';
+                          case 'borrower': return '👤';
+                          case 'loan_product': return '📦';
+                          case 'user': return '🔐';
+                          default: return '📋';
+                        }
+                      };
+
+                      return (
+                        <>
+                          <div className="overflow-x-auto">
+                            <table className="w-full">
+                              <thead className="bg-slate-50 border-b border-slate-200">
+                                <tr>
+                                  <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Date/Time</th>
+                                  <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Action</th>
+                                  <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Entity</th>
+                                  <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Details</th>
+                                  <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">User</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y divide-slate-100">
+                                {paginated.map((log) => {
+                                  const details = log.details ? JSON.parse(log.details) : {};
+                                  const prevValues = log.previous_values ? JSON.parse(log.previous_values) : null;
+
+                                  return (
+                                    <tr key={log.id} className="hover:bg-slate-50">
+                                      <td className="py-2 px-3 text-xs text-slate-600">
+                                        {log.created_at ? format(new Date(log.created_at), 'dd/MM/yy HH:mm') : '-'}
+                                      </td>
+                                      <td className="py-2 px-3">
+                                        {getActionBadge(log.action)}
+                                      </td>
+                                      <td className="py-2 px-3">
+                                        <div className="flex items-center gap-1.5">
+                                          <span>{getEntityIcon(log.entity_type)}</span>
+                                          <span className="text-xs font-medium text-slate-700">
+                                            {log.entity_name || log.entity_type || '-'}
+                                          </span>
+                                        </div>
+                                      </td>
+                                      <td className="py-2 px-3 text-xs text-slate-500 max-w-xs truncate">
+                                        {log.action?.includes('delete') && details.reason ? (
+                                          <span className="text-red-600">Reason: {details.reason}</span>
+                                        ) : log.action?.includes('update') && prevValues ? (
+                                          <span>Modified fields</span>
+                                        ) : details.amount ? (
+                                          <span>Amount: £{details.amount?.toLocaleString()}</span>
+                                        ) : details.success === false ? (
+                                          <span className="text-red-600">Failed: {details.reason}</span>
+                                        ) : (
+                                          '-'
+                                        )}
+                                      </td>
+                                      <td className="py-2 px-3 text-xs text-slate-600">
+                                        {log.user_id ? (
+                                          <span>{userLookup[log.user_id] || log.user_id.slice(0, 8) + '...'}</span>
+                                        ) : log.entity_name && log.action?.includes('login') ? (
+                                          log.entity_name
+                                        ) : '-'}
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Pagination */}
+                          {totalPages > 1 && (
+                            <div className="flex items-center justify-between mt-4 pt-4 border-t">
+                              <p className="text-xs text-slate-500">
+                                Showing {((auditPage - 1) * auditPerPage) + 1} - {Math.min(auditPage * auditPerPage, filtered.length)} of {filtered.length} events
+                              </p>
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setAuditPage(p => Math.max(1, p - 1))}
+                                  disabled={auditPage === 1}
+                                >
+                                  <ChevronLeft className="w-4 h-4" />
+                                </Button>
+                                <span className="text-xs text-slate-600">
+                                  Page {auditPage} of {totalPages}
+                                </span>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setAuditPage(p => Math.min(totalPages, p + 1))}
+                                  disabled={auditPage === totalPages}
+                                >
+                                  <ChevronRight className="w-4 h-4" />
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                        </>
+                      );
+                    })()}
+                  </>
+                )}
               </CardContent>
             </Card>
           </TabsContent>

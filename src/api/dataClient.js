@@ -26,7 +26,8 @@ const tableMap = {
   Organization: 'organizations',
   OrganizationMember: 'organization_members',
   Invitation: 'invitations',
-  UserProfile: 'user_profiles'
+  UserProfile: 'user_profiles',
+  AuditLog: 'audit_logs'
 };
 
 // Tables that should have organization_id filter applied
@@ -39,7 +40,8 @@ const orgScopedTables = [
   'expenses',
   'expense_types',
   'Investor',
-  'InvestorTransaction'
+  'InvestorTransaction',
+  'audit_logs'
 ];
 
 // Map column names that differ between code and database

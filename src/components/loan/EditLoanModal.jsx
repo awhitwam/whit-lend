@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, AlertTriangle } from 'lucide-react';
 import { api } from '@/api/dataClient';
@@ -25,7 +26,8 @@ export default function EditLoanModal({
     period: loan?.period || '',
     interest_only_period: loan?.interest_only_period || 0,
     duration: loan?.duration || '',
-    start_date: loan?.start_date || ''
+    start_date: loan?.start_date || '',
+    description: loan?.description || ''
   });
 
   const { data: products = [] } = useQuery({
@@ -48,7 +50,8 @@ export default function EditLoanModal({
       interest_only_period: parseInt(formData.interest_only_period) || 0,
       duration: parseInt(formData.duration),
       start_date: formData.start_date,
-      net_disbursed: parseFloat(formData.principal_amount) - (parseFloat(formData.arrangement_fee) || 0)
+      net_disbursed: parseFloat(formData.principal_amount) - (parseFloat(formData.arrangement_fee) || 0),
+      description: formData.description
     });
   };
 
@@ -176,6 +179,18 @@ export default function EditLoanModal({
                 required
               />
             </div>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              value={formData.description}
+              onChange={(e) => handleChange('description', e.target.value)}
+              placeholder="Enter a description for this loan (optional)"
+              rows={2}
+              className="resize-none"
+            />
           </div>
 
           <DialogFooter>

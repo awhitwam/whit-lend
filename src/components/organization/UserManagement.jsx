@@ -30,7 +30,17 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { UserPlus, Trash2, Loader2, Shield } from 'lucide-react';
+import { UserPlus, Trash2, Loader2, Shield, Edit } from 'lucide-react';
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import InviteUserDialog from './InviteUserDialog';
 import { toast } from 'sonner';
 
@@ -38,6 +48,8 @@ export default function UserManagement() {
   const { currentOrganization, canAdmin } = useOrganization();
   const [isInviteOpen, setIsInviteOpen] = useState(false);
   const [memberToRemove, setMemberToRemove] = useState(null);
+  const [memberToEdit, setMemberToEdit] = useState(null);
+  const [editForm, setEditForm] = useState({ full_name: '' });
   const queryClient = useQueryClient();
 
   const { data: members = [], isLoading } = useQuery({
@@ -125,6 +137,42 @@ export default function UserManagement() {
     }
   });
 
+  const updateProfileMutation = useMutation({
+    mutationFn: async ({ userId, data }) => {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update(data)
+        .eq('id', userId);
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['organization-members', currentOrganization?.id]
+      });
+      toast.success('Member updated successfully');
+      setMemberToEdit(null);
+    },
+    onError: (error) => {
+      console.error('Error updating member:', error);
+      toast.error('Failed to update member', {
+        description: error.message
+      });
+    }
+  });
+
+  const handleEditMember = (member) => {
+    setMemberToEdit(member);
+    setEditForm({ full_name: member.full_name || '' });
+  };
+
+  const handleSaveEdit = () => {
+    if (!memberToEdit) return;
+    updateProfileMutation.mutate({
+      userId: memberToEdit.user_id,
+      data: { full_name: editForm.full_name }
+    });
+  };
+
   if (!canAdmin()) {
     return (
       <Card>
@@ -171,10 +219,11 @@ export default function UserManagement() {
             <Table>
               <TableHeader>
                 <TableRow>
+                  <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
                   <TableHead>Role</TableHead>
                   <TableHead>Joined</TableHead>
-                  <TableHead className="w-[100px]">Actions</TableHead>
+                  <TableHead className="w-[120px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -183,7 +232,10 @@ export default function UserManagement() {
 
                   return (
                     <TableRow key={member.id}>
-                      <TableCell className="font-medium">{member.email}</TableCell>
+                      <TableCell className="font-medium">
+                        {member.full_name || <span className="text-slate-400 italic">Not set</span>}
+                      </TableCell>
+                      <TableCell className="text-slate-600">{member.email}</TableCell>
                       <TableCell>
                         <Select
                           value={member.role}
@@ -209,15 +261,25 @@ export default function UserManagement() {
                         {new Date(member.joined_at).toLocaleDateString()}
                       </TableCell>
                       <TableCell>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setMemberToRemove(member)}
-                          disabled={isLastAdmin || removeMemberMutation.isPending}
-                          title={isLastAdmin ? 'Cannot remove the last admin' : 'Remove member'}
-                        >
-                          <Trash2 className="w-4 h-4 text-red-600" />
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => handleEditMember(member)}
+                            title="Edit member"
+                          >
+                            <Edit className="w-4 h-4 text-slate-600" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => setMemberToRemove(member)}
+                            disabled={isLastAdmin || removeMemberMutation.isPending}
+                            title={isLastAdmin ? 'Cannot remove the last admin' : 'Remove member'}
+                          >
+                            <Trash2 className="w-4 h-4 text-red-600" />
+                          </Button>
+                        </div>
                       </TableCell>
                     </TableRow>
                   );
@@ -253,6 +315,55 @@ export default function UserManagement() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      <Dialog open={!!memberToEdit} onOpenChange={() => setMemberToEdit(null)}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Edit Team Member</DialogTitle>
+            <DialogDescription>
+              Update details for {memberToEdit?.email}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="full_name">Full Name</Label>
+              <Input
+                id="full_name"
+                value={editForm.full_name}
+                onChange={(e) => setEditForm({ ...editForm, full_name: e.target.value })}
+                placeholder="Enter full name"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label className="text-slate-500">Email</Label>
+              <Input
+                value={memberToEdit?.email || ''}
+                disabled
+                className="bg-slate-50"
+              />
+              <p className="text-xs text-slate-500">Email cannot be changed</p>
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setMemberToEdit(null)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={handleSaveEdit}
+              disabled={updateProfileMutation.isPending}
+            >
+              {updateProfileMutation.isPending ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Saving...
+                </>
+              ) : (
+                'Save Changes'
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   );
 }

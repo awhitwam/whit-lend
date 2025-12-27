@@ -26,13 +26,27 @@ export default function Loans() {
     queryFn: () => api.entities.Loan.list('-created_date')
   });
 
+  // Fetch all transactions to calculate disbursements per loan
+  const { data: allTransactions = [] } = useQuery({
+    queryKey: ['all-transactions'],
+    queryFn: () => api.entities.Transaction.list()
+  });
+
+  // Calculate total principal (initial + disbursements) per loan
+  const getDisbursementsForLoan = (loanId) => {
+    return allTransactions
+      .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Disbursement')
+      .reduce((sum, t) => sum + (t.amount || 0), 0);
+  };
+
   const loans = allLoans.filter(loan => !loan.is_deleted);
   const deletedLoans = allLoans.filter(loan => loan.is_deleted);
 
   const filteredLoans = loans.filter(loan => {
-    const matchesSearch = 
+    const matchesSearch =
       loan.borrower_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.product_name?.toLowerCase().includes(searchTerm.toLowerCase());
+      loan.product_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      loan.description?.toLowerCase().includes(searchTerm.toLowerCase());
 
     const matchesStatus = statusFilter === 'all' || 
       loan.status === statusFilter || 
@@ -58,8 +72,8 @@ export default function Loans() {
         bVal = b.product_name || '';
         break;
       case 'principal_amount':
-        aVal = a.principal_amount || 0;
-        bVal = b.principal_amount || 0;
+        aVal = (a.principal_amount || 0) + getDisbursementsForLoan(a.id);
+        bVal = (b.principal_amount || 0) + getDisbursementsForLoan(b.id);
         break;
       case 'start_date':
         aVal = new Date(a.start_date);
@@ -265,10 +279,12 @@ export default function Loans() {
                   </TableHeader>
                   <TableBody>
                     {sortedLoans.map((loan, index) => {
-                      const principalRemaining = loan.principal_amount - (loan.principal_paid || 0);
+                      const loanDisbursements = getDisbursementsForLoan(loan.id);
+                      const totalPrincipal = loan.principal_amount + loanDisbursements;
+                      const principalRemaining = totalPrincipal - (loan.principal_paid || 0);
                       const interestRemaining = loan.total_interest - (loan.interest_paid || 0);
                       const totalOutstanding = principalRemaining + interestRemaining;
-                      
+
                       return (
                         <TableRow
                           key={loan.id}
@@ -278,10 +294,15 @@ export default function Loans() {
                           <TableCell className="font-mono font-semibold text-slate-700">
                             {loan.loan_number || '-'}
                           </TableCell>
-                          <TableCell className="font-medium">{loan.borrower_name}</TableCell>
+                          <TableCell className="font-medium">
+                            <div>{loan.borrower_name}</div>
+                            {loan.description && (
+                              <div className="text-xs text-slate-500 font-normal truncate max-w-48">{loan.description}</div>
+                            )}
+                          </TableCell>
                           <TableCell className="text-slate-600">{loan.product_name}</TableCell>
                           <TableCell className="text-right font-mono font-semibold">
-                            {formatCurrency(loan.principal_amount)}
+                            {formatCurrency(totalPrincipal)}
                           </TableCell>
                           <TableCell className="text-right font-mono text-red-600 font-medium">
                             {formatCurrency(totalOutstanding)}

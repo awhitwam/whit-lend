@@ -1,5 +1,6 @@
 import React, { createContext, useState, useContext, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
+import { logAuthEvent, AuditAction } from '@/lib/auditLog';
 
 const AuthContext = createContext();
 
@@ -53,11 +54,15 @@ export const AuthProvider = ({ children }) => {
           type: 'login_error',
           message: error.message
         });
+        // Log failed login attempt
+        logAuthEvent(AuditAction.LOGIN_FAILED, email, false, { reason: error.message });
         return { error };
       }
 
       setUser(data.user);
       setIsAuthenticated(true);
+      // Log successful login
+      logAuthEvent(AuditAction.LOGIN, email, true);
       return { data };
     } catch (error) {
       setAuthError({
@@ -96,7 +101,10 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      const userEmail = user?.email;
       await supabase.auth.signOut();
+      // Log logout event
+      logAuthEvent(AuditAction.LOGOUT, userEmail, true);
       setUser(null);
       setIsAuthenticated(false);
     } catch (error) {

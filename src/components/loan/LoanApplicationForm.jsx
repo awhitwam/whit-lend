@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Loader2, Calculator, ChevronRight } from 'lucide-react';
@@ -24,7 +25,8 @@ export default function LoanApplicationForm({
     exit_fee: '',
     duration: '',
     start_date: format(new Date(), 'yyyy-MM-dd'),
-    status: 'Live'
+    status: 'Live',
+    description: ''
   });
 
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -160,6 +162,18 @@ export default function LoanApplicationForm({
               </SelectContent>
             </Select>
             <p className="text-xs text-slate-500">Live loans are immediately active. Use Pending for applications under review.</p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="description">Description</Label>
+            <Textarea
+              id="description"
+              value={formData.description}
+              onChange={(e) => handleChange('description', e.target.value)}
+              placeholder="Enter a description for this loan (optional)"
+              rows={2}
+              className="resize-none"
+            />
           </div>
 
           {selectedProduct && (

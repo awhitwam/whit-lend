@@ -1,22 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { format, differenceInDays, addMonths, addWeeks } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Split, List, Download, Layers, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, List, Download, Layers, ArrowUp, ArrowDown } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('separate'); // 'separate', 'detailed', 'smartview2', 'nested'
-  const [showCumulativeColumns, setShowCumulativeColumns] = useState(false);
 
   // Load nested sort order from localStorage, default to 'asc' (oldest first)
   const [nestedSortOrder, setNestedSortOrder] = useState(() => {
     const saved = localStorage.getItem('nestedScheduleSortOrder');
+    return saved || 'asc';
+  });
+
+  // Load smart view sort order from localStorage, default to 'asc' (oldest first)
+  const [smartViewSortOrder, setSmartViewSortOrder] = useState(() => {
+    const saved = localStorage.getItem('smartViewSortOrder');
     return saved || 'asc';
   });
 
@@ -25,8 +30,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     localStorage.setItem('nestedScheduleSortOrder', nestedSortOrder);
   }, [nestedSortOrder]);
 
+  useEffect(() => {
+    localStorage.setItem('smartViewSortOrder', smartViewSortOrder);
+  }, [smartViewSortOrder]);
+
   const toggleNestedSortOrder = () => {
     setNestedSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
+  };
+
+  const toggleSmartViewSortOrder = () => {
+    setSmartViewSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
   };
 
   // Helper to format installment label for Rolled-Up loans
@@ -80,6 +93,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       // Get active repayment transactions
       const repaymentTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
 
+      // Get further advance (disbursement) transactions
+      const disbursementTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
+
       // Add ALL schedule entries as separate rows with dynamically calculated expected interest
       schedule.forEach(row => {
         // Calculate principal outstanding at the start of this period
@@ -107,7 +123,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         });
       });
 
-      // Add ALL transactions as separate rows
+      // Add ALL repayment transactions as separate rows
       repaymentTransactions.forEach(tx => {
         allRows.push({
           date: new Date(tx.date),
@@ -120,6 +136,21 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         });
       });
 
+      // Add further advance (disbursement) transactions as separate rows
+      disbursementTransactions.forEach(tx => {
+        allRows.push({
+          date: new Date(tx.date),
+          dateStr: format(new Date(tx.date), 'yyyy-MM-dd'),
+          isDisbursement: true,
+          isFurtherAdvance: true,
+          transactions: [tx],
+          scheduleEntry: null,
+          daysDifference: null,
+          rowType: 'further_advance',
+          amount: tx.amount
+        });
+      });
+
 
 
       // Sort by date, then by type (schedule before transaction on same date)
@@ -127,8 +158,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         const dateCompare = a.date - b.date;
         if (dateCompare !== 0) return dateCompare;
 
-        // On same date: disbursement first, then schedule, then transaction
-        const typeOrder = { disbursement: 0, schedule: 1, transaction: 2 };
+        // On same date: disbursement first, then further_advance, then schedule, then transaction
+        const typeOrder = { disbursement: 0, further_advance: 1, schedule: 2, transaction: 3 };
         return typeOrder[a.rowType] - typeOrder[b.rowType];
       });
     }
@@ -160,6 +191,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         row.principalOutstanding = principalOutstanding;
         row.interestOutstanding = 0;
         row.expectedInterest = 0;
+      } else if (row.rowType === 'further_advance') {
+        // Further advance - increases principal
+        const advanceAmount = row.amount || row.transactions[0]?.amount || 0;
+        principalOutstanding += advanceAmount;
+
+        row.principalOutstanding = principalOutstanding;
+        row.interestOutstanding = totalInterestAccrued - totalInterestPaid;
+        row.expectedInterest = 0;
+
+        lastCalculationDate = currentDate;
       } else if (row.rowType === 'transaction') {
         // Apply transaction FIRST, then show resulting balances
         row.transactions.forEach(tx => {
@@ -215,10 +256,21 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       const csvRows = [headers.join(',')];
 
       combinedRows.forEach(row => {
+        const getRowType = () => {
+          if (row.rowType === 'disbursement') return 'Disbursement';
+          if (row.rowType === 'further_advance') return 'Further Advance';
+          if (row.rowType === 'transaction') return 'Payment';
+          return 'Schedule';
+        };
+        const getPrincipalAmount = () => {
+          if (row.rowType === 'disbursement') return loan.principal_amount;
+          if (row.rowType === 'further_advance') return row.amount || row.transactions[0]?.amount || 0;
+          return row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0) || '';
+        };
         const csvRow = [
           format(row.date, 'yyyy-MM-dd'),
-          row.isDisbursement ? 'Disbursement' : (row.rowType === 'transaction' ? 'Payment' : 'Schedule'),
-          row.isDisbursement ? loan.principal_amount : (row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0) || ''),
+          getRowType(),
+          getPrincipalAmount(),
           row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0) || '',
           row.expectedInterest || '',
           row.principalOutstanding || '',
@@ -282,17 +334,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 CSV
               </Button>
             )}
-            {viewMode === 'smartview2' && (
-              <label className="flex items-center gap-1.5 text-xs cursor-pointer text-slate-600">
-                <input
-                  type="checkbox"
-                  checked={showCumulativeColumns}
-                  onChange={(e) => setShowCumulativeColumns(e.target.checked)}
-                  className="w-3 h-3 rounded border-slate-300"
-                />
-                Cumulative
-              </label>
-            )}
           </div>
           <div className="flex items-center gap-1.5">
             <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>
@@ -342,30 +383,53 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           <Table>
             <TableHeader>
               <TableRow className="bg-slate-50 sticky top-0 z-20">
-                <TableHead className="font-semibold bg-slate-50 w-16">Inst.</TableHead>
-                <TableHead className="font-semibold bg-slate-50">Due Date</TableHead>
-                <TableHead className="font-semibold bg-slate-50 text-right">Expected Amt</TableHead>
-                <TableHead className="font-semibold bg-slate-50">Status</TableHead>
+                <TableHead className="font-semibold bg-slate-50 w-12 py-1.5 whitespace-nowrap">#</TableHead>
+                <TableHead className="font-semibold bg-slate-50 py-1.5">
+                  {viewMode === 'smartview2' ? (
+                    <div className="flex items-center gap-1">
+                      Due Date
+                      <TooltipProvider>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={toggleSmartViewSortOrder}
+                              className="h-5 w-5 p-0 hover:bg-slate-200"
+                            >
+                              {smartViewSortOrder === 'asc' ? (
+                                <ArrowUp className="w-3 h-3" />
+                              ) : (
+                                <ArrowDown className="w-3 h-3" />
+                              )}
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent>
+                            <p>{smartViewSortOrder === 'asc' ? 'Oldest first (click for newest first)' : 'Newest first (click for oldest first)'}</p>
+                          </TooltipContent>
+                        </Tooltip>
+                      </TooltipProvider>
+                    </div>
+                  ) : (
+                    'Due Date'
+                  )}
+                </TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right py-1.5">Expected</TableHead>
+                <TableHead className="font-semibold bg-slate-50 py-1.5">Status</TableHead>
                 {viewMode === 'detailed' && (
                   <>
-                    <TableHead className="font-semibold bg-slate-50">Date Paid</TableHead>
-                    <TableHead className="font-semibold bg-slate-50 text-right">Amt Paid</TableHead>
+                    <TableHead className="font-semibold bg-slate-50 py-1.5">Date Paid</TableHead>
+                    <TableHead className="font-semibold bg-slate-50 text-right py-1.5">Amt Paid</TableHead>
                   </>
                 )}
                 {viewMode === 'smartview2' && (
                   <>
-                    <TableHead className="font-semibold bg-slate-50 text-right">Principal Paid</TableHead>
-                    {showCumulativeColumns && (
-                      <>
-                        <TableHead className="font-semibold bg-slate-50 text-right">Principal Outstanding</TableHead>
-                        <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Interest Expected</TableHead>
-                        <TableHead className="font-semibold bg-slate-50 text-right">Cumulative Interest Paid</TableHead>
-                      </>
-                    )}
+                    <TableHead className="font-semibold bg-slate-50 py-1.5">Paid Date</TableHead>
+                    <TableHead className="font-semibold bg-slate-50 text-right py-1.5">Amount</TableHead>
                   </>
                 )}
-                <TableHead className="font-semibold bg-slate-50 text-right">Interest Variance</TableHead>
-                <TableHead className="font-semibold bg-slate-50">Notes</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right py-1.5">+/-</TableHead>
+                <TableHead className="font-semibold bg-slate-50 py-1.5">Notes</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -522,309 +586,189 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   })()
                   ) : (
                     (() => {
-                    // SMARTVIEW2 - Interest-focused cumulative tracking with principal reduction
+                    // SMART VIEW - Fuzzy payment matching by nearest due date
+                    // Each payment matches to the schedule period with closest due date
                     const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
                     const sortedTransactions = transactions
                       .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                       .sort((a, b) => new Date(a.date) - new Date(b.date));
 
                     const today = new Date();
-                    const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
-                    const periodRate = (loan.interest_rate / 100) / periodsPerYear;
 
-                    // Calculate cumulative values up to before display window
-                    let cumulativeInterestExpected = 0;
-                    let cumulativeInterestPaid = 0;
-                    let runningPrincipalOutstanding = loan.principal_amount;
+                    // Match each payment to nearest schedule period by date proximity
+                    const paymentAssignments = new Map();
+                    sortedSchedule.forEach(row => {
+                      paymentAssignments.set(row.id, []);
+                    });
 
-                    for (let i = 0; i < startIndex; i++) {
-                      const row = schedule[i];
+                    // For each payment, find the schedule period with minimum absolute days difference
+                    sortedTransactions.forEach(tx => {
+                      const txDate = new Date(tx.date);
+                      let closestSchedule = null;
+                      let minDaysDiff = Infinity;
+
+                      sortedSchedule.forEach(scheduleRow => {
+                        const dueDate = new Date(scheduleRow.due_date);
+                        const daysDiff = Math.abs(differenceInDays(txDate, dueDate));
+                        if (daysDiff < minDaysDiff) {
+                          minDaysDiff = daysDiff;
+                          closestSchedule = scheduleRow;
+                        }
+                      });
+
+                      if (closestSchedule) {
+                        paymentAssignments.get(closestSchedule.id).push({
+                          ...tx,
+                          daysDiff: minDaysDiff,
+                          daysFromDue: differenceInDays(txDate, new Date(closestSchedule.due_date))
+                        });
+                      }
+                    });
+
+                    // Build period data with matched payments
+                    const periodData = sortedSchedule.map((row) => {
                       const dueDate = new Date(row.due_date);
+                      const expectedAmount = row.interest_amount || row.total_due || 0;
+                      const matchedPayments = paymentAssignments.get(row.id) || [];
+
+                      // Sum all payments matched to this period
+                      const totalPaidForPeriod = matchedPayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                      const variance = totalPaidForPeriod - expectedAmount;
+
+                      // Get payment date info (use first payment date if multiple)
+                      const firstPayment = matchedPayments.length > 0 ? matchedPayments[0] : null;
+                      const paidDate = firstPayment ? new Date(firstPayment.date) : null;
+                      const daysFromDue = firstPayment ? firstPayment.daysFromDue : null;
+
+                      // Determine status
                       const isPastDue = today > dueDate;
+                      let status = 'upcoming';
 
-                      // Calculate principal paid up to this due date
-                      const txUpToDueDate = sortedTransactions.filter(tx => new Date(tx.date) <= dueDate);
-                      const principalPaidUpToDueDate = txUpToDueDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                      runningPrincipalOutstanding = loan.principal_amount - principalPaidUpToDueDate;
-
-                      // Calculate expected interest based on actual outstanding principal
-                      let expectedInterestForPeriod = 0;
-                      if (loan.interest_type === 'Flat') {
-                        expectedInterestForPeriod = loan.principal_amount * periodRate;
-                      } else if (loan.interest_type === 'Reducing') {
-                        expectedInterestForPeriod = runningPrincipalOutstanding * periodRate;
-                      } else if (loan.interest_type === 'Interest-Only') {
-                        expectedInterestForPeriod = loan.principal_amount * periodRate;
+                      if (totalPaidForPeriod >= expectedAmount - 0.01) {
+                        // Fully paid
+                        if (paidDate && daysFromDue !== null) {
+                          if (daysFromDue < 0) {
+                            status = 'paid_early';
+                          } else if (daysFromDue === 0) {
+                            status = 'paid';
+                          } else {
+                            status = 'paid_late';
+                          }
+                        } else {
+                          status = 'paid';
+                        }
+                      } else if (totalPaidForPeriod > 0.01) {
+                        // Partially paid
+                        status = 'partial';
+                      } else if (isPastDue) {
+                        // Missed
+                        status = 'missed';
                       }
+                      // else: upcoming (default)
 
-                      if (isPastDue) {
-                        cumulativeInterestExpected += expectedInterestForPeriod;
-                      }
+                      return {
+                        row,
+                        dueDate,
+                        expectedAmount,
+                        matchedPayments,
+                        totalPaidForPeriod,
+                        variance,
+                        paidDate,
+                        daysFromDue,
+                        status
+                      };
+                    });
 
-                      const evaluationDate = isPastDue ? dueDate : today;
-                      const txUpToEval = sortedTransactions.filter(tx => new Date(tx.date) <= evaluationDate);
-                      cumulativeInterestPaid = txUpToEval.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-                    }
+                    // Apply sort order to periodData
+                    const sortedPeriodData = smartViewSortOrder === 'desc'
+                      ? [...periodData].reverse()
+                      : periodData;
 
-                    const displayRows = schedule.slice(startIndex, endIndex);
+                    const displayData = sortedPeriodData.slice(startIndex, endIndex);
 
-                    return displayRows.map((row, idx) => {
-                      const actualIndex = startIndex + idx;
-                      const dueDate = new Date(row.due_date);
-                      const isPastDue = today > dueDate;
+                    return displayData.map((data) => {
+                      if (!data) return null;
+                      const row = data.row;
 
-                      // For past dates: calculate cumulative up to due date
-                      // For future dates: calculate cumulative up to TODAY only
-                      const evaluationDate = isPastDue ? dueDate : today;
-
-                      // Get the previous period's due date to determine principal outstanding at start of this period
-                      const previousDueDate = actualIndex > 0 ? new Date(sortedSchedule[actualIndex - 1].due_date) : new Date(loan.start_date);
-
-                      // Calculate principal paid up to END of previous period
-                      const txUpToPreviousPeriod = sortedTransactions.filter(tx => new Date(tx.date) <= previousDueDate);
-                      const principalPaidUpToPreviousPeriod = txUpToPreviousPeriod.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                      const principalOutstandingAtStartOfPeriod = loan.principal_amount - principalPaidUpToPreviousPeriod;
-
-                      // Recalculate expected interest based on principal outstanding at START of period
-                      let expectedInterestForPeriod = 0;
-                      if (loan.interest_type === 'Flat') {
-                        expectedInterestForPeriod = loan.principal_amount * periodRate;
-                      } else if (loan.interest_type === 'Reducing') {
-                        expectedInterestForPeriod = principalOutstandingAtStartOfPeriod * periodRate;
-                      } else if (loan.interest_type === 'Interest-Only') {
-                        expectedInterestForPeriod = loan.principal_amount * periodRate;
-                      } else if (loan.interest_type === 'Rolled-Up') {
-                        expectedInterestForPeriod = principalOutstandingAtStartOfPeriod * periodRate;
-                      }
-
-                      // Add to cumulative expected if due date has passed
-                      if (isPastDue) {
-                        cumulativeInterestExpected += expectedInterestForPeriod;
-                      }
-
-                      // Calculate payments up to evaluation date
-                      const txUpToDate = sortedTransactions.filter(tx => new Date(tx.date) <= evaluationDate);
-                      const interestPaidUpToDate = txUpToDate.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-                      const principalPaidUpToDate = txUpToDate.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-
-                      // Calculate outstanding principal as of evaluation date
-                      const principalOutstanding = loan.principal_amount - principalPaidUpToDate;
-
-                      // Cumulative interest variance (frozen for past dates, current for future dates)
-                      const cumulativeBalance = interestPaidUpToDate - cumulativeInterestExpected;
+                      const { dueDate, expectedAmount, totalPaidForPeriod, variance, paidDate, daysFromDue, status, matchedPayments } = data;
 
                       let statusBadge;
                       let statusColor = '';
                       let notes = '';
 
-                      if (isPastDue) {
-                        // Check if interest was paid by due date
-                        if (cumulativeBalance < -0.01) {
-                          // Interest in arrears at due date - check if it recovered later
-                          const arrearsAtDueDate = Math.abs(cumulativeBalance);
-
-                          // Find the transaction that brought the interest balance back to positive
-                          let recoveryTransactionDate = null;
-                          let runningInterestBalance = cumulativeBalance;
-
-                          // Check transactions after due date
-                          const laterTransactions = sortedTransactions.filter(tx => 
-                            new Date(tx.date) > dueDate
-                          ).sort((a, b) => new Date(a.date) - new Date(b.date));
-
-                          for (const tx of laterTransactions) {
-                            runningInterestBalance += (tx.interest_applied || 0);
-                            if (runningInterestBalance >= -0.01) {
-                              recoveryTransactionDate = new Date(tx.date);
-                              break;
-                            }
-                          }
-
-                          if (recoveryTransactionDate) {
-                            // Interest paid late
-                            const daysLate = differenceInDays(recoveryTransactionDate, dueDate);
-                            statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
-                            statusColor = 'bg-emerald-50/30';
-                            notes = `Paid ${daysLate} day${daysLate !== 1 ? 's' : ''} late`;
-                          } else {
-                            // Interest still in arrears
-                            const daysOverdue = differenceInDays(today, dueDate);
-                            statusBadge = <Badge className="bg-red-500 text-white">Overdue</Badge>;
-                            statusColor = 'bg-red-50/30';
-                            notes = `${daysOverdue} days overdue • ${formatCurrency(arrearsAtDueDate)} interest in arrears`;
-                          }
-                        } else {
-                          // Interest was paid by due date
+                      switch (status) {
+                        case 'paid_early':
                           statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                           statusColor = 'bg-emerald-50/30';
-
-                          if (cumulativeBalance > 0.01) {
-                            notes = `Interest overpaid by ${formatCurrency(cumulativeBalance)}`;
-                          } else {
-                            notes = 'Interest obligations met at due date';
-                          }
-                        }
-                      } else {
-                        // Future obligation - upcoming payment
-                        if (cumulativeBalance > 0.01) {
-                          statusBadge = <Badge className="bg-emerald-500 text-white">Ahead</Badge>;
+                          notes = `${Math.abs(daysFromDue)} days early`;
+                          break;
+                        case 'paid':
+                          statusBadge = <Badge className="bg-emerald-500 text-white">✓ Paid</Badge>;
                           statusColor = 'bg-emerald-50/30';
-                          notes = `Account in surplus: ${formatCurrency(cumulativeBalance)}`;
-                        } else {
-                          statusBadge = <Badge className="bg-blue-500 text-white">⏰ Upcoming</Badge>;
+                          notes = 'On time';
+                          break;
+                        case 'paid_late':
+                          statusBadge = <Badge className="bg-amber-500 text-white">Paid Late</Badge>;
+                          statusColor = 'bg-amber-50/30';
+                          notes = `${daysFromDue} days late`;
+                          break;
+                        case 'partial':
+                          const pctPaid = Math.round((totalPaidForPeriod / expectedAmount) * 100);
+                          statusBadge = <Badge className="bg-amber-500 text-white">Partial ({pctPaid}%)</Badge>;
+                          statusColor = 'bg-amber-50/30';
+                          notes = `${formatCurrency(Math.abs(variance))} short`;
+                          break;
+                        case 'missed':
+                          const daysOverdue = differenceInDays(today, dueDate);
+                          statusBadge = <Badge className="bg-red-500 text-white">Missed</Badge>;
+                          statusColor = 'bg-red-50/30';
+                          notes = `${daysOverdue} days overdue`;
+                          break;
+                        case 'upcoming':
+                        default:
+                          const daysUntil = differenceInDays(dueDate, today);
+                          statusBadge = <Badge className="bg-blue-500 text-white">Upcoming</Badge>;
                           statusColor = 'bg-blue-50/30';
-                          const daysUntilDue = differenceInDays(dueDate, today);
-                          notes = `Due in ${daysUntilDue} day${daysUntilDue !== 1 ? 's' : ''}`;
-                        }
+                          notes = daysUntil === 0 ? 'Due today' : `Due in ${daysUntil} days`;
+                          break;
                       }
 
-                      const recoveryTransactionDate = (() => {
-                        if (isPastDue && cumulativeBalance < -0.01) {
-                          const arrearsAtDueDate = Math.abs(cumulativeBalance);
-                          let runningInterestBalance = cumulativeBalance;
-                          const laterTransactions = sortedTransactions.filter(tx => 
-                            new Date(tx.date) > dueDate
-                          ).sort((a, b) => new Date(a.date) - new Date(b.date));
+                      // Add overpayment note if applicable
+                      if (variance > 0.01 && (status === 'paid' || status === 'paid_early' || status === 'paid_late')) {
+                        notes += ` (+${formatCurrency(variance)} over)`;
+                      }
 
-                          for (const tx of laterTransactions) {
-                            runningInterestBalance += (tx.interest_applied || 0);
-                            if (runningInterestBalance >= -0.01) {
-                              return new Date(tx.date);
-                            }
-                          }
-                        }
-                        return null;
-                      })();
+                      // Show multiple payments note
+                      if (matchedPayments.length > 1) {
+                        notes += ` (${matchedPayments.length} payments)`;
+                      }
 
-                      const arrearsAtDueDate = isPastDue && cumulativeBalance < -0.01 ? Math.abs(cumulativeBalance) : 0;
-                      const daysLate = recoveryTransactionDate ? differenceInDays(recoveryTransactionDate, dueDate) : 0;
-                      const daysUntilDue = !isPastDue ? differenceInDays(dueDate, today) : 0;
+                      // Variance color
+                      const varianceColor = variance >= 0
+                        ? 'text-emerald-600'
+                        : (Math.abs(variance) <= expectedAmount ? 'text-amber-600' : 'text-red-600');
 
                       return (
-                        <React.Fragment key={row.id}>
-                          <TableRow className={statusColor}>
-                            <TableCell className="font-medium">
-                              <div className="flex items-center gap-2">
-                                <span className="text-slate-400">📄</span>
-                                {formatInstallmentLabel(row)}
-                              </div>
-                            </TableCell>
-                            <TableCell>{format(dueDate, 'MMM dd, yyyy')}</TableCell>
-                            <TableCell className="text-right font-mono">{formatCurrency(expectedInterestForPeriod)}</TableCell>
-                            <TableCell>{statusBadge}</TableCell>
-                            <TableCell className="text-right font-mono text-slate-600">
-                              {formatCurrency(principalPaidUpToDate)}
-                            </TableCell>
-                            {showCumulativeColumns && (
-                              <>
-                                <TableCell className="text-right font-mono text-slate-600">
-                                  {formatCurrency(principalOutstanding)}
-                                </TableCell>
-                                <TableCell className="text-right font-mono text-slate-600">
-                                  {formatCurrency(cumulativeInterestExpected)}
-                                </TableCell>
-                                <TableCell className="text-right font-mono text-slate-600">
-                                  {formatCurrency(interestPaidUpToDate)}
-                                </TableCell>
-                              </>
-                            )}
-                            <TableCell className={`text-right font-mono font-semibold ${cumulativeBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                              {cumulativeBalance >= 0 ? '+' : ''}{formatCurrency(cumulativeBalance)}
-                            </TableCell>
-                            <TableCell className="text-slate-600 text-xs">
-                              {notes && (
-                                <TooltipProvider>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <span className="cursor-help underline decoration-dotted">{notes}</span>
-                                    </TooltipTrigger>
-                                    <TooltipContent className="max-w-md">
-                                      <div className="space-y-2 text-xs">
-                                        <div className="font-semibold text-xs border-b pb-1">Period Analysis</div>
-
-                                        <div>
-                                          <p className="font-medium">Due Date: {format(dueDate, 'MMM dd, yyyy')}</p>
-                                          <p className="text-slate-600">Expected Interest: {formatCurrency(expectedInterestForPeriod)}</p>
-                                        </div>
-
-                                        <div>
-                                          <p className="font-medium">Cumulative Position (as of {isPastDue ? format(dueDate, 'MMM dd, yyyy') : format(today, 'MMM dd, yyyy')}):</p>
-                                          <p className="text-slate-600">• Interest Expected: {formatCurrency(cumulativeInterestExpected)}</p>
-                                          <p className="text-slate-600">• Interest Paid: {formatCurrency(interestPaidUpToDate)}</p>
-                                          <p className={`font-semibold ${cumulativeBalance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                                            • Balance: {cumulativeBalance >= 0 ? '+' : ''}{formatCurrency(cumulativeBalance)}
-                                          </p>
-                                        </div>
-
-                                        {(() => {
-                                          const txUpToEvalDate = sortedTransactions.filter(tx => 
-                                            new Date(tx.date) <= (isPastDue ? dueDate : today)
-                                          );
-
-                                          if (txUpToEvalDate.length > 0) {
-                                            return (
-                                              <div>
-                                                <p className="font-medium">Payments Considered ({txUpToEvalDate.length}):</p>
-                                                <div className="space-y-1 mt-1 max-h-32 overflow-y-auto">
-                                                  {txUpToEvalDate.map((tx, i) => (
-                                                    <div key={i} className="text-slate-600 pl-2 border-l-2 border-slate-200">
-                                                      <p>• {format(new Date(tx.date), 'MMM dd, yyyy')}: {formatCurrency(tx.amount)}</p>
-                                                      <p className="pl-2 text-slate-500">
-                                                        Principal: {formatCurrency(tx.principal_applied || 0)} | 
-                                                        Interest: {formatCurrency(tx.interest_applied || 0)}
-                                                      </p>
-                                                    </div>
-                                                  ))}
-                                                </div>
-                                              </div>
-                                            );
-                                          }
-                                        })()}
-
-                                        <div className="border-t pt-2">
-                                          <p className="font-medium">Status Logic:</p>
-                                          {isPastDue ? (
-                                            cumulativeBalance < -0.01 ? (
-                                              recoveryTransactionDate ? (
-                                                <p className="text-slate-600">
-                                                  Interest shortfall of {formatCurrency(arrearsAtDueDate)} at due date was cleared {daysLate} day{daysLate !== 1 ? 's' : ''} late on {format(recoveryTransactionDate, 'MMM dd, yyyy')}.
-                                                </p>
-                                              ) : (
-                                                <p className="text-red-600">
-                                                  Interest shortfall of {formatCurrency(arrearsAtDueDate)} at due date remains unpaid.
-                                                </p>
-                                              )
-                                            ) : (
-                                              cumulativeBalance > 0.01 ? (
-                                                <p className="text-emerald-600">
-                                                  Interest obligations met by due date with surplus of {formatCurrency(cumulativeBalance)}.
-                                                </p>
-                                              ) : (
-                                                <p className="text-slate-600">
-                                                  Interest obligations met exactly by due date.
-                                                </p>
-                                              )
-                                            )
-                                          ) : (
-                                            cumulativeBalance > 0.01 ? (
-                                              <p className="text-emerald-600">
-                                                Upcoming in {daysUntilDue} day{daysUntilDue !== 1 ? 's' : ''}. Account has {formatCurrency(cumulativeBalance)} surplus - payments ahead of schedule.
-                                              </p>
-                                            ) : (
-                                              <p className="text-slate-600">
-                                                Upcoming in {daysUntilDue} day{daysUntilDue !== 1 ? 's' : ''}. No payments made yet.
-                                              </p>
-                                            )
-                                          )}
-                                        </div>
-                                      </div>
-                                    </TooltipContent>
-                                  </Tooltip>
-                                </TooltipProvider>
-                              )}
-                            </TableCell>
-                          </TableRow>
-                        </React.Fragment>
+                        <TableRow key={row.id} className={statusColor}>
+                          <TableCell className="font-medium py-1.5 whitespace-nowrap">
+                            {formatInstallmentLabel(row)}
+                          </TableCell>
+                          <TableCell className="py-1.5">{format(dueDate, 'MMM dd, yyyy')}</TableCell>
+                          <TableCell className="text-right font-mono py-1.5">{formatCurrency(expectedAmount)}</TableCell>
+                          <TableCell className="py-1.5">{statusBadge}</TableCell>
+                          <TableCell className="py-1.5">
+                            {paidDate ? format(paidDate, 'MMM dd, yyyy') : '—'}
+                          </TableCell>
+                          <TableCell className="text-right font-mono py-1.5">
+                            {totalPaidForPeriod > 0 ? formatCurrency(totalPaidForPeriod) : '—'}
+                          </TableCell>
+                          <TableCell className={`text-right font-mono font-semibold py-1.5 ${varianceColor}`}>
+                            {variance >= 0 ? '+' : ''}{formatCurrency(variance)}
+                          </TableCell>
+                          <TableCell className="text-slate-600 text-xs py-1.5">
+                            {notes}
+                          </TableCell>
+                        </TableRow>
                       );
                     });
                     })()
@@ -843,7 +787,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                 return (
                   <TableRow className="bg-slate-100 border-t-2 border-slate-300">
-                    <TableCell colSpan={viewMode === 'smartview2' && showCumulativeColumns ? 8 : viewMode === 'smartview2' ? 5 : 6} className="text-right font-semibold text-sm py-2">
+                    <TableCell colSpan={viewMode === 'smartview2' ? 6 : 6} className="text-right font-semibold text-sm py-2">
                       Totals
                     </TableCell>
                     <TableCell colSpan={2} className="py-2">
@@ -926,6 +870,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   const repaymentTransactions = transactions
                     .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
+                  const furtherAdvanceTransactions = transactions
+                    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+                    .sort((a, b) => new Date(a.date) - new Date(b.date));
 
                   const today = new Date();
                   const dailyRate = loan.interest_rate / 100 / 365;
@@ -954,11 +901,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     }
                   });
 
-                  // Build rows with running balances
+                  // Build rows WITHOUT running balances first, then sort, then calculate balances
                   const rows = [];
-                  let runningPrincipalBalance = loan.principal_amount;
-                  let runningInterestAccrued = 0;
-                  let runningInterestPaid = 0;
 
                   // Add disbursement row
                   rows.push({
@@ -967,17 +911,29 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     description: 'Loan Disbursement',
                     principal: loan.principal_amount,
                     interest: 0,
-                    balance: 0
+                    balance: 0, // Will be calculated after sorting
+                    sortOrder: 0 // Disbursement always first on its date
                   });
 
-                  // Process each schedule period (will be sorted later based on user preference)
+                  // Add further advance rows (balance calculated after sorting)
+                  furtherAdvanceTransactions.forEach(tx => {
+                    rows.push({
+                      type: 'further_advance',
+                      date: new Date(tx.date),
+                      description: 'Further Advance',
+                      principal: tx.amount,
+                      interest: 0,
+                      balance: 0, // Will be calculated after sorting
+                      transaction: tx,
+                      sortOrder: 1 // Further advances after disbursement on same date
+                    });
+                  });
+
+                  // Process each schedule period
                   sortedSchedule.forEach((scheduleRow, idx) => {
                     const dueDate = new Date(scheduleRow.due_date);
                     const expectedInterest = scheduleRow.interest_amount || 0;
                     const periodTransactions = txAssignments.get(scheduleRow.id) || [];
-
-                    // Accrue interest for this period
-                    runningInterestAccrued += expectedInterest;
 
                     // Calculate period payments
                     const periodInterestPaid = periodTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
@@ -1022,66 +978,94 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       description: installmentLabel,
                       principal: scheduleRow.principal_amount || 0,
                       interest: expectedInterest,
-                      balance: runningInterestAccrued - runningInterestPaid,
+                      balance: 0, // Will be calculated after sorting
                       status,
                       statusVariance,
                       periodInterestPaid,
                       periodPrincipalPaid,
                       expectedInterest,
-                      isPastDue
-                    });
-
-                    // Add CHILD ROWS for each transaction in this period
-                    const txCount = periodTransactions.length;
-                    periodTransactions.forEach((tx, txIdx) => {
-                      const txDate = new Date(tx.date);
-                      runningPrincipalBalance -= (tx.principal_applied || 0);
-                      runningPrincipalBalance = Math.max(0, runningPrincipalBalance);
-                      runningInterestPaid += (tx.interest_applied || 0);
-
-                      // Calculate status text for the last transaction in this period
-                      let txStatusText = null;
-                      if (txIdx === txCount - 1) {
-                        if (status === 'overpaid') {
-                          txStatusText = `Overpaid +${formatCurrency(statusVariance)}`;
-                        } else if (status === 'paid') {
-                          const daysDiff = differenceInDays(txDate, dueDate);
-                          if (daysDiff < 0) txStatusText = `${Math.abs(daysDiff)}d early`;
-                          else if (daysDiff === 0) txStatusText = 'On time';
-                          else txStatusText = `${daysDiff}d late`;
-                        } else if (status === 'underpaid') {
-                          txStatusText = `Short ${formatCurrency(Math.abs(statusVariance))}`;
-                        } else if (status === 'paid_early') {
-                          const daysDiff = differenceInDays(txDate, dueDate);
-                          txStatusText = `${Math.abs(daysDiff)}d early`;
-                        }
-                      }
-
-                      rows.push({
-                        type: 'transaction_child',
-                        transaction: tx,
-                        date: txDate,
-                        description: `${tx.reference || 'Payment'}`,
-                        principal: tx.principal_applied || 0,
-                        interest: tx.interest_applied || 0,
-                        balance: runningInterestAccrued - runningInterestPaid,
-                        parentScheduleId: scheduleRow.id,
-                        txStatusText,
-                        status: txIdx === txCount - 1 ? status : null,
-                        expectedInterest,
-                        dueDate
-                      });
+                      isPastDue,
+                      sortOrder: 2, // Schedule headers after disbursements/advances on same date
+                      periodTransactions // Store for adding child rows after sorting
                     });
                   });
 
-                  // Apply sorting based on user preference
-                  const sortedRows = [...rows];
+                  // Sort all rows by date first
+                  rows.sort((a, b) => {
+                    const dateDiff = a.date - b.date;
+                    if (dateDiff !== 0) return dateDiff;
+                    // On same date, use sortOrder: disbursement (0), further_advance (1), schedule_header (2)
+                    return (a.sortOrder || 0) - (b.sortOrder || 0);
+                  });
 
-                  if (nestedSortOrder === 'desc') {
-                    // Newest first (reverse chronological)
-                    sortedRows.reverse();
-                  }
-                  // else: keep 'asc' (oldest first, default chronological order)
+                  // Now expand schedule headers to include their transaction children, and calculate running balances
+                  const expandedRows = [];
+                  let runningPrincipalBalance = 0;
+                  let runningInterestAccrued = 0;
+                  let runningInterestPaid = 0;
+
+                  rows.forEach(row => {
+                    if (row.type === 'disbursement') {
+                      runningPrincipalBalance = row.principal;
+                      row.balance = runningPrincipalBalance;
+                      expandedRows.push(row);
+                    } else if (row.type === 'further_advance') {
+                      runningPrincipalBalance += row.principal;
+                      row.balance = runningPrincipalBalance;
+                      expandedRows.push(row);
+                    } else if (row.type === 'schedule_header') {
+                      // Accrue interest for this period
+                      runningInterestAccrued += row.expectedInterest;
+                      row.balance = runningInterestAccrued - runningInterestPaid;
+                      expandedRows.push(row);
+
+                      // Add CHILD ROWS for each transaction in this period
+                      const periodTransactions = row.periodTransactions || [];
+                      const txCount = periodTransactions.length;
+                      periodTransactions.forEach((tx, txIdx) => {
+                        const txDate = new Date(tx.date);
+                        runningPrincipalBalance -= (tx.principal_applied || 0);
+                        runningPrincipalBalance = Math.max(0, runningPrincipalBalance);
+                        runningInterestPaid += (tx.interest_applied || 0);
+
+                        // Calculate status text for the last transaction in this period
+                        let txStatusText = null;
+                        if (txIdx === txCount - 1) {
+                          if (row.status === 'overpaid') {
+                            txStatusText = `Overpaid +${formatCurrency(row.statusVariance)}`;
+                          } else if (row.status === 'paid') {
+                            const daysDiff = differenceInDays(txDate, row.date);
+                            if (daysDiff < 0) txStatusText = `${Math.abs(daysDiff)}d early`;
+                            else if (daysDiff === 0) txStatusText = 'On time';
+                            else txStatusText = `${daysDiff}d late`;
+                          } else if (row.status === 'underpaid') {
+                            txStatusText = `Short ${formatCurrency(Math.abs(row.statusVariance))}`;
+                          } else if (row.status === 'paid_early') {
+                            const daysDiff = differenceInDays(txDate, row.date);
+                            txStatusText = `${Math.abs(daysDiff)}d early`;
+                          }
+                        }
+
+                        expandedRows.push({
+                          type: 'transaction_child',
+                          transaction: tx,
+                          date: txDate,
+                          description: `${tx.reference || 'Payment'}`,
+                          principal: tx.principal_applied || 0,
+                          interest: tx.interest_applied || 0,
+                          balance: runningInterestAccrued - runningInterestPaid,
+                          parentScheduleId: row.scheduleRow.id,
+                          txStatusText,
+                          status: txIdx === txCount - 1 ? row.status : null,
+                          expectedInterest: row.expectedInterest,
+                          dueDate: row.date
+                        });
+                      });
+                    }
+                  });
+
+                  // Apply sorting based on user preference
+                  const sortedRows = nestedSortOrder === 'desc' ? [...expandedRows].reverse() : expandedRows;
 
                   return sortedRows.map((row, idx) => {
                     if (row.type === 'disbursement') {
@@ -1096,6 +1080,27 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           <TableCell className="py-0.5 text-right font-mono text-red-600 font-semibold text-xs">
                             {formatCurrency(row.principal)}
                           </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono font-semibold text-xs">
+                            {formatCurrency(row.balance)}
+                          </TableCell>
+                          <TableCell className="py-0.5">—</TableCell>
+                        </TableRow>
+                      );
+                    }
+
+                    if (row.type === 'further_advance') {
+                      return (
+                        <TableRow key={`further-advance-${idx}`} className="bg-orange-50/50 border-l-4 border-orange-500">
+                          <TableCell className="py-0.5 font-medium text-xs">
+                            {format(row.date, 'dd/MM/yy')}
+                          </TableCell>
+                          <TableCell className="py-0.5 font-semibold text-orange-700 text-xs">
+                            {row.description}
+                          </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-orange-600 font-semibold text-xs">{
+                            `+${formatCurrency(row.principal)}`
+                          }</TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
                           <TableCell className="py-0.5 text-right font-mono font-semibold text-xs">
                             {formatCurrency(row.balance)}
@@ -1327,11 +1332,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           ) : (
             <>
             {paginatedRows.map((row, index) => (
-              <TableRow 
+              <TableRow
                 key={index}
                 className={
-                  row.isDisbursement 
-                    ? 'bg-red-50/50 border-l-4 border-red-500' 
+                  row.rowType === 'disbursement'
+                    ? 'bg-red-50/50 border-l-4 border-red-500'
+                    : row.rowType === 'further_advance'
+                    ? 'bg-orange-50/50 border-l-4 border-orange-500'
                     : row.transactions.length > 0
                     ? 'bg-emerald-50/50 border-l-4 border-emerald-500'
                     : ''
@@ -1343,8 +1350,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                 {/* Actual Transactions */}
                 <TableCell className="text-right font-mono text-xs py-1">
-                  {row.isDisbursement ? (
+                  {row.rowType === 'disbursement' ? (
                     <span className="text-red-600 font-semibold">{formatCurrency(loan.principal_amount)}</span>
+                  ) : row.rowType === 'further_advance' ? (
+                    <span className="text-orange-600 font-semibold">{`+${formatCurrency(row.amount || row.transactions[0]?.amount || 0)}`}</span>
                   ) : (viewMode === 'separate' && row.rowType === 'transaction') ? (
                     formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0))
                   ) : (viewMode === 'merged' && row.transactions.length > 0) ? (
