@@ -860,7 +860,32 @@ export function applyManualPayment(interestAmount, principalAmount, scheduleRows
 }
 
 /**
+ * Get the effective interest rate for a loan on a given date
+ * @param {Object} loan - Loan object
+ * @param {Date} date - Date to check
+ * @returns {number} Interest rate as percentage (e.g., 12 for 12%)
+ */
+export function getEffectiveRate(loan, date = new Date()) {
+  if (!loan) return 0;
+
+  // Check if penalty rate applies
+  if (loan.has_penalty_rate && loan.penalty_rate && loan.penalty_rate_from) {
+    const penaltyDate = new Date(loan.penalty_rate_from);
+    penaltyDate.setHours(0, 0, 0, 0);
+    const checkDate = new Date(date);
+    checkDate.setHours(0, 0, 0, 0);
+
+    if (checkDate >= penaltyDate) {
+      return loan.penalty_rate;
+    }
+  }
+
+  return loan.interest_rate;
+}
+
+/**
  * Calculate accrued interest to date (what would be owed if settled today)
+ * Supports penalty rate from a specific date
  * @param {Object} loan - Loan object
  * @param {Date} asOfDate - Date to calculate as of (defaults to today)
  * @returns {number} Total accrued interest (not reduced by payments)
@@ -882,21 +907,60 @@ export function calculateAccruedInterest(loan, asOfDate = new Date()) {
   const daysPerPeriod = loan.period === 'Monthly' ? 30.417 : 7; // Average days
   const periodsElapsed = daysElapsed / daysPerPeriod;
   const principal = loan.principal_amount;
+
+  // Check if there's a penalty rate that applies
+  let penaltyDateObj = null;
+  let daysToPenalty = daysElapsed;
+  let daysAtPenalty = 0;
+
+  if (loan.has_penalty_rate && loan.penalty_rate && loan.penalty_rate_from) {
+    penaltyDateObj = new Date(loan.penalty_rate_from);
+    penaltyDateObj.setHours(0, 0, 0, 0);
+
+    if (penaltyDateObj > startDate && penaltyDateObj <= today) {
+      // Split the calculation period
+      daysToPenalty = Math.floor((penaltyDateObj - startDate) / (1000 * 60 * 60 * 24));
+      daysAtPenalty = daysElapsed - daysToPenalty;
+    } else if (penaltyDateObj <= startDate) {
+      // Penalty rate applies from the start
+      daysToPenalty = 0;
+      daysAtPenalty = daysElapsed;
+    }
+    // else: penalty date is in the future, use normal rate for all days
+  }
+
   const annualRate = loan.interest_rate / 100;
+  const penaltyAnnualRate = loan.penalty_rate ? loan.penalty_rate / 100 : annualRate;
   const periodRate = annualRate / periodsPerYear;
+  const penaltyPeriodRate = penaltyAnnualRate / periodsPerYear;
 
   let accruedInterest = 0;
 
+  // Helper function to calculate interest for a period with given rate
+  const calculateDailyInterest = (days, rate, balance) => {
+    return balance * (rate / 365) * days;
+  };
+
   if (loan.interest_type === 'Flat') {
     // Flat rate: total interest spread evenly
-    const totalInterest = loan.total_interest;
-    const interestPerDay = totalInterest / (loan.duration * daysPerPeriod);
-    accruedInterest = Math.min(interestPerDay * daysElapsed, totalInterest);
+    // For penalty rate, recalculate based on rates
+    if (daysAtPenalty > 0) {
+      const totalDays = loan.duration * daysPerPeriod;
+      // Normal rate portion
+      const normalInterestPerDay = (principal * annualRate) / 365;
+      const penaltyInterestPerDay = (principal * penaltyAnnualRate) / 365;
+      accruedInterest = (normalInterestPerDay * daysToPenalty) + (penaltyInterestPerDay * daysAtPenalty);
+    } else {
+      const totalInterest = loan.total_interest;
+      const interestPerDay = totalInterest / (loan.duration * daysPerPeriod);
+      accruedInterest = Math.min(interestPerDay * daysElapsed, totalInterest);
+    }
 
   } else if (loan.interest_type === 'Reducing') {
     // Reducing balance: calculate based on what should have been paid by now
     const periodsCompleted = Math.min(Math.floor(periodsElapsed), loan.duration);
     const dailyRate = annualRate / 365;
+    const penaltyDailyRate = penaltyAnnualRate / 365;
 
     // Simple approximation: use reducing balance formula for periods completed
     let remainingBalance = principal;
@@ -905,42 +969,71 @@ export function calculateAccruedInterest(loan, asOfDate = new Date()) {
     const pmt = principal * (r * Math.pow(1 + r, n)) / (Math.pow(1 + r, n) - 1);
 
     for (let i = 0; i < periodsCompleted; i++) {
-      const interestForPeriod = remainingBalance * r;
+      const periodEndDay = (i + 1) * daysPerPeriod;
+      // Use penalty rate if this period falls after penalty date
+      const usePenalty = penaltyDateObj && daysToPenalty < periodEndDay;
+      const currentPeriodRate = usePenalty ? penaltyPeriodRate : periodRate;
+
+      const interestForPeriod = remainingBalance * currentPeriodRate;
       accruedInterest += interestForPeriod;
-      const principalForPeriod = pmt - interestForPeriod;
+      const principalForPeriod = pmt - (remainingBalance * periodRate); // Use original pmt calculation
       remainingBalance -= principalForPeriod;
     }
 
     // Add partial period interest
     if (periodsElapsed > periodsCompleted && remainingBalance > 0) {
       const daysInPartialPeriod = daysElapsed - (periodsCompleted * daysPerPeriod);
-      accruedInterest += remainingBalance * dailyRate * daysInPartialPeriod;
+      const currentDailyRate = daysAtPenalty > 0 ? penaltyDailyRate : dailyRate;
+      accruedInterest += remainingBalance * currentDailyRate * daysInPartialPeriod;
     }
 
   } else if (loan.interest_type === 'Interest-Only') {
     // For Interest-Only loans, interest accrues continuously at the period rate
-    // Don't cap based on interest_only_period as loans may be extended
-    const interestPerPeriod = principal * periodRate;
-    const periodsCompleted = Math.floor(periodsElapsed);
+    // Support split calculation for penalty rate
+    if (daysAtPenalty > 0) {
+      // Calculate interest before penalty date
+      const normalInterest = calculateDailyInterest(daysToPenalty, annualRate, principal);
+      // Calculate interest at penalty rate
+      const penaltyInterest = calculateDailyInterest(daysAtPenalty, penaltyAnnualRate, principal);
+      accruedInterest = normalInterest + penaltyInterest;
+    } else {
+      const interestPerPeriod = principal * periodRate;
+      const periodsCompleted = Math.floor(periodsElapsed);
 
-    accruedInterest = periodsCompleted * interestPerPeriod;
+      accruedInterest = periodsCompleted * interestPerPeriod;
 
-    // Add partial period interest
-    const partialPeriod = periodsElapsed - periodsCompleted;
-    if (partialPeriod > 0) {
-      accruedInterest += partialPeriod * interestPerPeriod;
+      // Add partial period interest
+      const partialPeriod = periodsElapsed - periodsCompleted;
+      if (partialPeriod > 0) {
+        accruedInterest += partialPeriod * interestPerPeriod;
+      }
     }
 
   } else if (loan.interest_type === 'Rolled-Up') {
     // Rolled-up: compound interest daily
-    const dailyRate = annualRate / 365;
-    accruedInterest = principal * (Math.pow(1 + dailyRate, daysElapsed) - 1);
+    if (daysAtPenalty > 0) {
+      // Calculate compound interest up to penalty date
+      const dailyRate = annualRate / 365;
+      const penaltyDailyRate = penaltyAnnualRate / 365;
+      const amountAtPenaltyDate = principal * Math.pow(1 + dailyRate, daysToPenalty);
+      const finalAmount = amountAtPenaltyDate * Math.pow(1 + penaltyDailyRate, daysAtPenalty);
+      accruedInterest = finalAmount - principal;
+    } else {
+      const dailyRate = annualRate / 365;
+      accruedInterest = principal * (Math.pow(1 + dailyRate, daysElapsed) - 1);
+    }
   } else {
     // Fallback: use simple daily accrual based on total scheduled interest
     // This handles unknown interest types or missing data
-    const totalDays = loan.duration * daysPerPeriod;
-    const interestPerDay = (loan.total_interest || 0) / totalDays;
-    accruedInterest = Math.min(interestPerDay * daysElapsed, loan.total_interest || 0);
+    if (daysAtPenalty > 0) {
+      const normalInterest = calculateDailyInterest(daysToPenalty, annualRate, principal);
+      const penaltyInterest = calculateDailyInterest(daysAtPenalty, penaltyAnnualRate, principal);
+      accruedInterest = normalInterest + penaltyInterest;
+    } else {
+      const totalDays = loan.duration * daysPerPeriod;
+      const interestPerDay = (loan.total_interest || 0) / totalDays;
+      accruedInterest = Math.min(interestPerDay * daysElapsed, loan.total_interest || 0);
+    }
   }
 
   return Math.round(accruedInterest * 100) / 100;

@@ -831,8 +831,17 @@ export default function LoanDetails() {
                       <p className="font-bold text-lg">{formatCurrency(totalPrincipal)}</p>
                     </div>
                     <div>
-                      <span className="text-slate-500 text-xs">Rate</span>
-                      <p className="font-bold text-lg">{loan.interest_rate}% {loan.interest_type}</p>
+                      <span className="text-slate-500 text-xs">Rate{loan.override_interest_rate && ' (Custom)'}</span>
+                      <p className="font-bold text-lg">
+                        {loan.override_interest_rate && loan.overridden_rate != null
+                          ? loan.overridden_rate
+                          : loan.interest_rate}% {loan.interest_type}
+                        {loan.has_penalty_rate && loan.penalty_rate && (
+                          <span className="text-amber-600 text-sm ml-1" title={`Penalty rate ${loan.penalty_rate}% from ${format(new Date(loan.penalty_rate_from), 'dd/MM/yy')}`}>
+                            → {loan.penalty_rate}%
+                          </span>
+                        )}
+                      </p>
                     </div>
                     <div>
                       <span className="text-slate-500 text-xs">Duration</span>
