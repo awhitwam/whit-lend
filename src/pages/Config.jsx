@@ -1735,6 +1735,71 @@ export default function Config() {
                                 {paginated.map((log) => {
                                   const details = log.details ? JSON.parse(log.details) : {};
                                   const prevValues = log.previous_values ? JSON.parse(log.previous_values) : null;
+                                  const newValues = log.new_values ? JSON.parse(log.new_values) : null;
+
+                                  // Generate meaningful change descriptions
+                                  const getChangeDescription = () => {
+                                    if (!prevValues || !newValues) return null;
+                                    const changes = [];
+
+                                    // Product changes
+                                    if (prevValues.product_name !== newValues.product_name) {
+                                      changes.push(`Product: ${prevValues.product_name} → ${newValues.product_name}`);
+                                    }
+
+                                    // Principal/disbursement changes
+                                    if (prevValues.principal_amount !== newValues.principal_amount) {
+                                      changes.push(`Principal: £${prevValues.principal_amount?.toLocaleString()} → £${newValues.principal_amount?.toLocaleString()}`);
+                                    }
+
+                                    // Fee changes
+                                    if (prevValues.arrangement_fee !== newValues.arrangement_fee) {
+                                      changes.push(`Arrangement fee: £${prevValues.arrangement_fee || 0} → £${newValues.arrangement_fee || 0}`);
+                                    }
+                                    if (prevValues.exit_fee !== newValues.exit_fee) {
+                                      changes.push(`Exit fee: £${prevValues.exit_fee || 0} → £${newValues.exit_fee || 0}`);
+                                    }
+
+                                    // Interest rate changes
+                                    if (prevValues.interest_rate !== newValues.interest_rate) {
+                                      changes.push(`Interest rate: ${prevValues.interest_rate}% → ${newValues.interest_rate}%`);
+                                    }
+
+                                    // Interest rate override changes
+                                    if (prevValues.override_interest_rate !== newValues.override_interest_rate) {
+                                      changes.push(newValues.override_interest_rate
+                                        ? `Rate override enabled: ${newValues.overridden_rate}%`
+                                        : 'Rate override disabled');
+                                    } else if (prevValues.overridden_rate !== newValues.overridden_rate && newValues.override_interest_rate) {
+                                      changes.push(`Overridden rate: ${prevValues.overridden_rate}% → ${newValues.overridden_rate}%`);
+                                    }
+
+                                    // Penalty rate changes
+                                    if (prevValues.has_penalty_rate !== newValues.has_penalty_rate) {
+                                      changes.push(newValues.has_penalty_rate
+                                        ? `Penalty rate applied: ${newValues.penalty_rate}% from ${newValues.penalty_rate_from}`
+                                        : 'Penalty rate removed');
+                                    } else if (prevValues.penalty_rate !== newValues.penalty_rate && newValues.has_penalty_rate) {
+                                      changes.push(`Penalty rate: ${prevValues.penalty_rate}% → ${newValues.penalty_rate}%`);
+                                    }
+                                    if (prevValues.penalty_rate_from !== newValues.penalty_rate_from && newValues.has_penalty_rate) {
+                                      changes.push(`Penalty effective: ${prevValues.penalty_rate_from || '-'} → ${newValues.penalty_rate_from}`);
+                                    }
+
+                                    // Duration changes
+                                    if (prevValues.duration !== newValues.duration) {
+                                      changes.push(`Duration: ${prevValues.duration} → ${newValues.duration} periods`);
+                                    }
+
+                                    // Start date changes
+                                    if (prevValues.start_date !== newValues.start_date) {
+                                      changes.push(`Start date: ${prevValues.start_date} → ${newValues.start_date}`);
+                                    }
+
+                                    return changes.length > 0 ? changes : null;
+                                  };
+
+                                  const changeDescriptions = getChangeDescription();
 
                                   return (
                                     <tr key={log.id} className="hover:bg-slate-50">
@@ -1752,9 +1817,18 @@ export default function Config() {
                                           </span>
                                         </div>
                                       </td>
-                                      <td className="py-2 px-3 text-xs text-slate-500 max-w-xs truncate">
+                                      <td className="py-2 px-3 text-xs text-slate-500 max-w-md">
                                         {log.action?.includes('delete') && details.reason ? (
                                           <span className="text-red-600">Reason: {details.reason}</span>
+                                        ) : log.action?.includes('update') && changeDescriptions ? (
+                                          <div className="space-y-0.5">
+                                            {changeDescriptions.slice(0, 3).map((change, idx) => (
+                                              <div key={idx} className="truncate">{change}</div>
+                                            ))}
+                                            {changeDescriptions.length > 3 && (
+                                              <div className="text-slate-400">+{changeDescriptions.length - 3} more changes</div>
+                                            )}
+                                          </div>
                                         ) : log.action?.includes('update') && prevValues ? (
                                           <span>Modified fields</span>
                                         ) : details.amount ? (

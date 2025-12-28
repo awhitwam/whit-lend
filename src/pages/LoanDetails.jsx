@@ -148,13 +148,27 @@ export default function LoanDetails() {
 
       if (!product) throw new Error('Product not found');
 
-      // Capture previous values for audit
+      // Capture previous values for audit - include all modifiable fields
       const previousValues = {
         principal_amount: loan.principal_amount,
         interest_rate: loan.interest_rate,
         duration: loan.duration,
         start_date: loan.start_date,
-        auto_extend: loan.auto_extend
+        auto_extend: loan.auto_extend,
+        // Product changes
+        product_id: loan.product_id,
+        product_name: loan.product_name,
+        // Fee changes
+        arrangement_fee: loan.arrangement_fee,
+        exit_fee: loan.exit_fee,
+        net_disbursed: loan.net_disbursed,
+        // Interest rate override
+        override_interest_rate: loan.override_interest_rate,
+        overridden_rate: loan.overridden_rate,
+        // Penalty rate changes
+        has_penalty_rate: loan.has_penalty_rate,
+        penalty_rate: loan.penalty_rate,
+        penalty_rate_from: loan.penalty_rate_from
       };
 
       // Update loan with new parameters

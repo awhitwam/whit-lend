@@ -5,8 +5,28 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, Split, List, Download, Layers, ArrowUp, ArrowDown } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Split, List, Download, Layers, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
+
+// Helper to check if penalty rate applies for a given date
+const isPenaltyRateActive = (loan, date) => {
+  if (!loan?.has_penalty_rate || !loan?.penalty_rate || !loan?.penalty_rate_from) {
+    return false;
+  }
+  const penaltyDate = new Date(loan.penalty_rate_from);
+  penaltyDate.setHours(0, 0, 0, 0);
+  const checkDate = new Date(date);
+  checkDate.setHours(0, 0, 0, 0);
+  return checkDate >= penaltyDate;
+};
+
+// Helper to get effective rate for display
+const getDisplayRate = (loan, date) => {
+  if (isPenaltyRateActive(loan, date)) {
+    return loan.penalty_rate;
+  }
+  return loan?.interest_rate || 0;
+};
 
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product }) {
   const [currentPage, setCurrentPage] = useState(1);
@@ -584,6 +604,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         datePaid = '—';
                       }
 
+                      // Check if penalty rate applies to this period
+                      const hasPenaltyRate = isPenaltyRateActive(loan, dueDate);
+
                       return (
                         <React.Fragment key={row.id}>
                           <TableRow className={statusColor}>
@@ -603,7 +626,31 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell className={`text-right font-mono font-semibold ${cumulativeVariance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {cumulativeVariance >= 0 ? '+' : ''}{formatCurrency(cumulativeVariance)}
                             </TableCell>
-                            <TableCell className="text-slate-600 text-xs">{notes}</TableCell>
+                            <TableCell className="text-slate-600 text-xs">
+                              <div className="flex items-center gap-1.5">
+                                {hasPenaltyRate ? (
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
+                                          <AlertTriangle className="w-3 h-3" />
+                                          <span className="line-through text-slate-400">{loan.interest_rate}%</span>
+                                          <span>→</span>
+                                          <span>{loan.penalty_rate}%</span>
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>Penalty rate of {loan.penalty_rate}% applies from {format(new Date(loan.penalty_rate_from), 'dd MMM yyyy')}</p>
+                                        <p className="text-slate-400 text-xs">Original rate: {loan.interest_rate}%</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                ) : (
+                                  <span className="text-slate-500">{loan.interest_rate}%</span>
+                                )}
+                                <span>{notes}</span>
+                              </div>
+                            </TableCell>
                           </TableRow>
                         </React.Fragment>
                       );
@@ -771,6 +818,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         notes += ` (${matchedPayments.length} payments)`;
                       }
 
+                      // Check if penalty rate applies to this period
+                      const hasPenaltyRate = isPenaltyRateActive(loan, dueDate);
+
                       // Variance color
                       const varianceColor = variance >= 0
                         ? 'text-emerald-600'
@@ -794,7 +844,29 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             {variance >= 0 ? '+' : ''}{formatCurrency(variance)}
                           </TableCell>
                           <TableCell className="text-slate-600 text-xs py-1.5">
-                            {notes}
+                            <div className="flex items-center gap-1.5">
+                              {hasPenaltyRate ? (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
+                                        <AlertTriangle className="w-3 h-3" />
+                                        <span className="line-through text-slate-400">{loan.interest_rate}%</span>
+                                        <span>→</span>
+                                        <span>{loan.penalty_rate}%</span>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>Penalty rate of {loan.penalty_rate}% applies from {format(new Date(loan.penalty_rate_from), 'dd MMM yyyy')}</p>
+                                      <p className="text-slate-400 text-xs">Original rate: {loan.interest_rate}%</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              ) : (
+                                <span className="text-slate-500">{loan.interest_rate}%</span>
+                              )}
+                              <span>{notes}</span>
+                            </div>
                           </TableCell>
                         </TableRow>
                       );
@@ -893,8 +965,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 </TableHead>
                 <TableHead className="font-semibold bg-slate-50">Description</TableHead>
                 <TableHead className="font-semibold bg-slate-50 text-right">Principal</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Principal Bal</TableHead>
                 <TableHead className="font-semibold bg-slate-50 text-right">Interest</TableHead>
-                <TableHead className="font-semibold bg-slate-50 text-right">Interest Balance</TableHead>
+                <TableHead className="font-semibold bg-slate-50 text-right">Interest Bal</TableHead>
                 <TableHead className="font-semibold bg-slate-50 w-28">Status</TableHead>
               </TableRow>
             </TableHeader>
@@ -902,14 +975,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               {isLoading ? (
                 Array(6).fill(0).map((_, i) => (
                   <TableRow key={i}>
-                    <TableCell colSpan={6} className="h-14">
+                    <TableCell colSpan={7} className="h-14">
                       <div className="h-4 bg-slate-100 rounded animate-pulse w-full"></div>
                     </TableCell>
                   </TableRow>
                 ))
               ) : schedule.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} className="text-center py-12 text-slate-500">
+                  <TableCell colSpan={7} className="text-center py-12 text-slate-500">
                     No schedule available
                   </TableCell>
                 </TableRow>
@@ -1054,36 +1127,67 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   // Now expand schedule headers to include their transaction children, and calculate running balances
                   const expandedRows = [];
                   let runningPrincipalBalance = 0;
+                  let prevPrincipalBalance = 0;
                   let runningInterestAccrued = 0;
                   let runningInterestPaid = 0;
 
                   rows.forEach(row => {
                     if (row.type === 'disbursement') {
+                      prevPrincipalBalance = runningPrincipalBalance;
                       runningPrincipalBalance = row.principal;
-                      row.balance = runningPrincipalBalance;
+                      row.balance = runningInterestAccrued - runningInterestPaid;
+                      row.principalBalance = runningPrincipalBalance;
+                      row.principalChanged = true;
                       expandedRows.push(row);
                     } else if (row.type === 'further_advance') {
+                      prevPrincipalBalance = runningPrincipalBalance;
                       runningPrincipalBalance += row.principal;
-                      row.balance = runningPrincipalBalance;
+                      row.balance = runningInterestAccrued - runningInterestPaid;
+                      row.principalBalance = runningPrincipalBalance;
+                      row.principalChanged = true;
                       expandedRows.push(row);
                     } else if (row.type === 'schedule_header') {
                       // Accrue interest for this period
                       runningInterestAccrued += row.expectedInterest;
                       row.balance = runningInterestAccrued - runningInterestPaid;
+                      row.principalBalance = runningPrincipalBalance;
+                      row.principalChanged = false;
                       expandedRows.push(row);
 
-                      // Add CHILD ROWS for each transaction in this period
+                      // Group transactions by date for same-day receipts
                       const periodTransactions = row.periodTransactions || [];
-                      const txCount = periodTransactions.length;
-                      periodTransactions.forEach((tx, txIdx) => {
-                        const txDate = new Date(tx.date);
-                        runningPrincipalBalance -= (tx.principal_applied || 0);
-                        runningPrincipalBalance = Math.max(0, runningPrincipalBalance);
-                        runningInterestPaid += (tx.interest_applied || 0);
+                      const txByDate = new Map();
+                      periodTransactions.forEach(tx => {
+                        const dateKey = tx.date.split('T')[0]; // Get just the date part
+                        if (!txByDate.has(dateKey)) {
+                          txByDate.set(dateKey, []);
+                        }
+                        txByDate.get(dateKey).push(tx);
+                      });
 
-                        // Calculate status text for the last transaction in this period
+                      // Process grouped transactions
+                      const txDates = Array.from(txByDate.keys()).sort();
+                      const totalTxGroups = txDates.length;
+
+                      txDates.forEach((dateKey, groupIdx) => {
+                        const txGroup = txByDate.get(dateKey);
+                        const txDate = new Date(dateKey);
+
+                        // Sum up all principal and interest from transactions on this date
+                        const totalPrincipal = txGroup.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                        const totalInterest = txGroup.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+
+                        // Update running balances
+                        prevPrincipalBalance = runningPrincipalBalance;
+                        runningPrincipalBalance -= totalPrincipal;
+                        runningPrincipalBalance = Math.max(0, runningPrincipalBalance);
+                        runningInterestPaid += totalInterest;
+
+                        const principalChanged = totalPrincipal > 0.01;
+
+                        // Calculate status text for the last transaction group in this period
                         let txStatusText = null;
-                        if (txIdx === txCount - 1) {
+                        if (groupIdx === totalTxGroups - 1) {
                           if (row.status === 'overpaid') {
                             txStatusText = `Overpaid +${formatCurrency(row.statusVariance)}`;
                           } else if (row.status === 'paid') {
@@ -1099,17 +1203,29 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           }
                         }
 
+                        // Determine description - "Receipt" if both principal and interest, otherwise specific
+                        let description;
+                        if (totalPrincipal > 0.01 && totalInterest > 0.01) {
+                          description = 'Receipt';
+                        } else if (totalPrincipal > 0.01) {
+                          description = 'Principal Payment';
+                        } else {
+                          description = txGroup.length === 1 ? (txGroup[0].reference || 'Payment') : 'Payment';
+                        }
+
                         expandedRows.push({
                           type: 'transaction_child',
-                          transaction: tx,
+                          transactions: txGroup,
                           date: txDate,
-                          description: `${tx.reference || 'Payment'}`,
-                          principal: tx.principal_applied || 0,
-                          interest: tx.interest_applied || 0,
+                          description,
+                          principal: totalPrincipal,
+                          interest: totalInterest,
                           balance: runningInterestAccrued - runningInterestPaid,
+                          principalBalance: runningPrincipalBalance,
+                          principalChanged,
                           parentScheduleId: row.scheduleRow.id,
                           txStatusText,
-                          status: txIdx === txCount - 1 ? row.status : null,
+                          status: groupIdx === totalTxGroups - 1 ? row.status : null,
                           expectedInterest: row.expectedInterest,
                           dueDate: row.date
                         });
@@ -1133,10 +1249,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           <TableCell className="py-0.5 text-right font-mono text-red-600 font-semibold text-xs">
                             {formatCurrency(row.principal)}
                           </TableCell>
-                          <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
-                          <TableCell className="py-0.5 text-right font-mono font-semibold text-xs">
-                            {formatCurrency(row.balance)}
+                          <TableCell className="py-0.5 text-right font-mono text-red-600 font-semibold text-xs">
+                            {formatCurrency(row.principalBalance)}
                           </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
                           <TableCell className="py-0.5">—</TableCell>
                         </TableRow>
                       );
@@ -1151,13 +1268,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           <TableCell className="py-0.5 font-semibold text-orange-700 text-xs">
                             {row.description}
                           </TableCell>
-                          <TableCell className="py-0.5 text-right font-mono text-orange-600 font-semibold text-xs">{
-                            `+${formatCurrency(row.principal)}`
-                          }</TableCell>
-                          <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
-                          <TableCell className="py-0.5 text-right font-mono font-semibold text-xs">
-                            {formatCurrency(row.balance)}
+                          <TableCell className="py-0.5 text-right font-mono text-orange-600 font-semibold text-xs">
+                            +{formatCurrency(row.principal)}
                           </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-orange-600 font-semibold text-xs">
+                            {formatCurrency(row.principalBalance)}
+                          </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-xs">—</TableCell>
                           <TableCell className="py-0.5">—</TableCell>
                         </TableRow>
                       );
@@ -1181,6 +1299,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         paid_early: 'Paid Early'
                       };
 
+                      // Check if penalty rate applies to this period
+                      const hasPenaltyRate = isPenaltyRateActive(loan, row.date);
+                      const effectiveRate = hasPenaltyRate ? loan.penalty_rate : loan.interest_rate;
+                      const effectiveDailyRate = effectiveRate / 100 / 365;
+
                       return (
                         <TableRow
                           key={`header-${row.scheduleRow.id}`}
@@ -1189,27 +1312,39 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           <TableCell className="py-0.5 font-semibold text-slate-700 text-xs">
                             {format(row.date, 'dd/MM/yy')}
                           </TableCell>
-                          <TableCell className="py-0.5 font-semibold text-slate-800 text-xs">
-                            <TooltipProvider>
-                              <Tooltip>
-                                <TooltipTrigger asChild>
-                                  <span className="cursor-help">
-                                    {row.description}
-                                  </span>
-                                </TooltipTrigger>
-                                <TooltipContent className="max-w-md">
-                                  <div className="space-y-1 text-xs">
-                                    <p className="font-semibold">Interest Calculation:</p>
-                                    <p>Annual Rate: {loan.interest_rate}%</p>
-                                    <p>Daily Rate: {(dailyRate * 100).toFixed(4)}%/day</p>
-                                    <p>Expected Interest: {formatCurrency(row.expectedInterest)}</p>
-                                  </div>
-                                </TooltipContent>
-                              </Tooltip>
-                            </TooltipProvider>
+                          <TableCell className="py-0.5 text-xs">
+                            <div className="flex flex-col">
+                              <span className="font-semibold text-slate-800">{row.description}</span>
+                              <div className="flex items-center gap-2 text-[10px] text-slate-500">
+                                {hasPenaltyRate ? (
+                                  <TooltipProvider>
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
+                                          <AlertTriangle className="w-3 h-3" />
+                                          <span className="line-through text-slate-400">{loan.interest_rate}%</span>
+                                          <span>→</span>
+                                          <span>{loan.penalty_rate}%</span>
+                                        </span>
+                                      </TooltipTrigger>
+                                      <TooltipContent>
+                                        <p>Penalty rate from {format(new Date(loan.penalty_rate_from), 'dd MMM yyyy')}</p>
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  </TooltipProvider>
+                                ) : (
+                                  <span>{effectiveRate}% p.a.</span>
+                                )}
+                                <span className="text-slate-400">|</span>
+                                <span>{(effectiveDailyRate * 100).toFixed(4)}%/day</span>
+                              </div>
+                            </div>
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-slate-500 text-xs">
                             {row.principal > 0 ? formatCurrency(row.principal) : '—'}
+                          </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-slate-500 text-xs">
+                            —
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono font-semibold text-slate-700 text-xs">
                             ({formatCurrency(row.interest)})
@@ -1236,9 +1371,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         paid_early: 'text-emerald-600'
                       };
 
+                      // Generate unique key from transactions
+                      const txIds = row.transactions.map(tx => tx.id).join('-');
+
                       return (
                         <TableRow
-                          key={`tx-${row.transaction.id}`}
+                          key={`tx-${txIds}`}
                           className="bg-white hover:bg-emerald-50/30"
                         >
                           <TableCell className="py-0.5 pl-6 text-slate-600 text-xs">
@@ -1261,8 +1399,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                     <p>Date: {format(row.date, 'dd MMM yyyy')}</p>
                                     <p>Principal Applied: {formatCurrency(row.principal)}</p>
                                     <p>Interest Applied: {formatCurrency(row.interest)}</p>
-                                    {row.transaction.reference && (
-                                      <p>Reference: {row.transaction.reference}</p>
+                                    {row.transactions.length === 1 && row.transactions[0].reference && (
+                                      <p>Reference: {row.transactions[0].reference}</p>
+                                    )}
+                                    {row.transactions.length > 1 && (
+                                      <p className="text-slate-400">{row.transactions.length} transactions combined</p>
                                     )}
                                     {row.expectedInterest && (
                                       <p className="pt-1 border-t">Period Expected: {formatCurrency(row.expectedInterest)}</p>
@@ -1273,10 +1414,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             </TooltipProvider>
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-emerald-600 text-xs">
-                            {row.principal > 0 ? formatCurrency(row.principal) : '—'}
+                            {row.principal > 0.01 ? `-${formatCurrency(row.principal)}` : '—'}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-emerald-600 text-xs">
-                            {formatCurrency(row.interest)}
+                            {row.principalChanged ? formatCurrency(row.principalBalance) : '—'}
+                          </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-emerald-600 text-xs">
+                            {row.interest > 0.01 ? formatCurrency(row.interest) : '—'}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-slate-600 text-xs">
                             {formatCurrency(row.balance)}

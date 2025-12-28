@@ -42,9 +42,15 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     is_deleted: false 
   }, 'date'); // Sorted by date ascending
 
+  // Determine effective interest rate - use loan override if set, otherwise product rate
+  const effectiveInterestRate = loan.override_interest_rate && loan.overridden_rate != null
+    ? loan.overridden_rate
+    : product.interest_rate;
+
   console.log('=== SCHEDULE ENGINE: Starting Regeneration ===');
-  console.log('Loan:', { id: loanId, principal: loan.principal_amount, startDate: loan.start_date });
+  console.log('Loan:', { id: loanId, principal: loan.principal_amount, startDate: loan.start_date, overrideRate: loan.override_interest_rate, overriddenRate: loan.overridden_rate });
   console.log('Product:', { type: product.interest_type, rate: product.interest_rate, period: product.period });
+  console.log('Effective Interest Rate:', effectiveInterestRate);
   console.log('Events:', transactions.map(t => ({ date: t.date, type: t.type, amount: t.amount, principal: t.principal_applied, interest: t.interest_applied })));
 
   // Determine schedule horizon - must ensure coverage of all outstanding amounts
@@ -107,15 +113,21 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
 
   console.log('Schedule Duration:', scheduleDuration, 'periods', `(End Date: ${format(scheduleEndDate, 'yyyy-MM-dd')})`);
 
+  // Create effective product with potentially overridden interest rate
+  const effectiveProduct = {
+    ...product,
+    interest_rate: effectiveInterestRate
+  };
+
   // Generate schedule using event-driven approach
   const schedule = [];
 
   if (product.interest_alignment === 'monthly_first' && product.period === 'Monthly') {
     // Special case: align all interest to 1st of month
-    generateMonthlyFirstSchedule(schedule, loan, product, scheduleDuration, transactions);
+    generateMonthlyFirstSchedule(schedule, loan, effectiveProduct, scheduleDuration, transactions);
   } else {
     // Standard: period-based from start date with event-driven calculations
-    generatePeriodBasedSchedule(schedule, loan, product, scheduleDuration, transactions, scheduleEndDate, options);
+    generatePeriodBasedSchedule(schedule, loan, effectiveProduct, scheduleDuration, transactions, scheduleEndDate, options);
   }
 
   console.log(`Generated ${schedule.length} schedule entries`);
@@ -150,9 +162,9 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   const finalBalance = finalSchedule.length > 0 ? finalSchedule[finalSchedule.length - 1].balance : currentPrincipalOutstanding;
   const totalRepayable = totalInterest + currentPrincipalOutstanding + (loan.exit_fee || 0);
 
-  // Update loan
+  // Update loan - use effective rate (which may be overridden)
   await api.entities.Loan.update(loanId, {
-    interest_rate: product.interest_rate,
+    interest_rate: effectiveInterestRate,
     interest_type: product.interest_type,
     period: product.period,
     total_interest: Math.round(totalInterest * 100) / 100,
