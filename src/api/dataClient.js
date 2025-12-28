@@ -1,12 +1,8 @@
 import { supabase } from '@/lib/supabaseClient';
 
-// Get current organization ID from context or localStorage
-// This will be set by OrganizationContext, but fallback to localStorage
-let getCurrentOrganizationId = () => {
-  // Try to get from localStorage as fallback
-  // This ensures we have the org ID even before OrganizationContext loads
-  return localStorage.getItem('currentOrganizationId');
-};
+// Get current organization ID - MUST be set by OrganizationContext
+// SECURITY: Never fallback to localStorage to prevent org ID manipulation
+let getCurrentOrganizationId = () => null;
 
 export const setOrganizationIdGetter = (getter) => {
   getCurrentOrganizationId = getter;
@@ -36,6 +32,7 @@ const tableMap = {
 };
 
 // Tables that should have organization_id filter applied
+// SECURITY: All tables with organization_id column must be listed here
 const orgScopedTables = [
   'borrowers',
   'loans',
@@ -47,6 +44,7 @@ const orgScopedTables = [
   'Investor',
   'InvestorTransaction',
   'audit_logs',
+  'invitations',  // SECURITY: Invitations are org-scoped
   // Security/Property tables
   'properties',
   'loan_properties',
@@ -83,12 +81,15 @@ function parseOrder(orderStr, tableName) {
 }
 
 // Helper to apply organization filter to queries
+// SECURITY: Throws error if org ID not available for scoped tables
 function applyOrgFilter(query, tableName) {
   if (orgScopedTables.includes(tableName)) {
     const orgId = getCurrentOrganizationId();
-    if (orgId) {
-      return query.eq('organization_id', orgId);
+    if (!orgId) {
+      // CRITICAL: Fail safely - never return unfiltered query for org-scoped tables
+      throw new Error(`Organization context not available. Cannot query ${tableName} without organization scope.`);
     }
+    return query.eq('organization_id', orgId);
   }
   return query;
 }
@@ -144,9 +145,10 @@ function createEntityHandler(tableName) {
       // Auto-inject organization_id for scoped tables
       if (orgScopedTables.includes(tableName)) {
         const orgId = getCurrentOrganizationId();
-        if (orgId) {
-          data = { ...data, organization_id: orgId };
+        if (!orgId) {
+          throw new Error(`Organization context not available. Cannot create ${tableName} record without organization scope.`);
         }
+        data = { ...data, organization_id: orgId };
       }
 
       const { data: created, error } = await supabase
@@ -198,9 +200,10 @@ function createEntityHandler(tableName) {
       // Auto-inject organization_id for scoped tables
       if (orgScopedTables.includes(tableName)) {
         const orgId = getCurrentOrganizationId();
-        if (orgId) {
-          records = records.map(r => ({ ...r, organization_id: orgId }));
+        if (!orgId) {
+          throw new Error(`Organization context not available. Cannot create ${tableName} records without organization scope.`);
         }
+        records = records.map(r => ({ ...r, organization_id: orgId }));
       }
 
       const { data: created, error } = await supabase

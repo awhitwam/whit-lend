@@ -12,6 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Building2, Check, ChevronDown, LogOut, Loader2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { getOrganizationTheme } from '@/lib/organizationThemes';
 
 export default function OrganizationSwitcher() {
   const {
@@ -19,7 +20,8 @@ export default function OrganizationSwitcher() {
     currentOrganization,
     switchOrganization,
     memberRole,
-    isLoadingOrgs
+    isLoadingOrgs,
+    currentTheme
   } = useOrganization();
   const { logout } = useAuth();
   const queryClient = useQueryClient();
@@ -68,7 +70,11 @@ export default function OrganizationSwitcher() {
             className="w-full justify-between h-auto py-2 px-3"
           >
             <div className="flex items-center gap-2 min-w-0">
-              <Building2 className="w-4 h-4 flex-shrink-0" />
+              {/* Color indicator for current org */}
+              <div
+                className="w-3 h-3 rounded-full flex-shrink-0"
+                style={{ backgroundColor: currentTheme.primary }}
+              />
               <div className="flex flex-col items-start min-w-0">
                 <span className="truncate max-w-[150px] font-medium text-sm">
                   {currentOrganization?.name || 'Select Organization'}
@@ -84,23 +90,33 @@ export default function OrganizationSwitcher() {
         <DropdownMenuContent align="start" className="w-64">
           <DropdownMenuLabel>Switch Organization</DropdownMenuLabel>
           <DropdownMenuSeparator />
-          {organizations.map((org) => (
-            <DropdownMenuItem
-              key={org.id}
-              onClick={() => handleSwitch(org.id)}
-              className="cursor-pointer"
-            >
-              <div className="flex items-center justify-between w-full">
-                <div className="flex flex-col min-w-0">
-                  <span className="font-medium truncate">{org.name}</span>
-                  <span className="text-xs text-slate-500">{org.role}</span>
+          {organizations.map((org) => {
+            const orgTheme = getOrganizationTheme(org);
+            return (
+              <DropdownMenuItem
+                key={org.id}
+                onClick={() => handleSwitch(org.id)}
+                className="cursor-pointer"
+              >
+                <div className="flex items-center justify-between w-full">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {/* Color indicator for this org */}
+                    <div
+                      className="w-3 h-3 rounded-full flex-shrink-0"
+                      style={{ backgroundColor: orgTheme.primary }}
+                    />
+                    <div className="flex flex-col min-w-0">
+                      <span className="font-medium truncate">{org.name}</span>
+                      <span className="text-xs text-slate-500">{org.role}</span>
+                    </div>
+                  </div>
+                  {currentOrganization?.id === org.id && (
+                    <Check className="w-4 h-4 flex-shrink-0 ml-2" style={{ color: orgTheme.primary }} />
+                  )}
                 </div>
-                {currentOrganization?.id === org.id && (
-                  <Check className="w-4 h-4 text-emerald-600 flex-shrink-0 ml-2" />
-                )}
-              </div>
-            </DropdownMenuItem>
-          ))}
+              </DropdownMenuItem>
+            );
+          })}
           <DropdownMenuSeparator />
           <DropdownMenuItem
             onClick={logout}

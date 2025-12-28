@@ -5,20 +5,24 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Database, Trash2, StopCircle, Users, History, ChevronLeft, ChevronRight, RefreshCw, Calendar, ShieldAlert } from 'lucide-react';
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Database, Trash2, StopCircle, Users, History, ChevronLeft, ChevronRight, RefreshCw, Calendar, ShieldAlert, Palette } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { applyScheduleToNewLoan, regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { runAutoExtend, checkLoansNeedingExtension } from '@/lib/autoExtendService';
 import UserManagement from '@/components/organization/UserManagement';
 import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from 'date-fns';
 import { useOrganization } from '@/lib/OrganizationContext';
+import { organizationThemes, getThemeOptions } from '@/lib/organizationThemes';
+import { supabase } from '@/lib/supabaseClient';
+import { toast } from 'sonner';
 
 export default function Config() {
-  const { canAdmin } = useOrganization();
+  const { canAdmin, currentOrganization, refreshOrganizations, currentTheme } = useOrganization();
+  const queryClient = useQueryClient();
   const [file, setFile] = useState(null);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -65,16 +69,19 @@ export default function Config() {
   const [autoExtendError, setAutoExtendError] = useState(null);
   const [loansNeedingExtension, setLoansNeedingExtension] = useState(null);
 
-  // Fetch audit logs
+  // Fetch audit logs - only when org context is ready
   const { data: auditLogs = [], isLoading: auditLoading } = useQuery({
-    queryKey: ['audit-logs'],
-    queryFn: () => api.entities.AuditLog.list('-created_at', 500)
+    queryKey: ['audit-logs', currentOrganization?.id],
+    queryFn: () => api.entities.AuditLog.list('-created_at', 500),
+    enabled: !!currentOrganization
   });
 
   // Fetch user profiles to display names in audit log
+  // Note: UserProfile is NOT org-scoped (users exist across orgs)
   const { data: userProfiles = [] } = useQuery({
     queryKey: ['user-profiles'],
-    queryFn: () => api.entities.UserProfile.list()
+    queryFn: () => api.entities.UserProfile.list(),
+    enabled: !!currentOrganization
   });
 
   // Create a lookup map for user IDs to names/emails
@@ -462,25 +469,42 @@ export default function Config() {
           return;
         }
         try {
+          // Detect if this is a Fixed Charge product
+          const isFixedCharge = category.toLowerCase().includes('fixed charge') ||
+                                category.toLowerCase().includes('facility charge') ||
+                                category.toLowerCase().includes('facility fixed');
+
           // Check if product already exists
           const existing = await api.entities.LoanProduct.filter({ name: category });
           if (existing.length > 0) {
             productMap[category] = existing[0];
-            addLog(`  → Product already exists: ${category}`);
+            addLog(`  → Product already exists: ${category}${isFixedCharge ? ' (Fixed Charge)' : ''}`);
           } else {
-            const product = await api.entities.LoanProduct.create({
+            const productData = isFixedCharge ? {
               name: category,
+              product_type: 'Fixed Charge',
+              interest_rate: 0,
+              interest_type: null,
+              period: 'Monthly',
+              min_amount: 0,
+              max_amount: 1000000,
+              max_duration: 120
+            } : {
+              name: category,
+              product_type: 'Standard',
               interest_rate: 15,
               interest_type: 'Interest-Only',
               period: 'Monthly',
               min_amount: 1000,
               max_amount: 1000000,
               max_duration: 36
-            });
-            
+            };
+
+            const product = await api.entities.LoanProduct.create(productData);
+
             productMap[category] = product;
             prodCount++;
-            addLog(`  ✓ Created product: ${category}`);
+            addLog(`  ✓ Created product: ${category}${isFixedCharge ? ' (Fixed Charge)' : ''}`);
           }
           await delay(1000);
         } catch (err) {
@@ -623,8 +647,28 @@ export default function Config() {
           const principalAmount = parseFloat(loanRelease.Out);
           const arrangementFee = deductableFee ? parseFloat(deductableFee.In) : 0;
           const product = productMap[loanRelease.Category];
-          
+
           if (!product) continue;
+
+          // Check if this is a Fixed Charge facility
+          const isFixedChargeLoan = product.product_type === 'Fixed Charge';
+
+          // For Fixed Charge loans, calculate monthly charge from the payments
+          let monthlyCharge = 0;
+          if (isFixedChargeLoan) {
+            const chargeTxs = transactions.filter(t => t.Type === 'Interest Collections');
+            if (chargeTxs.length > 0) {
+              // Get the most common charge amount (mode)
+              const amounts = chargeTxs.map(t => parseFloat(t.In)).filter(a => a > 0);
+              const amountCounts = {};
+              amounts.forEach(a => {
+                amountCounts[a] = (amountCounts[a] || 0) + 1;
+              });
+              monthlyCharge = parseFloat(Object.keys(amountCounts).reduce((a, b) =>
+                amountCounts[a] > amountCounts[b] ? a : b
+              )) || 0;
+            }
+          }
 
           // Check if loan with this number already exists (including deleted)
           const existingLoans = await api.entities.Loan.filter({ loan_number: loanNum });
@@ -636,18 +680,28 @@ export default function Config() {
             const loanProductName = existingLoan.product_name || product.name;
 
             // Overwrite loan data (preserving product)
-            await api.entities.Loan.update(existingLoan.id, {
+            const updateData = {
               borrower_id: borrower.id,
               borrower_name: borrower.full_name,
-              principal_amount: principalAmount,
+              principal_amount: isFixedChargeLoan ? 0 : principalAmount,
               arrangement_fee: arrangementFee,
-              net_disbursed: principalAmount - arrangementFee,
+              net_disbursed: isFixedChargeLoan ? 0 : principalAmount - arrangementFee,
               start_date: parseDate(loanRelease.Date),
               is_deleted: false,
               status: 'Live',
               principal_paid: 0,
-              interest_paid: 0
-            });
+              interest_paid: 0,
+              product_type: product.product_type || 'Standard'
+            };
+
+            // Add Fixed Charge specific fields
+            if (isFixedChargeLoan) {
+              updateData.monthly_charge = monthlyCharge;
+              updateData.interest_rate = 0;
+              updateData.interest_type = null;
+            }
+
+            await api.entities.Loan.update(existingLoan.id, updateData);
 
             // Delete old transactions and schedule for clean reimport
             await api.entities.Transaction.deleteWhere({ loan_id: existingLoan.id });
@@ -655,42 +709,50 @@ export default function Config() {
 
             const updatedLoan = {
               ...existingLoan,
-              borrower_id: borrower.id,
-              borrower_name: borrower.full_name,
-              principal_amount: principalAmount,
-              arrangement_fee: arrangementFee,
-              net_disbursed: principalAmount - arrangementFee,
-              start_date: parseDate(loanRelease.Date),
+              ...updateData,
               product_id: loanProduct,
-              product_name: loanProductName,
-              is_deleted: false,
-              status: 'Live'
+              product_name: loanProductName
             };
 
             loanMap[loanNum] = { loan: updatedLoan, borrower, transactions: [] };
-            addLog(`  → Loan #${loanNum}: Overwriting existing loan (preserving product: ${loanProductName})`);
+            addLog(`  → Loan #${loanNum}: Overwriting existing loan${isFixedChargeLoan ? ' (Fixed Charge - ' + formatCurrency(monthlyCharge) + '/mo)' : ''} (preserving product: ${loanProductName})`);
             continue;
           }
 
           // Use default 6 month duration for all imported loans
           const calculatedDuration = 6;
 
-          // Use centralized schedule manager
-          const { loan } = await applyScheduleToNewLoan({
+          // Build loan data based on product type
+          const loanData = {
             loan_number: loanNum,
             borrower_id: borrower.id,
             borrower_name: borrower.full_name,
             product_id: product.id,
             product_name: product.name,
-            principal_amount: principalAmount,
             arrangement_fee: arrangementFee,
             exit_fee: 0,
-            net_disbursed: principalAmount - arrangementFee,
             start_date: parseDate(loanRelease.Date),
-            status: 'Live'
-          }, product, {
+            status: 'Live',
+            product_type: product.product_type || 'Standard'
+          };
+
+          if (isFixedChargeLoan) {
+            // Fixed Charge facility - no principal, just monthly charges
+            loanData.principal_amount = 0;
+            loanData.net_disbursed = 0;
+            loanData.monthly_charge = monthlyCharge;
+            loanData.interest_rate = 0;
+            loanData.interest_type = null;
+          } else {
+            // Standard loan
+            loanData.principal_amount = principalAmount;
+            loanData.net_disbursed = principalAmount - arrangementFee;
+          }
+
+          // Use centralized schedule manager
+          const { loan } = await applyScheduleToNewLoan(loanData, product, {
             duration: calculatedDuration,
-            autoExtend: true
+            autoExtend: true // Enable auto-extend for all imported loans
           });
 
           await delay(200);
@@ -698,7 +760,11 @@ export default function Config() {
           loanMap[loanNum] = { loan, borrower, transactions: [] };
 
           processed++;
-          addLog(`  ✓ Loan #${loanNum}: ${borrower.full_name} - ${formatCurrency(principalAmount)}`);
+          if (isFixedChargeLoan) {
+            addLog(`  ✓ Loan #${loanNum}: ${borrower.full_name} - Fixed Charge ${formatCurrency(monthlyCharge)}/mo`);
+          } else {
+            addLog(`  ✓ Loan #${loanNum}: ${borrower.full_name} - ${formatCurrency(principalAmount)}`);
+          }
           setProgress(40 + (processed / totalLoans) * 40);
           await delay(1500);
         } catch (err) {
@@ -756,12 +822,16 @@ export default function Config() {
 
           if (loanTxs.length === 0) continue;
 
+          // Check if this is a Fixed Charge loan
+          const isFixedChargeLoan = loan.product_type === 'Fixed Charge';
+
           // Sort transactions by date
           loanTxs.sort((a, b) => new Date(a.date) - new Date(b.date));
 
           // Track total disbursements for this loan to update principal
           let totalDisbursements = 0;
           let hasDisbursements = false;
+          let totalChargesPaid = 0;
 
           // Create transaction records with raw data
           for (const tx of loanTxs) {
@@ -782,6 +852,21 @@ export default function Config() {
               hasDisbursements = true;
               disbursementCount++;
               addLog(`    → Disbursement: ${formatCurrency(tx.amount)} on ${tx.date}`);
+            } else if (isFixedChargeLoan) {
+              // Fixed Charge loan - treat Interest Collections as charge payments
+              await api.entities.Transaction.create({
+                loan_id: loan.id,
+                borrower_id: borrower.id,
+                amount: tx.amount,
+                date: tx.date,
+                type: 'Repayment',
+                principal_applied: 0,
+                interest_applied: 0,
+                fees_applied: tx.amount, // Treat as fees/charges
+                reference: 'Facility Charge',
+                notes: `Imported charge payment: ${tx.details}`
+              });
+              totalChargesPaid += tx.amount;
             } else {
               // Regular repayment - determine type
               const isPrincipal = tx.type === 'Principal Collections';
@@ -806,6 +891,25 @@ export default function Config() {
             await delay(200);
           }
 
+          // Fixed Charge loans should never be marked as settled based on principal
+          if (isFixedChargeLoan) {
+            // Update loan with charges paid but keep status as Live
+            await api.entities.Loan.update(loan.id, {
+              charges_paid: totalChargesPaid,
+              status: 'Live' // Fixed Charge loans stay Live
+            });
+
+            addLog(`    → Fixed Charge: ${formatCurrency(totalChargesPaid)} in charges paid`);
+
+            loanCount++;
+            const chargeCount = loanTxs.filter(t => t.type !== 'Disbursement').length;
+            addLog(`  ✓ Loan #${loanNum}: ${chargeCount} charge payments imported`);
+            setProgress(80 + (loanCount / Object.keys(loanMap).length) * 10);
+            await delay(1000);
+            continue;
+          }
+
+          // Standard loan settlement logic
           // Calculate principal outstanding to determine if loan is settled
           const totalDisbursed = loan.principal_amount + totalDisbursements;
           const totalPrincipalPaid = loanTxs
@@ -974,6 +1078,71 @@ export default function Config() {
                 Create Organization
               </Button>
             </div>
+
+            {/* Organization Theme Selector */}
+            {canAdmin() && currentOrganization && (
+              <Card>
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Palette className="w-5 h-5" style={{ color: currentTheme.primary }} />
+                    Organization Theme
+                  </CardTitle>
+                  <CardDescription>
+                    Choose a color theme for {currentOrganization.name} to easily identify which organization you're working in
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="grid grid-cols-4 md:grid-cols-8 gap-3">
+                    {getThemeOptions().map((theme) => {
+                      const isSelected = (currentOrganization?.settings?.theme || 'emerald') === theme.value;
+                      return (
+                        <button
+                          key={theme.value}
+                          onClick={async () => {
+                            try {
+                              // Update organization settings in Supabase
+                              const currentSettings = currentOrganization.settings || {};
+                              const newSettings = { ...currentSettings, theme: theme.value };
+
+                              const { error } = await supabase
+                                .from('organizations')
+                                .update({ settings: newSettings })
+                                .eq('id', currentOrganization.id);
+
+                              if (error) throw error;
+
+                              // Refresh organizations to pick up the new theme
+                              await refreshOrganizations();
+                              toast.success(`Theme changed to ${theme.label}`);
+                            } catch (err) {
+                              console.error('Error updating theme:', err);
+                              toast.error('Failed to update theme');
+                            }
+                          }}
+                          className={`
+                            flex flex-col items-center gap-2 p-3 rounded-lg border-2 transition-all
+                            ${isSelected
+                              ? 'border-slate-900 bg-slate-50 shadow-md'
+                              : 'border-slate-200 hover:border-slate-300 hover:bg-slate-50'
+                            }
+                          `}
+                        >
+                          <div
+                            className={`w-8 h-8 rounded-full ${isSelected ? 'ring-2 ring-offset-2 ring-slate-400' : ''}`}
+                            style={{ backgroundColor: theme.color }}
+                          />
+                          <span className="text-xs font-medium text-slate-700">{theme.label}</span>
+                          {isSelected && (
+                            <CheckCircle2 className="w-4 h-4 text-slate-700" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
             <UserManagement />
           </TabsContent>
 

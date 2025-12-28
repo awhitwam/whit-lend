@@ -2,6 +2,7 @@ import React, { createContext, useState, useContext, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import { setOrganizationIdGetter } from '@/api/dataClient';
+import { getOrganizationTheme } from '@/lib/organizationThemes';
 
 const OrganizationContext = createContext();
 
@@ -25,9 +26,11 @@ export const OrganizationProvider = ({ children }) => {
   }, [user, isAuthenticated]);
 
   // Provide organization ID to dataClient
+  // SECURITY: Only provide org ID from verified context, never from localStorage
+  // This prevents users from manipulating localStorage to access other orgs' data
   useEffect(() => {
     setOrganizationIdGetter(() => {
-      return currentOrganization?.id || localStorage.getItem('currentOrganizationId');
+      return currentOrganization?.id || null;
     });
   }, [currentOrganization]);
 
@@ -119,6 +122,9 @@ export const OrganizationProvider = ({ children }) => {
   const canEdit = () => hasPermission('Manager');
   const canAdmin = () => hasPermission('Admin');
 
+  // Get current organization theme
+  const currentTheme = getOrganizationTheme(currentOrganization);
+
   return (
     <OrganizationContext.Provider value={{
       organizations,
@@ -130,7 +136,8 @@ export const OrganizationProvider = ({ children }) => {
       canView,
       canEdit,
       canAdmin,
-      refreshOrganizations: fetchOrganizations
+      refreshOrganizations: fetchOrganizations,
+      currentTheme
     }}>
       {children}
     </OrganizationContext.Provider>

@@ -18,6 +18,7 @@ import {
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { useOrganization } from '@/lib/OrganizationContext';
 
 const navigation = [
   { name: 'Dashboard', href: 'Dashboard', icon: LayoutDashboard },
@@ -36,6 +37,7 @@ export default function Layout({ children, currentPageName }) {
     const saved = localStorage.getItem('sidebarCollapsed');
     return saved === 'true';
   });
+  const { currentTheme, currentOrganization } = useOrganization();
 
   useEffect(() => {
     localStorage.setItem('sidebarCollapsed', sidebarCollapsed);
@@ -54,11 +56,19 @@ export default function Layout({ children, currentPageName }) {
       <div className="min-h-screen bg-slate-50">
         {/* Desktop Sidebar */}
         <aside className={`fixed inset-y-0 left-0 z-50 ${sidebarWidth} bg-slate-900 hidden md:block transition-all duration-300`}>
+          {/* Theme accent bar at top */}
+          <div
+            className="h-1 w-full transition-colors duration-300"
+            style={{ backgroundColor: currentTheme.primary }}
+          />
           <div className="flex h-full flex-col">
             {/* Logo and Collapse Toggle */}
             <div className="flex h-16 items-center justify-between px-4 border-b border-slate-800">
               <div className="flex items-center gap-3">
-                <div className="p-2 bg-emerald-500 rounded-lg flex-shrink-0">
+                <div
+                  className="p-2 rounded-lg flex-shrink-0 transition-colors duration-300"
+                  style={{ backgroundColor: currentTheme.primary }}
+                >
                   <Building2 className="w-5 h-5 text-white" />
                 </div>
                 {!sidebarCollapsed && (
@@ -138,9 +148,17 @@ export default function Layout({ children, currentPageName }) {
 
         {/* Mobile Header */}
         <header className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white border-b border-slate-200">
+          {/* Theme accent bar */}
+          <div
+            className="h-1 w-full transition-colors duration-300"
+            style={{ backgroundColor: currentTheme.primary }}
+          />
           <div className="flex items-center justify-between px-4 h-14">
             <div className="flex items-center gap-2">
-              <div className="p-1.5 bg-emerald-500 rounded-lg">
+              <div
+                className="p-1.5 rounded-lg transition-colors duration-300"
+                style={{ backgroundColor: currentTheme.primary }}
+              >
                 <Building2 className="w-4 h-4 text-white" />
               </div>
               <span className="text-lg font-bold text-slate-900">WhitLend</span>
@@ -194,6 +212,20 @@ export default function Layout({ children, currentPageName }) {
 
         {/* Main Content */}
         <main className={`${mainPadding} pt-14 md:pt-0 transition-all duration-300`}>
+          {/* Desktop header with organization name and theme color */}
+          <div className="hidden md:block sticky top-0 z-30">
+            <div
+              className="h-12 flex items-center px-6 transition-colors duration-300"
+              style={{ backgroundColor: currentTheme.primary }}
+            >
+              <div className="flex items-center gap-3">
+                <Building2 className="w-5 h-5 text-white/80" />
+                <span className="text-white font-medium">
+                  {currentOrganization?.name || 'Select Organization'}
+                </span>
+              </div>
+            </div>
+          </div>
           {children}
         </main>
       </div>

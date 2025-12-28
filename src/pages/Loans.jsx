@@ -56,6 +56,12 @@ export default function Loans() {
     queryFn: () => api.entities.Transaction.list()
   });
 
+  // Fetch all schedules for next due dates
+  const { data: allSchedules = [] } = useQuery({
+    queryKey: ['all-schedules'],
+    queryFn: () => api.entities.RepaymentSchedule.list()
+  });
+
   // Calculate total principal (initial + disbursements) per loan
   const getDisbursementsForLoan = (loanId) => {
     return allTransactions
@@ -72,6 +78,22 @@ export default function Loans() {
       principalPaid: repayments.reduce((sum, t) => sum + (t.principal_applied || 0), 0),
       interestPaid: repayments.reduce((sum, t) => sum + (t.interest_applied || 0), 0)
     };
+  };
+
+  // Get last payment for a loan
+  const getLastPaymentForLoan = (loanId) => {
+    const repayments = allTransactions
+      .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Repayment')
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    return repayments.length > 0 ? repayments[0] : null;
+  };
+
+  // Get next due date for a loan (first pending schedule item)
+  const getNextDueForLoan = (loanId) => {
+    const loanSchedule = allSchedules
+      .filter(s => s.loan_id === loanId && s.status === 'Pending')
+      .sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+    return loanSchedule.length > 0 ? loanSchedule[0] : null;
   };
 
   // Filter by borrower first if specified
@@ -140,44 +162,58 @@ export default function Loans() {
     };
   }, [borrowerFilter, loans, allTransactions]);
 
-  const sortedLoans = [...filteredLoans].sort((a, b) => {
-    let aVal, bVal;
-    
-    switch(sortField) {
-      case 'loan_number':
-        aVal = a.loan_number || '';
-        bVal = b.loan_number || '';
-        break;
-      case 'borrower_name':
-        aVal = a.borrower_name || '';
-        bVal = b.borrower_name || '';
-        break;
-      case 'product_name':
-        aVal = a.product_name || '';
-        bVal = b.product_name || '';
-        break;
-      case 'principal_amount':
-        aVal = (a.principal_amount || 0) + getDisbursementsForLoan(a.id);
-        bVal = (b.principal_amount || 0) + getDisbursementsForLoan(b.id);
-        break;
-      case 'start_date':
-        aVal = new Date(a.start_date);
-        bVal = new Date(b.start_date);
-        break;
-      case 'status':
-        aVal = a.status || '';
-        bVal = b.status || '';
-        break;
-      case 'created_date':
-      default:
-        aVal = new Date(a.created_date);
-        bVal = new Date(b.created_date);
-    }
-    
-    if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
-    if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
-    return 0;
-  });
+  const sortedLoans = useMemo(() => {
+    return [...filteredLoans].sort((a, b) => {
+      let aVal, bVal;
+
+      switch(sortField) {
+        case 'loan_number':
+          aVal = a.loan_number || '';
+          bVal = b.loan_number || '';
+          break;
+        case 'borrower_name':
+          aVal = a.borrower_name || '';
+          bVal = b.borrower_name || '';
+          break;
+        case 'product_name':
+          aVal = a.product_name || '';
+          bVal = b.product_name || '';
+          break;
+        case 'principal_amount':
+          aVal = (a.principal_amount || 0) + getDisbursementsForLoan(a.id);
+          bVal = (b.principal_amount || 0) + getDisbursementsForLoan(b.id);
+          break;
+        case 'start_date':
+          aVal = new Date(a.start_date);
+          bVal = new Date(b.start_date);
+          break;
+        case 'last_payment':
+          const aLastPay = getLastPaymentForLoan(a.id);
+          const bLastPay = getLastPaymentForLoan(b.id);
+          aVal = aLastPay ? new Date(aLastPay.date) : new Date(0);
+          bVal = bLastPay ? new Date(bLastPay.date) : new Date(0);
+          break;
+        case 'next_due':
+          const aNextDue = getNextDueForLoan(a.id);
+          const bNextDue = getNextDueForLoan(b.id);
+          aVal = aNextDue ? new Date(aNextDue.due_date) : new Date('9999-12-31');
+          bVal = bNextDue ? new Date(bNextDue.due_date) : new Date('9999-12-31');
+          break;
+        case 'status':
+          aVal = a.status || '';
+          bVal = b.status || '';
+          break;
+        case 'created_date':
+        default:
+          aVal = new Date(a.created_date);
+          bVal = new Date(b.created_date);
+      }
+
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredLoans, sortField, sortDirection, allTransactions, allSchedules]);
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -404,16 +440,25 @@ export default function Loans() {
                       </TableHead>
                       <TableHead className="text-right">Outstanding</TableHead>
                       <TableHead>
-                        <button 
-                          onClick={() => handleSort('start_date')}
+                        <button
+                          onClick={() => handleSort('last_payment')}
                           className="flex items-center gap-1 hover:text-slate-900 font-semibold"
                         >
-                          Start Date
+                          Last Payment
                           <ArrowUpDown className="w-3 h-3" />
                         </button>
                       </TableHead>
                       <TableHead>
-                        <button 
+                        <button
+                          onClick={() => handleSort('next_due')}
+                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+                        >
+                          Next Due
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead>
+                        <button
                           onClick={() => handleSort('status')}
                           className="flex items-center gap-1 hover:text-slate-900 font-semibold"
                         >
@@ -421,7 +466,7 @@ export default function Loans() {
                           <ArrowUpDown className="w-3 h-3" />
                         </button>
                       </TableHead>
-                      <TableHead className="w-12"></TableHead>
+                      <TableHead className="w-10"></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -432,6 +477,8 @@ export default function Loans() {
                       const principalRemaining = totalPrincipal - actualPayments.principalPaid;
                       const interestRemaining = (loan.total_interest || 0) - actualPayments.interestPaid;
                       const totalOutstanding = principalRemaining + interestRemaining;
+                      const lastPayment = getLastPaymentForLoan(loan.id);
+                      const nextDue = getNextDueForLoan(loan.id);
 
                       return (
                         <TableRow
@@ -439,24 +486,44 @@ export default function Loans() {
                           className="hover:bg-slate-50 cursor-pointer"
                           onClick={() => navigate(createPageUrl(`LoanDetails?id=${loan.id}`))}
                         >
-                          <TableCell className="font-mono font-semibold text-slate-700">
+                          <TableCell className="font-mono font-semibold text-slate-700 text-sm">
                             {loan.loan_number || '-'}
                           </TableCell>
                           <TableCell className="font-medium">
-                            <div>{loan.borrower_name}</div>
+                            <div className="text-sm">{loan.borrower_name}</div>
                             {loan.description && (
-                              <div className="text-xs text-slate-500 font-normal truncate max-w-48">{loan.description}</div>
+                              <div className="text-xs text-slate-500 font-normal truncate max-w-36">{loan.description}</div>
                             )}
                           </TableCell>
-                          <TableCell className="text-slate-600">{loan.product_name}</TableCell>
-                          <TableCell className="text-right font-mono font-semibold">
+                          <TableCell className="text-slate-600 text-sm">{loan.product_name}</TableCell>
+                          <TableCell className="text-right font-mono font-semibold text-sm">
                             {formatCurrency(totalPrincipal)}
                           </TableCell>
-                          <TableCell className={`text-right font-mono font-medium ${totalOutstanding <= 0 ? 'text-emerald-600' : 'text-red-600'} ${loan.status === 'Closed' && totalOutstanding > 0 ? 'line-through opacity-60' : ''}`}>
+                          <TableCell className={`text-right font-mono font-medium text-sm ${totalOutstanding <= 0 ? 'text-emerald-600' : 'text-red-600'} ${loan.status === 'Closed' && totalOutstanding > 0 ? 'line-through opacity-60' : ''}`}>
                             {totalOutstanding <= 0 ? '£0.00' : formatCurrency(totalOutstanding)}
                           </TableCell>
-                          <TableCell className="text-slate-600">
-                            {format(new Date(loan.start_date), 'MMM dd, yyyy')}
+                          <TableCell>
+                            {lastPayment ? (
+                              <div>
+                                <div className="text-sm font-semibold text-slate-700">{format(new Date(lastPayment.date), 'dd/MM/yy')}</div>
+                                <div className="text-xs text-emerald-600">{formatCurrency(lastPayment.amount)}</div>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-400">No payments</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            {nextDue ? (
+                              <div>
+                                <div className={`text-sm font-semibold ${new Date(nextDue.due_date) < new Date() ? 'text-red-600' : 'text-slate-700'}`}>
+                                  {format(new Date(nextDue.due_date), 'dd/MM/yy')}
+                                  {new Date(nextDue.due_date) < new Date() && <span className="text-xs font-normal ml-1">(overdue)</span>}
+                                </div>
+                                <div className="text-xs text-slate-500">{formatCurrency(nextDue.total_due || nextDue.interest_amount || 0)}</div>
+                              </div>
+                            ) : (
+                              <span className="text-xs text-slate-400">{loan.status === 'Closed' ? 'Settled' : 'No schedule'}</span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <Badge className={getStatusColor(loan.status)}>

@@ -8,6 +8,7 @@ import { logLoanEvent, logTransactionEvent, AuditAction } from '@/lib/auditLog';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
@@ -33,7 +34,9 @@ import {
   ChevronRight,
   Sparkles,
   Loader2,
-  Shield
+  Shield,
+  Zap,
+  Coins
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -595,6 +598,11 @@ export default function LoanDetails() {
     );
   }
 
+  // Determine product type
+  const isFixedCharge = loan?.product_type === 'Fixed Charge' || product?.product_type === 'Fixed Charge';
+  const isIrregularIncome = loan?.product_type === 'Irregular Income' || product?.product_type === 'Irregular Income';
+  const isSpecialType = isFixedCharge || isIrregularIncome;
+
   // Calculate totals from actual transactions
   const actualPrincipalPaid = transactions
     .filter(t => !t.is_deleted && t.type === 'Repayment')
@@ -742,255 +750,181 @@ export default function LoanDetails() {
               </div>
             </div>
           </div>
-          <CardContent className="p-4">
-            <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-sm mb-4">
-              <div>
-                <p className="text-slate-500 mb-0.5 text-xs">Principal</p>
-                <p className="font-bold text-base">{formatCurrency(totalPrincipal)}</p>
-              </div>
-              <div>
-                <p className="text-slate-500 mb-0.5 text-xs">Rate</p>
-                <p className="font-bold text-base">{loan.interest_rate}% {loan.interest_type}</p>
-              </div>
-              <div>
-                <p className="text-slate-500 mb-0.5 text-xs">Duration</p>
-                <p className="font-bold text-base">{loan.duration} {loan.period === 'Monthly' ? 'mo' : 'wk'}{loan.auto_extend && ' (ext)'}</p>
-              </div>
-              <div>
-                <p className="text-slate-500 mb-0.5 text-xs">Start Date</p>
-                <p className="font-bold text-base">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
-              </div>
-              {loan.arrangement_fee > 0 && (
-                <div>
-                  <p className="text-slate-500 mb-0.5 text-xs">Arr. Fee</p>
-                  <p className="font-bold text-base text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
-                </div>
-              )}
-              {loan.exit_fee > 0 && (
-                <div>
-                  <p className="text-slate-500 mb-0.5 text-xs">Exit Fee</p>
-                  <p className="font-bold text-base text-amber-600">{formatCurrency(loan.exit_fee)}</p>
-                </div>
-              )}
-              {loan.net_disbursed && (
-                <div>
-                  <p className="text-slate-500 mb-0.5 text-xs">Net Disbursed</p>
-                  <p className="font-bold text-base text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
-                </div>
-              )}
-            </div>
-            {product && (
-              <div className="pt-3 border-t border-slate-200">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-xs">
-                  <div>
-                    <p className="text-slate-500 mb-0.5">Calculation</p>
-                    <p className="font-medium text-slate-700">{product.interest_calculation_method === 'daily' ? 'Daily' : 'Monthly fixed'}</p>
-                  </div>
-                  {product.period === 'Monthly' && (
-                    <div>
-                      <p className="text-slate-500 mb-0.5">Alignment</p>
-                      <p className="font-medium text-slate-700">{product.interest_alignment === 'period_based' ? 'From start' : '1st of month'}</p>
-                    </div>
-                  )}
-                  {product.interest_only_period > 0 && (
-                    <div>
-                      <p className="text-slate-500 mb-0.5">Interest-Only</p>
-                      <p className="font-medium text-slate-700">{product.interest_only_period} periods</p>
-                    </div>
-                  )}
-                  {product.extend_for_full_period && (
-                    <div>
-                      <p className="text-slate-500 mb-0.5">Extension</p>
-                      <p className="font-medium text-slate-700">Full period required</p>
-                    </div>
-                  )}
-                  {product.interest_paid_in_advance && (
-                    <div>
-                      <p className="text-slate-500 mb-0.5">Payment</p>
-                      <p className="font-medium text-slate-700">Paid in advance</p>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Financial Summary */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
-          {/* Principal Outstanding */}
-          <Card className="bg-gradient-to-br from-blue-50 to-blue-100/50 border-blue-200">
-            <CardContent className="px-3 py-2">
-              <div className="flex justify-between items-baseline mb-1">
-                <span className="text-sm text-blue-600 font-medium">Principal Outstanding</span>
-                <span className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</span>
-              </div>
-              <div className="text-xs text-slate-600 space-y-0.5">
-                <div className="flex justify-between">
-                  <span>Initial:</span>
-                  <span className="font-mono">{formatCurrency(loan.principal_amount)}</span>
-                </div>
-                {totalDisbursements > 0 && (
-                  <div className="flex justify-between text-orange-600">
-                    <span>Further advances:</span>
-                    <span className="font-mono">+{formatCurrency(totalDisbursements)}</span>
-                  </div>
-                )}
-                {actualPrincipalPaid > 0 && (
-                  <div className="flex justify-between text-emerald-600">
-                    <span>Repaid:</span>
-                    <span className="font-mono">-{formatCurrency(actualPrincipalPaid)}</span>
-                  </div>
-                )}
-                {isLoanActive && (() => {
-                  // If net_disbursed exists and is less than principal, arrangement fee was paid in advance
-                  const arrangementFeePaidInAdvance = loan.net_disbursed && loan.net_disbursed < loan.principal_amount;
-                  const outstandingArrangementFee = arrangementFeePaidInAdvance ? 0 : (loan.arrangement_fee || 0);
-                  const outstandingFees = outstandingArrangementFee + (loan.exit_fee || 0);
-                  const settlementTotal = principalRemaining + Math.max(0, liveInterestOutstanding) + outstandingFees;
-
-                  return (
-                    <div className="pt-1 mt-1 border-t border-blue-200 space-y-0.5">
-                      <div className="flex justify-between text-slate-500">
-                        <span>Principal:</span>
-                        <span className="font-mono">{formatCurrency(principalRemaining)}</span>
-                      </div>
-                      <div className="flex justify-between text-slate-500">
-                        <span>Interest (live):</span>
-                        <span className="font-mono">{formatCurrency(Math.max(0, liveInterestOutstanding))}</span>
-                      </div>
-                      {outstandingFees > 0 && (
-                        <div className="flex justify-between text-slate-500">
-                          <span>Fees:</span>
-                          <span className="font-mono">{formatCurrency(outstandingFees)}</span>
-                        </div>
-                      )}
-                      <div className="flex justify-between font-semibold text-blue-800 pt-0.5">
-                        <span>Settlement today:</span>
-                        <span className="font-mono">{formatCurrency(settlementTotal)}</span>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </div>
-            </CardContent>
-          </Card>
-
-          {/* Interest */}
-          <Card className={`bg-gradient-to-br ${interestRemaining < 0
-            ? 'from-emerald-50 to-emerald-100/50 border-emerald-200'
-            : 'from-amber-50 to-amber-100/50 border-amber-200'}`}>
-            <CardContent className="px-3 py-2">
-              <div className="flex justify-between items-baseline mb-1">
-                <span className={`text-sm font-medium ${interestRemaining < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                  {interestRemaining < 0 ? 'Interest Overpaid' : 'Interest Outstanding'}
-                </span>
-                <span className={`text-xl font-bold ${interestRemaining < 0 ? 'text-emerald-700' : 'text-amber-900'}`}>
-                  {formatCurrency(Math.abs(interestRemaining))}
-                </span>
-              </div>
-              <div className="text-xs text-slate-600 space-y-0.5">
-                <div className="flex justify-between">
-                  <span>Expected (schedule):</span>
-                  <span className="font-mono">{formatCurrency(loan.total_interest)}</span>
-                </div>
-                <div className="flex justify-between text-emerald-600">
-                  <span>Received:</span>
-                  <span className="font-mono">-{formatCurrency(actualInterestPaid)}</span>
-                </div>
-                {isLoanActive && (
+          <CardContent className="px-4 py-4">
+            <div className="flex flex-col lg:flex-row lg:items-stretch lg:gap-4">
+              {/* Left: Loan Details */}
+              <div className="flex-1 flex flex-wrap items-center gap-x-6 gap-y-3">
+                {/* Fixed Charge Facility */}
+                {isFixedCharge && (
                   <>
-                    <div className="flex justify-between pt-0.5 border-t border-slate-200">
-                      <span>Accrued to today:</span>
-                      <span className="font-mono">{formatCurrency(accruedInterestToday)}</span>
+                    <div>
+                      <span className="text-slate-500 text-xs">Monthly Charge</span>
+                      <p className="font-bold text-lg text-purple-700">{formatCurrency(loan.monthly_charge || 0)}</p>
                     </div>
-                    <div className={`flex justify-between ${liveInterestOutstanding < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                      <span>Settlement balance:</span>
-                      <span className="font-mono">{liveInterestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(liveInterestOutstanding))}</span>
+                    <div>
+                      <span className="text-slate-500 text-xs">Duration</span>
+                      <p className="font-bold text-lg">{loan.duration} months</p>
                     </div>
+                    <div>
+                      <span className="text-slate-500 text-xs">Start Date</span>
+                      <p className="font-bold text-lg">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
+                    </div>
+                    {loan.arrangement_fee > 0 && (
+                      <div>
+                        <span className="text-slate-500 text-xs">Setup Fee</span>
+                        <p className="font-bold text-lg text-amber-600">{formatCurrency(loan.arrangement_fee)}</p>
+                      </div>
+                    )}
+                    {loan.exit_fee > 0 && (
+                      <div>
+                        <span className="text-slate-500 text-xs">Exit Fee</span>
+                        <p className="font-bold text-lg text-amber-600">{formatCurrency(loan.exit_fee)}</p>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Irregular Income */}
+                {isIrregularIncome && (
+                  <>
+                    <div>
+                      <span className="text-slate-500 text-xs">Principal Advanced</span>
+                      <p className="font-bold text-lg">{formatCurrency(totalPrincipal)}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 text-xs">Start Date</span>
+                      <p className="font-bold text-lg">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
+                    </div>
+                    {loan.arrangement_fee > 0 && (
+                      <div>
+                        <span className="text-slate-500 text-xs">Arr. Fee</span>
+                        <p className="font-bold text-lg text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
+                      </div>
+                    )}
+                  </>
+                )}
+
+                {/* Standard Loan */}
+                {!isSpecialType && (
+                  <>
+                    <div>
+                      <span className="text-slate-500 text-xs">Principal</span>
+                      <p className="font-bold text-lg">{formatCurrency(totalPrincipal)}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 text-xs">Rate</span>
+                      <p className="font-bold text-lg">{loan.interest_rate}% {loan.interest_type}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 text-xs">Duration</span>
+                      <p className="font-bold text-lg">{loan.duration} {loan.period === 'Monthly' ? 'mo' : 'wk'}{loan.auto_extend && ' (ext)'}</p>
+                    </div>
+                    <div>
+                      <span className="text-slate-500 text-xs">Start Date</span>
+                      <p className="font-bold text-lg">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
+                    </div>
+                    {loan.net_disbursed && (
+                      <div>
+                        <span className="text-slate-500 text-xs">Net Disbursed</span>
+                        <p className="font-bold text-lg text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
+                      </div>
+                    )}
+                    {product && (
+                      <div className="w-full lg:w-auto text-xs text-slate-500 pt-1">
+                        {product.interest_calculation_method === 'daily' ? 'Daily calc' : 'Monthly fixed'} • {product.interest_alignment === 'period_based' ? 'From start' : '1st of month'}
+                        {product.interest_paid_in_advance && ' • Paid in advance'}
+                        {loan.arrangement_fee > 0 && ` • Arr: ${formatCurrency(loan.arrangement_fee)}`}
+                        {loan.exit_fee > 0 && ` • Exit: ${formatCurrency(loan.exit_fee)}`}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
-            </CardContent>
-          </Card>
 
-          {/* Fees Outstanding */}
-          {(() => {
-            // Deductible fee = arrangement fee withheld from advance (net_disbursed < principal)
-            const isDeductibleFee = loan.net_disbursed && loan.net_disbursed < loan.principal_amount;
-            const arrangementFee = loan.arrangement_fee || 0;
-            const exitFee = loan.exit_fee || 0;
-            const loanIsSettled = loan.status === 'Settled' || loan.status === 'Closed';
+              {/* Right: Financial Summary Boxes */}
+              <div className="flex gap-2 mt-4 lg:mt-0 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-200 lg:pl-4">
+                {/* Fixed Charge Summary */}
+                {isFixedCharge && (
+                  <>
+                    <div className="flex-1 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 min-w-[120px]">
+                      <p className="text-xs text-purple-600 font-medium">Charges Paid</p>
+                      <p className="text-xl font-bold text-purple-900">{formatCurrency(transactions.filter(t => !t.is_deleted && t.type === 'Repayment').reduce((sum, t) => sum + t.amount, 0))}</p>
+                      <p className="text-xs text-slate-500">of {formatCurrency((loan.monthly_charge || 0) * (loan.duration || 0))}</p>
+                    </div>
+                    <div className="flex-1 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 min-w-[120px]">
+                      <p className="text-xs text-amber-600 font-medium">Outstanding</p>
+                      <p className="text-xl font-bold text-amber-900">{formatCurrency(Math.max(0, ((loan.monthly_charge || 0) * (loan.duration || 0)) - transactions.filter(t => !t.is_deleted && t.type === 'Repayment').reduce((sum, t) => sum + t.amount, 0)))}</p>
+                      <p className="text-xs text-slate-500">{schedule.filter(s => s.status === 'Pending').length} remaining</p>
+                    </div>
+                  </>
+                )}
 
-            // For deductible fees: they're "withheld" at start, then collected when loan settles
-            // Deductible fee is already paid (via withholding) so doesn't need collection
-            // But if there's a Fee Collection transaction, that's a SEPARATE fee collected
-            const totalFeesCollected = actualFeesPaid; // This is from "Fee Collections" transactions
+                {/* Irregular Income Summary */}
+                {isIrregularIncome && (
+                  <>
+                    <div className="flex-1 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 min-w-[120px]">
+                      <p className="text-xs text-blue-600 font-medium">Outstanding</p>
+                      <p className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</p>
+                      <p className="text-xs text-slate-500">principal due</p>
+                    </div>
+                    <div className="flex-1 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 min-w-[120px]">
+                      <p className="text-xs text-emerald-600 font-medium">Repaid</p>
+                      <p className="text-xl font-bold text-emerald-900">{formatCurrency(actualPrincipalPaid)}</p>
+                      <p className="text-xs text-slate-500">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length} payments</p>
+                    </div>
+                  </>
+                )}
 
-            // Outstanding = exit fee (if any) minus any collections not related to arrangement
-            // Note: Deductible/arrangement fee is NOT outstanding since it was already withheld
-            const outstandingFees = isDeductibleFee
-              ? Math.max(0, exitFee - totalFeesCollected)
-              : Math.max(0, (arrangementFee + exitFee) - totalFeesCollected);
-
-            return (
-              <Card className="bg-gradient-to-br from-purple-50 to-purple-100/50 border-purple-200">
-                <CardContent className="px-3 py-2">
-                  <div className="flex justify-between items-baseline mb-1">
-                    <span className="text-sm text-purple-600 font-medium">Fees</span>
-                    <span className="text-xl font-bold text-purple-900">{formatCurrency(arrangementFee + exitFee + totalFeesCollected)}</span>
-                  </div>
-                  <div className="text-xs text-slate-600 space-y-0.5">
-                    {arrangementFee > 0 && (
-                      <div className="flex justify-between">
-                        <span>Arrangement fee:</span>
-                        {isDeductibleFee ? (
-                          <span className="font-mono text-blue-600">{formatCurrency(arrangementFee)} <span className="text-[10px]">(withheld)</span></span>
-                        ) : (
-                          <span className="font-mono">{formatCurrency(arrangementFee)}</span>
-                        )}
-                      </div>
-                    )}
-                    {exitFee > 0 && (
-                      <div className="flex justify-between">
-                        <span>Exit fee:</span>
-                        <span className="font-mono">{formatCurrency(exitFee)}</span>
-                      </div>
-                    )}
-                    {totalFeesCollected > 0 && (
-                      <div className="flex justify-between text-emerald-600">
-                        <span>Fee collections:</span>
-                        <span className="font-mono">{formatCurrency(totalFeesCollected)}</span>
-                      </div>
-                    )}
-                    {!arrangementFee && !exitFee && totalFeesCollected === 0 && (
-                      <div className="text-slate-400">No fees on this loan</div>
-                    )}
-                    {outstandingFees > 0 && (
-                      <div className="flex justify-between pt-0.5 border-t border-purple-200 text-purple-700 font-medium">
-                        <span>Outstanding:</span>
-                        <span className="font-mono">{formatCurrency(outstandingFees)}</span>
-                      </div>
-                    )}
-                  </div>
-                </CardContent>
-              </Card>
-            );
-          })()}
-        </div>
+                {/* Standard Loan Summary */}
+                {!isSpecialType && (
+                  <>
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 min-w-[110px]">
+                      <p className="text-xs text-blue-600 font-medium">Principal O/S</p>
+                      <p className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</p>
+                    </div>
+                    <div className={`border rounded-lg px-3 py-2 min-w-[110px] ${interestRemaining < 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                      <p className={`text-xs font-medium ${interestRemaining < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                        {interestRemaining < 0 ? 'Int Overpaid' : 'Interest O/S'}
+                      </p>
+                      <p className={`text-xl font-bold ${interestRemaining < 0 ? 'text-emerald-900' : 'text-amber-900'}`}>{formatCurrency(Math.abs(interestRemaining))}</p>
+                    </div>
+                    {isLoanActive && (() => {
+                      const arrangementFeePaidInAdvance = loan.net_disbursed && loan.net_disbursed < loan.principal_amount;
+                      const outstandingArrangementFee = arrangementFeePaidInAdvance ? 0 : (loan.arrangement_fee || 0);
+                      const outstandingFees = outstandingArrangementFee + (loan.exit_fee || 0);
+                      const settlementTotal = principalRemaining + Math.max(0, liveInterestOutstanding) + outstandingFees;
+                      return (
+                        <div className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 min-w-[120px]">
+                          <p className="text-xs text-slate-600 font-medium">Settlement</p>
+                          <p className="text-xl font-bold text-slate-900">{formatCurrency(settlementTotal)}</p>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Tabs for different views */}
-        <Tabs defaultValue="overview" className="space-y-6">
+        <Tabs defaultValue={isIrregularIncome ? "repayments" : "overview"} className="space-y-6">
           <TabsList>
-            <TabsTrigger value="overview">Overview</TabsTrigger>
+            {!isIrregularIncome && (
+              <TabsTrigger value="overview">
+                {isFixedCharge ? 'Schedule' : 'Overview'}
+              </TabsTrigger>
+            )}
             <TabsTrigger value="repayments">
-              Repayments
+              {isFixedCharge ? 'Payments' : isIrregularIncome ? 'Income Received' : 'Repayments'}
               <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}</Badge>
             </TabsTrigger>
-            <TabsTrigger value="disbursements">
-              Disbursements
-              <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Disbursement').length + 1}</Badge>
-            </TabsTrigger>
+            {!isFixedCharge && (
+              <TabsTrigger value="disbursements">
+                Disbursements
+                <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Disbursement').length + 1}</Badge>
+              </TabsTrigger>
+            )}
             <TabsTrigger value="security">
               <Shield className="w-4 h-4 mr-1" />
               Security
@@ -1005,10 +939,12 @@ export default function LoanDetails() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="space-y-4">
-            {/* Combined Repayment View */}
-            <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
-          </TabsContent>
+          {!isIrregularIncome && (
+            <TabsContent value="overview" className="space-y-4">
+              {/* Combined Repayment View */}
+              <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
+            </TabsContent>
+          )}
 
           <TabsContent value="repayments">
             <Card>

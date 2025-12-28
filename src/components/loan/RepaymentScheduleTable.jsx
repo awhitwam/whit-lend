@@ -13,6 +13,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('separate'); // 'separate', 'detailed', 'smartview2', 'nested'
 
+  // Check if this is a Fixed Charge loan
+  const isFixedCharge = loan?.product_type === 'Fixed Charge' || product?.product_type === 'Fixed Charge';
+  // Use nullish coalescing to handle 0 correctly (0 is a valid monthly_charge value, but || would skip it)
+  const monthlyCharge = loan?.monthly_charge ?? product?.monthly_charge ?? 0;
+
   // Load nested sort order from localStorage, default to 'asc' (oldest first)
   const [nestedSortOrder, setNestedSortOrder] = useState(() => {
     const saved = localStorage.getItem('nestedScheduleSortOrder');
@@ -56,13 +61,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
   // Calculate totals
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
-  
+
+  // For Fixed Charge loans, sum fees_applied; for regular loans, sum interest_applied
   let cumulativeInterestPaid = transactions
     .filter(tx => !tx.is_deleted)
-    .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-  
-  // Calculate total expected interest from schedule
-  const totalExpectedInterest = schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
+    .reduce((sum, tx) => sum + (isFixedCharge ? (tx.fees_applied || 0) : (tx.interest_applied || 0)), 0);
+
+  // Calculate total expected interest/charge from schedule
+  const totalExpectedInterest = isFixedCharge
+    ? monthlyCharge * schedule.length
+    : schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
 
   // Create combined or separate rows based on view mode
   let combinedRows;
@@ -96,7 +104,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       // Get further advance (disbursement) transactions
       const disbursementTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
 
-      // Add ALL schedule entries as separate rows with dynamically calculated expected interest
+      // Add ALL schedule entries as separate rows with dynamically calculated expected interest/charge
       schedule.forEach(row => {
         // Calculate principal outstanding at the start of this period
         const dueDate = new Date(row.due_date);
@@ -108,8 +116,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
         const principalOutstandingAtStart = loan.principal_amount - principalPaidBeforeThisPeriod;
 
-        // Use schedule entry's interest amount directly (it's already been generated correctly)
-        let expectedInterestForPeriod = row.interest_amount;
+        // For Fixed Charge loans, use monthly charge; otherwise use schedule's interest amount
+        let expectedInterestForPeriod = isFixedCharge ? monthlyCharge : row.interest_amount;
 
         allRows.push({
           date: dueDate,
@@ -119,7 +127,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           scheduleEntry: row,
           daysDifference: null,
           rowType: 'schedule',
-          expectedInterest: expectedInterestForPeriod
+          expectedInterest: expectedInterestForPeriod,
+          isFixedCharge: isFixedCharge
         });
       });
 
@@ -179,11 +188,19 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       const currentDate = row.date;
       const daysSinceLastCalculation = Math.max(0, differenceInDays(currentDate, lastCalculationDate));
 
-      // Accrue interest on current principal balance for days elapsed
-      if (daysSinceLastCalculation > 0 && principalOutstanding > 0) {
-        const dailyRate = loan.interest_rate / 100 / 365;
-        const interestForPeriod = principalOutstanding * dailyRate * daysSinceLastCalculation;
-        totalInterestAccrued += interestForPeriod;
+      // Accrue interest/charges based on loan type
+      if (isFixedCharge) {
+        // For Fixed Charge loans, accrue the monthly charge at each schedule period
+        if (row.rowType === 'schedule') {
+          totalInterestAccrued += monthlyCharge;
+        }
+      } else {
+        // For regular loans, accrue interest on current principal balance for days elapsed
+        if (daysSinceLastCalculation > 0 && principalOutstanding > 0) {
+          const dailyRate = loan.interest_rate / 100 / 365;
+          const interestForPeriod = principalOutstanding * dailyRate * daysSinceLastCalculation;
+          totalInterestAccrued += interestForPeriod;
+        }
       }
 
       if (row.rowType === 'disbursement') {
@@ -207,8 +224,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           if (tx.principal_applied) {
             principalOutstanding -= tx.principal_applied;
           }
-          if (tx.interest_applied) {
-            totalInterestPaid += tx.interest_applied;
+          // For Fixed Charge, use fees_applied; for regular loans, use interest_applied
+          if (isFixedCharge) {
+            if (tx.fees_applied) {
+              totalInterestPaid += tx.fees_applied;
+            }
+          } else {
+            if (tx.interest_applied) {
+              totalInterestPaid += tx.interest_applied;
+            }
           }
         });
 
@@ -218,13 +242,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         row.principalOutstanding = principalOutstanding;
         row.interestOutstanding = totalInterestAccrued - totalInterestPaid;
         row.expectedInterest = 0;
-        
+
         lastCalculationDate = currentDate;
       } else if (row.rowType === 'schedule') {
         // Schedule row - show balances at this point in time (after accrual, before any payments)
         row.principalOutstanding = principalOutstanding;
         row.interestOutstanding = totalInterestAccrued - totalInterestPaid;
-        row.expectedInterest = row.scheduleEntry.interest_amount;
+        // For Fixed Charge, expectedInterest is already set from monthlyCharge; use it instead of schedule's interest_amount
+        row.expectedInterest = isFixedCharge ? monthlyCharge : row.scheduleEntry.interest_amount;
         
         lastCalculationDate = currentDate;
       }
@@ -628,11 +653,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     // Build period data with matched payments
                     const periodData = sortedSchedule.map((row) => {
                       const dueDate = new Date(row.due_date);
-                      const expectedAmount = row.interest_amount || row.total_due || 0;
+                      // For Fixed Charge loans, use monthly charge; otherwise use interest amount
+                      const expectedAmount = isFixedCharge ? monthlyCharge : (row.interest_amount || row.total_due || 0);
                       const matchedPayments = paymentAssignments.get(row.id) || [];
 
                       // Sum all payments matched to this period
-                      const totalPaidForPeriod = matchedPayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                      // For Fixed Charge, use fees_applied; for regular loans, use interest_applied
+                      const totalPaidForPeriod = matchedPayments.reduce((sum, tx) =>
+                        sum + (isFixedCharge ? (tx.fees_applied || tx.amount || 0) : (tx.interest_applied || 0)), 0);
                       const variance = totalPaidForPeriod - expectedAmount;
 
                       // Get payment date info (use first payment date if multiple)
@@ -954,11 +982,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   // Process each schedule period
                   sortedSchedule.forEach((scheduleRow, idx) => {
                     const dueDate = new Date(scheduleRow.due_date);
-                    const expectedInterest = scheduleRow.interest_amount || 0;
+                    // For Fixed Charge loans, use monthly charge; otherwise use interest amount
+                    const expectedInterest = isFixedCharge ? monthlyCharge : (scheduleRow.interest_amount || 0);
                     const periodTransactions = txAssignments.get(scheduleRow.id) || [];
 
                     // Calculate period payments
-                    const periodInterestPaid = periodTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                    // For Fixed Charge, use fees_applied; for regular loans, use interest_applied
+                    const periodInterestPaid = periodTransactions.reduce((sum, tx) =>
+                      sum + (isFixedCharge ? (tx.fees_applied || tx.amount || 0) : (tx.interest_applied || 0)), 0);
                     const periodPrincipalPaid = periodTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
 
                     // Determine status
@@ -1329,18 +1360,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <TableRow className="bg-slate-50 border-t sticky top-[41px] z-20 shadow-sm">
                   <TableHead className="bg-slate-50"></TableHead>
                   <TableHead className="font-semibold text-right bg-slate-50">
-                    <div>Principal</div>
-                    <div className="text-xs text-red-600 font-bold mt-1">{formatCurrency(totalPrincipalDisbursed)}</div>
+                    <div>{isFixedCharge ? '—' : 'Principal'}</div>
+                    {!isFixedCharge && <div className="text-xs text-red-600 font-bold mt-1">{formatCurrency(totalPrincipalDisbursed)}</div>}
                   </TableHead>
                   <TableHead className="font-semibold text-right bg-slate-50">
-                    <div>Interest</div>
-                    <div className="text-xs text-emerald-600 font-bold mt-1">{formatCurrency(cumulativeInterestPaid)}</div>
+                    <div>{isFixedCharge ? 'Charges Paid' : 'Interest'}</div>
+                    <div className={`text-xs font-bold mt-1 ${isFixedCharge ? 'text-purple-600' : 'text-emerald-600'}`}>{formatCurrency(cumulativeInterestPaid)}</div>
                   </TableHead>
                   <TableHead className="font-semibold text-right border-l-2 border-slate-300 bg-slate-50">
                     {schedule.length > 0 && (
                       <>
-                        <div>Expected Interest</div>
-                        <div className="text-xs text-blue-600 font-bold mt-1">{formatCurrency(totalExpectedInterest)}</div>
+                        <div>{isFixedCharge ? 'Expected Charge' : 'Expected Interest'}</div>
+                        <div className={`text-xs font-bold mt-1 ${isFixedCharge ? 'text-purple-600' : 'text-blue-600'}`}>{formatCurrency(isFixedCharge ? monthlyCharge * schedule.length : totalExpectedInterest)}</div>
                       </>
                     )}
                   </TableHead>
@@ -1420,6 +1451,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 {/* Expected Schedule */}
                 <TableCell className="text-right font-mono text-xs border-l-2 border-slate-200 py-1">
                   {(viewMode === 'separate' && row.rowType === 'schedule' && row.expectedInterest !== undefined) ? (
+                    isFixedCharge ? (
+                      // Fixed Charge loan - show simple monthly charge (use monthlyCharge directly for reliability)
+                      <div className="text-xs">
+                        <span className="text-purple-600 font-semibold">{formatCurrency(monthlyCharge)}</span>
+                        <span className="text-[10px] text-slate-500 ml-1">(monthly charge)</span>
+                      </div>
+                    ) : (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
@@ -1603,6 +1641,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         </TooltipContent>
                       </Tooltip>
                     </TooltipProvider>
+                    )
                   ) : (viewMode === 'merged' && schedule.length > 0 && row.expectedInterest > 0) ? (
                     <div>
                       {formatCurrency(row.expectedInterest)}

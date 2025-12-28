@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Plus, Package, MoreHorizontal, Edit, Trash2, TrendingUp, Clock, Banknote, Copy } from 'lucide-react';
+import { Plus, Package, MoreHorizontal, Edit, Trash2, TrendingUp, Clock, Copy, Zap, Coins } from 'lucide-react';
 import ProductForm from '@/components/product/ProductForm';
 import EmptyState from '@/components/ui/EmptyState';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -110,87 +110,125 @@ export default function Products() {
           />
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-            {products.map((product) => (
-              <Card key={product.id} className="hover:shadow-md transition-shadow">
-                <CardHeader className="flex flex-row items-start justify-between pb-2">
-                  <div>
-                    <CardTitle className="text-lg">{product.name}</CardTitle>
-                    <Badge 
-                      variant="outline" 
-                      className={product.interest_type === 'Reducing' 
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 mt-2' 
-                        : 'bg-amber-50 text-amber-700 border-amber-200 mt-2'
-                      }
-                    >
-                      {product.interest_type} Balance
-                    </Badge>
-                  </div>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="ghost" size="icon" className="h-8 w-8">
-                        <MoreHorizontal className="w-4 h-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="end">
-                      <DropdownMenuItem onClick={() => handleEdit(product)}>
-                        <Edit className="w-4 h-4 mr-2" />
-                        Edit
-                      </DropdownMenuItem>
-                      <DropdownMenuItem onClick={() => handleDuplicate(product)}>
-                        <Copy className="w-4 h-4 mr-2" />
-                        Duplicate
-                      </DropdownMenuItem>
-                      <DropdownMenuItem
-                        onClick={() => deleteMutation.mutate(product.id)}
-                        className="text-red-600"
-                      >
-                        <Trash2 className="w-4 h-4 mr-2" />
-                        Delete
-                      </DropdownMenuItem>
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </CardHeader>
-                <CardContent className="space-y-3">
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 rounded-lg bg-blue-100">
-                        <TrendingUp className="w-4 h-4 text-blue-600" />
-                      </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Interest</p>
-                        <p className="font-semibold">{product.interest_rate}% p.a.</p>
-                      </div>
+            {products.map((product) => {
+              const isFixedCharge = product.product_type === 'Fixed Charge';
+              const isIrregularIncome = product.product_type === 'Irregular Income';
+              const isSpecialType = isFixedCharge || isIrregularIncome;
+
+              return (
+                <Card key={product.id} className="hover:shadow-md transition-shadow">
+                  <CardHeader className="flex flex-row items-start justify-between pb-2">
+                    <div>
+                      <CardTitle className="text-lg">{product.name}</CardTitle>
+                      {isFixedCharge ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-purple-50 text-purple-700 border-purple-200 mt-2"
+                        >
+                          <Zap className="w-3 h-3 mr-1" />
+                          Fixed Charge Facility
+                        </Badge>
+                      ) : isIrregularIncome ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-amber-50 text-amber-700 border-amber-200 mt-2"
+                        >
+                          <Coins className="w-3 h-3 mr-1" />
+                          Irregular Income
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className={product.interest_type === 'Reducing'
+                            ? 'bg-emerald-50 text-emerald-700 border-emerald-200 mt-2'
+                            : 'bg-amber-50 text-amber-700 border-amber-200 mt-2'
+                          }
+                        >
+                          {product.interest_type} Balance
+                        </Badge>
+                      )}
                     </div>
-                    <div className="flex items-center gap-2">
-                      <div className="p-2 rounded-lg bg-purple-100">
-                        <Clock className="w-4 h-4 text-purple-600" />
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button variant="ghost" size="icon" className="h-8 w-8">
+                          <MoreHorizontal className="w-4 h-4" />
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem onClick={() => handleEdit(product)}>
+                          <Edit className="w-4 h-4 mr-2" />
+                          Edit
+                        </DropdownMenuItem>
+                        <DropdownMenuItem onClick={() => handleDuplicate(product)}>
+                          <Copy className="w-4 h-4 mr-2" />
+                          Duplicate
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          onClick={() => deleteMutation.mutate(product.id)}
+                          className="text-red-600"
+                        >
+                          <Trash2 className="w-4 h-4 mr-2" />
+                          Delete
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    {isFixedCharge ? (
+                      <div className="text-sm text-slate-600">
+                        <p>Regular monthly fee for loan facility access.</p>
+                        <p className="mt-2 text-xs text-slate-500">Supports arrangement and exit fees.</p>
                       </div>
-                      <div>
-                        <p className="text-xs text-slate-500">Period</p>
-                        <p className="font-semibold">{product.period}</p>
+                    ) : isIrregularIncome ? (
+                      <div className="text-sm text-slate-600">
+                        <p>No fixed schedule - record payments as received.</p>
+                        <p className="mt-2 text-xs text-slate-500">Principal tracking only.</p>
                       </div>
-                    </div>
-                  </div>
-                  
-                  <div className="pt-2 border-t space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-slate-500">Calculation:</span>
-                      <span className="font-medium text-slate-700">
-                        {product.interest_calculation_method === 'daily' ? 'Daily (variable)' : 'Monthly (fixed 365/12)'}
-                      </span>
-                    </div>
-                    {product.interest_alignment && product.period === 'Monthly' && (
-                      <div className="flex justify-between text-sm">
-                        <span className="text-slate-500">Alignment:</span>
-                        <span className="font-medium text-slate-700">
-                          {product.interest_alignment === 'period_based' ? 'From start date' : '1st of month'}
-                        </span>
-                      </div>
+                    ) : (
+                      <>
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 rounded-lg bg-blue-100">
+                              <TrendingUp className="w-4 h-4 text-blue-600" />
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-500">Interest</p>
+                              <p className="font-semibold">{product.interest_rate}% p.a.</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 rounded-lg bg-purple-100">
+                              <Clock className="w-4 h-4 text-purple-600" />
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-500">Period</p>
+                              <p className="font-semibold">{product.period}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="pt-2 border-t space-y-2">
+                          <div className="flex justify-between text-sm">
+                            <span className="text-slate-500">Calculation:</span>
+                            <span className="font-medium text-slate-700">
+                              {product.interest_calculation_method === 'daily' ? 'Daily (variable)' : 'Monthly (fixed 365/12)'}
+                            </span>
+                          </div>
+                          {product.interest_alignment && product.period === 'Monthly' && (
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-500">Alignment:</span>
+                              <span className="font-medium text-slate-700">
+                                {product.interest_alignment === 'period_based' ? 'From start date' : '1st of month'}
+                              </span>
+                            </div>
+                          )}
+                        </div>
+                      </>
                     )}
-                  </div>
-                </CardContent>
-              </Card>
-            ))}
+                  </CardContent>
+                </Card>
+              );
+            })}
           </div>
         )}
 

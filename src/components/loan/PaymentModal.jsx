@@ -21,6 +21,10 @@ export default function PaymentModal({
   onSubmit,
   isLoading
 }) {
+  // Determine product type
+  const isFixedCharge = loan?.product_type === 'Fixed Charge';
+  const isIrregularIncome = loan?.product_type === 'Irregular Income';
+  const isSpecialType = isFixedCharge || isIrregularIncome;
   const [formData, setFormData] = useState({
     amount: '',
     date: format(new Date(), 'yyyy-MM-dd'),
@@ -95,27 +99,48 @@ export default function PaymentModal({
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-5">
-          {/* Loan Summary Header */}
-          <div className="grid grid-cols-3 gap-3">
-            <Card className="bg-slate-50 border-slate-200">
-              <CardContent className="p-3 text-center">
-                <p className="text-xs text-slate-500 mb-0.5">Total Outstanding</p>
-                <p className="text-lg font-bold text-slate-900">{formatCurrency(outstandingAmount)}</p>
-              </CardContent>
-            </Card>
-            <Card className="bg-amber-50 border-amber-200">
-              <CardContent className="p-3 text-center">
-                <p className="text-xs text-amber-600 mb-0.5">Interest Due</p>
-                <p className="text-lg font-bold text-amber-700">{formatCurrency(outstandingInterest)}</p>
-              </CardContent>
-            </Card>
-            <Card className="bg-blue-50 border-blue-200">
-              <CardContent className="p-3 text-center">
-                <p className="text-xs text-blue-600 mb-0.5">Principal Due</p>
-                <p className="text-lg font-bold text-blue-700">{formatCurrency(outstandingPrincipal)}</p>
-              </CardContent>
-            </Card>
-          </div>
+          {/* Loan Summary Header - Different for each product type */}
+          {isIrregularIncome ? (
+            <div className="grid grid-cols-1 gap-3">
+              <Card className="bg-blue-50 border-blue-200">
+                <CardContent className="p-3 text-center">
+                  <p className="text-xs text-blue-600 mb-0.5">Principal Outstanding</p>
+                  <p className="text-lg font-bold text-blue-700">{formatCurrency(outstandingPrincipal)}</p>
+                  <p className="text-xs text-slate-500 mt-1">No interest on irregular income loans</p>
+                </CardContent>
+              </Card>
+            </div>
+          ) : isFixedCharge ? (
+            <div className="grid grid-cols-1 gap-3">
+              <Card className="bg-purple-50 border-purple-200">
+                <CardContent className="p-3 text-center">
+                  <p className="text-xs text-purple-600 mb-0.5">Charges Outstanding</p>
+                  <p className="text-lg font-bold text-purple-700">{formatCurrency(outstandingAmount)}</p>
+                </CardContent>
+              </Card>
+            </div>
+          ) : (
+            <div className="grid grid-cols-3 gap-3">
+              <Card className="bg-slate-50 border-slate-200">
+                <CardContent className="p-3 text-center">
+                  <p className="text-xs text-slate-500 mb-0.5">Total Outstanding</p>
+                  <p className="text-lg font-bold text-slate-900">{formatCurrency(outstandingAmount)}</p>
+                </CardContent>
+              </Card>
+              <Card className="bg-amber-50 border-amber-200">
+                <CardContent className="p-3 text-center">
+                  <p className="text-xs text-amber-600 mb-0.5">Interest Due</p>
+                  <p className="text-lg font-bold text-amber-700">{formatCurrency(outstandingInterest)}</p>
+                </CardContent>
+              </Card>
+              <Card className="bg-blue-50 border-blue-200">
+                <CardContent className="p-3 text-center">
+                  <p className="text-xs text-blue-600 mb-0.5">Principal Due</p>
+                  <p className="text-lg font-bold text-blue-700">{formatCurrency(outstandingPrincipal)}</p>
+                </CardContent>
+              </Card>
+            </div>
+          )}
 
           {/* Main Form Grid */}
           <div className="grid grid-cols-2 gap-4">
@@ -179,9 +204,33 @@ export default function PaymentModal({
               </div>
             </div>
 
-            {/* Right Column - Attribution */}
+            {/* Right Column - Attribution (only for standard loans) */}
             <div className="space-y-4">
-              {/* Manual Attribution Toggle */}
+              {/* Info for special product types */}
+              {isIrregularIncome && (
+                <Card className="border-amber-200 bg-amber-50">
+                  <CardContent className="p-3">
+                    <p className="text-sm text-amber-800 font-medium">Irregular Income Payment</p>
+                    <p className="text-xs text-amber-600 mt-1">
+                      Payment will be applied directly to principal. No interest calculation.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {isFixedCharge && (
+                <Card className="border-purple-200 bg-purple-50">
+                  <CardContent className="p-3">
+                    <p className="text-sm text-purple-800 font-medium">Facility Charge Payment</p>
+                    <p className="text-xs text-purple-600 mt-1">
+                      Payment will be applied to outstanding charges.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
+              {/* Manual Attribution Toggle - only for standard loans */}
+              {!isSpecialType && (
               <Card className={`${manualMode ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200'}`}>
                 <CardContent className="p-3">
                   <div className="flex items-center justify-between">
@@ -202,9 +251,10 @@ export default function PaymentModal({
                   </div>
                 </CardContent>
               </Card>
+              )}
 
-              {/* Manual Split Inputs */}
-              {manualMode && formData.amount && (
+              {/* Manual Split Inputs - only for standard loans */}
+              {!isSpecialType && manualMode && formData.amount && (
                 <Card className="border-blue-200 bg-blue-50/30">
                   <CardContent className="p-4 space-y-4">
                     <div className="space-y-3">
@@ -281,8 +331,8 @@ export default function PaymentModal({
                 </Card>
               )}
 
-              {/* Auto-allocation info when not in manual mode */}
-              {!manualMode && formData.amount && (
+              {/* Auto-allocation info when not in manual mode - only for standard loans */}
+              {!isSpecialType && !manualMode && formData.amount && (
                 <Card className="border-slate-200 bg-slate-50/50">
                   <CardContent className="p-4">
                     <div className="text-sm text-slate-600">
@@ -298,8 +348,8 @@ export default function PaymentModal({
             </div>
           </div>
 
-          {/* Overpayment Options - Full Width */}
-          {showOverpayment && (
+          {/* Overpayment Options - Full Width (only for standard loans) */}
+          {!isSpecialType && showOverpayment && (
             <Card className="border-amber-200 bg-amber-50">
               <CardContent className="p-4">
                 <div className="flex items-start gap-3 mb-3">

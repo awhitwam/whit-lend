@@ -44,26 +44,35 @@ function parseCSV(text) {
 }
 
 function transformBorrowerData(row) {
-  const business = row['Business'];
-  const firstName = row['First Name'];
-  const lastName = row['Last Name'];
-  
+  const business = row['Business']?.trim();
+  const contact = row['Contact']?.trim() || '';
+  const group = row['Group']?.trim();
+
+  // Parse contact name into first/last
+  const nameParts = contact.split(' ').filter(Boolean);
+  const firstName = nameParts[0] || '';
+  const lastName = nameParts.slice(1).join(' ') || '';
+
+  // Full name: prefer business, fallback to contact name
+  const fullName = business || contact || 'Unknown';
+
   return {
-    unique_number: row['Unique#'],
-    full_name: business || `${firstName} ${lastName}`,
+    unique_number: row['Unique#']?.trim(),
+    full_name: fullName,
     first_name: firstName,
     last_name: lastName,
     business: business,
-    email: row['Email'],
-    gender: row['Gender'],
-    address: row['Address'],
-    city: row['City'],
-    zipcode: row['Zipcode'],
-    country: row['Country'],
-    mobile: row['Mobile'],
-    landline: row['Landline'],
-    phone: row['Mobile'] || row['Landline'],
-    import_created_date: row['Created'],
+    email: row['Email']?.trim(),
+    address: row['Address']?.trim(),
+    phone: row['Mobile']?.trim() || row['Landline']?.trim(),
+    mobile: row['Mobile']?.trim(),
+    landline: row['Landline']?.trim(),
+    gender: row['Gender']?.trim(),
+    city: row['City']?.trim(),
+    zipcode: row['Zipcode']?.trim(),
+    country: row['Country']?.trim(),
+    notes: group ? `Group: ${group}` : '',
+    import_created_date: row['Created']?.trim(),
     status: 'Active'
   };
 }

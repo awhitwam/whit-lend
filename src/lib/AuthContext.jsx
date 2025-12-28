@@ -102,13 +102,21 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       const userEmail = user?.email;
+      // SECURITY: Clear organization context to prevent data leakage on next login
+      localStorage.removeItem('currentOrganizationId');
       await supabase.auth.signOut();
       // Log logout event
       logAuthEvent(AuditAction.LOGOUT, userEmail, true);
       setUser(null);
       setIsAuthenticated(false);
+      // Redirect to login page
+      window.location.href = '/Login';
     } catch (error) {
       console.error('Logout failed:', error);
+      // Still clear org context even if signOut fails
+      localStorage.removeItem('currentOrganizationId');
+      // Still redirect to login
+      window.location.href = '/Login';
     }
   };
 
