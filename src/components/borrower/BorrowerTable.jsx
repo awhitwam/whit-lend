@@ -6,9 +6,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Search, MoreHorizontal, Eye, Edit, Phone, Mail, User } from 'lucide-react';
+import { Search, MoreHorizontal, Eye, Edit, Phone, Mail, User, FileText } from 'lucide-react';
 
-export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
+export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts = {} }) {
   const [searchTerm, setSearchTerm] = useState('');
 
   const filteredBorrowers = borrowers.filter(b => {
@@ -39,6 +39,7 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
               <TableHead className="font-semibold">ID</TableHead>
               <TableHead className="font-semibold">Name / Business</TableHead>
               <TableHead className="font-semibold">Contact</TableHead>
+              <TableHead className="font-semibold">Loans</TableHead>
               <TableHead className="font-semibold">Status</TableHead>
               <TableHead className="w-12"></TableHead>
             </TableRow>
@@ -47,27 +48,28 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
             {isLoading ? (
               Array(5).fill(0).map((_, i) => (
                 <TableRow key={i}>
-                  <TableCell colSpan={5} className="h-16">
+                  <TableCell colSpan={6} className="h-16">
                     <div className="h-4 bg-slate-100 rounded animate-pulse w-3/4"></div>
                   </TableCell>
                 </TableRow>
               ))
             ) : filteredBorrowers.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center py-12 text-slate-500">
+                <TableCell colSpan={6} className="text-center py-12 text-slate-500">
                   {searchTerm ? 'No borrowers match your search' : 'No borrowers found'}
                 </TableCell>
               </TableRow>
             ) : (
               filteredBorrowers.map((borrower) => {
                 const displayName = borrower.business || `${borrower.first_name} ${borrower.last_name}`;
+                const counts = loanCounts[borrower.id] || { total: 0, live: 0, settled: 0, pending: 0, defaulted: 0 };
                 return (
                 <TableRow key={borrower.id} className="hover:bg-slate-50/50 transition-colors">
                   <TableCell className="font-mono font-semibold text-slate-700">
                     #{borrower.unique_number}
                   </TableCell>
                   <TableCell>
-                    <Link 
+                    <Link
                       to={createPageUrl(`BorrowerDetails?id=${borrower.id}`)}
                       className="flex items-center gap-3 group"
                     >
@@ -100,10 +102,46 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
                     </div>
                   </TableCell>
                   <TableCell>
-                    <Badge 
+                    {counts.total === 0 ? (
+                      <span className="text-sm text-slate-400">No loans</span>
+                    ) : (
+                      <Link
+                        to={createPageUrl(`Loans?borrower=${borrower.id}`)}
+                        className="group"
+                      >
+                        <div className="flex flex-wrap gap-1.5 items-center">
+                          {counts.live > 0 && (
+                            <Badge className="bg-emerald-100 text-emerald-700 hover:bg-emerald-200 text-xs">
+                              {counts.live} Live
+                            </Badge>
+                          )}
+                          {counts.settled > 0 && (
+                            <Badge className="bg-purple-100 text-purple-700 hover:bg-purple-200 text-xs">
+                              {counts.settled} Settled
+                            </Badge>
+                          )}
+                          {counts.pending > 0 && (
+                            <Badge className="bg-slate-100 text-slate-700 hover:bg-slate-200 text-xs">
+                              {counts.pending} Pending
+                            </Badge>
+                          )}
+                          {counts.defaulted > 0 && (
+                            <Badge className="bg-red-100 text-red-700 hover:bg-red-200 text-xs">
+                              {counts.defaulted} Defaulted
+                            </Badge>
+                          )}
+                        </div>
+                        <p className="text-xs text-slate-500 group-hover:text-blue-600 mt-1">
+                          View all {counts.total} loan{counts.total !== 1 ? 's' : ''}
+                        </p>
+                      </Link>
+                    )}
+                  </TableCell>
+                  <TableCell>
+                    <Badge
                       variant={borrower.status === 'Active' ? 'default' : 'destructive'}
-                      className={borrower.status === 'Active' 
-                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100' 
+                      className={borrower.status === 'Active'
+                        ? 'bg-emerald-50 text-emerald-700 border-emerald-200 hover:bg-emerald-100'
                         : 'bg-red-50 text-red-700 border-red-200 hover:bg-red-100'
                       }
                     >
@@ -124,6 +162,14 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading }) {
                             View Details
                           </Link>
                         </DropdownMenuItem>
+                        {counts.total > 0 && (
+                          <DropdownMenuItem asChild>
+                            <Link to={createPageUrl(`Loans?borrower=${borrower.id}`)}>
+                              <FileText className="w-4 h-4 mr-2" />
+                              View Loans ({counts.total})
+                            </Link>
+                          </DropdownMenuItem>
+                        )}
                         <DropdownMenuItem onClick={() => onEdit(borrower)}>
                           <Edit className="w-4 h-4 mr-2" />
                           Edit

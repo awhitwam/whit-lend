@@ -228,9 +228,25 @@ export default function BorrowerDetails() {
     );
   }
 
-  const activeLoans = loans.filter(l => l.status === 'Active');
+  const activeLoans = loans.filter(l => l.status === 'Active' || l.status === 'Live');
   const totalBorrowed = loans.reduce((sum, l) => sum + (l.principal_amount || 0), 0);
   const totalRepaid = transactions.filter(t => t.type === 'Repayment').reduce((sum, t) => sum + (t.amount || 0), 0);
+
+  // Calculate exposure totals for live/defaulted loans
+  const exposureLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active' || l.status === 'Defaulted');
+  const disbursements = transactions
+    .filter(t => t.type === 'Disbursement' && !t.is_deleted && exposureLoans.some(l => l.id === t.loan_id))
+    .reduce((sum, t) => sum + (t.amount || 0), 0);
+  const repayments = transactions
+    .filter(t => t.type === 'Repayment' && !t.is_deleted && exposureLoans.some(l => l.id === t.loan_id));
+  const principalPaid = repayments.reduce((sum, t) => sum + (t.principal_applied || 0), 0);
+  const interestPaid = repayments.reduce((sum, t) => sum + (t.interest_applied || 0), 0);
+
+  const totalPrincipal = exposureLoans.reduce((sum, l) => sum + (l.principal_amount || 0), 0) + disbursements;
+  const totalInterest = exposureLoans.reduce((sum, l) => sum + (l.total_interest || 0), 0);
+  const principalOutstanding = Math.max(0, totalPrincipal - principalPaid);
+  const interestOutstanding = Math.max(0, totalInterest - interestPaid);
+  const totalOutstanding = principalOutstanding + interestOutstanding;
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -347,7 +363,7 @@ export default function BorrowerDetails() {
         </Card>
 
         {/* Stats */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
           <Card>
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
@@ -361,16 +377,27 @@ export default function BorrowerDetails() {
               </div>
             </CardContent>
           </Card>
+          <Card className="bg-gradient-to-br from-amber-50 to-amber-100 border-amber-200">
+            <CardContent className="p-5">
+              <div>
+                <p className="text-sm text-amber-700 font-medium">Total Outstanding</p>
+                <p className="text-2xl font-bold text-amber-900">{formatCurrency(totalOutstanding)}</p>
+              </div>
+            </CardContent>
+          </Card>
           <Card>
             <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Total Borrowed</p>
-                  <p className="text-2xl font-bold">{formatCurrency(totalBorrowed)}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-purple-100">
-                  <CreditCard className="w-5 h-5 text-purple-600" />
-                </div>
+              <div>
+                <p className="text-sm text-slate-500">Principal Outstanding</p>
+                <p className="text-2xl font-bold">{formatCurrency(principalOutstanding)}</p>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-5">
+              <div>
+                <p className="text-sm text-slate-500">Interest Outstanding</p>
+                <p className="text-2xl font-bold">{formatCurrency(interestOutstanding)}</p>
               </div>
             </CardContent>
           </Card>

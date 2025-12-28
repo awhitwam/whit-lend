@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
@@ -8,25 +8,46 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import EmptyState from '@/components/ui/EmptyState';
 
 export default function Loans() {
   const navigate = useNavigate();
-  const [searchParams] = useSearchParams();
+  const [searchParams, setSearchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
-  // Read initial status filter from URL param (e.g., ?status=Closed for settled loans)
-  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'Live');
+  // Read borrower filter from URL param
+  const borrowerFilter = searchParams.get('borrower') || null;
+  // Read initial status filter from URL param - default to 'all' when filtering by borrower
+  const [statusFilter, setStatusFilter] = useState(
+    searchParams.get('status') || (borrowerFilter ? 'all' : 'Live')
+  );
   // Read initial tab from URL param, default to 'active'
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'active');
   const [sortField, setSortField] = useState('created_date');
   const [sortDirection, setSortDirection] = useState('desc');
 
+  // When borrower filter changes, update status filter to show all
+  useEffect(() => {
+    if (borrowerFilter && statusFilter === 'Live') {
+      setStatusFilter('all');
+    }
+  }, [borrowerFilter]);
+
   const { data: allLoans = [], isLoading } = useQuery({
     queryKey: ['loans'],
     queryFn: () => api.entities.Loan.list('-created_date')
+  });
+
+  // Fetch borrower details if filtering by borrower
+  const { data: filterBorrower } = useQuery({
+    queryKey: ['borrower', borrowerFilter],
+    queryFn: async () => {
+      const borrowers = await api.entities.Borrower.filter({ id: borrowerFilter });
+      return borrowers[0];
+    },
+    enabled: !!borrowerFilter
   });
 
   // Fetch all transactions to calculate disbursements per loan
@@ -53,8 +74,14 @@ export default function Loans() {
     };
   };
 
-  const loans = allLoans.filter(loan => !loan.is_deleted);
-  const deletedLoans = allLoans.filter(loan => loan.is_deleted);
+  // Filter by borrower first if specified
+  const borrowerFilteredLoans = useMemo(() => {
+    if (!borrowerFilter) return allLoans;
+    return allLoans.filter(loan => loan.borrower_id === borrowerFilter);
+  }, [allLoans, borrowerFilter]);
+
+  const loans = borrowerFilteredLoans.filter(loan => !loan.is_deleted);
+  const deletedLoans = borrowerFilteredLoans.filter(loan => loan.is_deleted);
 
   const filteredLoans = loans.filter(loan => {
     const matchesSearch =
@@ -62,12 +89,56 @@ export default function Loans() {
       loan.product_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       loan.description?.toLowerCase().includes(searchTerm.toLowerCase());
 
-    const matchesStatus = statusFilter === 'all' || 
-      loan.status === statusFilter || 
+    const matchesStatus = statusFilter === 'all' ||
+      loan.status === statusFilter ||
       (statusFilter === 'Live' && (loan.status === 'Live' || loan.status === 'Active'));
 
     return matchesSearch && matchesStatus;
   });
+
+  // Function to clear borrower filter
+  const clearBorrowerFilter = () => {
+    const newParams = new URLSearchParams(searchParams);
+    newParams.delete('borrower');
+    setSearchParams(newParams);
+    setStatusFilter('all'); // Show all when clearing borrower filter
+  };
+
+  // Calculate borrower exposure totals when filtering by borrower
+  const borrowerTotals = useMemo(() => {
+    if (!borrowerFilter) return null;
+
+    const activeLoans = loans.filter(l =>
+      l.status === 'Live' || l.status === 'Active' || l.status === 'Defaulted'
+    );
+
+    let totalPrincipal = 0;
+    let totalInterest = 0;
+    let principalPaid = 0;
+    let interestPaid = 0;
+    let disbursements = 0;
+
+    activeLoans.forEach(loan => {
+      totalPrincipal += loan.principal_amount || 0;
+      totalInterest += loan.total_interest || 0;
+      disbursements += getDisbursementsForLoan(loan.id);
+      const payments = getActualPaymentsForLoan(loan.id);
+      principalPaid += payments.principalPaid;
+      interestPaid += payments.interestPaid;
+    });
+
+    const totalPrincipalWithDisbursements = totalPrincipal + disbursements;
+    const principalOutstanding = Math.max(0, totalPrincipalWithDisbursements - principalPaid);
+    const interestOutstanding = Math.max(0, totalInterest - interestPaid);
+    const totalOutstanding = principalOutstanding + interestOutstanding;
+
+    return {
+      liveCount: activeLoans.length,
+      totalOutstanding,
+      principalOutstanding,
+      interestOutstanding
+    };
+  }, [borrowerFilter, loans, allTransactions]);
 
   const sortedLoans = [...filteredLoans].sort((a, b) => {
     let aVal, bVal;
@@ -156,6 +227,68 @@ export default function Loans() {
             </Button>
           </Link>
         </div>
+
+        {/* Borrower Filter Banner */}
+        {borrowerFilter && filterBorrower && (
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center">
+                  <User className="w-5 h-5 text-blue-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-blue-600 font-medium">Showing loans for</p>
+                  <p className="font-semibold text-blue-900">
+                    {filterBorrower.business || `${filterBorrower.first_name} ${filterBorrower.last_name}`}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Link to={createPageUrl(`BorrowerDetails?id=${borrowerFilter}`)}>
+                  <Button variant="outline" size="sm" className="border-blue-300 text-blue-700 hover:bg-blue-100">
+                    View Borrower
+                  </Button>
+                </Link>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearBorrowerFilter}
+                  className="text-blue-700 hover:bg-blue-100"
+              >
+                <X className="w-4 h-4 mr-1" />
+                Clear Filter
+              </Button>
+              </div>
+            </div>
+            {/* Exposure Totals */}
+            {borrowerTotals && borrowerTotals.totalOutstanding > 0 && (
+              <div className="mt-4 pt-4 border-t border-blue-200 grid grid-cols-2 md:grid-cols-4 gap-4">
+                <div>
+                  <p className="text-xs text-blue-600 font-medium">Live/Defaulted Loans</p>
+                  <p className="text-lg font-bold text-blue-900">{borrowerTotals.liveCount}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-blue-600 font-medium">Total Outstanding</p>
+                  <p className="text-lg font-bold text-blue-900">
+                    {formatCurrency(borrowerTotals.totalOutstanding)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-blue-600 font-medium">Principal Outstanding</p>
+                  <p className="text-lg font-bold text-blue-900">
+                    {formatCurrency(borrowerTotals.principalOutstanding)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs text-blue-600 font-medium">Interest Outstanding</p>
+                  <p className="text-lg font-bold text-blue-900">
+                    {formatCurrency(borrowerTotals.interestOutstanding)}
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
@@ -292,7 +425,7 @@ export default function Loans() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {sortedLoans.map((loan, index) => {
+                    {sortedLoans.map((loan) => {
                       const loanDisbursements = getDisbursementsForLoan(loan.id);
                       const actualPayments = getActualPaymentsForLoan(loan.id);
                       const totalPrincipal = loan.principal_amount + loanDisbursements;

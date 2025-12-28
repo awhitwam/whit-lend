@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,105 @@ export default function Borrowers() {
     queryKey: ['borrowers'],
     queryFn: () => api.entities.Borrower.list('-created_date')
   });
+
+  // Fetch all loans to calculate counts per borrower
+  const { data: allLoans = [] } = useQuery({
+    queryKey: ['loans'],
+    queryFn: () => api.entities.Loan.list()
+  });
+
+  // Fetch all transactions to calculate outstanding amounts
+  const { data: allTransactions = [] } = useQuery({
+    queryKey: ['all-transactions'],
+    queryFn: () => api.entities.Transaction.list()
+  });
+
+  // Calculate loan counts and financial metrics per borrower
+  const borrowerMetrics = useMemo(() => {
+    const metrics = {};
+    const activeLoans = allLoans.filter(l => !l.is_deleted);
+
+    // First pass: calculate basic counts and principal per borrower
+    activeLoans.forEach(loan => {
+      if (!loan.borrower_id) return;
+      if (!metrics[loan.borrower_id]) {
+        metrics[loan.borrower_id] = {
+          total: 0,
+          live: 0,
+          settled: 0,
+          pending: 0,
+          defaulted: 0,
+          totalPrincipal: 0,
+          totalInterest: 0,
+          principalPaid: 0,
+          interestPaid: 0,
+          disbursements: 0
+        };
+      }
+
+      metrics[loan.borrower_id].total++;
+
+      if (loan.status === 'Live' || loan.status === 'Active') {
+        metrics[loan.borrower_id].live++;
+        // Only count exposure for live loans
+        metrics[loan.borrower_id].totalPrincipal += loan.principal_amount || 0;
+        metrics[loan.borrower_id].totalInterest += loan.total_interest || 0;
+      } else if (loan.status === 'Closed') {
+        metrics[loan.borrower_id].settled++;
+      } else if (loan.status === 'Pending') {
+        metrics[loan.borrower_id].pending++;
+      } else if (loan.status === 'Defaulted') {
+        metrics[loan.borrower_id].defaulted++;
+        // Include defaulted in exposure
+        metrics[loan.borrower_id].totalPrincipal += loan.principal_amount || 0;
+        metrics[loan.borrower_id].totalInterest += loan.total_interest || 0;
+      }
+    });
+
+    // Second pass: calculate payments and disbursements from transactions
+    allTransactions.filter(t => !t.is_deleted).forEach(transaction => {
+      if (!transaction.borrower_id || !metrics[transaction.borrower_id]) return;
+
+      // Find the loan for this transaction
+      const loan = activeLoans.find(l => l.id === transaction.loan_id);
+      if (!loan || (loan.status !== 'Live' && loan.status !== 'Active' && loan.status !== 'Defaulted')) return;
+
+      if (transaction.type === 'Disbursement') {
+        metrics[transaction.borrower_id].disbursements += transaction.amount || 0;
+      } else if (transaction.type === 'Repayment') {
+        metrics[transaction.borrower_id].principalPaid += transaction.principal_applied || 0;
+        metrics[transaction.borrower_id].interestPaid += transaction.interest_applied || 0;
+      }
+    });
+
+    // Calculate outstanding for each borrower
+    Object.keys(metrics).forEach(borrowerId => {
+      const m = metrics[borrowerId];
+      const totalPrincipalWithDisbursements = m.totalPrincipal + m.disbursements;
+      const principalOutstanding = totalPrincipalWithDisbursements - m.principalPaid;
+      const interestOutstanding = m.totalInterest - m.interestPaid;
+      m.totalOutstanding = Math.max(0, principalOutstanding + interestOutstanding);
+      m.principalOutstanding = Math.max(0, principalOutstanding);
+    });
+
+    return metrics;
+  }, [allLoans, allTransactions]);
+
+  // For backwards compatibility, extract just loan counts
+  const loanCountsByBorrower = useMemo(() => {
+    const counts = {};
+    Object.keys(borrowerMetrics).forEach(borrowerId => {
+      const m = borrowerMetrics[borrowerId];
+      counts[borrowerId] = {
+        total: m.total,
+        live: m.live,
+        settled: m.settled,
+        pending: m.pending,
+        defaulted: m.defaulted
+      };
+    });
+    return counts;
+  }, [borrowerMetrics]);
 
   const borrowers = allBorrowers.filter(b => !b.is_archived);
 
@@ -105,10 +204,11 @@ export default function Borrowers() {
             }
           />
         ) : (
-          <BorrowerTable 
-            borrowers={borrowers} 
+          <BorrowerTable
+            borrowers={borrowers}
             onEdit={handleEdit}
             isLoading={isLoading}
+            loanCounts={loanCountsByBorrower}
           />
         )}
 

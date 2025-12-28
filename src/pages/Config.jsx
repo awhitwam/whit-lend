@@ -5,9 +5,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Settings, Database, Trash2, StopCircle, Users, History, ChevronLeft, ChevronRight, RefreshCw, Calendar } from 'lucide-react';
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Database, Trash2, StopCircle, Users, History, ChevronLeft, ChevronRight, RefreshCw, Calendar, ShieldAlert } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
 import { applyScheduleToNewLoan, regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { runAutoExtend, checkLoansNeedingExtension } from '@/lib/autoExtendService';
 import UserManagement from '@/components/organization/UserManagement';
@@ -16,8 +15,10 @@ import { useQuery } from '@tanstack/react-query';
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { format } from 'date-fns';
+import { useOrganization } from '@/lib/OrganizationContext';
 
 export default function Config() {
+  const { canAdmin } = useOrganization();
   const [file, setFile] = useState(null);
   const [importing, setImporting] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -946,7 +947,7 @@ export default function Config() {
       <div className="p-4 md:p-6 space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">Settings</h1>
-          <p className="text-slate-500 mt-1">Manage system configuration and data imports</p>
+          <p className="text-slate-500 mt-1">Manage your team, view audit logs, and configure system settings</p>
         </div>
 
         <Tabs defaultValue="team" className="space-y-6">
@@ -955,18 +956,16 @@ export default function Config() {
               <Users className="w-4 h-4 mr-2" />
               Team
             </TabsTrigger>
-            <TabsTrigger value="import">
-              <Database className="w-4 h-4 mr-2" />
-              Import Data
-            </TabsTrigger>
-            <TabsTrigger value="general">
-              <Settings className="w-4 h-4 mr-2" />
-              General
-            </TabsTrigger>
             <TabsTrigger value="audit">
               <History className="w-4 h-4 mr-2" />
               Audit Log
             </TabsTrigger>
+            {canAdmin() && (
+              <TabsTrigger value="admin" className="text-amber-700">
+                <ShieldAlert className="w-4 h-4 mr-2" />
+                Administration
+              </TabsTrigger>
+            )}
           </TabsList>
 
           <TabsContent value="team" className="space-y-6">
@@ -978,205 +977,336 @@ export default function Config() {
             <UserManagement />
           </TabsContent>
 
-          <TabsContent value="import" className="space-y-6">
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              {/* Import All Loans */}
-              <Card className="border-2">
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Database className="w-5 h-5 text-blue-600" />
-                    Import All Loans
-                  </CardTitle>
-                  <CardDescription>Bulk import all loans, borrowers, and transactions from CSV</CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                  <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
-                    <input
-                      type="file"
-                      accept=".csv,.txt"
-                      onChange={(e) => {
-                        setFile(e.target.files[0]);
-                        setSpecificLoanNumber('');
-                      }}
-                      className="hidden"
-                      id="file-upload-all"
-                    />
-                    <label htmlFor="file-upload-all" className="cursor-pointer">
-                      <Upload className="w-10 h-10 mx-auto text-slate-400 mb-3" />
-                      <p className="text-sm text-slate-600 mb-1">
-                        {file && !specificLoanNumber ? file.name : 'Click to upload CSV file'}
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        Import complete transaction history
-                      </p>
-                    </label>
-                  </div>
+          {canAdmin() && (
+          <TabsContent value="admin" className="space-y-6">
+            {/* Admin Warning Banner */}
+            <Alert className="border-amber-200 bg-amber-50">
+              <ShieldAlert className="w-4 h-4 text-amber-600" />
+              <AlertDescription className="text-amber-800">
+                <strong>Administrator Area</strong> - These tools can make significant changes to your data. Use with caution.
+              </AlertDescription>
+            </Alert>
 
-                  {file && !specificLoanNumber && !importing && !result && (
-                    <Button onClick={handleImport} className="w-full bg-blue-600 hover:bg-blue-700">
-                      <FileText className="w-4 h-4 mr-2" />
+            {/* Import Data Section */}
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <Database className="w-5 h-5 text-blue-600" />
+                Data Import
+              </h2>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* Import All Loans */}
+                <Card className="border-2">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <Database className="w-5 h-5 text-blue-600" />
                       Import All Loans
-                    </Button>
-                  )}
-                </CardContent>
-              </Card>
+                    </CardTitle>
+                    <CardDescription>Bulk import all loans, borrowers, and transactions from CSV</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
+                      <input
+                        type="file"
+                        accept=".csv,.txt"
+                        onChange={(e) => {
+                          setFile(e.target.files[0]);
+                          setSpecificLoanNumber('');
+                        }}
+                        className="hidden"
+                        id="file-upload-all"
+                      />
+                      <label htmlFor="file-upload-all" className="cursor-pointer">
+                        <Upload className="w-10 h-10 mx-auto text-slate-400 mb-3" />
+                        <p className="text-sm text-slate-600 mb-1">
+                          {file && !specificLoanNumber ? file.name : 'Click to upload CSV file'}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          Import complete transaction history
+                        </p>
+                      </label>
+                    </div>
 
-              {/* Import Specific Loan */}
-              <Card className="border-2">
+                    {file && !specificLoanNumber && !importing && !result && (
+                      <Button onClick={handleImport} className="w-full bg-blue-600 hover:bg-blue-700">
+                        <FileText className="w-4 h-4 mr-2" />
+                        Import All Loans
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+
+                {/* Import Specific Loan */}
+                <Card className="border-2">
+                  <CardHeader>
+                    <CardTitle className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-emerald-600" />
+                      Import Specific Loan
+                    </CardTitle>
+                    <CardDescription>Import a single loan by loan number with all related data</CardDescription>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
+                      <input
+                        type="file"
+                        accept=".csv,.txt"
+                        onChange={(e) => setFile(e.target.files[0])}
+                        className="hidden"
+                        id="file-upload-specific"
+                      />
+                      <label htmlFor="file-upload-specific" className="cursor-pointer">
+                        <Upload className="w-10 h-10 mx-auto text-slate-400 mb-3" />
+                        <p className="text-sm text-slate-600 mb-1">
+                          {file ? file.name : 'Click to upload CSV file'}
+                        </p>
+                        <p className="text-xs text-slate-400">
+                          {file ? 'Click to change file' : 'Import single loan data'}
+                        </p>
+                      </label>
+                    </div>
+
+                    <div className="space-y-2">
+                      <label className="text-sm font-medium text-slate-700">
+                        Loan Number
+                      </label>
+                      <Input
+                        type="text"
+                        placeholder="e.g., 1000001"
+                        value={specificLoanNumber}
+                        onChange={(e) => setSpecificLoanNumber(e.target.value)}
+                        disabled={importing}
+                        className="font-mono"
+                      />
+                    </div>
+
+                    {file && specificLoanNumber && !importing && (
+                      <Button onClick={() => {
+                        setResult(null);
+                        setError(null);
+                        handleImport();
+                      }} className="w-full bg-emerald-600 hover:bg-emerald-700">
+                        <FileText className="w-4 h-4 mr-2" />
+                        Import Loan #{specificLoanNumber}
+                      </Button>
+                    )}
+                  </CardContent>
+                </Card>
+              </div>
+
+              {/* Import Status and Logs */}
+              {(importing || result || error || logs.length > 0) && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Import Status</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+
+                  {importing && (
+                    <div className="space-y-3">
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-3">
+                          <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                          <span className="text-sm font-medium">{status}</span>
+                        </div>
+                        <Button
+                          variant="destructive"
+                          size="sm"
+                          onClick={() => {
+                            cancelImport.current = true;
+                            addLog('Stopping import...');
+                          }}
+                        >
+                          <StopCircle className="w-4 h-4 mr-2" />
+                          Stop Import
+                        </Button>
+                      </div>
+                      <Progress value={progress} className="h-2" />
+                      <p className="text-xs text-slate-500 text-center">{progress}% complete</p>
+                    </div>
+                  )}
+
+                  {result && (
+                    <Alert className="border-emerald-200 bg-emerald-50">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <AlertDescription>
+                        <div className="space-y-2">
+                          <p className="font-semibold text-emerald-900">Import completed successfully!</p>
+                          <ul className="text-sm text-emerald-800 space-y-1">
+                            <li>- {result.products} loan products created</li>
+                            <li>- {result.borrowers} borrowers created</li>
+                            <li>- {result.loans} loans created</li>
+                            <li>- {result.transactions} transactions imported</li>
+                            {result.disbursements > 0 && <li>- {result.disbursements} disbursements (further advances)</li>}
+                            <li>- {result.expenses} expenses imported</li>
+                          </ul>
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {error && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="w-4 h-4" />
+                      <AlertDescription>{error}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  {logs.length > 0 && (
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <h3 className="font-semibold text-sm text-slate-700">Import Log ({logs.length} entries)</h3>
+                        <Button variant="ghost" size="sm" onClick={clearLogs}>
+                          Clear Log
+                        </Button>
+                      </div>
+                      <div className="space-y-1 text-xs text-slate-600 font-mono max-h-64 overflow-y-auto">
+                        {[...logs].reverse().map((log, idx) => (
+                          <div key={idx}>{log}</div>
+                        ))}
+                        <div ref={logEndRef} />
+                      </div>
+                    </div>
+                  )}
+                  </CardContent>
+                </Card>
+              )}
+            </div>
+
+            {/* Auto-Extend Section */}
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold text-slate-900 flex items-center gap-2">
+                <RefreshCw className="w-5 h-5 text-blue-600" />
+                Loan Schedule Management
+              </h2>
+
+              <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center gap-2">
-                    <FileText className="w-5 h-5 text-emerald-600" />
-                    Import Specific Loan
+                    <Calendar className="w-5 h-5 text-blue-600" />
+                    Auto-Extend Loan Schedules
                   </CardTitle>
-                  <CardDescription>Import a single loan by loan number with all related data</CardDescription>
+                  <CardDescription>
+                    Automatically extend repayment schedules for loans with auto-extend enabled
+                  </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  <div className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center">
-                    <input
-                      type="file"
-                      accept=".csv,.txt"
-                      onChange={(e) => setFile(e.target.files[0])}
-                      className="hidden"
-                      id="file-upload-specific"
-                    />
-                    <label htmlFor="file-upload-specific" className="cursor-pointer">
-                      <Upload className="w-10 h-10 mx-auto text-slate-400 mb-3" />
-                      <p className="text-sm text-slate-600 mb-1">
-                        {file ? file.name : 'Click to upload CSV file'}
-                      </p>
-                      <p className="text-xs text-slate-400">
-                        {file ? 'Click to change file' : 'Import single loan data'}
-                      </p>
-                    </label>
-                  </div>
+                  <Alert>
+                    <Calendar className="w-4 h-4" />
+                    <AlertDescription>
+                      This will extend schedules up to today's date for all loans with <strong>auto-extend enabled</strong> and status <strong>Live</strong>.
+                      Payments will be re-applied after regenerating schedules.
+                    </AlertDescription>
+                  </Alert>
 
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-slate-700">
-                      Loan Number
-                    </label>
-                    <Input
-                      type="text"
-                      placeholder="e.g., 1000001"
-                      value={specificLoanNumber}
-                      onChange={(e) => setSpecificLoanNumber(e.target.value)}
-                      disabled={importing}
-                      className="font-mono"
-                    />
-                  </div>
-
-                  {file && specificLoanNumber && !importing && (
-                    <Button onClick={() => {
-                      setResult(null);
-                      setError(null);
-                      handleImport();
-                    }} className="w-full bg-emerald-600 hover:bg-emerald-700">
-                      <FileText className="w-4 h-4 mr-2" />
-                      Import Loan #{specificLoanNumber}
-                    </Button>
+                  {loansNeedingExtension && loansNeedingExtension.count > 0 && (
+                    <Alert className="border-amber-200 bg-amber-50">
+                      <AlertCircle className="w-4 h-4 text-amber-600" />
+                      <AlertDescription>
+                        <p className="font-semibold text-amber-900">{loansNeedingExtension.count} loan(s) need schedule extension:</p>
+                        <ul className="text-sm text-amber-800 mt-1 space-y-0.5">
+                          {loansNeedingExtension.loans.slice(0, 5).map(loan => (
+                            <li key={loan.id}>
+                              - #{loan.loanNumber} - {loan.borrowerName} ({loan.daysOverdue} days overdue)
+                            </li>
+                          ))}
+                          {loansNeedingExtension.loans.length > 5 && (
+                            <li>- ...and {loansNeedingExtension.loans.length - 5} more</li>
+                          )}
+                        </ul>
+                      </AlertDescription>
+                    </Alert>
                   )}
+
+                  {autoExtending && autoExtendProgress && (
+                    <div className="space-y-2">
+                      <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                        <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                        <div className="flex-1">
+                          <span className="text-sm font-medium text-blue-900">
+                            Processing loan {autoExtendProgress.current} of {autoExtendProgress.total}...
+                          </span>
+                          {autoExtendProgress.loan && (
+                            <span className="text-sm text-blue-700 ml-2">({autoExtendProgress.loan})</span>
+                          )}
+                        </div>
+                      </div>
+                      <Progress value={autoExtendProgress.percent} className="h-2" />
+                    </div>
+                  )}
+
+                  {autoExtendResult && (
+                    <Alert className="border-emerald-200 bg-emerald-50">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <AlertDescription>
+                        <div className="space-y-2">
+                          <p className="font-semibold text-emerald-900">Auto-extend complete!</p>
+                          <div className="grid grid-cols-3 gap-4 text-sm">
+                            <div className="text-center p-2 bg-emerald-100 rounded">
+                              <p className="text-lg font-bold text-emerald-700">{autoExtendResult.succeeded}</p>
+                              <p className="text-emerald-600">Extended</p>
+                            </div>
+                            <div className="text-center p-2 bg-slate-100 rounded">
+                              <p className="text-lg font-bold text-slate-700">{autoExtendResult.skipped}</p>
+                              <p className="text-slate-600">Skipped</p>
+                            </div>
+                            <div className="text-center p-2 bg-red-100 rounded">
+                              <p className="text-lg font-bold text-red-700">{autoExtendResult.failed}</p>
+                              <p className="text-red-600">Failed</p>
+                            </div>
+                          </div>
+                          <p className="text-xs text-emerald-700">
+                            Completed in {(autoExtendResult.duration / 1000).toFixed(1)}s
+                          </p>
+                        </div>
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {autoExtendError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="w-4 h-4" />
+                      <AlertDescription>{autoExtendError}</AlertDescription>
+                    </Alert>
+                  )}
+
+                  <div className="flex gap-3">
+                    <Button
+                      variant="outline"
+                      onClick={checkExtensionStatus}
+                      disabled={autoExtending}
+                      className="flex-1"
+                    >
+                      <RefreshCw className="w-4 h-4 mr-2" />
+                      Check Status
+                    </Button>
+                    <Button
+                      onClick={handleAutoExtend}
+                      disabled={autoExtending}
+                      className="flex-1 bg-blue-600 hover:bg-blue-700"
+                    >
+                      {autoExtending ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Extending...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="w-4 h-4 mr-2" />
+                          Run Auto-Extend Now
+                        </>
+                      )}
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
             </div>
 
-            {/* Import Status and Logs */}
-            {(importing || result || error || logs.length > 0) && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Import Status</CardTitle>
-                </CardHeader>
-                <CardContent className="space-y-4">
-
-                {importing && (
-                  <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
-                        <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-                        <span className="text-sm font-medium">{status}</span>
-                      </div>
-                      <Button 
-                        variant="destructive" 
-                        size="sm"
-                        onClick={() => {
-                          cancelImport.current = true;
-                          addLog('⏹️ Stopping import...');
-                        }}
-                      >
-                        <StopCircle className="w-4 h-4 mr-2" />
-                        Stop Import
-                      </Button>
-                    </div>
-                    <Progress value={progress} className="h-2" />
-                    <p className="text-xs text-slate-500 text-center">{progress}% complete</p>
-                  </div>
-                )}
-
-                {result && (
-                  <Alert className="border-emerald-200 bg-emerald-50">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <AlertDescription>
-                      <div className="space-y-2">
-                        <p className="font-semibold text-emerald-900">Import completed successfully!</p>
-                        <ul className="text-sm text-emerald-800 space-y-1">
-                          <li>• {result.products} loan products created</li>
-                          <li>• {result.borrowers} borrowers created</li>
-                          <li>• {result.loans} loans created</li>
-                          <li>• {result.transactions} transactions imported</li>
-                          {result.disbursements > 0 && <li>• {result.disbursements} disbursements (further advances)</li>}
-                          <li>• {result.expenses} expenses imported</li>
-                        </ul>
-                      </div>
-                    </AlertDescription>
-                  </Alert>
-                )}
-
-                {error && (
-                  <Alert variant="destructive">
-                    <AlertCircle className="w-4 h-4" />
-                    <AlertDescription>{error}</AlertDescription>
-                  </Alert>
-                )}
-
-                {logs.length > 0 && (
-                  <div className="bg-slate-50 border border-slate-200 rounded-lg p-4">
-                    <div className="flex items-center justify-between mb-2">
-                      <h3 className="font-semibold text-sm text-slate-700">Import Log ({logs.length} entries)</h3>
-                      <Button variant="ghost" size="sm" onClick={clearLogs}>
-                        Clear Log
-                      </Button>
-                    </div>
-                    <div className="space-y-1 text-xs text-slate-600 font-mono max-h-64 overflow-y-auto">
-                      {[...logs].reverse().map((log, idx) => (
-                        <div key={idx}>{log}</div>
-                      ))}
-                      <div ref={logEndRef} />
-                    </div>
-                  </div>
-                )}
-                </CardContent>
-                </Card>
-                )}
-
-            <Card>
-              <CardHeader>
-                <CardTitle>Import Instructions</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3 text-sm text-slate-600">
-                <p>This tool will:</p>
-                <ol className="list-decimal list-inside space-y-2 ml-2">
-                  <li>Create loan products from unique categories</li>
-                  <li>Extract and create borrowers from transaction details</li>
-                  <li>Create loans with proper fees and amounts</li>
-                  <li>Import all repayment transactions (interest, principal, fees)</li>
-                  <li>Create expense records for all business expenses</li>
-                </ol>
-                <p className="text-amber-600 font-medium mt-4">
-                  ⚠️ Note: Balance column is ignored. Loan calculations will be based on the imported data.
-                </p>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="general">
+            {/* Danger Zone */}
+            <div className="space-y-4">
+              <h2 className="text-lg font-semibold text-red-600 flex items-center gap-2">
+                <Trash2 className="w-5 h-5" />
+                Danger Zone
+              </h2>
             <Card>
               <CardHeader>
                 <CardTitle>Delete Data</CardTitle>
@@ -1258,209 +1388,89 @@ export default function Config() {
               </CardContent>
             </Card>
 
-            {/* Purge Deleted Loans */}
-            <Card className="mt-6">
-              <CardHeader>
-                <CardTitle>Purge Deleted Loans</CardTitle>
-                <CardDescription>Permanently remove soft-deleted loans from the database</CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Alert>
-                  <AlertCircle className="w-4 h-4" />
-                  <AlertDescription>
-                    This permanently removes loans that were previously deleted. Use this to allow re-importing a loan with the same loan number.
-                  </AlertDescription>
-                </Alert>
-
-                <div className="space-y-3">
-                  <div className="flex items-center gap-3">
-                    <Select
-                      value={purgeLoanNumber}
-                      onValueChange={setPurgeLoanNumber}
-                      onOpenChange={(open) => open && loadDeletedLoans()}
-                    >
-                      <SelectTrigger className="flex-1">
-                        <SelectValue placeholder={loadingDeletedLoans ? "Loading..." : "Select a deleted loan to purge"} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {deletedLoans.length === 0 ? (
-                          <SelectItem value="_none" disabled>No deleted loans found</SelectItem>
-                        ) : (
-                          deletedLoans.map(loan => (
-                            <SelectItem key={loan.id} value={loan.loan_number}>
-                              #{loan.loan_number} - {loan.borrower_name} (deleted {loan.deleted_date ? format(new Date(loan.deleted_date), 'dd/MM/yyyy') : 'unknown'})
-                            </SelectItem>
-                          ))
-                        )}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                </div>
-
-                {purging && (
-                  <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
-                    <Loader2 className="w-5 h-5 animate-spin text-amber-600" />
-                    <span className="text-sm font-medium text-amber-900">Purging loan data...</span>
-                  </div>
-                )}
-
-                {purgeResult && (
-                  <Alert className="border-emerald-200 bg-emerald-50">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <AlertDescription>
-                      <div className="space-y-1">
-                        <p className="font-semibold text-emerald-900">Loan #{purgeResult.loanNumber} purged successfully!</p>
-                        <ul className="text-sm text-emerald-800">
-                          <li>• {purgeResult.scheduleCount} schedule entries deleted</li>
-                          <li>• {purgeResult.transactionCount} transactions deleted</li>
-                          <li>• Loan record permanently removed</li>
-                        </ul>
-                      </div>
-                    </AlertDescription>
-                  </Alert>
-                )}
-
-                {purgeError && (
-                  <Alert variant="destructive">
+              {/* Purge Deleted Loans */}
+              <Card>
+                <CardHeader>
+                  <CardTitle>Purge Deleted Loans</CardTitle>
+                  <CardDescription>Permanently remove soft-deleted loans from the database</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <Alert>
                     <AlertCircle className="w-4 h-4" />
-                    <AlertDescription>{purgeError}</AlertDescription>
-                  </Alert>
-                )}
-
-                <Button
-                  variant="destructive"
-                  onClick={handlePurgeLoan}
-                  disabled={purging || !purgeLoanNumber}
-                  className="w-full"
-                >
-                  <Trash2 className="w-4 h-4 mr-2" />
-                  Purge Selected Loan
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Auto-Extend Loans */}
-            <Card className="mt-6">
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <RefreshCw className="w-5 h-5 text-blue-600" />
-                  Auto-Extend Loan Schedules
-                </CardTitle>
-                <CardDescription>
-                  Automatically extend repayment schedules for loans with auto-extend enabled
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <Alert>
-                  <Calendar className="w-4 h-4" />
-                  <AlertDescription>
-                    This will extend schedules up to today's date for all loans with <strong>auto-extend enabled</strong> and status <strong>Live</strong>.
-                    Payments will be re-applied after regenerating schedules.
-                  </AlertDescription>
-                </Alert>
-
-                {loansNeedingExtension && loansNeedingExtension.count > 0 && (
-                  <Alert className="border-amber-200 bg-amber-50">
-                    <AlertCircle className="w-4 h-4 text-amber-600" />
                     <AlertDescription>
-                      <p className="font-semibold text-amber-900">{loansNeedingExtension.count} loan(s) need schedule extension:</p>
-                      <ul className="text-sm text-amber-800 mt-1 space-y-0.5">
-                        {loansNeedingExtension.loans.slice(0, 5).map(loan => (
-                          <li key={loan.id}>
-                            • #{loan.loanNumber} - {loan.borrowerName} ({loan.daysOverdue} days overdue)
-                          </li>
-                        ))}
-                        {loansNeedingExtension.loans.length > 5 && (
-                          <li>• ...and {loansNeedingExtension.loans.length - 5} more</li>
-                        )}
-                      </ul>
+                      This permanently removes loans that were previously deleted. Use this to allow re-importing a loan with the same loan number.
                     </AlertDescription>
                   </Alert>
-                )}
 
-                {autoExtending && autoExtendProgress && (
-                  <div className="space-y-2">
-                    <div className="flex items-center gap-3 p-4 bg-blue-50 border border-blue-200 rounded-lg">
-                      <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-                      <div className="flex-1">
-                        <span className="text-sm font-medium text-blue-900">
-                          Processing loan {autoExtendProgress.current} of {autoExtendProgress.total}...
-                        </span>
-                        {autoExtendProgress.loan && (
-                          <span className="text-sm text-blue-700 ml-2">({autoExtendProgress.loan})</span>
-                        )}
-                      </div>
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-3">
+                      <Select
+                        value={purgeLoanNumber}
+                        onValueChange={setPurgeLoanNumber}
+                        onOpenChange={(open) => open && loadDeletedLoans()}
+                      >
+                        <SelectTrigger className="flex-1">
+                          <SelectValue placeholder={loadingDeletedLoans ? "Loading..." : "Select a deleted loan to purge"} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {deletedLoans.length === 0 ? (
+                            <SelectItem value="_none" disabled>No deleted loans found</SelectItem>
+                          ) : (
+                            deletedLoans.map(loan => (
+                              <SelectItem key={loan.id} value={loan.loan_number}>
+                                #{loan.loan_number} - {loan.borrower_name} (deleted {loan.deleted_date ? format(new Date(loan.deleted_date), 'dd/MM/yyyy') : 'unknown'})
+                              </SelectItem>
+                            ))
+                          )}
+                        </SelectContent>
+                      </Select>
                     </div>
-                    <Progress value={autoExtendProgress.percent} className="h-2" />
                   </div>
-                )}
 
-                {autoExtendResult && (
-                  <Alert className="border-emerald-200 bg-emerald-50">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <AlertDescription>
-                      <div className="space-y-2">
-                        <p className="font-semibold text-emerald-900">Auto-extend complete!</p>
-                        <div className="grid grid-cols-3 gap-4 text-sm">
-                          <div className="text-center p-2 bg-emerald-100 rounded">
-                            <p className="text-lg font-bold text-emerald-700">{autoExtendResult.succeeded}</p>
-                            <p className="text-emerald-600">Extended</p>
-                          </div>
-                          <div className="text-center p-2 bg-slate-100 rounded">
-                            <p className="text-lg font-bold text-slate-700">{autoExtendResult.skipped}</p>
-                            <p className="text-slate-600">Skipped</p>
-                          </div>
-                          <div className="text-center p-2 bg-red-100 rounded">
-                            <p className="text-lg font-bold text-red-700">{autoExtendResult.failed}</p>
-                            <p className="text-red-600">Failed</p>
-                          </div>
+                  {purging && (
+                    <div className="flex items-center gap-3 p-4 bg-amber-50 border border-amber-200 rounded-lg">
+                      <Loader2 className="w-5 h-5 animate-spin text-amber-600" />
+                      <span className="text-sm font-medium text-amber-900">Purging loan data...</span>
+                    </div>
+                  )}
+
+                  {purgeResult && (
+                    <Alert className="border-emerald-200 bg-emerald-50">
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                      <AlertDescription>
+                        <div className="space-y-1">
+                          <p className="font-semibold text-emerald-900">Loan #{purgeResult.loanNumber} purged successfully!</p>
+                          <ul className="text-sm text-emerald-800">
+                            <li>- {purgeResult.scheduleCount} schedule entries deleted</li>
+                            <li>- {purgeResult.transactionCount} transactions deleted</li>
+                            <li>- Loan record permanently removed</li>
+                          </ul>
                         </div>
-                        <p className="text-xs text-emerald-700">
-                          Completed in {(autoExtendResult.duration / 1000).toFixed(1)}s
-                        </p>
-                      </div>
-                    </AlertDescription>
-                  </Alert>
-                )}
+                      </AlertDescription>
+                    </Alert>
+                  )}
 
-                {autoExtendError && (
-                  <Alert variant="destructive">
-                    <AlertCircle className="w-4 h-4" />
-                    <AlertDescription>{autoExtendError}</AlertDescription>
-                  </Alert>
-                )}
+                  {purgeError && (
+                    <Alert variant="destructive">
+                      <AlertCircle className="w-4 h-4" />
+                      <AlertDescription>{purgeError}</AlertDescription>
+                    </Alert>
+                  )}
 
-                <div className="flex gap-3">
                   <Button
-                    variant="outline"
-                    onClick={checkExtensionStatus}
-                    disabled={autoExtending}
-                    className="flex-1"
+                    variant="destructive"
+                    onClick={handlePurgeLoan}
+                    disabled={purging || !purgeLoanNumber}
+                    className="w-full"
                   >
-                    <RefreshCw className="w-4 h-4 mr-2" />
-                    Check Status
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Purge Selected Loan
                   </Button>
-                  <Button
-                    onClick={handleAutoExtend}
-                    disabled={autoExtending}
-                    className="flex-1 bg-blue-600 hover:bg-blue-700"
-                  >
-                    {autoExtending ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Extending...
-                      </>
-                    ) : (
-                      <>
-                        <RefreshCw className="w-4 h-4 mr-2" />
-                        Run Auto-Extend Now
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+                </CardContent>
+              </Card>
+            </div>
           </TabsContent>
+          )}
 
           <TabsContent value="audit" className="space-y-6">
             <Card>
