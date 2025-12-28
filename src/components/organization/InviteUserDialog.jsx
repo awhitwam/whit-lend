@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { api } from '@/api/dataClient';
+import { supabase } from '@/lib/supabaseClient';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
-import { Loader2, Mail } from 'lucide-react';
+import { Loader2, Mail, CheckCircle } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { toast } from 'sonner';
 
@@ -32,60 +32,51 @@ export default function InviteUserDialog({ open, onClose }) {
 
   const inviteMutation = useMutation({
     mutationFn: async ({ email, role }) => {
-      // Generate secure token
-      const token = crypto.randomUUID();
-      const expiresAt = new Date();
-      expiresAt.setDate(expiresAt.getDate() + 7); // 7 days
-
-      const invitation = await api.entities.Invitation.create({
-        organization_id: currentOrganization.id,
-        email: email.toLowerCase().trim(),
-        role,
-        invited_by: user.id,
-        token,
-        expires_at: expiresAt.toISOString(),
-        status: 'pending'
+      // Call the invite-user Edge Function
+      const { data, error } = await supabase.functions.invoke('invite-user', {
+        body: {
+          email: email.toLowerCase().trim(),
+          role,
+          organization_id: currentOrganization.id
+        }
       });
 
-      return invitation;
+      if (error) {
+        throw new Error(error.message || 'Failed to send invitation');
+      }
+
+      if (data.error) {
+        throw new Error(data.error);
+      }
+
+      return { ...data, email: email.toLowerCase().trim() };
     },
-    onSuccess: (invitation) => {
+    onSuccess: (result) => {
       queryClient.invalidateQueries({
-        queryKey: ['invitations', currentOrganization?.id]
+        queryKey: ['members', currentOrganization?.id]
       });
 
-      // Show invitation link (in production, this would be sent via email)
-      const inviteUrl = `${window.location.origin}/AcceptInvitation?token=${invitation.token}`;
-
-      toast.success('Invitation created!', {
-        description: (
-          <div className="space-y-2">
-            <p className="text-sm">Send this link to {invitation.email}:</p>
-            <div className="bg-slate-100 p-2 rounded text-xs break-all">
-              {inviteUrl}
-            </div>
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => {
-                navigator.clipboard.writeText(inviteUrl);
-                toast.success('Link copied to clipboard!');
-              }}
-            >
-              Copy Link
-            </Button>
-          </div>
-        ),
-        duration: 10000
-      });
+      if (result.existingUser) {
+        // User already existed and was added directly
+        toast.success('User added!', {
+          description: `${result.email} has been added to ${currentOrganization.name}`,
+          icon: <CheckCircle className="w-4 h-4 text-green-500" />
+        });
+      } else {
+        // New user - invitation email sent
+        toast.success('Invitation sent!', {
+          description: `An email invitation has been sent to ${result.email}`,
+          icon: <Mail className="w-4 h-4 text-blue-500" />
+        });
+      }
 
       setEmail('');
       setRole('Viewer');
       onClose();
     },
     onError: (error) => {
-      console.error('Error creating invitation:', error);
-      toast.error('Failed to create invitation', {
+      console.error('Error sending invitation:', error);
+      toast.error('Failed to send invitation', {
         description: error.message
       });
     }
@@ -108,7 +99,7 @@ export default function InviteUserDialog({ open, onClose }) {
         <DialogHeader>
           <DialogTitle>Invite User to {currentOrganization?.name}</DialogTitle>
           <DialogDescription>
-            Send an invitation to join your organization. The invitation will expire in 7 days.
+            Send an email invitation to join your organization. If the user already has an account, they will be added immediately.
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
