@@ -1312,33 +1312,32 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           <TableCell className="py-0.5 font-semibold text-slate-700 text-xs">
                             {format(row.date, 'dd/MM/yy')}
                           </TableCell>
-                          <TableCell className="py-0.5 text-xs">
-                            <div className="flex flex-col">
-                              <span className="font-semibold text-slate-800">{row.description}</span>
-                              <div className="flex items-center gap-2 text-[10px] text-slate-500">
-                                {hasPenaltyRate ? (
-                                  <TooltipProvider>
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
-                                          <AlertTriangle className="w-3 h-3" />
-                                          <span className="line-through text-slate-400">{loan.interest_rate}%</span>
-                                          <span>→</span>
-                                          <span>{loan.penalty_rate}%</span>
-                                        </span>
-                                      </TooltipTrigger>
-                                      <TooltipContent>
-                                        <p>Penalty rate from {format(new Date(loan.penalty_rate_from), 'dd MMM yyyy')}</p>
-                                      </TooltipContent>
-                                    </Tooltip>
-                                  </TooltipProvider>
-                                ) : (
-                                  <span>{effectiveRate}% p.a.</span>
-                                )}
-                                <span className="text-slate-400">|</span>
-                                <span>{(effectiveDailyRate * 100).toFixed(4)}%/day</span>
-                              </div>
-                            </div>
+                          <TableCell className="py-0.5 text-xs text-slate-700">
+                            {hasPenaltyRate ? (
+                              <span className="inline-flex items-center gap-1">
+                                <span>Interest due at</span>
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <span className="inline-flex items-center gap-1 text-amber-600 font-medium">
+                                        <AlertTriangle className="w-3 h-3" />
+                                        <span className="line-through text-slate-400">{loan.interest_rate}%</span>
+                                        <span>→</span>
+                                        <span>{loan.penalty_rate}%</span>
+                                      </span>
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>Penalty rate from {format(new Date(loan.penalty_rate_from), 'dd MMM yyyy')}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                                <span className="text-slate-500">({(effectiveDailyRate * 100).toFixed(4)}%/day)</span>
+                              </span>
+                            ) : (
+                              <span>
+                                Interest due at {effectiveRate}% p.a. <span className="text-slate-500">({(effectiveDailyRate * 100).toFixed(4)}%/day)</span>
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-slate-500 text-xs">
                             {row.principal > 0 ? formatCurrency(row.principal) : '—'}
