@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
@@ -62,6 +62,7 @@ import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiv
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
+import ImportRestructureModal from '@/components/loan/ImportRestructureModal';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -86,6 +87,8 @@ export default function LoanDetails() {
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingMessage, setProcessingMessage] = useState('');
   const [disbursementSort, setDisbursementSort] = useState('date-desc');
+  const [activeTab, setActiveTab] = useState('overview');
+  const [isImportRestructureOpen, setIsImportRestructureOpen] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -574,6 +577,18 @@ export default function LoanDetails() {
     return status === 'Closed' ? 'Settled' : status;
   };
 
+  // Determine product type for tab selection (needs to be before early returns)
+  const isIrregularIncomeType = loan?.product_type === 'Irregular Income' || product?.product_type === 'Irregular Income';
+
+  // Set default tab based on product type when it loads
+  useEffect(() => {
+    if (isIrregularIncomeType) {
+      setActiveTab('journal');
+    } else if (loan) {
+      setActiveTab('overview');
+    }
+  }, [isIrregularIncomeType, loan]);
+
   if (loanLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-6">
@@ -714,6 +729,10 @@ export default function LoanDetails() {
                     <DropdownMenuItem onClick={handleGenerateLoanStatement}>
                       <Download className="w-4 h-4 mr-2" />
                       Download Statement
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setIsImportRestructureOpen(true)}>
+                      <Download className="w-4 h-4 mr-2 rotate-180" />
+                      Import Restructure Transactions
                     </DropdownMenuItem>
                     {loan.status !== 'Closed' && (
                       <>
@@ -908,11 +927,18 @@ export default function LoanDetails() {
         </Card>
 
         {/* Tabs for different views */}
-        <Tabs defaultValue={isIrregularIncome ? "repayments" : "overview"} className="space-y-6">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
           <TabsList>
             {!isIrregularIncome && (
               <TabsTrigger value="overview">
                 {isFixedCharge ? 'Schedule' : 'Overview'}
+              </TabsTrigger>
+            )}
+            {isIrregularIncome && (
+              <TabsTrigger value="journal">
+                <FileText className="w-4 h-4 mr-1" />
+                Journal
+                <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted).length + 1}</Badge>
               </TabsTrigger>
             )}
             <TabsTrigger value="repayments">
@@ -943,6 +969,163 @@ export default function LoanDetails() {
             <TabsContent value="overview" className="space-y-4">
               {/* Combined Repayment View */}
               <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
+            </TabsContent>
+          )}
+
+          {isIrregularIncome && (
+            <TabsContent value="journal">
+              <Card>
+                <CardHeader>
+                  <div className="flex items-center justify-between">
+                    <CardTitle className="flex items-center gap-2">
+                      <FileText className="w-5 h-5 text-blue-600" />
+                      Transaction Journal
+                    </CardTitle>
+                  </div>
+                </CardHeader>
+                <CardContent>
+                  {(() => {
+                    // Build all journal entries: initial disbursement + all transactions
+                    const journalEntries = [];
+
+                    // Add initial disbursement
+                    journalEntries.push({
+                      id: 'initial',
+                      date: new Date(loan.start_date),
+                      type: 'Disbursement',
+                      description: 'Initial Advance',
+                      debit: loan.principal_amount,
+                      credit: 0,
+                      reference: 'OPEN',
+                      notes: 'Loan originated'
+                    });
+
+                    // Add all non-deleted transactions
+                    transactions.filter(t => !t.is_deleted).forEach(t => {
+                      if (t.type === 'Disbursement') {
+                        journalEntries.push({
+                          id: t.id,
+                          date: new Date(t.date),
+                          type: 'Disbursement',
+                          description: 'Additional Advance',
+                          debit: t.amount,
+                          credit: 0,
+                          reference: t.reference || '',
+                          notes: t.notes || ''
+                        });
+                      } else if (t.type === 'Repayment') {
+                        journalEntries.push({
+                          id: t.id,
+                          date: new Date(t.date),
+                          type: 'Repayment',
+                          description: 'Income Received',
+                          debit: 0,
+                          credit: t.amount,
+                          reference: t.reference || '',
+                          notes: t.notes || '',
+                          principal_applied: t.principal_applied || 0,
+                          interest_applied: t.interest_applied || 0
+                        });
+                      }
+                    });
+
+                    // Sort by date (oldest first for journal view)
+                    journalEntries.sort((a, b) => a.date - b.date);
+
+                    // Calculate running balance
+                    let runningBalance = 0;
+                    journalEntries.forEach(entry => {
+                      runningBalance += entry.debit - entry.credit;
+                      entry.balance = runningBalance;
+                    });
+
+                    const totalDebits = journalEntries.reduce((sum, e) => sum + e.debit, 0);
+                    const totalCredits = journalEntries.reduce((sum, e) => sum + e.credit, 0);
+
+                    return (
+                      <>
+                        {/* Summary */}
+                        <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-lg">
+                          <div>
+                            <p className="text-xs text-slate-500 mb-1">Total Advanced</p>
+                            <p className="text-xl font-bold text-red-600">{formatCurrency(totalDebits)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500 mb-1">Total Received</p>
+                            <p className="text-xl font-bold text-emerald-600">{formatCurrency(totalCredits)}</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500 mb-1">Balance Outstanding</p>
+                            <p className="text-xl font-bold text-slate-900">{formatCurrency(runningBalance)}</p>
+                          </div>
+                        </div>
+
+                        {/* Journal Table */}
+                        <div className="overflow-x-auto border rounded-lg">
+                          <table className="w-full">
+                            <thead className="bg-slate-100 border-b border-slate-200">
+                              <tr>
+                                <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Description</th>
+                                <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Reference</th>
+                                <th className="text-right py-2 px-3 text-xs font-semibold text-red-700">Debit (Out)</th>
+                                <th className="text-right py-2 px-3 text-xs font-semibold text-emerald-700">Credit (In)</th>
+                                <th className="text-right py-2 px-3 text-xs font-semibold text-slate-700">Balance</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-slate-100">
+                              {journalEntries.map((entry, idx) => (
+                                <tr key={entry.id} className={`hover:bg-slate-50 ${entry.type === 'Disbursement' ? 'bg-red-50/30' : 'bg-emerald-50/30'}`}>
+                                  <td className="py-2 px-3 text-sm">{format(entry.date, 'dd/MM/yy')}</td>
+                                  <td className="py-2 px-3">
+                                    <div className="flex items-center gap-2">
+                                      {entry.type === 'Disbursement' ? (
+                                        <Coins className="w-4 h-4 text-red-500" />
+                                      ) : (
+                                        <Banknote className="w-4 h-4 text-emerald-500" />
+                                      )}
+                                      <div>
+                                        <p className="text-sm font-medium">{entry.description}</p>
+                                        {entry.notes && <p className="text-xs text-slate-500">{entry.notes}</p>}
+                                      </div>
+                                    </div>
+                                  </td>
+                                  <td className="py-2 px-3 text-sm text-slate-600 font-mono">{entry.reference || '—'}</td>
+                                  <td className="py-2 px-3 text-sm text-right font-medium text-red-600">
+                                    {entry.debit > 0 ? formatCurrency(entry.debit) : '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-sm text-right font-medium text-emerald-600">
+                                    {entry.credit > 0 ? formatCurrency(entry.credit) : '—'}
+                                  </td>
+                                  <td className="py-2 px-3 text-sm text-right font-bold text-slate-900">
+                                    {formatCurrency(entry.balance)}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                            <tfoot className="bg-slate-100 border-t-2 border-slate-300">
+                              <tr>
+                                <td colSpan="3" className="py-2 px-3 text-sm font-bold text-slate-700">Totals</td>
+                                <td className="py-2 px-3 text-sm text-right font-bold text-red-700">{formatCurrency(totalDebits)}</td>
+                                <td className="py-2 px-3 text-sm text-right font-bold text-emerald-700">{formatCurrency(totalCredits)}</td>
+                                <td className="py-2 px-3 text-sm text-right font-bold text-slate-900">{formatCurrency(runningBalance)}</td>
+                              </tr>
+                            </tfoot>
+                          </table>
+                        </div>
+
+                        {journalEntries.length === 1 && (
+                          <div className="text-center py-8 text-slate-500 mt-4">
+                            <Banknote className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                            <p>No income received yet</p>
+                            <p className="text-sm mt-1">Record payments as they come in to track progress</p>
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
+                </CardContent>
+              </Card>
             </TabsContent>
           )}
 
@@ -1316,6 +1499,17 @@ export default function LoanDetails() {
             setIsSettleOpen(false);
           }}
           isLoading={paymentMutation.isPending}
+        />
+
+        {/* Import Restructure Transactions Modal */}
+        <ImportRestructureModal
+          isOpen={isImportRestructureOpen}
+          onClose={() => setIsImportRestructureOpen(false)}
+          loan={loan}
+          onImportComplete={() => {
+            queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] });
+            queryClient.refetchQueries({ queryKey: ['loan', loanId] });
+          }}
         />
 
         {/* Regenerate Schedule Dialog */}

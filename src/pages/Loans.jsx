@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Upload } from 'lucide-react';
 import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import EmptyState from '@/components/ui/EmptyState';
@@ -230,13 +230,16 @@ export default function Loans() {
       'Live': 'bg-emerald-100 text-emerald-700',
       'Active': 'bg-emerald-100 text-emerald-700',
       'Closed': 'bg-purple-100 text-purple-700',
+      'Restructured': 'bg-amber-100 text-amber-700',
       'Defaulted': 'bg-red-100 text-red-700'
     };
     return colors[status] || colors['Pending'];
   };
 
   const getStatusLabel = (status) => {
-    return status === 'Closed' ? 'Settled' : status;
+    if (status === 'Closed') return 'Settled';
+    if (status === 'Restructured') return 'Restructured';
+    return status;
   };
 
   const statusCounts = {
@@ -256,12 +259,20 @@ export default function Loans() {
             <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Loans</h1>
             <p className="text-slate-500 mt-1">Manage all loan applications and active loans</p>
           </div>
-          <Link to={createPageUrl('NewLoan')}>
-            <Button className="bg-slate-900 hover:bg-slate-800">
-              <Plus className="w-4 h-4 mr-2" />
-              New Loan
-            </Button>
-          </Link>
+          <div className="flex gap-2">
+            <Link to={createPageUrl('ImportTransactions')}>
+              <Button variant="outline">
+                <Upload className="w-4 h-4 mr-2" />
+                Import Transactions
+              </Button>
+            </Link>
+            <Link to={createPageUrl('NewLoan')}>
+              <Button className="bg-slate-900 hover:bg-slate-800">
+                <Plus className="w-4 h-4 mr-2" />
+                New Loan
+              </Button>
+            </Link>
+          </div>
         </div>
 
         {/* Borrower Filter Banner */}
