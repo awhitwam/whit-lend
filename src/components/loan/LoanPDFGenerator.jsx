@@ -174,36 +174,108 @@ export function generateLoanStatementPDF(loan, schedule, transactions) {
 export function generateSettlementStatementPDF(loan, settlementData) {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
-  let y = 20;
+  let y = 15;
+
+  // Organization Name (if available)
+  if (settlementData.organizationName) {
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(settlementData.organizationName, pageWidth / 2, y, { align: 'center' });
+    y += 10;
+  }
 
   // Header
   doc.setFontSize(20);
   doc.setFont(undefined, 'bold');
   doc.text('SETTLEMENT STATEMENT', pageWidth / 2, y, { align: 'center' });
-  
-  y += 15;
+
+  y += 12;
   doc.setFontSize(10);
   doc.setFont(undefined, 'normal');
   doc.text(`Settlement Date: ${format(new Date(settlementData.settlementDate), 'MMM dd, yyyy')}`, pageWidth / 2, y, { align: 'center' });
-  y += 6;
+  y += 5;
   doc.text(`Generated: ${format(new Date(), 'MMM dd, yyyy HH:mm')}`, pageWidth / 2, y, { align: 'center' });
-  
+
   // Borrower Info
-  y += 15;
-  doc.setFontSize(14);
+  y += 12;
+  doc.setFontSize(12);
   doc.setFont(undefined, 'bold');
   doc.text('Borrower Information', 15, y);
-  
-  y += 8;
+
+  y += 7;
   doc.setFontSize(10);
   doc.setFont(undefined, 'normal');
-  doc.text(`Name: ${loan.borrower_name}`, 15, y);
-  y += 6;
-  doc.text(`Loan ID: ${loan.id}`, 15, y);
-  
+
+  // Use borrower object if available, otherwise fall back to loan.borrower_name
+  const borrower = settlementData.borrower;
+  if (borrower) {
+    // Display name (business name or individual name)
+    const displayName = borrower.business || borrower.full_name || `${borrower.first_name || ''} ${borrower.last_name || ''}`.trim() || loan.borrower_name;
+    doc.text(`Name: ${displayName}`, 15, y);
+    y += 5;
+
+    // Address
+    if (borrower.address) {
+      doc.text(`Address: ${borrower.address}`, 15, y);
+      y += 5;
+    }
+
+    // Phone
+    if (borrower.phone) {
+      doc.text(`Phone: ${borrower.phone}`, 15, y);
+      y += 5;
+    }
+
+    // Email
+    if (borrower.email) {
+      doc.text(`Email: ${borrower.email}`, 15, y);
+      y += 5;
+    }
+  } else {
+    doc.text(`Name: ${loan.borrower_name}`, 15, y);
+    y += 5;
+  }
+
+  // Loan Reference
+  doc.text(`Loan Reference: #${loan.loan_number || loan.id.slice(0, 8)}`, 15, y);
+  if (loan.description) {
+    y += 5;
+    doc.text(`Description: ${loan.description}`, 15, y);
+  }
+  y += 5;
+  doc.text(`Product: ${loan.product_name}`, 15, y);
+
+  // Interest Summary Section
+  y += 12;
+  doc.setFontSize(12);
+  doc.setFont(undefined, 'bold');
+  doc.text('Interest Summary', 15, y);
+
+  y += 7;
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+
+  // Interest details
+  const daysElapsed = settlementData.daysElapsed || 0;
+  const dailyRate = settlementData.dailyRate || (loan.interest_rate / 100 / 365);
+  const interestAccrued = settlementData.interestAccrued || settlementData.interestDue;
+  const interestPaid = settlementData.interestPaid || 0;
+
+  doc.text(`Days Elapsed: ${daysElapsed}`, 15, y);
+  y += 5;
+  doc.text(`Daily Interest Rate: ${(dailyRate * 100).toFixed(4)}%`, 15, y);
+  y += 5;
+  doc.text(`Total Interest Accrued: ${formatCurrency(interestAccrued)}`, 15, y);
+  y += 5;
+  doc.text(`Interest Already Paid: ${formatCurrency(interestPaid)}`, 15, y);
+  y += 5;
+  doc.setFont(undefined, 'bold');
+  doc.text(`Interest Outstanding: ${formatCurrency(settlementData.interestDue)}`, 15, y);
+  doc.setFont(undefined, 'normal');
+
   // Settlement Breakdown
   y += 12;
-  doc.setFontSize(14);
+  doc.setFontSize(12);
   doc.setFont(undefined, 'bold');
   doc.text('Settlement Breakdown', 15, y);
   

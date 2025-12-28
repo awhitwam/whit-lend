@@ -777,13 +777,17 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               )}
               {/* Totals Row for Smart/Detailed Views */}
               {!isLoading && schedule.length > 0 && (() => {
-                const allTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
-                const totalPrincipalPaid = allTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                const totalInterestPaid = allTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                const allRepayments = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
+                const allDisbursements = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
+                const totalPrincipalPaid = allRepayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                const totalInterestPaid = allRepayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
+                const totalDisbursements = allDisbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
                 const totalExpectedInterest = schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-                const totalExpectedPrincipal = loan.principal_amount;
+                const totalExpectedPrincipal = loan.principal_amount + totalDisbursements;
                 const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
                 const interestOutstanding = totalExpectedInterest - totalInterestPaid;
+                const totalOutstanding = principalOutstanding + interestOutstanding;
 
                 return (
                   <TableRow className="bg-slate-100 border-t-2 border-slate-300">
@@ -794,15 +798,33 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       <div className="text-xs space-y-1">
                         <div className="flex justify-between">
                           <span className="text-slate-600">Principal:</span>
-                          <span className="font-mono">{formatCurrency(totalExpectedPrincipal)} owed - {formatCurrency(totalPrincipalPaid)} paid = <span className="font-bold text-red-600">{formatCurrency(principalOutstanding)}</span></span>
+                          <span className="font-mono">
+                            {formatCurrency(totalExpectedPrincipal)} owed - {formatCurrency(totalPrincipalPaid)} paid =
+                            <span className={`font-bold ${principalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {principalOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(principalOutstanding))}
+                            </span>
+                          </span>
                         </div>
                         <div className="flex justify-between">
                           <span className="text-slate-600">Interest:</span>
-                          <span className="font-mono">{formatCurrency(totalExpectedInterest)} owed - {formatCurrency(totalInterestPaid)} paid = <span className="font-bold text-red-600">{formatCurrency(interestOutstanding)}</span></span>
+                          <span className="font-mono">
+                            {formatCurrency(totalExpectedInterest)} owed - {formatCurrency(totalInterestPaid)} paid =
+                            <span className={`font-bold ${interestOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                              {interestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(interestOutstanding))}
+                            </span>
+                          </span>
                         </div>
+                        {totalFeesPaid > 0 && (
+                          <div className="flex justify-between">
+                            <span className="text-purple-600">Fees collected:</span>
+                            <span className="font-mono text-purple-600">{formatCurrency(totalFeesPaid)}</span>
+                          </div>
+                        )}
                         <div className="flex justify-between border-t pt-1">
-                          <span className="text-slate-700 font-semibold">Total Outstanding:</span>
-                          <span className="font-mono font-bold text-red-600 text-base">{formatCurrency(principalOutstanding + interestOutstanding)}</span>
+                          <span className="text-slate-700 font-semibold">{totalOutstanding < 0 ? 'Total Overpaid:' : 'Total Outstanding:'}</span>
+                          <span className={`font-mono font-bold text-base ${totalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            {totalOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(totalOutstanding))}
+                          </span>
                         </div>
                       </div>
                     </TableCell>
@@ -1245,13 +1267,17 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               )}
               {/* Totals Row for Nested View */}
               {!isLoading && schedule.length > 0 && (() => {
-                const allTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
-                const totalPrincipalPaid = allTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                const totalInterestPaid = allTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                const allRepayments = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
+                const allDisbursements = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
+                const totalPrincipalPaid = allRepayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                const totalInterestPaid = allRepayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
+                const totalDisbursements = allDisbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
                 const totalExpectedInterest = schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-                const totalExpectedPrincipal = loan.principal_amount;
+                const totalExpectedPrincipal = loan.principal_amount + totalDisbursements;
                 const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
                 const interestOutstanding = totalExpectedInterest - totalInterestPaid;
+                const totalOutstanding = principalOutstanding + interestOutstanding;
 
                 return (
                   <TableRow className="bg-slate-100 border-t-2 border-slate-300">
@@ -1262,20 +1288,29 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       <div className="text-xs space-y-0.5">
                         <div className="font-mono text-slate-600">{formatCurrency(totalExpectedPrincipal)} owed</div>
                         <div className="font-mono text-emerald-600">-{formatCurrency(totalPrincipalPaid)} paid</div>
-                        <div className="font-mono font-bold text-red-600 border-t pt-0.5">{formatCurrency(principalOutstanding)}</div>
+                        <div className={`font-mono font-bold border-t pt-0.5 ${principalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {principalOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(principalOutstanding))}
+                        </div>
                       </div>
                     </TableCell>
                     <TableCell className="text-right py-2">
                       <div className="text-xs space-y-0.5">
                         <div className="font-mono text-slate-600">{formatCurrency(totalExpectedInterest)} owed</div>
                         <div className="font-mono text-emerald-600">-{formatCurrency(totalInterestPaid)} paid</div>
-                        <div className="font-mono font-bold text-red-600 border-t pt-0.5">{formatCurrency(interestOutstanding)}</div>
+                        <div className={`font-mono font-bold border-t pt-0.5 ${interestOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {interestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(interestOutstanding))}
+                        </div>
+                        {totalFeesPaid > 0 && (
+                          <div className="font-mono text-purple-600 pt-0.5">Fees: {formatCurrency(totalFeesPaid)}</div>
+                        )}
                       </div>
                     </TableCell>
                     <TableCell colSpan={2} className="text-right py-2">
                       <div className="text-xs">
-                        <div className="text-slate-700 font-semibold">Total Outstanding:</div>
-                        <div className="font-mono font-bold text-red-600 text-base">{formatCurrency(principalOutstanding + interestOutstanding)}</div>
+                        <div className="text-slate-700 font-semibold">{totalOutstanding < 0 ? 'Total Overpaid:' : 'Total Outstanding:'}</div>
+                        <div className={`font-mono font-bold text-base ${totalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {totalOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(totalOutstanding))}
+                        </div>
                       </div>
                     </TableCell>
                   </TableRow>
@@ -1361,11 +1396,25 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   ) : '-'}
                 </TableCell>
                 <TableCell className="text-right font-mono text-xs py-1">
-                  {(viewMode === 'separate' && row.rowType === 'transaction') ? (
-                    <span className="text-emerald-600">{formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0))}</span>
-                  ) : (viewMode === 'merged' && row.transactions.length > 0) ? (
-                    <span className="text-emerald-600">{formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0))}</span>
-                  ) : '-'}
+                  {(viewMode === 'separate' && row.rowType === 'transaction') ? (() => {
+                    const interestPaid = row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                    const feesPaid = row.transactions.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
+                    if (feesPaid > 0 && interestPaid === 0) {
+                      return <span className="text-purple-600">{formatCurrency(feesPaid)} <span className="text-[10px]">(fee)</span></span>;
+                    } else if (feesPaid > 0) {
+                      return <span className="text-emerald-600">{formatCurrency(interestPaid)} <span className="text-purple-600">+{formatCurrency(feesPaid)} fee</span></span>;
+                    }
+                    return <span className="text-emerald-600">{formatCurrency(interestPaid)}</span>;
+                  })() : (viewMode === 'merged' && row.transactions.length > 0) ? (() => {
+                    const interestPaid = row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                    const feesPaid = row.transactions.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
+                    if (feesPaid > 0 && interestPaid === 0) {
+                      return <span className="text-purple-600">{formatCurrency(feesPaid)} <span className="text-[10px]">(fee)</span></span>;
+                    } else if (feesPaid > 0) {
+                      return <span className="text-emerald-600">{formatCurrency(interestPaid)} <span className="text-purple-600">+{formatCurrency(feesPaid)} fee</span></span>;
+                    }
+                    return <span className="text-emerald-600">{formatCurrency(interestPaid)}</span>;
+                  })() : '-'}
                 </TableCell>
 
                 {/* Expected Schedule */}
@@ -1582,13 +1631,17 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             ))}
             {/* Totals Row for Journal View */}
             {!isLoading && schedule.length > 0 && (() => {
-              const allTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
-              const totalPrincipalPaid = allTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-              const totalInterestPaid = allTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+              const allRepayments = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
+              const allDisbursements = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
+              const totalPrincipalPaid = allRepayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+              const totalInterestPaid = allRepayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+              const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
+              const totalDisbursements = allDisbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
               const totalExpectedInterest = schedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-              const totalExpectedPrincipal = loan.principal_amount;
+              const totalExpectedPrincipal = loan.principal_amount + totalDisbursements;
               const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
               const interestOutstanding = totalExpectedInterest - totalInterestPaid;
+              const totalOutstanding = principalOutstanding + interestOutstanding;
 
               return (
                 <TableRow className="bg-slate-100 border-t-2 border-slate-300">
@@ -1599,20 +1652,29 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     <div className="text-xs space-y-0.5">
                       <div className="font-mono text-slate-600">{formatCurrency(totalExpectedPrincipal)} owed</div>
                       <div className="font-mono text-emerald-600">-{formatCurrency(totalPrincipalPaid)} paid</div>
-                      <div className="font-mono font-bold text-red-600 border-t pt-0.5">{formatCurrency(principalOutstanding)}</div>
+                      <div className={`font-mono font-bold border-t pt-0.5 ${principalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {principalOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(principalOutstanding))}
+                      </div>
                     </div>
                   </TableCell>
                   <TableCell className="text-right py-2">
                     <div className="text-xs space-y-0.5">
                       <div className="font-mono text-slate-600">{formatCurrency(totalExpectedInterest)} owed</div>
                       <div className="font-mono text-emerald-600">-{formatCurrency(totalInterestPaid)} paid</div>
-                      <div className="font-mono font-bold text-red-600 border-t pt-0.5">{formatCurrency(interestOutstanding)}</div>
+                      <div className={`font-mono font-bold border-t pt-0.5 ${interestOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {interestOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(interestOutstanding))}
+                      </div>
+                      {totalFeesPaid > 0 && (
+                        <div className="font-mono text-purple-600 pt-0.5">Fees: {formatCurrency(totalFeesPaid)}</div>
+                      )}
                     </div>
                   </TableCell>
                   <TableCell colSpan={2} className="text-right py-2">
                     <div className="text-xs">
-                      <div className="text-slate-700 font-semibold">Total Outstanding:</div>
-                      <div className="font-mono font-bold text-red-600 text-base">{formatCurrency(principalOutstanding + interestOutstanding)}</div>
+                      <div className="text-slate-700 font-semibold">{totalOutstanding < 0 ? 'Total Overpaid:' : 'Total Outstanding:'}</div>
+                      <div className={`font-mono font-bold text-base ${totalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {totalOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(totalOutstanding))}
+                      </div>
                     </div>
                   </TableCell>
                 </TableRow>

@@ -73,11 +73,22 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   let scheduleDuration;
   let scheduleEndDate = options.endDate ? new Date(options.endDate) : today;
   scheduleEndDate.setHours(0, 0, 0, 0);
+  const isSettledLoan = options.endDate && currentPrincipalOutstanding <= 0.01;
 
   // Base duration from options or loan
   const baseDuration = options.duration !== undefined ? options.duration : loan.duration;
 
-  if (options.endDate && (loan.auto_extend || currentPrincipalOutstanding > 0.01)) {
+  if (isSettledLoan) {
+    // Settled loan: calculate exact periods from start to settlement date
+    const daysToEndDate = Math.max(0, differenceInDays(scheduleEndDate, loanStartDate));
+    scheduleDuration = product.period === 'Monthly'
+      ? Math.ceil(daysToEndDate / 30.44)
+      : Math.ceil(daysToEndDate / 7);
+
+    // Ensure at least 1 period
+    scheduleDuration = Math.max(1, scheduleDuration);
+    console.log('Settled loan: truncating schedule at settlement date');
+  } else if (options.endDate && (loan.auto_extend || currentPrincipalOutstanding > 0.01)) {
     // Auto-extend with end date: calculate periods from start to end date
     const daysToEndDate = Math.max(0, differenceInDays(scheduleEndDate, loanStartDate));
     const calculatedDuration = product.period === 'Monthly'
@@ -108,7 +119,19 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   }
 
   console.log(`Generated ${schedule.length} schedule entries`);
-  schedule.forEach((row, idx) => {
+
+  // For settled loans, filter out any periods after the settlement date
+  let finalSchedule = schedule;
+  if (isSettledLoan) {
+    finalSchedule = schedule.filter(row => {
+      const dueDate = new Date(row.due_date);
+      dueDate.setHours(0, 0, 0, 0);
+      return dueDate <= scheduleEndDate;
+    });
+    console.log(`Settled loan: filtered to ${finalSchedule.length} entries (before settlement date)`);
+  }
+
+  finalSchedule.forEach((row, idx) => {
     console.log(`  [${idx + 1}] ${row.due_date}: Principal=${row.principal_amount}, Interest=${row.interest_amount}, Balance=${row.balance}`);
   });
 
@@ -116,15 +139,15 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   await api.entities.RepaymentSchedule.deleteWhere({ loan_id: loanId });
 
   // Batch create all schedule rows at once
-  const scheduleWithLoanId = schedule.map(row => ({
+  const scheduleWithLoanId = finalSchedule.map(row => ({
     loan_id: loanId,
     ...row
   }));
   await api.entities.RepaymentSchedule.createMany(scheduleWithLoanId);
 
   // Calculate totals from generated schedule
-  const totalInterest = schedule.reduce((sum, row) => sum + row.interest_amount, 0);
-  const finalBalance = schedule.length > 0 ? schedule[schedule.length - 1].balance : currentPrincipalOutstanding;
+  const totalInterest = finalSchedule.reduce((sum, row) => sum + row.interest_amount, 0);
+  const finalBalance = finalSchedule.length > 0 ? finalSchedule[finalSchedule.length - 1].balance : currentPrincipalOutstanding;
   const totalRepayable = totalInterest + currentPrincipalOutstanding + (loan.exit_fee || 0);
 
   // Update loan
@@ -138,7 +161,7 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
 
   console.log('=== SCHEDULE ENGINE: Regeneration Complete ===');
 
-  return { loan, schedule, summary: { totalInterest, totalRepayable } };
+  return { loan, schedule: finalSchedule, summary: { totalInterest, totalRepayable } };
 }
 
 /**

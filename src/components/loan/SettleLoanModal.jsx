@@ -8,6 +8,7 @@ import { Loader2, Calculator, Calendar, TrendingDown, DollarSign, FileText, Down
 import { formatCurrency } from './LoanCalculator';
 import { generateSettlementStatementPDF } from './LoanPDFGenerator';
 import { format, differenceInDays } from 'date-fns';
+import { useOrganization } from '@/lib/OrganizationContext';
 
 function calculateSettlementAmount(loan, settlementDate, transactions = []) {
   const startDate = new Date(loan.start_date);
@@ -93,10 +94,12 @@ export default function SettleLoanModal({
   isOpen,
   onClose,
   loan,
+  borrower,
   transactions = [],
   onSubmit,
   isLoading
 }) {
+  const { currentOrganization } = useOrganization();
   const [settlementDate, setSettlementDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [settlementAmount, setSettlementAmount] = useState('');
   const [reference, setReference] = useState('');
@@ -129,10 +132,16 @@ export default function SettleLoanModal({
     const settlementData = {
       settlementDate: settlementDate,
       principalRemaining: settlement.principalRemaining,
+      interestAccrued: settlement.interestAccrued,
+      interestPaid: settlement.interestPaid,
       interestDue: settlement.interestRemaining,
       exitFee: settlement.exitFee,
       totalSettlement: settlement.settlementAmount,
-      dailyBreakdown: settlement.dailyBreakdown
+      dailyBreakdown: settlement.dailyBreakdown,
+      daysElapsed: settlement.daysElapsed,
+      dailyRate: settlement.dailyRate,
+      organizationName: currentOrganization?.name || '',
+      borrower: borrower || null
     };
     generateSettlementStatementPDF(loan, settlementData);
   };

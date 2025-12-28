@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useEffect } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
@@ -15,9 +15,12 @@ import EmptyState from '@/components/ui/EmptyState';
 
 export default function Loans() {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
-  const [activeTab, setActiveTab] = useState('active');
+  // Read initial status filter from URL param (e.g., ?status=Closed for settled loans)
+  const [statusFilter, setStatusFilter] = useState(searchParams.get('status') || 'Live');
+  // Read initial tab from URL param, default to 'active'
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'active');
   const [sortField, setSortField] = useState('created_date');
   const [sortDirection, setSortDirection] = useState('desc');
 
@@ -37,6 +40,17 @@ export default function Loans() {
     return allTransactions
       .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Disbursement')
       .reduce((sum, t) => sum + (t.amount || 0), 0);
+  };
+
+  // Calculate actual payments from transactions (more accurate than loan.principal_paid/interest_paid)
+  const getActualPaymentsForLoan = (loanId) => {
+    const repayments = allTransactions.filter(t =>
+      t.loan_id === loanId && !t.is_deleted && t.type === 'Repayment'
+    );
+    return {
+      principalPaid: repayments.reduce((sum, t) => sum + (t.principal_applied || 0), 0),
+      interestPaid: repayments.reduce((sum, t) => sum + (t.interest_applied || 0), 0)
+    };
   };
 
   const loans = allLoans.filter(loan => !loan.is_deleted);
@@ -170,17 +184,17 @@ export default function Loans() {
               </div>
               <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full md:w-auto">
                 <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full md:w-auto">
-                  <TabsTrigger value="all" className="text-xs">
-                    All ({statusCounts.all})
-                  </TabsTrigger>
-                  <TabsTrigger value="Pending" className="text-xs">
-                    Pending ({statusCounts.Pending})
-                  </TabsTrigger>
                   <TabsTrigger value="Live" className="text-xs">
                     Live ({statusCounts.Live})
                   </TabsTrigger>
                   <TabsTrigger value="Closed" className="text-xs">
                     Settled ({statusCounts.Settled})
+                  </TabsTrigger>
+                  <TabsTrigger value="all" className="text-xs">
+                    All ({statusCounts.all})
+                  </TabsTrigger>
+                  <TabsTrigger value="Pending" className="text-xs">
+                    Pending ({statusCounts.Pending})
                   </TabsTrigger>
                   <TabsTrigger value="Defaulted" className="text-xs">
                     Defaulted ({statusCounts.Defaulted})
@@ -280,9 +294,10 @@ export default function Loans() {
                   <TableBody>
                     {sortedLoans.map((loan, index) => {
                       const loanDisbursements = getDisbursementsForLoan(loan.id);
+                      const actualPayments = getActualPaymentsForLoan(loan.id);
                       const totalPrincipal = loan.principal_amount + loanDisbursements;
-                      const principalRemaining = totalPrincipal - (loan.principal_paid || 0);
-                      const interestRemaining = loan.total_interest - (loan.interest_paid || 0);
+                      const principalRemaining = totalPrincipal - actualPayments.principalPaid;
+                      const interestRemaining = (loan.total_interest || 0) - actualPayments.interestPaid;
                       const totalOutstanding = principalRemaining + interestRemaining;
 
                       return (
@@ -304,8 +319,8 @@ export default function Loans() {
                           <TableCell className="text-right font-mono font-semibold">
                             {formatCurrency(totalPrincipal)}
                           </TableCell>
-                          <TableCell className="text-right font-mono text-red-600 font-medium">
-                            {formatCurrency(totalOutstanding)}
+                          <TableCell className={`text-right font-mono font-medium ${totalOutstanding <= 0 ? 'text-emerald-600' : 'text-red-600'} ${loan.status === 'Closed' && totalOutstanding > 0 ? 'line-through opacity-60' : ''}`}>
+                            {totalOutstanding <= 0 ? '£0.00' : formatCurrency(totalOutstanding)}
                           </TableCell>
                           <TableCell className="text-slate-600">
                             {format(new Date(loan.start_date), 'MMM dd, yyyy')}

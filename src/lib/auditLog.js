@@ -43,7 +43,16 @@ export const AuditAction = {
   // Organization
   ORG_MEMBER_INVITE: 'org_member_invite',
   ORG_MEMBER_REMOVE: 'org_member_remove',
-  ORG_SETTINGS_UPDATE: 'org_settings_update'
+  ORG_SETTINGS_UPDATE: 'org_settings_update',
+
+  // Security/Properties
+  PROPERTY_CREATE: 'property_create',
+  PROPERTY_UPDATE: 'property_update',
+  LOAN_PROPERTY_LINK: 'loan_property_link',
+  LOAN_PROPERTY_REMOVE: 'loan_property_remove',
+  VALUATION_CREATE: 'valuation_create',
+  FIRST_CHARGE_HOLDER_CREATE: 'first_charge_holder_create',
+  FIRST_CHARGE_HOLDER_UPDATE: 'first_charge_holder_update'
 };
 
 // Entity types for categorization
@@ -56,7 +65,11 @@ export const EntityType = {
   INVESTOR: 'investor',
   EXPENSE: 'expense',
   ORGANIZATION: 'organization',
-  PAGE: 'page'
+  PAGE: 'page',
+  PROPERTY: 'property',
+  LOAN_PROPERTY: 'loan_property',
+  VALUATION: 'valuation',
+  FIRST_CHARGE_HOLDER: 'first_charge_holder'
 };
 
 /**
@@ -209,5 +222,38 @@ export async function logPageAccess(pageName, path) {
     entityType: EntityType.PAGE,
     entityName: pageName,
     details: { path }
+  });
+}
+
+/**
+ * Helper to log property events
+ */
+export async function logPropertyEvent(action, property, details = null, previousValues = null) {
+  await logAudit({
+    action,
+    entityType: EntityType.PROPERTY,
+    entityId: property.id,
+    entityName: property.address,
+    details,
+    previousValues,
+    newValues: action.includes('update') ? details : null
+  });
+}
+
+/**
+ * Helper to log loan-property link events
+ */
+export async function logLoanPropertyEvent(action, loanProperty, loan = null, property = null, details = null) {
+  await logAudit({
+    action,
+    entityType: EntityType.LOAN_PROPERTY,
+    entityId: loanProperty.id,
+    entityName: `${loan?.loan_number || 'Loan'} - ${property?.address || 'Property'}`,
+    details: {
+      loan_id: loanProperty.loan_id,
+      property_id: loanProperty.property_id,
+      charge_type: loanProperty.charge_type,
+      ...details
+    }
   });
 }

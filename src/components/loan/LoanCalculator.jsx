@@ -714,6 +714,152 @@ export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0,
 }
 
 /**
+ * Apply payment with manual interest/principal split
+ * Applies specified amounts to oldest unpaid schedule rows
+ * @param {number} interestAmount - Amount to apply to interest
+ * @param {number} principalAmount - Amount to apply to principal
+ * @param {Array} scheduleRows - Repayment schedule rows
+ * @param {number} existingCredit - Existing overpayment credit
+ * @param {string} overpaymentOption - 'reduce_principal' or 'credit'
+ * @returns {Object} { updates, principalReduction, creditAmount }
+ */
+export function applyManualPayment(interestAmount, principalAmount, scheduleRows, existingCredit = 0, overpaymentOption = 'credit') {
+  let remainingInterest = interestAmount;
+  let remainingPrincipal = principalAmount + existingCredit;
+  const updates = [];
+
+  // Sort by due date to pay oldest first
+  const sortedRows = [...scheduleRows].sort((a, b) =>
+    new Date(a.due_date) - new Date(b.due_date)
+  );
+
+  // Apply interest first to oldest unpaid rows
+  for (const row of sortedRows) {
+    if (remainingInterest <= 0) break;
+    if (row.status === 'Paid') continue;
+
+    const interestDue = row.interest_amount - (row.interest_paid || 0);
+    const interestPayment = Math.min(remainingInterest, interestDue);
+    remainingInterest -= interestPayment;
+
+    if (interestPayment > 0) {
+      const newInterestPaid = (row.interest_paid || 0) + interestPayment;
+      const newPrincipalPaid = row.principal_paid || 0;
+      const totalPaid = newInterestPaid + newPrincipalPaid;
+
+      let newStatus = row.status;
+      if (totalPaid >= row.total_due - 0.01) {
+        newStatus = 'Paid';
+      } else if (totalPaid > 0) {
+        newStatus = 'Partial';
+      }
+
+      updates.push({
+        id: row.id,
+        interest_paid: Math.round(newInterestPaid * 100) / 100,
+        principal_paid: Math.round(newPrincipalPaid * 100) / 100,
+        status: newStatus,
+        interestApplied: interestPayment,
+        principalApplied: 0
+      });
+    }
+  }
+
+  // Apply principal to oldest unpaid rows
+  for (const row of sortedRows) {
+    if (remainingPrincipal <= 0) break;
+    if (row.status === 'Paid') continue;
+
+    const principalDue = row.principal_amount - (row.principal_paid || 0);
+    const principalPayment = Math.min(remainingPrincipal, principalDue);
+    remainingPrincipal -= principalPayment;
+
+    if (principalPayment > 0) {
+      const existingUpdate = updates.find(u => u.id === row.id);
+
+      if (existingUpdate) {
+        existingUpdate.principal_paid = Math.round(((row.principal_paid || 0) + principalPayment) * 100) / 100;
+        existingUpdate.principalApplied += principalPayment;
+
+        // Recalculate status
+        const totalPaid = existingUpdate.interest_paid + existingUpdate.principal_paid;
+        if (totalPaid >= row.total_due - 0.01) {
+          existingUpdate.status = 'Paid';
+        } else if (totalPaid > 0) {
+          existingUpdate.status = 'Partial';
+        }
+      } else {
+        const newPrincipalPaid = (row.principal_paid || 0) + principalPayment;
+        const newInterestPaid = row.interest_paid || 0;
+        const totalPaid = newInterestPaid + newPrincipalPaid;
+
+        let newStatus = row.status;
+        if (totalPaid >= row.total_due - 0.01) {
+          newStatus = 'Paid';
+        } else if (totalPaid > 0) {
+          newStatus = 'Partial';
+        }
+
+        updates.push({
+          id: row.id,
+          interest_paid: Math.round(newInterestPaid * 100) / 100,
+          principal_paid: Math.round(newPrincipalPaid * 100) / 100,
+          status: newStatus,
+          interestApplied: 0,
+          principalApplied: principalPayment
+        });
+      }
+    }
+  }
+
+  // Handle overpayment (remaining principal)
+  let principalReduction = 0;
+  let creditAmount = 0;
+
+  if (remainingPrincipal > 0) {
+    if (overpaymentOption === 'reduce_principal') {
+      // Continue applying to future principal
+      for (const row of sortedRows) {
+        if (remainingPrincipal <= 0) break;
+
+        const existingUpdate = updates.find(u => u.id === row.id);
+        const currentPrincipalPaid = existingUpdate ? existingUpdate.principal_paid : (row.principal_paid || 0);
+        const additionalPrincipal = Math.min(remainingPrincipal, row.principal_amount - currentPrincipalPaid);
+
+        if (additionalPrincipal > 0) {
+          if (existingUpdate) {
+            existingUpdate.principal_paid = Math.round((existingUpdate.principal_paid + additionalPrincipal) * 100) / 100;
+            existingUpdate.principalApplied += additionalPrincipal;
+          } else {
+            updates.push({
+              id: row.id,
+              interest_paid: row.interest_paid || 0,
+              principal_paid: Math.round(((row.principal_paid || 0) + additionalPrincipal) * 100) / 100,
+              status: row.status,
+              interestApplied: 0,
+              principalApplied: additionalPrincipal
+            });
+          }
+
+          principalReduction += additionalPrincipal;
+          remainingPrincipal -= additionalPrincipal;
+        }
+      }
+
+      creditAmount = remainingPrincipal;
+    } else {
+      creditAmount = remainingPrincipal;
+    }
+  }
+
+  return {
+    updates,
+    principalReduction: Math.round(principalReduction * 100) / 100,
+    creditAmount: Math.round(creditAmount * 100) / 100
+  };
+}
+
+/**
  * Calculate accrued interest to date (what would be owed if settled today)
  * @param {Object} loan - Loan object
  * @param {Date} asOfDate - Date to calculate as of (defaults to today)

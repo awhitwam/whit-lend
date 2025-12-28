@@ -22,7 +22,8 @@ import {
   ArrowDownLeft,
   ArrowUpRight as ArrowUpRightIcon,
   Banknote,
-  Receipt
+  Receipt,
+  Shield
 } from 'lucide-react';
 import { isPast, isToday, format } from 'date-fns';
 
@@ -53,6 +54,19 @@ export default function Dashboard() {
   const { data: transactions = [] } = useQuery({
     queryKey: ['transactions'],
     queryFn: () => api.entities.Transaction.list('-date', 100),
+    enabled: !!currentOrganization
+  });
+
+  // Security-related queries
+  const { data: loanProperties = [] } = useQuery({
+    queryKey: ['loan-properties-dashboard'],
+    queryFn: () => api.entities.LoanProperty.filter({ status: 'Active' }),
+    enabled: !!currentOrganization
+  });
+
+  const { data: properties = [] } = useQuery({
+    queryKey: ['properties-dashboard'],
+    queryFn: () => api.entities.Property.list(),
     enabled: !!currentOrganization
   });
 
@@ -97,6 +111,41 @@ export default function Dashboard() {
       const totalPaid = (s.principal_paid || 0) + (s.interest_paid || 0);
       return sum + (s.total_due - totalPaid);
     }, 0);
+
+  // Calculate security warnings
+  const calculateSecurityMetrics = () => {
+    const LTV_THRESHOLD = 80;
+    let loansWithHighLTV = 0;
+    let loansWithSecurity = 0;
+
+    activeLoans.forEach(loan => {
+      const loanProps = loanProperties.filter(lp => lp.loan_id === loan.id);
+      if (loanProps.length === 0) return;
+
+      loansWithSecurity++;
+      let totalSecurityValue = 0;
+
+      loanProps.forEach(lp => {
+        const property = properties.find(p => p.id === lp.property_id);
+        if (!property) return;
+
+        const value = lp.charge_type === 'Second Charge'
+          ? Math.max(0, (property.current_value || 0) - (lp.first_charge_balance || 0))
+          : property.current_value || 0;
+
+        totalSecurityValue += value;
+      });
+
+      const outstandingPrincipal = (loan.principal_amount || 0) - (loan.principal_paid || 0);
+      const ltv = totalSecurityValue > 0 ? (outstandingPrincipal / totalSecurityValue) * 100 : 0;
+
+      if (ltv > LTV_THRESHOLD) loansWithHighLTV++;
+    });
+
+    return { loansWithHighLTV, loansWithSecurity };
+  };
+
+  const securityMetrics = calculateSecurityMetrics();
 
   // Build recent activity feed from loans and transactions
   const recentActivity = [
@@ -257,6 +306,32 @@ export default function Dashboard() {
             </CardContent>
           </Card>
         </div>
+
+        {/* Security Warning */}
+        {securityMetrics.loansWithHighLTV > 0 && (
+          <Card className="bg-gradient-to-r from-red-50 to-orange-50 border-red-200">
+            <CardContent className="p-5">
+              <div className="flex items-start gap-4">
+                <div className="p-3 rounded-xl bg-red-100">
+                  <Shield className="w-5 h-5 text-red-600" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="font-semibold text-red-900">High LTV Warning</h3>
+                  <p className="text-sm text-red-700 mt-1">
+                    {securityMetrics.loansWithHighLTV} loan{securityMetrics.loansWithHighLTV !== 1 ? 's have' : ' has'} LTV
+                    ratio{securityMetrics.loansWithHighLTV !== 1 ? 's' : ''} exceeding 80%.
+                    Consider obtaining updated valuations or additional security.
+                  </p>
+                </div>
+                <Link to={createPageUrl('Loans')}>
+                  <Button variant="outline" size="sm" className="border-red-300 text-red-700 hover:bg-red-100">
+                    Review
+                  </Button>
+                </Link>
+              </div>
+            </CardContent>
+          </Card>
+        )}
 
         {/* Recent Activity */}
         <div>

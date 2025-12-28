@@ -571,19 +571,26 @@ export default function Config() {
           // If no Loan Released row, check if loan already exists in database
           if (!loanRelease) {
             const existingLoans = await api.entities.Loan.filter({ loan_number: loanNum });
-            // Find first non-deleted loan
-            const existingLoan = existingLoans.find(l => !l.is_deleted);
+            // Find first loan (deleted or not)
+            const existingLoan = existingLoans[0];
             if (existingLoan) {
               // Find the borrower
               const borrowers = await api.entities.Borrower.filter({ id: existingLoan.borrower_id });
               const borrower = borrowers[0];
               if (borrower) {
-                loanMap[loanNum] = { loan: existingLoan, borrower, transactions: [] };
-                addLog(`  → Loan #${loanNum}: Found existing loan for ${borrower.full_name || 'Unknown'}`);
+                // Overwrite loan - delete old transactions and schedule, reset status
+                await api.entities.Loan.update(existingLoan.id, {
+                  is_deleted: false,
+                  status: 'Live',
+                  principal_paid: 0,
+                  interest_paid: 0
+                });
+                await api.entities.Transaction.deleteWhere({ loan_id: existingLoan.id });
+                await api.entities.RepaymentSchedule.deleteWhere({ loan_id: existingLoan.id });
+
+                loanMap[loanNum] = { loan: { ...existingLoan, is_deleted: false, status: 'Live' }, borrower, transactions: [] };
+                addLog(`  → Loan #${loanNum}: Overwriting loan for ${borrower.full_name || 'Unknown'}`);
               }
-            } else if (existingLoans.length > 0) {
-              // Loan exists but is deleted
-              addLog(`  ⚠ Loan #${loanNum}: Skipped (loan was deleted)`);
             }
             continue;
           }
@@ -622,13 +629,45 @@ export default function Config() {
           const existingLoans = await api.entities.Loan.filter({ loan_number: loanNum });
           if (existingLoans.length > 0) {
             const existingLoan = existingLoans[0];
-            if (existingLoan.is_deleted) {
-              addLog(`  ⚠ Loan #${loanNum}: Skipped (loan was previously deleted)`);
-            } else {
-              // Use existing loan for transaction import
-              loanMap[loanNum] = { loan: existingLoan, borrower, transactions: [] };
-              addLog(`  → Loan #${loanNum}: Already exists, will import transactions only`);
-            }
+
+            // Preserve the existing product if it exists, otherwise use CSV product
+            const loanProduct = existingLoan.product_id ? existingLoan.product_id : product.id;
+            const loanProductName = existingLoan.product_name || product.name;
+
+            // Overwrite loan data (preserving product)
+            await api.entities.Loan.update(existingLoan.id, {
+              borrower_id: borrower.id,
+              borrower_name: borrower.full_name,
+              principal_amount: principalAmount,
+              arrangement_fee: arrangementFee,
+              net_disbursed: principalAmount - arrangementFee,
+              start_date: parseDate(loanRelease.Date),
+              is_deleted: false,
+              status: 'Live',
+              principal_paid: 0,
+              interest_paid: 0
+            });
+
+            // Delete old transactions and schedule for clean reimport
+            await api.entities.Transaction.deleteWhere({ loan_id: existingLoan.id });
+            await api.entities.RepaymentSchedule.deleteWhere({ loan_id: existingLoan.id });
+
+            const updatedLoan = {
+              ...existingLoan,
+              borrower_id: borrower.id,
+              borrower_name: borrower.full_name,
+              principal_amount: principalAmount,
+              arrangement_fee: arrangementFee,
+              net_disbursed: principalAmount - arrangementFee,
+              start_date: parseDate(loanRelease.Date),
+              product_id: loanProduct,
+              product_name: loanProductName,
+              is_deleted: false,
+              status: 'Live'
+            };
+
+            loanMap[loanNum] = { loan: updatedLoan, borrower, transactions: [] };
+            addLog(`  → Loan #${loanNum}: Overwriting existing loan (preserving product: ${loanProductName})`);
             continue;
           }
 
@@ -743,8 +782,11 @@ export default function Config() {
               disbursementCount++;
               addLog(`    → Disbursement: ${formatCurrency(tx.amount)} on ${tx.date}`);
             } else {
-              // Regular repayment
+              // Regular repayment - determine type
               const isPrincipal = tx.type === 'Principal Collections';
+              const isFee = tx.type === 'Fee Collections';
+              // Treat anything that's not principal or fee as interest (including 'Interest Collections')
+              const isInterest = !isPrincipal && !isFee;
               await api.entities.Transaction.create({
                 loan_id: loan.id,
                 borrower_id: borrower.id,
@@ -752,7 +794,8 @@ export default function Config() {
                 date: tx.date,
                 type: 'Repayment',
                 principal_applied: isPrincipal ? tx.amount : 0,
-                interest_applied: isPrincipal ? 0 : tx.amount,
+                interest_applied: isInterest ? tx.amount : 0,
+                fees_applied: isFee ? tx.amount : 0,
                 reference: tx.type,
                 notes: `Imported: ${tx.details}`
               });
@@ -762,19 +805,42 @@ export default function Config() {
             await delay(200);
           }
 
-          // Keep loan status as Live (don't mark as closed during import)
-          // Note: principal_amount stays as initial disbursement only
-          // The schedule manager calculates total disbursed dynamically by adding Disbursement transactions
+          // Calculate principal outstanding to determine if loan is settled
+          const totalDisbursed = loan.principal_amount + totalDisbursements;
+          const totalPrincipalPaid = loanTxs
+            .filter(t => t.type === 'Principal Collections')
+            .reduce((sum, t) => sum + t.amount, 0);
+          const principalOutstanding = totalDisbursed - totalPrincipalPaid;
+
+          // Find the date of the last principal payment (settlement date)
+          const principalPayments = loanTxs
+            .filter(t => t.type === 'Principal Collections')
+            .sort((a, b) => new Date(b.date) - new Date(a.date));
+          const settlementDate = principalPayments.length > 0 ? principalPayments[0].date : null;
+
+          // Determine loan status based on principal outstanding
+          const isSettled = principalOutstanding <= 0.01;
+          const loanStatus = isSettled ? 'Closed' : 'Live';
+
+          if (isSettled) {
+            addLog(`    → Loan fully settled on ${settlementDate} (principal outstanding: ${formatCurrency(principalOutstanding)})`);
+          }
+
+          // Update loan status
           await api.entities.Loan.update(loan.id, {
             principal_paid: 0,
             interest_paid: 0,
-            status: 'Live'
+            status: loanStatus
           });
 
-          // Regenerate schedule if there were disbursements to sync repayment dates
-          if (hasDisbursements) {
-            const totalPrincipal = loan.principal_amount + totalDisbursements;
-            addLog(`    → Regenerating schedule (total disbursed: ${formatCurrency(totalPrincipal)})`);
+          // Always regenerate schedule after importing transactions
+          const totalPrincipal = loan.principal_amount + totalDisbursements;
+          addLog(`    → Regenerating schedule (total disbursed: ${formatCurrency(totalPrincipal)})`);
+
+          if (isSettled && settlementDate) {
+            // Regenerate with end date at settlement
+            await regenerateLoanSchedule(loan.id, { endDate: settlementDate });
+          } else {
             await regenerateLoanSchedule(loan.id);
           }
 

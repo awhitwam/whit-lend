@@ -9,29 +9,35 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
-  ArrowLeft, 
-  Edit, 
-  Phone, 
-  Mail, 
-  MapPin, 
+import {
+  ArrowLeft,
+  Edit,
+  Phone,
+  Mail,
+  MapPin,
   CreditCard,
   Plus,
   FileText,
   User,
   Calendar,
   Trash2,
-  Archive
+  Archive,
+  DollarSign,
+  Loader2
 } from 'lucide-react';
 import BorrowerForm from '@/components/borrower/BorrowerForm';
+import BorrowerPaymentModal from '@/components/borrower/BorrowerPaymentModal';
 import LoanCard from '@/components/loan/LoanCard';
-import { formatCurrency } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyManualPayment } from '@/components/loan/LoanCalculator';
+import { toast } from 'sonner';
 import { format } from 'date-fns';
 
 export default function BorrowerDetails() {
   const urlParams = new URLSearchParams(window.location.search);
   const borrowerId = urlParams.get('id');
   const [isEditOpen, setIsEditOpen] = useState(false);
+  const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { user } = useAuth();
@@ -87,6 +93,103 @@ export default function BorrowerDetails() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['borrowers'] });
       navigate(createPageUrl('Borrowers'));
+    }
+  });
+
+  // Multi-loan payment mutation
+  const borrowerPaymentMutation = useMutation({
+    mutationFn: async (paymentData) => {
+      setIsProcessingPayment(true);
+      toast.loading('Processing payment...', { id: 'borrower-payment' });
+
+      const results = [];
+
+      // Process each loan allocation
+      for (const allocation of paymentData.allocations) {
+        // Fetch loan and schedule
+        const [loanData] = await api.entities.Loan.filter({ id: allocation.loan_id });
+        const scheduleData = await api.entities.RepaymentSchedule.filter(
+          { loan_id: allocation.loan_id },
+          'installment_number'
+        );
+
+        if (!loanData) continue;
+
+        // Apply manual payment to this loan
+        const { updates, principalReduction, creditAmount } = applyManualPayment(
+          allocation.interest_amount,
+          allocation.principal_amount,
+          scheduleData,
+          loanData.overpayment_credit || 0,
+          paymentData.overpayment_option
+        );
+
+        let totalPrincipalApplied = 0;
+        let totalInterestApplied = 0;
+
+        // Update schedule rows
+        for (const update of updates) {
+          await api.entities.RepaymentSchedule.update(update.id, {
+            interest_paid: update.interest_paid,
+            principal_paid: update.principal_paid,
+            status: update.status
+          });
+          totalPrincipalApplied += update.principalApplied;
+          totalInterestApplied += update.interestApplied;
+        }
+
+        // Create transaction for this loan
+        await api.entities.Transaction.create({
+          loan_id: allocation.loan_id,
+          borrower_id: paymentData.borrower_id,
+          amount: allocation.interest_amount + allocation.principal_amount,
+          date: paymentData.date,
+          type: 'Repayment',
+          reference: paymentData.reference,
+          notes: paymentData.notes || `Multi-loan payment`,
+          principal_applied: totalPrincipalApplied,
+          interest_applied: totalInterestApplied
+        });
+
+        // Update loan totals
+        const newPrincipalPaid = (loanData.principal_paid || 0) + totalPrincipalApplied;
+        const newInterestPaid = (loanData.interest_paid || 0) + totalInterestApplied;
+
+        const updateData = {
+          principal_paid: newPrincipalPaid,
+          interest_paid: newInterestPaid,
+          overpayment_credit: creditAmount
+        };
+
+        // Check if loan is fully paid
+        if (newPrincipalPaid >= loanData.principal_amount && newInterestPaid >= loanData.total_interest) {
+          updateData.status = 'Closed';
+        }
+
+        await api.entities.Loan.update(allocation.loan_id, updateData);
+
+        results.push({
+          loan_id: allocation.loan_id,
+          principal_applied: totalPrincipalApplied,
+          interest_applied: totalInterestApplied
+        });
+      }
+
+      return results;
+    },
+    onSuccess: async () => {
+      setIsProcessingPayment(false);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['borrower-loans', borrowerId] }),
+        queryClient.invalidateQueries({ queryKey: ['borrower-transactions', borrowerId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
+      toast.success('Payment recorded successfully', { id: 'borrower-payment' });
+      setIsPaymentOpen(false);
+    },
+    onError: (error) => {
+      setIsProcessingPayment(false);
+      toast.error('Failed to record payment: ' + error.message, { id: 'borrower-payment' });
     }
   });
 
@@ -166,9 +269,19 @@ export default function BorrowerDetails() {
                   <Edit className="w-4 h-4 mr-2" />
                   Edit
                 </Button>
-                <Button 
-                  variant="destructive" 
-                  size="sm" 
+                {loans.filter(l => l.status === 'Live' || l.status === 'Active').length > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={() => setIsPaymentOpen(true)}
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    <DollarSign className="w-4 h-4 mr-2" />
+                    Record Payment
+                  </Button>
+                )}
+                <Button
+                  variant="destructive"
+                  size="sm"
                   onClick={handleDeleteOrArchive}
                   disabled={deleteOrArchiveMutation.isPending}
                 >
@@ -360,6 +473,16 @@ export default function BorrowerDetails() {
             />
           </DialogContent>
         </Dialog>
+
+        {/* Borrower Payment Modal */}
+        <BorrowerPaymentModal
+          isOpen={isPaymentOpen}
+          onClose={() => setIsPaymentOpen(false)}
+          borrower={borrower}
+          loans={loans}
+          onSubmit={(data) => borrowerPaymentMutation.mutate(data)}
+          isLoading={borrowerPaymentMutation.isPending || isProcessingPayment}
+        />
       </div>
     </div>
   );

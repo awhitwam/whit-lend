@@ -12,10 +12,10 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { 
-  ArrowLeft, 
-  DollarSign, 
-  Calendar, 
+import {
+  ArrowLeft,
+  DollarSign,
+  Calendar,
   User,
   TrendingUp,
   FileText,
@@ -32,7 +32,8 @@ import {
   ChevronLeft,
   ChevronRight,
   Sparkles,
-  Loader2
+  Loader2,
+  Shield
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -54,9 +55,10 @@ import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanModal from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
-import { formatCurrency, applyPaymentWaterfall, calculateLiveInterestOutstanding, calculateAccruedInterest } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
+import SecurityTab from '@/components/loan/SecurityTab';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -117,6 +119,15 @@ export default function LoanDetails() {
     queryKey: ['loan-expenses', loanId],
     queryFn: () => api.entities.Expense.filter({ loan_id: loanId }, '-date'),
     enabled: !!loanId
+  });
+
+  const { data: borrower } = useQuery({
+    queryKey: ['borrower', loan?.borrower_id],
+    queryFn: async () => {
+      const borrowers = await api.entities.Borrower.filter({ id: loan.borrower_id });
+      return borrowers[0];
+    },
+    enabled: !!loan?.borrower_id
   });
 
   const editLoanMutation = useMutation({
@@ -343,10 +354,21 @@ export default function LoanDetails() {
       setProcessingMessage('Regenerating schedule...');
       toast.loading('Regenerating repayment schedule...', { id: 'regenerate-schedule' });
 
-      // Use centralized schedule manager with end date for auto-extend loans
+      // For closed/settled loans, find the settlement date (last principal payment)
+      let effectiveEndDate = endDate;
+      if (loan.status === 'Closed') {
+        const principalPayments = transactions
+          .filter(t => !t.is_deleted && t.type === 'Repayment' && t.principal_applied > 0)
+          .sort((a, b) => new Date(b.date) - new Date(a.date));
+        if (principalPayments.length > 0) {
+          effectiveEndDate = principalPayments[0].date;
+        }
+      }
+
+      // Use centralized schedule manager with end date for auto-extend or closed loans
       // Always pass duration for consistency between Edit Loan and Regenerate Schedule
-      const options = loan.auto_extend
-        ? { endDate, duration: loan.duration }
+      const options = (loan.auto_extend || loan.status === 'Closed')
+        ? { endDate: effectiveEndDate, duration: loan.duration }
         : { duration: loan.duration };
       await regenerateLoanSchedule(loanId, options);
 
@@ -419,21 +441,41 @@ export default function LoanDetails() {
       setIsProcessing(true);
       setProcessingMessage('Processing payment...');
       toast.loading('Processing payment...', { id: 'payment' });
-      
+
       // Check if this is a settlement payment
       const isSettlement = paymentData.notes?.toLowerCase().includes('settlement');
-      
-      // Apply waterfall logic with overpayment handling
-      const { updates, principalReduction, creditAmount } = applyPaymentWaterfall(
-        paymentData.amount, 
-        schedule,
-        loan.overpayment_credit || 0,
-        paymentData.overpayment_option
-      );
-      
+
+      let updates, principalReduction, creditAmount;
+
+      // Check if manual split mode is enabled
+      if (paymentData.manual_split) {
+        // Use manual payment function with specified interest/principal amounts
+        const result = applyManualPayment(
+          paymentData.interest_amount,
+          paymentData.principal_amount,
+          schedule,
+          loan.overpayment_credit || 0,
+          paymentData.overpayment_option
+        );
+        updates = result.updates;
+        principalReduction = result.principalReduction;
+        creditAmount = result.creditAmount;
+      } else {
+        // Apply waterfall logic with overpayment handling
+        const result = applyPaymentWaterfall(
+          paymentData.amount,
+          schedule,
+          loan.overpayment_credit || 0,
+          paymentData.overpayment_option
+        );
+        updates = result.updates;
+        principalReduction = result.principalReduction;
+        creditAmount = result.creditAmount;
+      }
+
       let totalPrincipalApplied = 0;
       let totalInterestApplied = 0;
-      
+
       // Update schedule rows
       for (const update of updates) {
         await api.entities.RepaymentSchedule.update(update.id, {
@@ -560,6 +602,9 @@ export default function LoanDetails() {
   const actualInterestPaid = transactions
     .filter(t => !t.is_deleted && t.type === 'Repayment')
     .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+  const actualFeesPaid = transactions
+    .filter(t => !t.is_deleted && t.type === 'Repayment')
+    .reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
 
   // Calculate total disbursements (further advances)
   const totalDisbursements = transactions
@@ -602,7 +647,10 @@ export default function LoanDetails() {
           <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-4 py-2 text-white">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <Link to={createPageUrl('Loans')} className="text-slate-300 hover:text-white transition-colors">
+                <Link
+                  to={`${createPageUrl('Loans')}${loan.status === 'Closed' ? '?status=Closed' : ''}`}
+                  className="text-slate-300 hover:text-white transition-colors"
+                >
                   <ArrowLeft className="w-4 h-4" />
                 </Link>
                 <h1 className="text-base font-bold">
@@ -829,11 +877,17 @@ export default function LoanDetails() {
           </Card>
 
           {/* Interest */}
-          <Card className="bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200">
+          <Card className={`bg-gradient-to-br ${interestRemaining < 0
+            ? 'from-emerald-50 to-emerald-100/50 border-emerald-200'
+            : 'from-amber-50 to-amber-100/50 border-amber-200'}`}>
             <CardContent className="px-3 py-2">
               <div className="flex justify-between items-baseline mb-1">
-                <span className="text-sm text-amber-600 font-medium">Interest Outstanding</span>
-                <span className="text-xl font-bold text-amber-900">{formatCurrency(interestRemaining)}</span>
+                <span className={`text-sm font-medium ${interestRemaining < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                  {interestRemaining < 0 ? 'Interest Overpaid' : 'Interest Outstanding'}
+                </span>
+                <span className={`text-xl font-bold ${interestRemaining < 0 ? 'text-emerald-700' : 'text-amber-900'}`}>
+                  {formatCurrency(Math.abs(interestRemaining))}
+                </span>
               </div>
               <div className="text-xs text-slate-600 space-y-0.5">
                 <div className="flex justify-between">
@@ -862,36 +916,61 @@ export default function LoanDetails() {
 
           {/* Fees Outstanding */}
           {(() => {
-            const arrangementFeePaidInAdvance = loan.net_disbursed && loan.net_disbursed < loan.principal_amount;
-            const outstandingArrangementFee = arrangementFeePaidInAdvance ? 0 : (loan.arrangement_fee || 0);
-            const totalFeesOutstanding = outstandingArrangementFee + (loan.exit_fee || 0);
+            // Deductible fee = arrangement fee withheld from advance (net_disbursed < principal)
+            const isDeductibleFee = loan.net_disbursed && loan.net_disbursed < loan.principal_amount;
+            const arrangementFee = loan.arrangement_fee || 0;
+            const exitFee = loan.exit_fee || 0;
+            const loanIsSettled = loan.status === 'Settled' || loan.status === 'Closed';
+
+            // For deductible fees: they're "withheld" at start, then collected when loan settles
+            // Deductible fee is already paid (via withholding) so doesn't need collection
+            // But if there's a Fee Collection transaction, that's a SEPARATE fee collected
+            const totalFeesCollected = actualFeesPaid; // This is from "Fee Collections" transactions
+
+            // Outstanding = exit fee (if any) minus any collections not related to arrangement
+            // Note: Deductible/arrangement fee is NOT outstanding since it was already withheld
+            const outstandingFees = isDeductibleFee
+              ? Math.max(0, exitFee - totalFeesCollected)
+              : Math.max(0, (arrangementFee + exitFee) - totalFeesCollected);
 
             return (
               <Card className="bg-gradient-to-br from-purple-50 to-purple-100/50 border-purple-200">
                 <CardContent className="px-3 py-2">
                   <div className="flex justify-between items-baseline mb-1">
-                    <span className="text-sm text-purple-600 font-medium">Fees Outstanding</span>
-                    <span className="text-xl font-bold text-purple-900">{formatCurrency(totalFeesOutstanding)}</span>
+                    <span className="text-sm text-purple-600 font-medium">Fees</span>
+                    <span className="text-xl font-bold text-purple-900">{formatCurrency(arrangementFee + exitFee + totalFeesCollected)}</span>
                   </div>
                   <div className="text-xs text-slate-600 space-y-0.5">
-                    {loan.arrangement_fee > 0 && (
+                    {arrangementFee > 0 && (
                       <div className="flex justify-between">
                         <span>Arrangement fee:</span>
-                        {arrangementFeePaidInAdvance ? (
-                          <span className="font-mono text-emerald-600">{formatCurrency(loan.arrangement_fee)} (paid)</span>
+                        {isDeductibleFee ? (
+                          <span className="font-mono text-blue-600">{formatCurrency(arrangementFee)} <span className="text-[10px]">(withheld)</span></span>
                         ) : (
-                          <span className="font-mono">{formatCurrency(loan.arrangement_fee)}</span>
+                          <span className="font-mono">{formatCurrency(arrangementFee)}</span>
                         )}
                       </div>
                     )}
-                    {loan.exit_fee > 0 && (
+                    {exitFee > 0 && (
                       <div className="flex justify-between">
                         <span>Exit fee:</span>
-                        <span className="font-mono">{formatCurrency(loan.exit_fee)}</span>
+                        <span className="font-mono">{formatCurrency(exitFee)}</span>
                       </div>
                     )}
-                    {!loan.arrangement_fee && !loan.exit_fee && (
+                    {totalFeesCollected > 0 && (
+                      <div className="flex justify-between text-emerald-600">
+                        <span>Fee collections:</span>
+                        <span className="font-mono">{formatCurrency(totalFeesCollected)}</span>
+                      </div>
+                    )}
+                    {!arrangementFee && !exitFee && totalFeesCollected === 0 && (
                       <div className="text-slate-400">No fees on this loan</div>
+                    )}
+                    {outstandingFees > 0 && (
+                      <div className="flex justify-between pt-0.5 border-t border-purple-200 text-purple-700 font-medium">
+                        <span>Outstanding:</span>
+                        <span className="font-mono">{formatCurrency(outstandingFees)}</span>
+                      </div>
                     )}
                   </div>
                 </CardContent>
@@ -910,7 +989,11 @@ export default function LoanDetails() {
             </TabsTrigger>
             <TabsTrigger value="disbursements">
               Disbursements
-              <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.principal_applied !== 0).length + 1}</Badge>
+              <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Disbursement').length + 1}</Badge>
+            </TabsTrigger>
+            <TabsTrigger value="security">
+              <Shield className="w-4 h-4 mr-1" />
+              Security
             </TabsTrigger>
             <TabsTrigger value="expenses">
               Expenses
@@ -960,10 +1043,11 @@ export default function LoanDetails() {
                   const totalAmount = repayments.reduce((sum, t) => sum + t.amount, 0);
                   const totalPrincipal = repayments.reduce((sum, t) => sum + (t.principal_applied || 0), 0);
                   const totalInterest = repayments.reduce((sum, t) => sum + (t.interest_applied || 0), 0);
+                  const totalFees = repayments.reduce((sum, t) => sum + (t.fees_applied || 0), 0);
 
                   return (
                     <>
-                      <div className="grid grid-cols-3 gap-4 mb-6 p-4 bg-slate-50 rounded-lg">
+                      <div className={`grid ${totalFees > 0 ? 'grid-cols-4' : 'grid-cols-3'} gap-4 mb-6 p-4 bg-slate-50 rounded-lg`}>
                         <div>
                           <p className="text-xs text-slate-500 mb-1">Total Repaid</p>
                           <p className="text-xl font-bold text-slate-900">{formatCurrency(totalAmount)}</p>
@@ -976,6 +1060,12 @@ export default function LoanDetails() {
                           <p className="text-xs text-slate-500 mb-1">Interest Repaid</p>
                           <p className="text-xl font-bold text-amber-600">{formatCurrency(totalInterest)}</p>
                         </div>
+                        {totalFees > 0 && (
+                          <div>
+                            <p className="text-xs text-slate-500 mb-1">Fees Repaid</p>
+                            <p className="text-xl font-bold text-purple-600">{formatCurrency(totalFees)}</p>
+                          </div>
+                        )}
                       </div>
 
                       {repayments.length === 0 ? (
@@ -993,6 +1083,9 @@ export default function LoanDetails() {
                                 <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Amount</th>
                                 <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Principal</th>
                                 <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Interest</th>
+                                {totalFees > 0 && (
+                                  <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Fees</th>
+                                )}
                                 <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Notes</th>
                               </tr>
                             </thead>
@@ -1004,6 +1097,9 @@ export default function LoanDetails() {
                                   <td className="py-3 px-4 text-sm font-semibold text-emerald-600 text-right">{formatCurrency(tx.amount)}</td>
                                   <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(tx.principal_applied || 0)}</td>
                                   <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(tx.interest_applied || 0)}</td>
+                                  {totalFees > 0 && (
+                                    <td className="py-3 px-4 text-sm text-purple-600 text-right">{formatCurrency(tx.fees_applied || 0)}</td>
+                                  )}
                                   <td className="py-3 px-4 text-sm text-slate-500">{tx.notes || '—'}</td>
                                 </tr>
                               ))}
@@ -1164,6 +1260,10 @@ export default function LoanDetails() {
             </Card>
           </TabsContent>
 
+          <TabsContent value="security">
+            <SecurityTab loan={loan} />
+          </TabsContent>
+
           <TabsContent value="expenses">
             <Card>
               <CardHeader>
@@ -1253,6 +1353,8 @@ export default function LoanDetails() {
           onClose={() => setIsPaymentOpen(false)}
           loan={loan}
           outstandingAmount={totalOutstanding}
+          outstandingInterest={Math.max(0, interestRemaining)}
+          outstandingPrincipal={Math.max(0, principalRemaining)}
           onSubmit={(data) => paymentMutation.mutate(data)}
           isLoading={paymentMutation.isPending}
         />
@@ -1271,6 +1373,7 @@ export default function LoanDetails() {
           isOpen={isSettleOpen}
           onClose={() => setIsSettleOpen(false)}
           loan={loan}
+          borrower={borrower}
           transactions={transactions}
           onSubmit={(data) => {
             paymentMutation.mutate(data);
