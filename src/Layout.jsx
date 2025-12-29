@@ -1,4 +1,4 @@
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,8 @@ import {
   TrendingUp,
   ChevronLeft,
   ChevronRight,
-  Settings
+  Settings,
+  ArrowLeft
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
@@ -38,6 +39,12 @@ export default function Layout({ children, currentPageName }) {
     return saved === 'true';
   });
   const { currentTheme, currentOrganization } = useOrganization();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  // Determine if we should show a back button (detail pages, not main nav pages)
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'Ledger', 'Expenses', 'Products', 'Config'];
+  const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {
     localStorage.setItem('sidebarCollapsed', sidebarCollapsed);
@@ -155,6 +162,14 @@ export default function Layout({ children, currentPageName }) {
           />
           <div className="flex items-center justify-between px-4 h-14">
             <div className="flex items-center gap-2">
+              {showBackButton && (
+                <button
+                  onClick={() => navigate(-1)}
+                  className="text-slate-600 hover:text-slate-900 transition-colors p-1 -ml-1 rounded"
+                >
+                  <ArrowLeft className="w-5 h-5" />
+                </button>
+              )}
               <div
                 className="p-1.5 rounded-lg transition-colors duration-300"
                 style={{ backgroundColor: currentTheme.primary }}
@@ -219,6 +234,14 @@ export default function Layout({ children, currentPageName }) {
               style={{ backgroundColor: currentTheme.primary }}
             >
               <div className="flex items-center gap-3">
+                {showBackButton && (
+                  <button
+                    onClick={() => navigate(-1)}
+                    className="text-white/70 hover:text-white transition-colors p-1 -ml-1 rounded hover:bg-white/10"
+                  >
+                    <ArrowLeft className="w-5 h-5" />
+                  </button>
+                )}
                 <Building2 className="w-5 h-5 text-white/80" />
                 <span className="text-white font-medium">
                   {currentOrganization?.name || 'Select Organization'}

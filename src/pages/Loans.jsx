@@ -414,11 +414,20 @@ export default function Loans() {
                   <TableHeader>
                     <TableRow className="bg-slate-50">
                       <TableHead className="w-24">
-                        <button 
+                        <button
                           onClick={() => handleSort('loan_number')}
                           className="flex items-center gap-1 hover:text-slate-900 font-semibold"
                         >
                           Loan #
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-24">
+                        <button
+                          onClick={() => handleSort('start_date')}
+                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+                        >
+                          Date
                           <ArrowUpDown className="w-3 h-3" />
                         </button>
                       </TableHead>
@@ -499,6 +508,9 @@ export default function Loans() {
                         >
                           <TableCell className="font-mono font-semibold text-slate-700 text-sm">
                             {loan.loan_number || '-'}
+                          </TableCell>
+                          <TableCell className="text-sm text-slate-600">
+                            {loan.start_date ? format(new Date(loan.start_date), 'dd/MM/yy') : '-'}
                           </TableCell>
                           <TableCell className="font-medium">
                             <div className="text-sm">{loan.borrower_name}</div>

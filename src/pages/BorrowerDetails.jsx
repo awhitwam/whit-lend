@@ -27,8 +27,11 @@ import {
   DollarSign,
   Search,
   ArrowUpDown,
-  ChevronRight
+  ChevronRight,
+  Eye,
+  EyeOff
 } from 'lucide-react';
+import { Switch } from "@/components/ui/switch";
 import BorrowerForm from '@/components/borrower/BorrowerForm';
 import BorrowerPaymentModal from '@/components/borrower/BorrowerPaymentModal';
 import { formatCurrency, applyManualPayment } from '@/components/loan/LoanCalculator';
@@ -42,7 +45,7 @@ export default function BorrowerDetails() {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
-  const [statusFilter, setStatusFilter] = useState('all');
+  const [showOnlyLive, setShowOnlyLive] = useState(true);
   const [sortField, setSortField] = useState('created_date');
   const [sortDirection, setSortDirection] = useState('desc');
   const queryClient = useQueryClient();
@@ -257,7 +260,7 @@ export default function BorrowerDetails() {
     return loanSchedule.length > 0 ? loanSchedule[0] : null;
   };
 
-  // Filter loans by search and status
+  // Filter loans by search and live status
   const filteredLoans = useMemo(() => {
     return loans.filter(loan => {
       const matchesSearch =
@@ -265,13 +268,12 @@ export default function BorrowerDetails() {
         loan.description?.toLowerCase().includes(searchTerm.toLowerCase()) ||
         loan.loan_number?.toLowerCase().includes(searchTerm.toLowerCase());
 
-      const matchesStatus = statusFilter === 'all' ||
-        loan.status === statusFilter ||
-        (statusFilter === 'Live' && (loan.status === 'Live' || loan.status === 'Active'));
+      const isLiveOrActive = loan.status === 'Live' || loan.status === 'Active';
+      const matchesLiveFilter = !showOnlyLive || isLiveOrActive;
 
-      return matchesSearch && matchesStatus;
+      return matchesSearch && matchesLiveFilter;
     });
-  }, [loans, searchTerm, statusFilter]);
+  }, [loans, searchTerm, showOnlyLive]);
 
   // Sort loans
   const sortedLoans = useMemo(() => {
@@ -347,13 +349,8 @@ export default function BorrowerDetails() {
     return status === 'Closed' ? 'Settled' : status;
   };
 
-  const statusCounts = {
-    all: loans.length,
-    Pending: loans.filter(l => l.status === 'Pending').length,
-    Live: loans.filter(l => l.status === 'Live' || l.status === 'Active').length,
-    Settled: loans.filter(l => l.status === 'Closed').length,
-    Defaulted: loans.filter(l => l.status === 'Defaulted').length,
-  };
+  const liveCount = loans.filter(l => l.status === 'Live' || l.status === 'Active').length;
+  const nonLiveCount = loans.length - liveCount;
 
   if (borrowerLoading) {
     return (
@@ -576,7 +573,7 @@ export default function BorrowerDetails() {
           <TabsContent value="loans" className="space-y-4">
             {/* Filters */}
             <div className="flex flex-col md:flex-row gap-4 items-start md:items-center justify-between">
-              <div className="flex flex-col md:flex-row gap-4 flex-1">
+              <div className="flex flex-col md:flex-row gap-4 items-center flex-1">
                 <div className="relative flex-1 max-w-sm">
                   <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                   <Input
@@ -586,25 +583,23 @@ export default function BorrowerDetails() {
                     className="pl-10"
                   />
                 </div>
-                <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full md:w-auto">
-                  <TabsList className="grid grid-cols-2 md:grid-cols-5 w-full md:w-auto">
-                    <TabsTrigger value="Live" className="text-xs">
-                      Live ({statusCounts.Live})
-                    </TabsTrigger>
-                    <TabsTrigger value="Closed" className="text-xs">
-                      Settled ({statusCounts.Settled})
-                    </TabsTrigger>
-                    <TabsTrigger value="all" className="text-xs">
-                      All ({statusCounts.all})
-                    </TabsTrigger>
-                    <TabsTrigger value="Pending" className="text-xs">
-                      Pending ({statusCounts.Pending})
-                    </TabsTrigger>
-                    <TabsTrigger value="Defaulted" className="text-xs">
-                      Defaulted ({statusCounts.Defaulted})
-                    </TabsTrigger>
-                  </TabsList>
-                </Tabs>
+                <div className="flex items-center gap-2">
+                  <Switch
+                    id="show-only-live"
+                    checked={showOnlyLive}
+                    onCheckedChange={setShowOnlyLive}
+                  />
+                  <label
+                    htmlFor="show-only-live"
+                    className="text-sm text-slate-600 cursor-pointer flex items-center gap-1.5"
+                  >
+                    {showOnlyLive ? <Eye className="w-4 h-4" /> : <EyeOff className="w-4 h-4" />}
+                    Live only
+                    <span className="text-xs text-slate-400">
+                      ({showOnlyLive ? liveCount : loans.length})
+                    </span>
+                  </label>
+                </div>
               </div>
               <Link to={createPageUrl(`NewLoan?borrower=${borrowerId}`)}>
                 <Button size="sm">
@@ -647,6 +642,15 @@ export default function BorrowerDetails() {
                           className="flex items-center gap-1 hover:text-slate-900 font-semibold"
                         >
                           Loan #
+                          <ArrowUpDown className="w-3 h-3" />
+                        </button>
+                      </TableHead>
+                      <TableHead className="w-24">
+                        <button
+                          onClick={() => handleSort('start_date')}
+                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+                        >
+                          Date
                           <ArrowUpDown className="w-3 h-3" />
                         </button>
                       </TableHead>
@@ -718,6 +722,9 @@ export default function BorrowerDetails() {
                         >
                           <TableCell className="font-mono font-semibold text-slate-700 text-sm">
                             {loan.loan_number || '-'}
+                          </TableCell>
+                          <TableCell className="text-sm text-slate-600">
+                            {loan.start_date ? format(new Date(loan.start_date), 'dd/MM/yy') : '-'}
                           </TableCell>
                           <TableCell className="font-medium">
                             <div className="text-sm">{loan.product_name}</div>

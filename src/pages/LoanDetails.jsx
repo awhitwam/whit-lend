@@ -679,12 +679,6 @@ export default function LoanDetails() {
           <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-4 py-2 text-white">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <button
-                  onClick={() => navigate(-1)}
-                  className="text-slate-300 hover:text-white transition-colors"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </button>
                 <h1 className="text-base font-bold">
                   {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`}
                   {loan.description && <span className="font-normal text-slate-300"> - {loan.description}</span>}

@@ -1396,8 +1396,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         const txDate = new Date(dateKey);
 
                         // Sum up all principal and interest from transactions on this date
+                        // For Fixed Charge loans, use fees_applied instead of interest_applied
                         const totalPrincipal = txGroup.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                        const totalInterest = txGroup.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                        const totalInterest = txGroup.reduce((sum, tx) =>
+                          sum + (isFixedCharge ? (tx.fees_applied || 0) : (tx.interest_applied || 0)), 0);
 
                         // Update running balances
                         prevPrincipalBalance = runningPrincipalBalance;
@@ -1557,6 +1559,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           </TableCell>
                           <TableCell className="py-0.5 text-sm text-slate-700">
                             {(() => {
+                              // Fixed Charge loans show simple monthly charge
+                              if (isFixedCharge) {
+                                return (
+                                  <span>
+                                    Fixed charge due @ <span className="font-medium text-purple-600">{formatCurrency(monthlyCharge)}</span>
+                                  </span>
+                                );
+                              }
+
                               const scheduleRow = row.scheduleRow;
                               const dailyRate = effectiveRate / 100 / 365;
                               const principalStart = scheduleRow?.calculation_principal_start || row.principalBalance || loan.principal_amount;
