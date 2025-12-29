@@ -37,6 +37,25 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   const product = products[0];
   if (!product) throw new Error('Loan product not found');
 
+  // Check if this is an Irregular Income loan - no schedule should be generated
+  if (product.product_type === 'Irregular Income') {
+    console.log('=== SCHEDULE ENGINE: Irregular Income - Clearing Schedule ===');
+
+    // Delete any existing schedule entries
+    await api.entities.RepaymentSchedule.deleteWhere({ loan_id: loanId });
+
+    // Update loan with zero interest values
+    await api.entities.Loan.update(loanId, {
+      interest_rate: 0,
+      interest_type: 'None',
+      total_interest: 0,
+      total_repayable: loan.principal_amount + (loan.exit_fee || 0)
+    });
+
+    console.log('=== SCHEDULE ENGINE: Irregular Income - Schedule Cleared ===');
+    return { loan, schedule: [], summary: { totalInterest: 0, totalRepayable: loan.principal_amount } };
+  }
+
   const transactions = await api.entities.Transaction.filter({ 
     loan_id: loanId, 
     is_deleted: false 
