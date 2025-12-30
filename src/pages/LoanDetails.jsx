@@ -664,7 +664,7 @@ export default function LoanDetails() {
   const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
 
     return (
-      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 relative">
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col overflow-hidden">
         {/* Processing Overlay */}
         {isProcessing && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
@@ -675,7 +675,7 @@ export default function LoanDetails() {
           </div>
         )}
 
-        <div className="p-4 md:p-6 space-y-4">
+        <div className="p-4 md:p-6 space-y-4 flex flex-col flex-1 overflow-hidden">
         {/* Header */}
         <Card className="overflow-hidden">
           <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-4 py-2 text-white">
@@ -953,8 +953,8 @@ export default function LoanDetails() {
         </Card>
 
         {/* Tabs for different views */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-6">
-          <TabsList>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 overflow-hidden">
+          <TabsList className="flex-shrink-0">
             <TabsTrigger value="overview">
               {isFixedCharge ? 'Schedule' : 'Overview'}
             </TabsTrigger>
@@ -982,12 +982,12 @@ export default function LoanDetails() {
             </TabsTrigger>
           </TabsList>
 
-          <TabsContent value="overview" className="space-y-4">
+          <TabsContent value="overview" className="flex-1 flex flex-col min-h-0 mt-4">
             {/* Combined Repayment View */}
             <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
           </TabsContent>
 
-          <TabsContent value="repayments">
+          <TabsContent value="repayments" className="flex-1 overflow-auto mt-4">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -1091,7 +1091,7 @@ export default function LoanDetails() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="disbursements">
+          <TabsContent value="disbursements" className="flex-1 overflow-auto mt-4">
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -1237,11 +1237,11 @@ export default function LoanDetails() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="security">
+          <TabsContent value="security" className="flex-1 overflow-auto mt-4">
             <SecurityTab loan={loan} />
           </TabsContent>
 
-          <TabsContent value="expenses">
+          <TabsContent value="expenses" className="flex-1 overflow-auto mt-4">
             <Card>
               <CardHeader>
                 <CardTitle>Loan Expenses</CardTitle>
@@ -1280,7 +1280,7 @@ export default function LoanDetails() {
             </Card>
           </TabsContent>
 
-          <TabsContent value="ai-analysis">
+          <TabsContent value="ai-analysis" className="flex-1 overflow-auto mt-4">
             <Card className="border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-white">
               <CardHeader>
                 <div className="flex items-center justify-between">

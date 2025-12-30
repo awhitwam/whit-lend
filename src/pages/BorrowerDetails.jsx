@@ -21,6 +21,7 @@ import {
   Plus,
   FileText,
   User,
+  Users,
   Calendar,
   Trash2,
   Archive,
@@ -482,6 +483,17 @@ export default function BorrowerDetails() {
                   <div>
                     <p className="text-xs text-slate-500">Email</p>
                     <p className="font-medium text-sm">{borrower.email}</p>
+                  </div>
+                </div>
+              )}
+              {borrower.contact_email && borrower.contact_email !== borrower.email && (
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-slate-100">
+                    <Users className="w-4 h-4 text-slate-600" />
+                  </div>
+                  <div>
+                    <p className="text-xs text-slate-500">Contact Email (Group)</p>
+                    <p className="font-medium text-sm">{borrower.contact_email}</p>
                   </div>
                 </div>
               )}

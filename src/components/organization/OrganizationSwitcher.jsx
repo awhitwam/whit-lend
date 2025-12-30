@@ -41,9 +41,9 @@ export default function OrganizationSwitcher() {
     // Switch organization (updates localStorage synchronously)
     switchOrganization(orgId);
 
-    // Force complete page reload to reset all state
+    // Force complete page reload to Dashboard
     setTimeout(() => {
-      window.location.href = window.location.href.split('?')[0];
+      window.location.href = '/Dashboard';
     }, 300);
   };
 

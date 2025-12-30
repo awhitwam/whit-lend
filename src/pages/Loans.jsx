@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Upload, Link2 } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Upload, Link2 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -20,21 +20,32 @@ export default function Loans() {
   const [searchTerm, setSearchTerm] = useState('');
   // Read borrower filter from URL param
   const borrowerFilter = searchParams.get('borrower') || null;
-  // Read initial status filter from URL param - default to 'all' when filtering by borrower
+  // Read contact_email filter from URL param (for filtering by contact group)
+  const contactEmailFilter = searchParams.get('contact_email') || null;
+  // Read initial status filter from URL param - default to 'all' when filtering by borrower or contact
+  const hasFilter = borrowerFilter || contactEmailFilter;
   const [statusFilter, setStatusFilter] = useState(
-    searchParams.get('status') || (borrowerFilter ? 'all' : 'Live')
+    searchParams.get('status') || (hasFilter ? 'all' : 'Live')
   );
   // Read initial tab from URL param, default to 'active'
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'active');
   const [sortField, setSortField] = useState('created_date');
   const [sortDirection, setSortDirection] = useState('desc');
 
-  // When borrower filter changes, update status filter to show all
+  // Sync status filter with URL param when it changes
   useEffect(() => {
-    if (borrowerFilter && statusFilter === 'Live') {
+    const urlStatus = searchParams.get('status');
+    if (urlStatus && urlStatus !== statusFilter) {
+      setStatusFilter(urlStatus);
+    }
+  }, [searchParams]);
+
+  // When borrower/contact filter changes, update status filter to show all
+  useEffect(() => {
+    if (hasFilter && statusFilter === 'Live') {
       setStatusFilter('all');
     }
-  }, [borrowerFilter]);
+  }, [hasFilter]);
 
   const { data: allLoans = [], isLoading } = useQuery({
     queryKey: ['loans'],
@@ -50,6 +61,21 @@ export default function Loans() {
     },
     enabled: !!borrowerFilter
   });
+
+  // Fetch all borrowers to support contact_email filtering
+  const { data: allBorrowers = [] } = useQuery({
+    queryKey: ['borrowers'],
+    queryFn: () => api.entities.Borrower.list(),
+    enabled: !!contactEmailFilter
+  });
+
+  // Get borrower IDs for the contact email filter
+  const contactBorrowerIds = useMemo(() => {
+    if (!contactEmailFilter || !allBorrowers.length) return [];
+    return allBorrowers
+      .filter(b => b.contact_email === contactEmailFilter || b.email === contactEmailFilter)
+      .map(b => b.id);
+  }, [contactEmailFilter, allBorrowers]);
 
   // Fetch all transactions to calculate disbursements per loan
   const { data: allTransactions = [] } = useQuery({
@@ -97,11 +123,16 @@ export default function Loans() {
     return loanSchedule.length > 0 ? loanSchedule[0] : null;
   };
 
-  // Filter by borrower first if specified
+  // Filter by borrower or contact_email first if specified
   const borrowerFilteredLoans = useMemo(() => {
-    if (!borrowerFilter) return allLoans;
-    return allLoans.filter(loan => loan.borrower_id === borrowerFilter);
-  }, [allLoans, borrowerFilter]);
+    if (borrowerFilter) {
+      return allLoans.filter(loan => loan.borrower_id === borrowerFilter);
+    }
+    if (contactEmailFilter && contactBorrowerIds.length > 0) {
+      return allLoans.filter(loan => contactBorrowerIds.includes(loan.borrower_id));
+    }
+    return allLoans;
+  }, [allLoans, borrowerFilter, contactEmailFilter, contactBorrowerIds]);
 
   const loans = borrowerFilteredLoans.filter(loan => !loan.is_deleted);
   const deletedLoans = borrowerFilteredLoans.filter(loan => loan.is_deleted);
@@ -119,12 +150,13 @@ export default function Loans() {
     return matchesSearch && matchesStatus;
   });
 
-  // Function to clear borrower filter
+  // Function to clear borrower/contact filter
   const clearBorrowerFilter = () => {
     const newParams = new URLSearchParams(searchParams);
     newParams.delete('borrower');
+    newParams.delete('contact_email');
     setSearchParams(newParams);
-    setStatusFilter('all'); // Show all when clearing borrower filter
+    setStatusFilter('all'); // Show all when clearing filter
   };
 
   // Calculate borrower exposure totals when filtering by borrower
@@ -335,6 +367,35 @@ export default function Loans() {
                 </div>
               </div>
             )}
+          </div>
+        )}
+
+        {/* Contact Email Filter Banner */}
+        {contactEmailFilter && contactBorrowerIds.length > 0 && (
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-purple-100 flex items-center justify-center">
+                  <Users className="w-5 h-5 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-sm text-purple-600 font-medium">Showing loans for contact group</p>
+                  <p className="font-semibold text-purple-900">{contactEmailFilter}</p>
+                  <p className="text-xs text-purple-600 mt-0.5">
+                    {contactBorrowerIds.length} borrower{contactBorrowerIds.length !== 1 ? 's' : ''} in this group
+                  </p>
+                </div>
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearBorrowerFilter}
+                className="text-purple-700 hover:bg-purple-100"
+              >
+                <X className="w-4 h-4 mr-1" />
+                Clear Filter
+              </Button>
+            </div>
           </div>
         )}
 

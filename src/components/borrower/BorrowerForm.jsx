@@ -15,6 +15,7 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
     mobile: borrower?.mobile || '',
     landline: borrower?.landline || '',
     email: borrower?.email || '',
+    contact_email: borrower?.contact_email || '',
     address: borrower?.address || '',
     city: borrower?.city || '',
     zipcode: borrower?.zipcode || '',
@@ -109,6 +110,20 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
             placeholder="email@example.com"
           />
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="contact_email">Contact Email (for grouping)</Label>
+        <Input
+          id="contact_email"
+          type="email"
+          value={formData.contact_email}
+          onChange={(e) => handleChange('contact_email', e.target.value)}
+          placeholder="Primary contact's email"
+        />
+        <p className="text-xs text-slate-500">
+          Used to group multiple borrowers under the same contact person
+        </p>
       </div>
 
       <div className="space-y-2">

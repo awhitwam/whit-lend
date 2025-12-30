@@ -1,5 +1,6 @@
 import BorrowerDetails from './pages/BorrowerDetails';
 import Borrowers from './pages/Borrowers';
+import BorrowersByContact from './pages/BorrowersByContact';
 import Config from './pages/Config';
 import Dashboard from './pages/Dashboard';
 import Expenses from './pages/Expenses';
@@ -15,12 +16,16 @@ import Products from './pages/Products';
 import LoanDetails from './pages/LoanDetails';
 import AcceptInvitation from './pages/AcceptInvitation';
 import Login from './pages/Login';
+import Users from './pages/Users';
+import AuditLog from './pages/AuditLog';
+import SuperAdmin from './pages/SuperAdmin';
 import __Layout from './Layout.jsx';
 
 
 export const PAGES = {
     "BorrowerDetails": BorrowerDetails,
     "Borrowers": Borrowers,
+    "BorrowersByContact": BorrowersByContact,
     "Config": Config,
     "Dashboard": Dashboard,
     "Expenses": Expenses,
@@ -36,6 +41,9 @@ export const PAGES = {
     "LoanDetails": LoanDetails,
     "AcceptInvitation": AcceptInvitation,
     "Login": Login,
+    "Users": Users,
+    "AuditLog": AuditLog,
+    "SuperAdmin": SuperAdmin,
 }
 
 export const pagesConfig = {

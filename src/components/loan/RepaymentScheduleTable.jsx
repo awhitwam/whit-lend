@@ -382,8 +382,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     };
 
     return (
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50">
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0">
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex-shrink-0">
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
               <Button
@@ -480,11 +480,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             </span>
           </div>
         </div>
-        <div className="overflow-hidden">
+        <div className="flex-1 min-h-0 relative">
         {(viewMode === 'detailed' || viewMode === 'smartview2') ? (
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-slate-50 sticky top-0 z-20">
+          <Table wrapperClassName="absolute inset-0 overflow-auto">
+            <TableHeader className="[&_tr]:sticky [&_tr]:top-0 [&_tr]:z-20 [&_tr]:bg-slate-50">
+              <TableRow className="bg-slate-50">
                 <TableHead className="font-semibold bg-slate-50 w-12 py-1.5 whitespace-nowrap">#</TableHead>
                 <TableHead className="font-semibold bg-slate-50 py-1.5">
                   {viewMode === 'smartview2' ? (
@@ -991,9 +991,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             </TableBody>
           </Table>
         ) : viewMode === 'nested' ? (
-          <Table>
-            <TableHeader>
-              <TableRow className="bg-slate-50 sticky top-0 z-20">
+          <Table wrapperClassName="absolute inset-0 overflow-auto">
+            <TableHeader className="[&_tr]:sticky [&_tr]:z-20 [&_tr]:bg-slate-50 [&_tr:first-child]:top-0 [&_tr:last-child]:top-[33px]">
+              <TableRow className="bg-slate-50">
                 <TableHead className="font-semibold bg-slate-50 w-24">
                   <div className="flex items-center gap-1">
                     Date
@@ -1046,23 +1046,23 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 const interestBalance = totalExpectedInterest - totalInterestReceived;
 
                 return (
-                  <TableRow className="bg-slate-100 border-b-2 border-slate-300 sticky top-[41px] z-10">
-                    <TableCell className="py-1.5 text-xs font-semibold text-slate-600" colSpan={3}>
+                  <TableRow className="bg-slate-100 border-b-2 border-slate-300">
+                    <TableCell className="py-1.5 text-xs font-semibold text-slate-600 bg-slate-100" colSpan={3}>
                       Current Totals
                     </TableCell>
-                    <TableCell className="py-1.5 text-right font-mono text-sm font-bold text-slate-800">
+                    <TableCell className="py-1.5 text-right font-mono text-sm font-bold text-slate-800 bg-slate-100">
                       {formatCurrency(principalBalance)}
                     </TableCell>
-                    <TableCell className="py-1.5 text-right font-mono text-sm font-bold text-emerald-600">
+                    <TableCell className="py-1.5 text-right font-mono text-sm font-bold text-emerald-600 bg-slate-100">
                       {formatCurrency(totalInterestReceived)}
                     </TableCell>
-                    <TableCell className="py-1.5 text-right font-mono text-sm text-slate-500">
+                    <TableCell className="py-1.5 text-right font-mono text-sm text-slate-500 bg-slate-100">
                       ({formatCurrency(totalExpectedInterest)})
                     </TableCell>
-                    <TableCell className={`py-1.5 text-right font-mono text-sm font-bold ${interestBalance < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    <TableCell className={`py-1.5 text-right font-mono text-sm font-bold bg-slate-100 ${interestBalance < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                       {interestBalance < 0 ? '-' : ''}{formatCurrency(Math.abs(interestBalance))}
                     </TableCell>
-                    <TableCell className="py-1.5"></TableCell>
+                    <TableCell className="py-1.5 bg-slate-100"></TableCell>
                   </TableRow>
                 );
               })()}
@@ -1832,14 +1832,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             </TableBody>
           </Table>
         ) : (
-        <Table>
-              <TableHeader>
-                <TableRow className="bg-slate-50 sticky top-0 z-20 shadow-sm">
+        <Table wrapperClassName="absolute inset-0 overflow-auto">
+              <TableHeader className="[&_tr]:sticky [&_tr]:z-20 [&_tr]:bg-slate-50 [&_tr:first-child]:top-0 [&_tr:last-child]:top-[33px]">
+                <TableRow className="bg-slate-50 shadow-sm">
                   <TableHead className="font-semibold bg-slate-50">Date</TableHead>
                   <TableHead className="font-semibold bg-slate-50" colSpan={2}>Actual Transactions</TableHead>
                   <TableHead className="font-semibold bg-slate-50" colSpan={2}>Expected Schedule</TableHead>
                 </TableRow>
-                <TableRow className="bg-slate-50 border-t sticky top-[41px] z-20 shadow-sm">
+                <TableRow className="bg-slate-50 border-t shadow-sm">
                   <TableHead className="bg-slate-50"></TableHead>
                   <TableHead className="font-semibold text-right bg-slate-50">
                     <div>{isFixedCharge ? '—' : 'Principal'}</div>

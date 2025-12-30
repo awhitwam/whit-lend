@@ -158,7 +158,7 @@ function mapLoanStatus(loandiscStatus) {
 // STRICT FIELD WHITELISTS - Only these fields exist in the database
 const VALID_BORROWER_FIELDS = [
   'unique_number', 'full_name', 'first_name', 'last_name', 'business',
-  'email', 'address', 'phone', 'mobile', 'landline', 'gender',
+  'email', 'contact_email', 'address', 'phone', 'mobile', 'landline', 'gender',
   'city', 'zipcode', 'country', 'notes', 'status'
 ];
 
@@ -204,6 +204,7 @@ const BORROWER_FIELD_OPTIONS = [
   { value: 'last_name', label: 'Last Name' },
   { value: 'business', label: 'Business/Company Name' },
   { value: 'email', label: 'Email' },
+  { value: 'contact_email', label: 'Contact Email (for grouping)' },
   { value: 'address', label: 'Address' },
   { value: 'phone', label: 'Phone (Primary)' },
   { value: 'mobile', label: 'Mobile' },
@@ -307,8 +308,8 @@ const DEFAULT_LOAN_MAPPINGS = {
   'Interest Rate': '_interest_rate',
   'Loan Status Name': '_status',
   'Loan Title': 'description',
-  'Notes': '_notes',
-  'Loan Id': '_notes',
+  'Notes': '_ignore',
+  'Loan Id': '_ignore',
   'Loan Duration': 'duration',
   // Ignore calculated/aggregate fields
   'Interest Amount': '_ignore',
@@ -616,12 +617,14 @@ export default function ImportLoandisc() {
 
   // Import state
   const [importing, setImporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [cancelled, setCancelled] = useState(false);
   const cancelRef = useRef(false);
   const [progress, setProgress] = useState({ stage: '', current: 0, total: 0, percent: 0 });
   const [importResult, setImportResult] = useState(null);
   const [importError, setImportError] = useState(null);
   const [logs, setLogs] = useState([]);
+  const [clearResult, setClearResult] = useState(null);
 
   // Cancel import handler
   const handleCancelImport = () => {
@@ -704,6 +707,7 @@ export default function ImportLoandisc() {
       first_name: mapped.first_name || '',
       last_name: mapped.last_name || '',
       email: mapped.email || '',
+      contact_email: mapped.contact_email || mapped.email || '',  // Default to email if not separately provided
       mobile: mapped.mobile || '',
       landline: mapped.landline || '',
       phone: mapped.phone || mapped.mobile || mapped.landline || '',
@@ -749,12 +753,7 @@ export default function ImportLoandisc() {
       }
     }
 
-    // Build description from multiple sources
-    const descParts = [];
-    if (mapped.description) descParts.push(mapped.description);
-    if (mapped._additionalNotes) descParts.push(mapped._additionalNotes);
-    if (mapped._maturity_date) descParts.push(`Maturity: ${parseDate(mapped._maturity_date)}`);
-
+    // Only use Loan Title as description - nothing else
     return {
       loan_number: loanNumber,
       restructured_from_loan_number: restructuredFromNumber, // Stored in dedicated field
@@ -767,7 +766,7 @@ export default function ImportLoandisc() {
       start_date: mapped.start_date || null,
       duration: mapped.duration ? parseInt(mapped.duration) : null,
       status: mapped._status ? mapLoanStatus(mapped._status) : 'Live',
-      description: descParts.join(' | '),
+      description: mapped.description || '',
       override_interest_rate: rateInfo.rate > 0,
       overridden_rate: rateInfo.rate
     };
@@ -886,53 +885,23 @@ export default function ImportLoandisc() {
     //           expenses → loans
     //           audit_logs (entity_id may reference loans/borrowers but no FK)
 
-    // 1. Delete ALL audit logs via Supabase (batch deletion for performance)
-    addLog(`  Deleting all audit logs...`);
+    // 1. Delete audit logs for current organization (using org-filtered API)
+    addLog(`  Deleting audit logs for current organization...`);
     try {
-      const { count: auditCount } = await supabase
-        .from('audit_logs')
-        .select('*', { count: 'exact', head: true });
-      addLog(`    Found ${auditCount || 0} total audit logs in database`);
-
-      if (auditCount && auditCount > 0) {
-        let deletedSoFar = 0;
-        let hasMore = true;
-
-        while (hasMore) {
-          const { data: batch, error: fetchError } = await supabase
-            .from('audit_logs')
-            .select('id')
-            .limit(500);
-
-          if (fetchError) {
-            addLog(`    Error fetching audit logs: ${fetchError.message}`);
-            break;
+      const auditLogs = await api.entities.AuditLog.list();
+      if (auditLogs.length > 0) {
+        addLog(`    Found ${auditLogs.length} audit logs in current organization`);
+        // Delete in batches for performance
+        for (let i = 0; i < auditLogs.length; i += 100) {
+          const batch = auditLogs.slice(i, i + 100);
+          for (const log of batch) {
+            await api.entities.AuditLog.delete(log.id);
           }
-
-          if (!batch || batch.length === 0) {
-            hasMore = false;
-            break;
-          }
-
-          const ids = batch.map(a => a.id);
-          const { error: delError } = await supabase
-            .from('audit_logs')
-            .delete()
-            .in('id', ids);
-
-          if (delError) {
-            addLog(`    Error deleting audit log batch: ${delError.message}`);
-            break;
-          }
-
-          deletedSoFar += batch.length;
-          addLog(`    Deleted ${deletedSoFar} of ${auditCount} audit logs...`);
-
-          if (batch.length < 500) {
-            hasMore = false;
-          }
+          addLog(`    Deleted ${Math.min(i + 100, auditLogs.length)} of ${auditLogs.length} audit logs...`);
         }
-        addLog(`    Audit logs deletion complete: ${deletedSoFar} deleted`);
+        addLog(`    Audit logs deletion complete: ${auditLogs.length} deleted`);
+      } else {
+        addLog(`    No audit logs found in current organization`);
       }
     } catch (e) {
       addLog(`  Note: Could not delete audit logs: ${e.message}`);
@@ -977,124 +946,49 @@ export default function ImportLoandisc() {
       addLog(`  Note: Could not delete properties: ${e.message}`);
     }
 
-    // 5. Delete ALL transactions directly via Supabase (includes soft-deleted)
-    // This is critical because the FK constraint applies to ALL rows, not just active ones
-    addLog(`  Deleting all transactions (including soft-deleted)...`);
+    // 5. Delete transactions for current organization (using org-filtered API)
+    addLog(`  Deleting transactions for current organization...`);
     try {
-      // First count how many exist
-      const { count: txCount } = await supabase
-        .from('transactions')
-        .select('*', { count: 'exact', head: true });
-      addLog(`    Found ${txCount || 0} total transactions in database`);
-
-      if (txCount && txCount > 0) {
-        // Delete ALL transactions in batches using neq on a dummy condition
-        // This works around RLS by letting the policy filter, then deleting all matching rows
+      const transactions = await api.entities.Transaction.list();
+      if (transactions.length > 0) {
+        addLog(`    Found ${transactions.length} transactions in current organization`);
+        // Delete in batches for performance
         let deletedSoFar = 0;
-        let hasMore = true;
-
-        while (hasMore) {
-          // Get batch of transaction IDs
-          const { data: batch, error: fetchError } = await supabase
-            .from('transactions')
-            .select('id')
-            .limit(500);
-
-          if (fetchError) {
-            addLog(`    Error fetching transactions: ${fetchError.message}`);
-            break;
+        for (let i = 0; i < transactions.length; i += 100) {
+          const batch = transactions.slice(i, i + 100);
+          for (const tx of batch) {
+            await api.entities.Transaction.delete(tx.id);
           }
-
-          if (!batch || batch.length === 0) {
-            hasMore = false;
-            break;
-          }
-
-          // Delete this batch by IDs
-          const ids = batch.map(t => t.id);
-          const { error: delError } = await supabase
-            .from('transactions')
-            .delete()
-            .in('id', ids);
-
-          if (delError) {
-            addLog(`    Error deleting transaction batch: ${delError.message}`);
-            break;
-          }
-
-          deletedSoFar += batch.length;
-          addLog(`    Deleted ${deletedSoFar} transactions so far...`);
+          deletedSoFar = Math.min(i + 100, transactions.length);
+          addLog(`    Deleted ${deletedSoFar} of ${transactions.length} transactions...`);
         }
-
-        // Verify deletion
-        const { count: remainingCount } = await supabase
-          .from('transactions')
-          .select('*', { count: 'exact', head: true });
-        if (remainingCount && remainingCount > 0) {
-          addLog(`    WARNING: ${remainingCount} transactions still remain!`);
-        } else {
-          addLog(`    All transactions deleted successfully`);
-        }
+        addLog(`    Transactions deletion complete: ${transactions.length} deleted`);
+      } else {
+        addLog(`    No transactions found in current organization`);
       }
     } catch (err) {
       addLog(`    Error during transaction deletion: ${err.message}`);
     }
 
-    // 6. Delete ALL repayment schedules directly via Supabase
-    addLog(`  Deleting all repayment schedules...`);
+    // 6. Delete repayment schedules for current organization (using org-filtered API)
+    addLog(`  Deleting repayment schedules for current organization...`);
     try {
-      const { count: schedCount } = await supabase
-        .from('repayment_schedules')
-        .select('*', { count: 'exact', head: true });
-      addLog(`    Found ${schedCount || 0} total schedules in database`);
-
-      if (schedCount && schedCount > 0) {
-        // Delete ALL schedules in batches using same approach
+      const schedules = await api.entities.RepaymentSchedule.list();
+      if (schedules.length > 0) {
+        addLog(`    Found ${schedules.length} schedules in current organization`);
+        // Delete in batches for performance
         let deletedSoFar = 0;
-        let hasMore = true;
-
-        while (hasMore) {
-          // Get batch of schedule IDs
-          const { data: batch, error: fetchError } = await supabase
-            .from('repayment_schedules')
-            .select('id')
-            .limit(500);
-
-          if (fetchError) {
-            addLog(`    Error fetching schedules: ${fetchError.message}`);
-            break;
+        for (let i = 0; i < schedules.length; i += 100) {
+          const batch = schedules.slice(i, i + 100);
+          for (const sched of batch) {
+            await api.entities.RepaymentSchedule.delete(sched.id);
           }
-
-          if (!batch || batch.length === 0) {
-            hasMore = false;
-            break;
-          }
-
-          // Delete this batch by IDs
-          const ids = batch.map(s => s.id);
-          const { error: delError } = await supabase
-            .from('repayment_schedules')
-            .delete()
-            .in('id', ids);
-
-          if (delError) {
-            addLog(`    Error deleting schedule batch: ${delError.message}`);
-            break;
-          }
-
-          deletedSoFar += batch.length;
-          addLog(`    Deleted ${deletedSoFar} schedules so far...`);
+          deletedSoFar = Math.min(i + 100, schedules.length);
+          addLog(`    Deleted ${deletedSoFar} of ${schedules.length} schedules...`);
         }
-
-        // Verify deletion
-        const { count: remainingCount } = await supabase
-          .from('repayment_schedules')
-          .select('*', { count: 'exact', head: true });
-        if (remainingCount && remainingCount > 0) {
-          addLog(`    WARNING: ${remainingCount} schedules still remain!`);
-        } else {
-          addLog(`    All schedules deleted successfully`);
-        }
+        addLog(`    Schedules deletion complete: ${schedules.length} deleted`);
+      } else {
+        addLog(`    No schedules found in current organization`);
       }
     } catch (err) {
       addLog(`    Error during schedule deletion: ${err.message}`);
@@ -1252,6 +1146,28 @@ export default function ImportLoandisc() {
     addLog('Data cleared successfully');
   };
 
+  // Standalone clear data function (can be run independently of import)
+  const handleClearDataOnly = async () => {
+    if (!window.confirm('Are you sure you want to delete ALL data for this organization?\n\nThis will delete:\n• All borrowers\n• All loans\n• All transactions\n• All repayment schedules\n• All properties and security\n• All expenses\n• All investors and investor transactions\n• All audit logs\n\nThis action CANNOT be undone!')) {
+      return;
+    }
+
+    setClearing(true);
+    setClearResult(null);
+    setLogs([]);
+
+    try {
+      await clearAllData();
+      setClearResult({ success: true, message: 'All data cleared successfully!' });
+      // Invalidate all queries to refresh any cached data
+      queryClient.invalidateQueries();
+    } catch (err) {
+      setClearResult({ success: false, message: err.message });
+    } finally {
+      setClearing(false);
+    }
+  };
+
   // Main import function
   const handleImport = async () => {
     setImporting(true);
@@ -1303,16 +1219,17 @@ export default function ImportLoandisc() {
           });
 
           try {
-            // Skip if no identifiable data
-            if (!borrowerData.unique_number && !borrowerData.email && !borrowerData.business) {
+            // Skip only if we have no way to identify or name the borrower
+            // Note: We do NOT use email as a unique identifier - multiple borrowers can share the same email
+            if (!borrowerData.unique_number && !borrowerData.full_name && !borrowerData.business) {
               continue;
             }
 
-            // Check for existing borrower
-            const existing = existingBorrowersList.find(b =>
-              (borrowerData.unique_number && b.unique_number === borrowerData.unique_number) ||
-              (borrowerData.email && b.email === borrowerData.email)
-            );
+            // Check for existing borrower - ONLY match on unique_number
+            // Email is NOT a unique identifier - multiple borrowers can legitimately share the same email/contact_email
+            const existing = borrowerData.unique_number
+              ? existingBorrowersList.find(b => b.unique_number === borrowerData.unique_number)
+              : null;
 
             // Filter to only valid database fields
             const filteredBorrowerData = filterFields(borrowerData, VALID_BORROWER_FIELDS);
@@ -1434,17 +1351,9 @@ export default function ImportLoandisc() {
             // Parse interest rate
             const rateInfo = parseInterestRate(row['Interest Rate']);
 
-            // Build description with loan info
-            const loandiscLoanId = row['Loan Id']?.trim();
-            const loanTitle = row['Loan Title']?.trim();
-            const loanNotes = row['Notes']?.trim();
+            // Only use Loan Title as description - nothing else
+            const loanTitle = row['Loan Title']?.trim() || '';
             const maturityDate = parseDate(row['Maturity Date']);
-
-            const descParts = [];
-            if (loanTitle) descParts.push(loanTitle);
-            if (loanNotes && loanNotes !== loanTitle) descParts.push(loanNotes);
-            if (loandiscLoanId) descParts.push(`Loandisc ID: ${loandiscLoanId}`);
-            if (maturityDate) descParts.push(`Maturity: ${maturityDate}`);
 
             // Calculate duration from start date and maturity date if possible
             const startDate = parseDate(row['Released Date']);
@@ -1469,7 +1378,7 @@ export default function ImportLoandisc() {
               start_date: startDate,
               duration: duration,
               status: mapLoanStatus(row['Loan Status Name']),
-              description: descParts.join(' | '),
+              description: loanTitle,
               arrangement_fee: parseAmount(row['Arragement Fee']),
               exit_fee: parseAmount(row['Facility Exit Fee']),
               override_interest_rate: rateInfo.rate > 0,
@@ -1981,6 +1890,69 @@ export default function ImportLoandisc() {
                   <ChevronRight className="w-4 h-4 ml-2" />
                 </Button>
               </div>
+            </CardContent>
+          </Card>
+        )}
+
+        {/* Standalone Clear Data Tool */}
+        {step === 'options' && (
+          <Card className="border-red-200 bg-red-50/50">
+            <CardHeader>
+              <CardTitle className="text-red-900 flex items-center gap-2">
+                <Trash2 className="w-5 h-5" />
+                Clear Data Tool
+              </CardTitle>
+              <CardDescription className="text-red-700">
+                Delete all data for the current organization without importing new data
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <p className="text-sm text-red-800">
+                Use this tool to clear all existing data independently of the import process.
+                This will delete all borrowers, loans, transactions, schedules, properties, expenses,
+                investors, and audit logs for the current organization.
+              </p>
+
+              {clearResult && (
+                <Alert className={clearResult.success ? 'border-emerald-300 bg-emerald-50' : 'border-red-300 bg-red-100'}>
+                  {clearResult.success ? (
+                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                  ) : (
+                    <AlertCircle className="w-4 h-4 text-red-600" />
+                  )}
+                  <AlertDescription className={clearResult.success ? 'text-emerald-800' : 'text-red-800'}>
+                    {clearResult.message}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Show logs during clearing */}
+              {clearing && logs.length > 0 && (
+                <div className="bg-slate-900 text-slate-100 rounded-lg p-3 font-mono text-xs max-h-48 overflow-y-auto">
+                  {logs.map((log, i) => (
+                    <div key={i} className="whitespace-pre-wrap">{log}</div>
+                  ))}
+                </div>
+              )}
+
+              <Button
+                variant="destructive"
+                onClick={handleClearDataOnly}
+                disabled={clearing || importing}
+                className="w-full"
+              >
+                {clearing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Clearing Data...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Clear All Data Now
+                  </>
+                )}
+              </Button>
             </CardContent>
           </Card>
         )}

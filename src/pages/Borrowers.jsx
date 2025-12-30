@@ -176,7 +176,7 @@ export default function Borrowers() {
             <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Borrowers</h1>
             <p className="text-slate-500 mt-1">Manage your borrower profiles</p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex items-center gap-3">
             <Link to={createPageUrl('ImportBorrowers')}>
               <Button variant="outline">
                 <Upload className="w-4 h-4 mr-2" />

@@ -1,0 +1,306 @@
+import { useState, useMemo } from 'react';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import {
+  Search,
+  ChevronDown,
+  ChevronRight,
+  Users,
+  User,
+  Mail,
+  Phone,
+  FileText,
+  Building2
+} from 'lucide-react';
+import { formatCurrency } from '@/components/loan/LoanCalculator';
+
+export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [] }) {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [expandedGroups, setExpandedGroups] = useState(new Set());
+
+  // Group borrowers by contact_email
+  const groupedBorrowers = useMemo(() => {
+    const groups = {};
+
+    borrowers.forEach(borrower => {
+      // Use contact_email if available, otherwise use email, otherwise "No Contact Email"
+      const groupKey = borrower.contact_email || borrower.email || '__no_contact__';
+
+      if (!groups[groupKey]) {
+        groups[groupKey] = {
+          contactEmail: groupKey === '__no_contact__' ? null : groupKey,
+          borrowers: [],
+          totalLoans: 0,
+          liveLoans: 0,
+          totalOutstanding: 0
+        };
+      }
+
+      groups[groupKey].borrowers.push(borrower);
+
+      // Aggregate loan counts
+      const counts = loanCounts[borrower.id] || { total: 0, live: 0 };
+      groups[groupKey].totalLoans += counts.total;
+      groups[groupKey].liveLoans += counts.live;
+    });
+
+    // Calculate total outstanding per group from loans
+    Object.values(groups).forEach(group => {
+      group.borrowers.forEach(borrower => {
+        const borrowerLoans = loans.filter(l =>
+          l.borrower_id === borrower.id &&
+          !l.is_deleted &&
+          (l.status === 'Live' || l.status === 'Active')
+        );
+        borrowerLoans.forEach(loan => {
+          const principalOutstanding = (loan.principal_amount || 0) - (loan.principal_paid || 0);
+          const interestOutstanding = (loan.total_interest || 0) - (loan.interest_paid || 0);
+          group.totalOutstanding += Math.max(0, principalOutstanding + interestOutstanding);
+        });
+      });
+    });
+
+    return groups;
+  }, [borrowers, loanCounts, loans]);
+
+  // Filter groups by search term
+  const filteredGroups = useMemo(() => {
+    const search = searchTerm.toLowerCase();
+    if (!search) return groupedBorrowers;
+
+    const filtered = {};
+    Object.entries(groupedBorrowers).forEach(([key, group]) => {
+      // Check if contact email matches
+      const contactMatches = group.contactEmail?.toLowerCase().includes(search);
+
+      // Check if any borrower in group matches
+      const matchingBorrowers = group.borrowers.filter(b => {
+        const displayName = (b.business || `${b.first_name} ${b.last_name}`).toLowerCase();
+        return displayName.includes(search) ||
+               b.phone?.includes(search) ||
+               b.unique_number?.includes(search) ||
+               b.email?.toLowerCase().includes(search);
+      });
+
+      if (contactMatches || matchingBorrowers.length > 0) {
+        filtered[key] = {
+          ...group,
+          borrowers: contactMatches ? group.borrowers : matchingBorrowers
+        };
+      }
+    });
+
+    return filtered;
+  }, [groupedBorrowers, searchTerm]);
+
+  // Sort groups by total outstanding (highest first), then by number of borrowers
+  const sortedGroups = useMemo(() => {
+    return Object.entries(filteredGroups)
+      .sort(([, a], [, b]) => {
+        if (b.totalOutstanding !== a.totalOutstanding) {
+          return b.totalOutstanding - a.totalOutstanding;
+        }
+        return b.borrowers.length - a.borrowers.length;
+      });
+  }, [filteredGroups]);
+
+  const toggleGroup = (key) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+      return next;
+    });
+  };
+
+  const expandAll = () => {
+    setExpandedGroups(new Set(Object.keys(filteredGroups)));
+  };
+
+  const collapseAll = () => {
+    setExpandedGroups(new Set());
+  };
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-col sm:flex-row gap-3 items-start sm:items-center justify-between">
+        <div className="relative max-w-sm w-full sm:w-auto">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Input
+            placeholder="Search contacts or borrowers..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <div className="flex gap-2">
+          <Button variant="outline" size="sm" onClick={expandAll}>
+            Expand All
+          </Button>
+          <Button variant="outline" size="sm" onClick={collapseAll}>
+            Collapse All
+          </Button>
+        </div>
+      </div>
+
+      <div className="text-sm text-slate-500">
+        {sortedGroups.length} contact group{sortedGroups.length !== 1 ? 's' : ''} •{' '}
+        {Object.values(filteredGroups).reduce((sum, g) => sum + g.borrowers.length, 0)} borrowers
+      </div>
+
+      <div className="space-y-3">
+        {sortedGroups.map(([key, group]) => {
+          const isExpanded = expandedGroups.has(key);
+          const hasMultipleBorrowers = group.borrowers.length > 1;
+
+          return (
+            <Card key={key} className="overflow-hidden">
+              <Collapsible open={isExpanded} onOpenChange={() => toggleGroup(key)}>
+                <CollapsibleTrigger asChild>
+                  <CardHeader className="cursor-pointer hover:bg-slate-50 transition-colors py-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-3">
+                        {isExpanded ? (
+                          <ChevronDown className="w-5 h-5 text-slate-400" />
+                        ) : (
+                          <ChevronRight className="w-5 h-5 text-slate-400" />
+                        )}
+                        <div className={`p-2 rounded-lg ${hasMultipleBorrowers ? 'bg-blue-100' : 'bg-slate-100'}`}>
+                          {hasMultipleBorrowers ? (
+                            <Users className={`w-5 h-5 ${hasMultipleBorrowers ? 'text-blue-600' : 'text-slate-500'}`} />
+                          ) : (
+                            <User className="w-5 h-5 text-slate-500" />
+                          )}
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <CardTitle className="text-base font-semibold">
+                              {group.contactEmail || 'No Contact Email'}
+                            </CardTitle>
+                            {hasMultipleBorrowers && (
+                              <Badge variant="secondary" className="bg-blue-50 text-blue-700">
+                                {group.borrowers.length} borrowers
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="flex items-center gap-4 mt-1 text-sm text-slate-500">
+                            <span className="flex items-center gap-1">
+                              <FileText className="w-3.5 h-3.5" />
+                              {group.liveLoans} live loan{group.liveLoans !== 1 ? 's' : ''}
+                            </span>
+                            {group.totalOutstanding > 0 && (
+                              <span className="font-medium text-slate-700">
+                                {formatCurrency(group.totalOutstanding)} outstanding
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {group.liveLoans > 0 && (
+                          <Link
+                            to={createPageUrl(`Loans?contact_email=${encodeURIComponent(group.contactEmail || '')}`)}
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <Button variant="outline" size="sm">
+                              View All Loans
+                            </Button>
+                          </Link>
+                        )}
+                      </div>
+                    </div>
+                  </CardHeader>
+                </CollapsibleTrigger>
+
+                <CollapsibleContent>
+                  <CardContent className="pt-0 pb-4">
+                    <div className="border-t pt-4 space-y-3">
+                      {group.borrowers.map(borrower => {
+                        const displayName = borrower.business || `${borrower.first_name} ${borrower.last_name}`;
+                        const counts = loanCounts[borrower.id] || { total: 0, live: 0, settled: 0 };
+
+                        return (
+                          <div
+                            key={borrower.id}
+                            className="flex items-center justify-between p-3 rounded-lg bg-slate-50 hover:bg-slate-100 transition-colors"
+                          >
+                            <Link
+                              to={createPageUrl(`BorrowerDetails?id=${borrower.id}`)}
+                              className="flex items-center gap-3 flex-1 group"
+                            >
+                              <div className="w-10 h-10 rounded-full bg-white border border-slate-200 flex items-center justify-center">
+                                {borrower.business ? (
+                                  <Building2 className="w-5 h-5 text-slate-400" />
+                                ) : (
+                                  <User className="w-5 h-5 text-slate-400" />
+                                )}
+                              </div>
+                              <div>
+                                <p className="font-medium text-slate-900 group-hover:text-blue-600 transition-colors">
+                                  {displayName}
+                                </p>
+                                <div className="flex items-center gap-3 text-xs text-slate-500">
+                                  <span className="font-mono">#{borrower.unique_number}</span>
+                                  {borrower.phone && (
+                                    <span className="flex items-center gap-1">
+                                      <Phone className="w-3 h-3" />
+                                      {borrower.phone}
+                                    </span>
+                                  )}
+                                  {borrower.email && borrower.email !== group.contactEmail && (
+                                    <span className="flex items-center gap-1">
+                                      <Mail className="w-3 h-3" />
+                                      {borrower.email}
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </Link>
+                            <div className="flex items-center gap-3">
+                              {counts.total > 0 ? (
+                                <Link to={createPageUrl(`Loans?borrower=${borrower.id}`)}>
+                                  <div className="flex gap-1.5">
+                                    {counts.live > 0 && (
+                                      <Badge className="bg-emerald-100 text-emerald-700 text-xs">
+                                        {counts.live} Live
+                                      </Badge>
+                                    )}
+                                    {counts.settled > 0 && (
+                                      <Badge className="bg-purple-100 text-purple-700 text-xs">
+                                        {counts.settled} Settled
+                                      </Badge>
+                                    )}
+                                  </div>
+                                </Link>
+                              ) : (
+                                <span className="text-xs text-slate-400">No loans</span>
+                              )}
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </CardContent>
+                </CollapsibleContent>
+              </Collapsible>
+            </Card>
+          );
+        })}
+
+        {sortedGroups.length === 0 && (
+          <div className="text-center py-12 text-slate-500">
+            {searchTerm ? 'No contacts match your search' : 'No borrowers found'}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
