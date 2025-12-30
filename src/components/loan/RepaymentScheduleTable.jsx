@@ -665,7 +665,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                       return (
                         <React.Fragment key={row.id}>
-                          <TableRow className={statusColor}>
+                          <TableRow className={`${statusColor} ${row.is_extension_period ? 'bg-purple-50' : ''}`}>
                             <TableCell className="font-medium">
                               <div className="flex items-center gap-2">
                                 <span className="text-slate-400">📄</span>
@@ -883,7 +883,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         : (Math.abs(variance) <= expectedAmount ? 'text-amber-600' : 'text-red-600');
 
                       return (
-                        <TableRow key={row.id} className={statusColor}>
+                        <TableRow key={row.id} className={`${statusColor} ${row.is_extension_period ? 'bg-purple-50' : ''}`}>
                           <TableCell className="font-medium py-1.5 whitespace-nowrap">
                             {formatInstallmentLabel(row)}
                           </TableCell>
@@ -1544,7 +1544,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       return (
                         <TableRow
                           key={`header-${row.scheduleRow.id}`}
-                          className={`bg-slate-100/80 border-t border-slate-300 ${hasTransactions ? 'cursor-pointer hover:bg-slate-200/80' : ''}`}
+                          className={`${row.scheduleRow.is_extension_period ? 'bg-purple-100/80' : 'bg-slate-100/80'} border-t border-slate-300 ${hasTransactions ? 'cursor-pointer hover:bg-slate-200/80' : ''}`}
                           onClick={hasTransactions ? () => togglePeriodExpansion(row.scheduleRow.id) : undefined}
                         >
                           <TableCell className="py-0.5 font-semibold text-slate-700 text-sm">
@@ -1573,6 +1573,19 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               const principalStart = scheduleRow?.calculation_principal_start || row.principalBalance || loan.principal_amount;
                               const days = scheduleRow?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
                               const dailyInterestAmount = principalStart * dailyRate;
+
+                              // Special case for Rolled-Up loans: first installment is rolled-up interest for entire loan duration
+                              if (loan.interest_type === 'Rolled-Up' && scheduleRow?.installment_number === 1) {
+                                const totalDays = differenceInDays(new Date(scheduleRow.due_date), new Date(loan.start_date));
+                                const rollUpPrincipal = loan.principal_amount;
+                                const rollUpDailyRate = loan.interest_rate / 100 / 365;
+                                const rollUpDailyInterest = rollUpPrincipal * rollUpDailyRate;
+                                return (
+                                  <span>
+                                    Rolled-up interest due, <span className="text-slate-500">{totalDays}d × {formatCurrency(rollUpDailyInterest)}/day</span>
+                                  </span>
+                                );
+                              }
 
                               if (hasPenaltyRate) {
                                 return (
@@ -1837,6 +1850,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     ? 'bg-orange-50/50 border-l-4 border-orange-500'
                     : row.transactions.length > 0
                     ? 'bg-emerald-50/50 border-l-4 border-emerald-500'
+                    : row.scheduleEntry?.is_extension_period
+                    ? 'bg-purple-50'
                     : ''
                 }
               >

@@ -5,7 +5,8 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency, calculateLiveInterestOutstanding } from './LoanCalculator';
 import { format } from 'date-fns';
-import { ChevronRight, Calendar, Banknote, TrendingUp, User, AlertCircle } from 'lucide-react';
+import { ChevronRight, Calendar, Banknote, TrendingUp, User, AlertCircle, Link2 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export default function LoanCard({ loan }) {
   const liveInterestOutstanding = calculateLiveInterestOutstanding(loan);
@@ -38,7 +39,25 @@ export default function LoanCard({ loan }) {
               <User className="w-4 h-4 text-slate-400" />
               <h3 className="font-semibold text-slate-900">{loan.borrower_name}</h3>
             </div>
-            <p className="text-sm text-slate-500">{loan.product_name}</p>
+            <div className="flex items-center gap-1.5">
+              {loan.loan_number && (
+                <span className="text-xs font-mono text-slate-500">#{loan.loan_number}</span>
+              )}
+              {loan.restructured_from_loan_number && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Link2 className="w-3 h-3 text-amber-500 cursor-help" />
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Restructured from #{loan.restructured_from_loan_number}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
+              <span className="text-slate-300">•</span>
+              <span className="text-sm text-slate-500">{loan.product_name}</span>
+            </div>
           </div>
           <Badge className={getStatusColor(loan.status)}>{getStatusLabel(loan.status)}</Badge>
         </div>

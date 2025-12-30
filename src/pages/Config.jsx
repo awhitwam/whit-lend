@@ -1,11 +1,13 @@
 import { useState, useEffect, useRef } from 'react';
+import { Link } from 'react-router-dom';
+import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Database, Trash2, StopCircle, Users, History, ChevronLeft, ChevronRight, RefreshCw, Calendar, ShieldAlert, Palette } from 'lucide-react';
+import { Upload, FileText, CheckCircle2, AlertCircle, Loader2, Database, Trash2, StopCircle, Users, History, ChevronLeft, ChevronRight, RefreshCw, Calendar, ShieldAlert, Palette, ArrowRight } from 'lucide-react';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { applyScheduleToNewLoan, regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { runAutoExtend, checkLoansNeedingExtension } from '@/lib/autoExtendService';
@@ -1162,6 +1164,36 @@ export default function Config() {
                 <Database className="w-5 h-5 text-blue-600" />
                 Data Import
               </h2>
+
+              {/* Loandisc Import - Featured */}
+              <Card className="border-2 border-purple-200 bg-purple-50/50">
+                <CardHeader>
+                  <CardTitle className="flex items-center gap-2">
+                    <Database className="w-5 h-5 text-purple-600" />
+                    Loandisc Import
+                  </CardTitle>
+                  <CardDescription>
+                    Import borrowers, loans, and repayments from Loandisc CSV exports with full data migration support
+                  </CardDescription>
+                </CardHeader>
+                <CardContent>
+                  <div className="flex items-center justify-between">
+                    <div className="text-sm text-slate-600">
+                      <ul className="space-y-1">
+                        <li>• Import borrowers, loans, and repayments from 3 CSV files</li>
+                        <li>• Auto-create loan products and detect restructure chains</li>
+                        <li>• Option to clear existing data for fresh import</li>
+                      </ul>
+                    </div>
+                    <Link to={createPageUrl('ImportLoandisc')}>
+                      <Button className="bg-purple-600 hover:bg-purple-700">
+                        Open Import Wizard
+                        <ArrowRight className="w-4 h-4 ml-2" />
+                      </Button>
+                    </Link>
+                  </div>
+                </CardContent>
+              </Card>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Import All Loans */}

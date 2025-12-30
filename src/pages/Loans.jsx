@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Upload } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Upload, Link2 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import EmptyState from '@/components/ui/EmptyState';
@@ -507,7 +508,21 @@ export default function Loans() {
                           onClick={() => navigate(createPageUrl(`LoanDetails?id=${loan.id}`))}
                         >
                           <TableCell className="font-mono font-semibold text-slate-700 text-sm">
-                            {loan.loan_number || '-'}
+                            <div className="flex items-center gap-1">
+                              {loan.loan_number || '-'}
+                              {loan.restructured_from_loan_number && (
+                                <TooltipProvider>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Link2 className="w-3.5 h-3.5 text-amber-500 cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent>
+                                      <p>Restructured from #{loan.restructured_from_loan_number}</p>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                </TooltipProvider>
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="text-sm text-slate-600">
                             {loan.start_date ? format(new Date(loan.start_date), 'dd/MM/yy') : '-'}

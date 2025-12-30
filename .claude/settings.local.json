@@ -6,7 +6,9 @@
       "Bash(dir:*)",
       "Bash(findstr:*)",
       "Bash(more:*)",
-      "Bash(cat:*)"
+      "Bash(cat:*)",
+      "Bash(grep:*)",
+      "Bash(find:*)"
     ]
   }
 }

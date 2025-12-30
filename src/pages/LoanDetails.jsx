@@ -36,8 +36,10 @@ import {
   Loader2,
   Shield,
   Zap,
-  Coins
+  Coins,
+  Link2
 } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -679,8 +681,20 @@ export default function LoanDetails() {
           <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-4 py-2 text-white">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-3">
-                <h1 className="text-base font-bold">
+                <h1 className="text-base font-bold flex items-center gap-1.5">
                   {loan.loan_number ? `#${loan.loan_number}` : `Loan ${loan.id.slice(0, 8)}`}
+                  {loan.restructured_from_loan_number && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <Link2 className="w-4 h-4 text-amber-400 cursor-help" />
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Restructured from loan #{loan.restructured_from_loan_number}</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
                   {loan.description && <span className="font-normal text-slate-300"> - {loan.description}</span>}
                   <span className="font-normal text-slate-400">, </span>
                   <span className="font-normal">{loan.borrower_name}</span>
