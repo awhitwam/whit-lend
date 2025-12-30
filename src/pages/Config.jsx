@@ -21,6 +21,7 @@ import { useOrganization } from '@/lib/OrganizationContext';
 import { organizationThemes, getThemeOptions } from '@/lib/organizationThemes';
 import { supabase } from '@/lib/supabaseClient';
 import { toast } from 'sonner';
+import { getOrgItem, setOrgItem, removeOrgItem, getOrgJSON, setOrgJSON } from '@/lib/orgStorage';
 
 export default function Config() {
   const { canAdmin, currentOrganization, refreshOrganizations, currentTheme } = useOrganization();
@@ -95,15 +96,15 @@ export default function Config() {
 
   const logEndRef = useRef(null);
   
-  // Load logs from localStorage on mount
+  // Load logs from org-scoped localStorage on mount
   useEffect(() => {
-    const savedLogs = localStorage.getItem('importLogs');
-    const savedImporting = localStorage.getItem('importing');
-    const savedProgress = localStorage.getItem('importProgress');
-    const savedStatus = localStorage.getItem('importStatus');
-    
-    if (savedLogs) {
-      setLogs(JSON.parse(savedLogs));
+    const savedLogs = getOrgJSON('importLogs', []);
+    const savedImporting = getOrgItem('importing');
+    const savedProgress = getOrgItem('importProgress');
+    const savedStatus = getOrgItem('importStatus');
+
+    if (savedLogs.length > 0) {
+      setLogs(savedLogs);
     }
     if (savedImporting === 'true') {
       setImporting(true);
@@ -116,18 +117,18 @@ export default function Config() {
     }
   }, []);
   
-  // Save logs to localStorage whenever they change
+  // Save logs to org-scoped localStorage whenever they change
   useEffect(() => {
     if (logs.length > 0) {
-      localStorage.setItem('importLogs', JSON.stringify(logs));
+      setOrgJSON('importLogs', logs);
     }
   }, [logs]);
-  
-  // Save import state
+
+  // Save import state to org-scoped localStorage
   useEffect(() => {
-    localStorage.setItem('importing', importing.toString());
-    localStorage.setItem('importProgress', progress.toString());
-    localStorage.setItem('importStatus', status);
+    setOrgItem('importing', importing.toString());
+    setOrgItem('importProgress', progress.toString());
+    setOrgItem('importStatus', status);
   }, [importing, progress, status]);
   
 
@@ -248,17 +249,17 @@ export default function Config() {
     const logEntry = `${new Date().toLocaleTimeString()}: ${message}`;
     setLogs(prev => {
       const newLogs = [...prev, logEntry];
-      localStorage.setItem('importLogs', JSON.stringify(newLogs));
+      setOrgJSON('importLogs', newLogs);
       return newLogs;
     });
   };
-  
+
   const clearLogs = () => {
     setLogs([]);
-    localStorage.removeItem('importLogs');
-    localStorage.removeItem('importing');
-    localStorage.removeItem('importProgress');
-    localStorage.removeItem('importStatus');
+    removeOrgItem('importLogs');
+    removeOrgItem('importing');
+    removeOrgItem('importProgress');
+    removeOrgItem('importStatus');
   };
 
   const handleDeleteData = async () => {
@@ -1043,7 +1044,7 @@ export default function Config() {
       setError(err.message);
     } finally {
       setImporting(false);
-      localStorage.setItem('importing', 'false');
+      setOrgItem('importing', 'false');
       addLog('Import process ended');
     }
   };

@@ -39,6 +39,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
+import { getOrgItem, setOrgItem, removeOrgItem } from '@/lib/orgStorage';
 
 // CSV Parser that handles quoted fields
 function parseCSV(text) {
@@ -399,10 +400,10 @@ const STORAGE_KEY_BORROWER_CSV = 'loandisc_borrower_csv';
 const STORAGE_KEY_LOAN_CSV = 'loandisc_loan_csv';
 const STORAGE_KEY_REPAYMENT_CSV = 'loandisc_repayment_csv';
 
-// Load saved mappings from localStorage
+// Load saved mappings from org-scoped localStorage
 function loadSavedMappings(storageKey, defaultMappings) {
   try {
-    const saved = localStorage.getItem(storageKey);
+    const saved = getOrgItem(storageKey);
     if (saved) {
       return { ...defaultMappings, ...JSON.parse(saved) };
     }
@@ -412,28 +413,28 @@ function loadSavedMappings(storageKey, defaultMappings) {
   return defaultMappings;
 }
 
-// Save mappings to localStorage
+// Save mappings to org-scoped localStorage
 function saveMappings(storageKey, mappings) {
   try {
-    localStorage.setItem(storageKey, JSON.stringify(mappings));
+    setOrgItem(storageKey, JSON.stringify(mappings));
   } catch (e) {
     console.warn('Failed to save mappings:', e);
   }
 }
 
-// Save CSV data to localStorage (with file metadata)
+// Save CSV data to org-scoped localStorage (with file metadata)
 function saveCsvData(storageKey, fileName, data) {
   try {
-    localStorage.setItem(storageKey, JSON.stringify({ fileName, data, savedAt: Date.now() }));
+    setOrgItem(storageKey, JSON.stringify({ fileName, data, savedAt: Date.now() }));
   } catch (e) {
     console.warn('Failed to save CSV data:', e);
   }
 }
 
-// Load CSV data from localStorage
+// Load CSV data from org-scoped localStorage
 function loadCsvData(storageKey) {
   try {
-    const saved = localStorage.getItem(storageKey);
+    const saved = getOrgItem(storageKey);
     if (saved) {
       return JSON.parse(saved);
     }
@@ -443,10 +444,10 @@ function loadCsvData(storageKey) {
   return null;
 }
 
-// Clear saved CSV data
+// Clear saved CSV data from org-scoped localStorage
 function clearCsvData(storageKey) {
   try {
-    localStorage.removeItem(storageKey);
+    removeOrgItem(storageKey);
   } catch (e) {
     console.warn('Failed to clear CSV data:', e);
   }
@@ -885,14 +886,53 @@ export default function ImportLoandisc() {
     //           expenses → loans
     //           audit_logs (entity_id may reference loans/borrowers but no FK)
 
-    // 1. Delete audit logs first (may reference loans/borrowers in entity_id)
+    // 1. Delete ALL audit logs via Supabase (batch deletion for performance)
+    addLog(`  Deleting all audit logs...`);
     try {
-      const auditLogs = await api.entities.AuditLog.list();
-      if (auditLogs.length > 0) {
-        addLog(`  Deleting ${auditLogs.length} audit logs...`);
-        for (const al of auditLogs) {
-          await api.entities.AuditLog.delete(al.id);
+      const { count: auditCount } = await supabase
+        .from('audit_logs')
+        .select('*', { count: 'exact', head: true });
+      addLog(`    Found ${auditCount || 0} total audit logs in database`);
+
+      if (auditCount && auditCount > 0) {
+        let deletedSoFar = 0;
+        let hasMore = true;
+
+        while (hasMore) {
+          const { data: batch, error: fetchError } = await supabase
+            .from('audit_logs')
+            .select('id')
+            .limit(500);
+
+          if (fetchError) {
+            addLog(`    Error fetching audit logs: ${fetchError.message}`);
+            break;
+          }
+
+          if (!batch || batch.length === 0) {
+            hasMore = false;
+            break;
+          }
+
+          const ids = batch.map(a => a.id);
+          const { error: delError } = await supabase
+            .from('audit_logs')
+            .delete()
+            .in('id', ids);
+
+          if (delError) {
+            addLog(`    Error deleting audit log batch: ${delError.message}`);
+            break;
+          }
+
+          deletedSoFar += batch.length;
+          addLog(`    Deleted ${deletedSoFar} of ${auditCount} audit logs...`);
+
+          if (batch.length < 500) {
+            hasMore = false;
+          }
         }
+        addLog(`    Audit logs deletion complete: ${deletedSoFar} deleted`);
       }
     } catch (e) {
       addLog(`  Note: Could not delete audit logs: ${e.message}`);

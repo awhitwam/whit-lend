@@ -20,6 +20,7 @@ import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useOrganization } from '@/lib/OrganizationContext';
+import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 
 const navigation = [
   { name: 'Dashboard', href: 'Dashboard', icon: LayoutDashboard },
@@ -35,7 +36,7 @@ const navigation = [
 export default function Layout({ children, currentPageName }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
-    const saved = localStorage.getItem('sidebarCollapsed');
+    const saved = getOrgItem('sidebarCollapsed');
     return saved === 'true';
   });
   const { currentTheme, currentOrganization } = useOrganization();
@@ -47,7 +48,7 @@ export default function Layout({ children, currentPageName }) {
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {
-    localStorage.setItem('sidebarCollapsed', sidebarCollapsed);
+    setOrgItem('sidebarCollapsed', sidebarCollapsed);
   }, [sidebarCollapsed]);
 
   const isActive = (pageName) => {

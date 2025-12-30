@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChevronLeft, ChevronRight, ChevronDown, Split, List, Download, Layers, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
+import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 
 // Helper to check if penalty rate applies for a given date
 const isPenaltyRateActive = (loan, date) => {
@@ -43,21 +44,21 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   // For Irregular Income loans, treat schedule as empty (only show transactions)
   const effectiveSchedule = isIrregularIncome ? [] : schedule;
 
-  // Load nested sort order from localStorage, default to 'asc' (oldest first)
+  // Load nested sort order from org-scoped localStorage, default to 'asc' (oldest first)
   const [nestedSortOrder, setNestedSortOrder] = useState(() => {
-    const saved = localStorage.getItem('nestedScheduleSortOrder');
+    const saved = getOrgItem('nestedScheduleSortOrder');
     return saved || 'asc';
   });
 
-  // Load smart view sort order from localStorage, default to 'asc' (oldest first)
+  // Load smart view sort order from org-scoped localStorage, default to 'asc' (oldest first)
   const [smartViewSortOrder, setSmartViewSortOrder] = useState(() => {
-    const saved = localStorage.getItem('smartViewSortOrder');
+    const saved = getOrgItem('smartViewSortOrder');
     return saved || 'asc';
   });
 
-  // Load collapsed state from localStorage, default to true (collapsed)
+  // Load collapsed state from org-scoped localStorage, default to true (collapsed)
   const [periodsCollapsed, setPeriodsCollapsed] = useState(() => {
-    const saved = localStorage.getItem('nestedScheduleCollapsed');
+    const saved = getOrgItem('nestedScheduleCollapsed');
     return saved === null ? true : saved === 'true';
   });
 
@@ -91,17 +92,17 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     setExpandedPeriods(new Set());
   };
 
-  // Save sort order to localStorage whenever it changes
+  // Save sort order to org-scoped localStorage whenever it changes
   useEffect(() => {
-    localStorage.setItem('nestedScheduleSortOrder', nestedSortOrder);
+    setOrgItem('nestedScheduleSortOrder', nestedSortOrder);
   }, [nestedSortOrder]);
 
   useEffect(() => {
-    localStorage.setItem('smartViewSortOrder', smartViewSortOrder);
+    setOrgItem('smartViewSortOrder', smartViewSortOrder);
   }, [smartViewSortOrder]);
 
   useEffect(() => {
-    localStorage.setItem('nestedScheduleCollapsed', periodsCollapsed.toString());
+    setOrgItem('nestedScheduleCollapsed', periodsCollapsed.toString());
   }, [periodsCollapsed]);
 
   const toggleNestedSortOrder = () => {
@@ -1027,6 +1028,44 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <TableHead className="font-semibold bg-slate-50 text-right">Interest Bal</TableHead>
                 <TableHead className="font-semibold bg-slate-50 w-28">Status</TableHead>
               </TableRow>
+              {/* Summary totals row - fixed below header */}
+              {!isLoading && (() => {
+                // Calculate summary totals for nested view
+                const totalDisbursed = loan.principal_amount +
+                  transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+                    .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+                const totalPrincipalReceived = transactions
+                  .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+                  .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                const totalInterestReceived = transactions
+                  .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+                  .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+                const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
+
+                const principalBalance = totalDisbursed - totalPrincipalReceived;
+                const interestBalance = totalExpectedInterest - totalInterestReceived;
+
+                return (
+                  <TableRow className="bg-slate-100 border-b-2 border-slate-300 sticky top-[41px] z-10">
+                    <TableCell className="py-1.5 text-xs font-semibold text-slate-600" colSpan={3}>
+                      Current Totals
+                    </TableCell>
+                    <TableCell className="py-1.5 text-right font-mono text-sm font-bold text-slate-800">
+                      {formatCurrency(principalBalance)}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-right font-mono text-sm font-bold text-emerald-600">
+                      {formatCurrency(totalInterestReceived)}
+                    </TableCell>
+                    <TableCell className="py-1.5 text-right font-mono text-sm text-slate-500">
+                      ({formatCurrency(totalExpectedInterest)})
+                    </TableCell>
+                    <TableCell className={`py-1.5 text-right font-mono text-sm font-bold ${interestBalance < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      {interestBalance < 0 ? '-' : ''}{formatCurrency(Math.abs(interestBalance))}
+                    </TableCell>
+                    <TableCell className="py-1.5"></TableCell>
+                  </TableRow>
+                );
+              })()}
             </TableHeader>
             <TableBody>
               {isLoading ? (
