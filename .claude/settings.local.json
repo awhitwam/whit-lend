@@ -8,7 +8,9 @@
       "Bash(more:*)",
       "Bash(cat:*)",
       "Bash(grep:*)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(npm run build:*)",
+      "Bash(node --check:*)"
     ]
   }
 }

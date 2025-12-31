@@ -9,7 +9,6 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import {
@@ -574,7 +573,6 @@ function applyMappings(row, mappings, parseOptions = {}) {
 
 export default function ImportLoandisc() {
   const [step, setStep] = useState('options'); // options, borrowers, loans, repayments, review, importing
-  const [clearData, setClearData] = useState(false);
   const [debugLoanNumber, setDebugLoanNumber] = useState(''); // Loan number to debug (e.g., "1000017")
   const [showMappings, setShowMappings] = useState({ borrowers: false, loans: false, repayments: false });
 
@@ -617,14 +615,12 @@ export default function ImportLoandisc() {
 
   // Import state
   const [importing, setImporting] = useState(false);
-  const [clearing, setClearing] = useState(false);
   const [cancelled, setCancelled] = useState(false);
   const cancelRef = useRef(false);
   const [progress, setProgress] = useState({ stage: '', current: 0, total: 0, percent: 0 });
   const [importResult, setImportResult] = useState(null);
   const [importError, setImportError] = useState(null);
   const [logs, setLogs] = useState([]);
-  const [clearResult, setClearResult] = useState(null);
 
   // Cancel import handler
   const handleCancelImport = () => {
@@ -874,300 +870,6 @@ export default function ImportLoandisc() {
     clearFileSelection('repayments');
   };
 
-  // Clear all data function
-  const clearAllData = async () => {
-    addLog('Clearing existing data...');
-
-    // Delete in correct order due to foreign key constraints
-    // FK chain: value_history → loan_properties → loans → borrowers
-    //           transactions → loans
-    //           repayment_schedules → loans
-    //           expenses → loans
-    //           audit_logs (entity_id may reference loans/borrowers but no FK)
-
-    // 1. Delete audit logs for current organization (using org-filtered API)
-    addLog(`  Deleting audit logs for current organization...`);
-    try {
-      const auditLogs = await api.entities.AuditLog.list();
-      if (auditLogs.length > 0) {
-        addLog(`    Found ${auditLogs.length} audit logs in current organization`);
-        // Delete in batches for performance
-        for (let i = 0; i < auditLogs.length; i += 100) {
-          const batch = auditLogs.slice(i, i + 100);
-          for (const log of batch) {
-            await api.entities.AuditLog.delete(log.id);
-          }
-          addLog(`    Deleted ${Math.min(i + 100, auditLogs.length)} of ${auditLogs.length} audit logs...`);
-        }
-        addLog(`    Audit logs deletion complete: ${auditLogs.length} deleted`);
-      } else {
-        addLog(`    No audit logs found in current organization`);
-      }
-    } catch (e) {
-      addLog(`  Note: Could not delete audit logs: ${e.message}`);
-    }
-
-    // 2. Delete value_history FIRST (references loan_properties via loan_property_id)
-    try {
-      const valueHistory = await api.entities.ValueHistory.list();
-      if (valueHistory.length > 0) {
-        addLog(`  Deleting ${valueHistory.length} value history records...`);
-        for (const vh of valueHistory) {
-          await api.entities.ValueHistory.delete(vh.id);
-        }
-      }
-    } catch (e) {
-      addLog(`  Note: Could not delete value history: ${e.message}`);
-    }
-
-    // 3. Delete loan_properties (references loans via loan_id, properties via property_id)
-    try {
-      const loanProperties = await api.entities.LoanProperty.list();
-      if (loanProperties.length > 0) {
-        addLog(`  Deleting ${loanProperties.length} loan-property links...`);
-        for (const lp of loanProperties) {
-          await api.entities.LoanProperty.delete(lp.id);
-        }
-      }
-    } catch (e) {
-      addLog(`  Note: Could not delete loan-properties: ${e.message}`);
-    }
-
-    // 4. Delete properties (no FK to loans, but loan_properties references it)
-    try {
-      const properties = await api.entities.Property.list();
-      if (properties.length > 0) {
-        addLog(`  Deleting ${properties.length} properties...`);
-        for (const p of properties) {
-          await api.entities.Property.delete(p.id);
-        }
-      }
-    } catch (e) {
-      addLog(`  Note: Could not delete properties: ${e.message}`);
-    }
-
-    // 5. Delete transactions for current organization (using org-filtered API)
-    addLog(`  Deleting transactions for current organization...`);
-    try {
-      const transactions = await api.entities.Transaction.list();
-      if (transactions.length > 0) {
-        addLog(`    Found ${transactions.length} transactions in current organization`);
-        // Delete in batches for performance
-        let deletedSoFar = 0;
-        for (let i = 0; i < transactions.length; i += 100) {
-          const batch = transactions.slice(i, i + 100);
-          for (const tx of batch) {
-            await api.entities.Transaction.delete(tx.id);
-          }
-          deletedSoFar = Math.min(i + 100, transactions.length);
-          addLog(`    Deleted ${deletedSoFar} of ${transactions.length} transactions...`);
-        }
-        addLog(`    Transactions deletion complete: ${transactions.length} deleted`);
-      } else {
-        addLog(`    No transactions found in current organization`);
-      }
-    } catch (err) {
-      addLog(`    Error during transaction deletion: ${err.message}`);
-    }
-
-    // 6. Delete repayment schedules for current organization (using org-filtered API)
-    addLog(`  Deleting repayment schedules for current organization...`);
-    try {
-      const schedules = await api.entities.RepaymentSchedule.list();
-      if (schedules.length > 0) {
-        addLog(`    Found ${schedules.length} schedules in current organization`);
-        // Delete in batches for performance
-        let deletedSoFar = 0;
-        for (let i = 0; i < schedules.length; i += 100) {
-          const batch = schedules.slice(i, i + 100);
-          for (const sched of batch) {
-            await api.entities.RepaymentSchedule.delete(sched.id);
-          }
-          deletedSoFar = Math.min(i + 100, schedules.length);
-          addLog(`    Deleted ${deletedSoFar} of ${schedules.length} schedules...`);
-        }
-        addLog(`    Schedules deletion complete: ${schedules.length} deleted`);
-      } else {
-        addLog(`    No schedules found in current organization`);
-      }
-    } catch (err) {
-      addLog(`    Error during schedule deletion: ${err.message}`);
-    }
-
-    // 7. Delete expenses (references loans via loan_id - nullable)
-    try {
-      const expenses = await api.entities.Expense.list();
-      if (expenses.length > 0) {
-        addLog(`  Deleting ${expenses.length} expenses...`);
-        let expenseErrors = 0;
-        for (const e of expenses) {
-          try {
-            await api.entities.Expense.delete(e.id);
-          } catch (err) {
-            expenseErrors++;
-            if (expenseErrors <= 2) {
-              addLog(`    Error deleting expense ${e.id}: ${err.message}`);
-            }
-          }
-        }
-        if (expenseErrors > 0) {
-          addLog(`    Failed to delete ${expenseErrors} expenses`);
-        }
-      }
-    } catch (e) {
-      addLog(`  Note: Could not list/delete expenses: ${e.message}`);
-    }
-
-    // 8. Delete investor transactions (does NOT reference loans, only investors)
-    try {
-      const investorTx = await api.entities.InvestorTransaction.list();
-      if (investorTx.length > 0) {
-        addLog(`  Deleting ${investorTx.length} investor transactions...`);
-        for (const it of investorTx) {
-          await api.entities.InvestorTransaction.delete(it.id);
-        }
-      }
-    } catch (e) {
-      addLog(`  Note: Could not delete investor transactions: ${e.message}`);
-    }
-
-    // 9. Delete loans (references borrowers via borrower_id, self-references via restructured_from_loan_id)
-    // First, get all loans and clear ALL restructured_from_loan_id references
-    let loans = await api.entities.Loan.list();
-    const initialLoanCount = loans.length;
-    addLog(`  Deleting ${loans.length} loans...`);
-
-    if (loans.length > 0) {
-      // Count how many have restructured_from_loan_id set
-      const withRestructureRef = loans.filter(l => l.restructured_from_loan_id).length;
-      addLog(`    Found ${withRestructureRef} loans with restructure references`);
-
-      // Clear ALL restructured_from_loan_id references FIRST on EVERY loan
-      // This is necessary because if loan A references loan B, we can't delete loan B
-      if (withRestructureRef > 0) {
-        addLog(`    Clearing all restructure references...`);
-        let clearErrors = 0;
-        for (const l of loans) {
-          if (l.restructured_from_loan_id) {
-            try {
-              await api.entities.Loan.update(l.id, { restructured_from_loan_id: null });
-            } catch (e) {
-              clearErrors++;
-              if (clearErrors <= 3) {
-                addLog(`      Error clearing ref on loan ${l.loan_number}: ${e.message}`);
-              }
-            }
-          }
-        }
-        if (clearErrors > 0) {
-          addLog(`      Failed to clear ${clearErrors} restructure references`);
-        }
-
-        // Verify the references were cleared
-        const verifyLoans = await api.entities.Loan.list();
-        const stillHaveRef = verifyLoans.filter(l => l.restructured_from_loan_id).length;
-        if (stillHaveRef > 0) {
-          addLog(`      WARNING: ${stillHaveRef} loans still have restructure references after clearing!`);
-        } else {
-          addLog(`    Restructure references cleared successfully.`);
-        }
-      } else {
-        addLog(`    No restructure references to clear.`);
-      }
-
-      // Now delete loans in multiple passes (some may still have FK issues)
-      let remainingLoans = loans;
-      let maxPasses = 10;
-      let passCount = 0;
-      let lastErrorSample = '';
-
-      while (remainingLoans.length > 0 && passCount < maxPasses) {
-        passCount++;
-        const failedLoans = [];
-
-        for (const l of remainingLoans) {
-          try {
-            await api.entities.Loan.delete(l.id);
-          } catch (err) {
-            // Capture full error details on first failure
-            if (failedLoans.length === 0) {
-              lastErrorSample = err.message || String(err);
-            }
-            failedLoans.push({ loan: l, error: err.message });
-          }
-        }
-
-        remainingLoans = failedLoans.map(f => f.loan);
-
-        if (remainingLoans.length > 0) {
-          addLog(`    Pass ${passCount}: ${remainingLoans.length} loans remaining...`);
-
-          // On first pass, log the error to understand what's blocking
-          if (passCount === 1) {
-            addLog(`      First error: ${lastErrorSample}`);
-          }
-        }
-      }
-
-      if (remainingLoans.length > 0) {
-        addLog(`    ERROR: Could not delete ${remainingLoans.length} loans after ${maxPasses} passes`);
-        addLog(`    Last error: ${lastErrorSample}`);
-        // Log a few specific loan IDs for investigation
-        addLog(`    Sample failing loan IDs:`);
-        for (const loan of remainingLoans.slice(0, 3)) {
-          addLog(`      - ${loan.loan_number || 'no#'} (id: ${loan.id})`);
-        }
-        throw new Error(`Failed to delete all loans. ${remainingLoans.length} loans could not be deleted due to foreign key constraints. Error: ${lastErrorSample}`);
-      }
-
-      addLog(`    Deleted ${initialLoanCount} loans successfully`);
-    }
-
-    // 10. Delete borrowers (no FK references to other tables)
-    const borrowers = await api.entities.Borrower.list();
-    addLog(`  Deleting ${borrowers.length} borrowers...`);
-
-    let borrowerErrors = 0;
-    for (const b of borrowers) {
-      try {
-        await api.entities.Borrower.delete(b.id);
-      } catch (err) {
-        borrowerErrors++;
-        if (borrowerErrors <= 3) {
-          addLog(`    Error deleting borrower ${b.full_name}: ${err.message}`);
-        }
-      }
-    }
-
-    if (borrowerErrors > 0) {
-      throw new Error(`Failed to delete ${borrowerErrors} borrowers. There may be loans still referencing them.`);
-    }
-
-    addLog('Data cleared successfully');
-  };
-
-  // Standalone clear data function (can be run independently of import)
-  const handleClearDataOnly = async () => {
-    if (!window.confirm('Are you sure you want to delete ALL data for this organization?\n\nThis will delete:\n• All borrowers\n• All loans\n• All transactions\n• All repayment schedules\n• All properties and security\n• All expenses\n• All investors and investor transactions\n• All audit logs\n\nThis action CANNOT be undone!')) {
-      return;
-    }
-
-    setClearing(true);
-    setClearResult(null);
-    setLogs([]);
-
-    try {
-      await clearAllData();
-      setClearResult({ success: true, message: 'All data cleared successfully!' });
-      // Invalidate all queries to refresh any cached data
-      queryClient.invalidateQueries();
-    } catch (err) {
-      setClearResult({ success: false, message: err.message });
-    } finally {
-      setClearing(false);
-    }
-  };
-
   // Main import function
   const handleImport = async () => {
     setImporting(true);
@@ -1178,12 +880,6 @@ export default function ImportLoandisc() {
     setCancelled(false);
 
     try {
-      // Step 1: Clear data if requested
-      if (clearData) {
-        setProgress({ stage: 'Clearing existing data', current: 0, total: 1, percent: 5 });
-        await clearAllData();
-      }
-
       const result = {
         borrowers: { created: 0, updated: 0, errors: 0 },
         products: { created: 0, existing: 0 },
@@ -1194,7 +890,7 @@ export default function ImportLoandisc() {
 
       // Build borrower lookup map
       const borrowerMap = {};
-      let existingBorrowersList = clearData ? [] : await api.entities.Borrower.list();
+      let existingBorrowersList = await api.entities.Borrower.list();
 
       // Step 2: Import borrowers
       if (borrowersData?.data?.length > 0) {
@@ -1293,7 +989,7 @@ export default function ImportLoandisc() {
 
         // Second pass: import loans
         const total = loansData.data.length;
-        let existingLoansList = clearData ? [] : await api.entities.Loan.list();
+        let existingLoansList = await api.entities.Loan.list();
 
         for (let i = 0; i < loansData.data.length; i++) {
           // Check for cancellation
@@ -1790,32 +1486,6 @@ export default function ImportLoandisc() {
               <CardDescription>Configure import settings before uploading files</CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="flex items-start gap-4 p-4 border rounded-lg bg-red-50 border-red-200">
-                <Checkbox
-                  id="clear-data"
-                  checked={clearData}
-                  onCheckedChange={setClearData}
-                  className="mt-1"
-                />
-                <div className="flex-1">
-                  <label htmlFor="clear-data" className="font-medium text-red-900 cursor-pointer">
-                    Clear all existing data before import
-                  </label>
-                  <p className="text-sm text-red-700 mt-1">
-                    This will delete all borrowers, loans, transactions, and repayment schedules.
-                    Loan products and other reference data will be preserved.
-                  </p>
-                  {clearData && (
-                    <Alert className="mt-3 border-red-300 bg-red-100">
-                      <AlertCircle className="w-4 h-4 text-red-600" />
-                      <AlertDescription className="text-red-800">
-                        <strong>Warning:</strong> This action cannot be undone! All existing data will be permanently deleted.
-                      </AlertDescription>
-                    </Alert>
-                  )}
-                </div>
-              </div>
-
               {/* Debug loan number input */}
               <div className="p-4 border rounded-lg bg-slate-50 border-slate-200">
                 <label htmlFor="debug-loan" className="block font-medium text-slate-700 mb-2">
@@ -1890,69 +1560,6 @@ export default function ImportLoandisc() {
                   <ChevronRight className="w-4 h-4 ml-2" />
                 </Button>
               </div>
-            </CardContent>
-          </Card>
-        )}
-
-        {/* Standalone Clear Data Tool */}
-        {step === 'options' && (
-          <Card className="border-red-200 bg-red-50/50">
-            <CardHeader>
-              <CardTitle className="text-red-900 flex items-center gap-2">
-                <Trash2 className="w-5 h-5" />
-                Clear Data Tool
-              </CardTitle>
-              <CardDescription className="text-red-700">
-                Delete all data for the current organization without importing new data
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <p className="text-sm text-red-800">
-                Use this tool to clear all existing data independently of the import process.
-                This will delete all borrowers, loans, transactions, schedules, properties, expenses,
-                investors, and audit logs for the current organization.
-              </p>
-
-              {clearResult && (
-                <Alert className={clearResult.success ? 'border-emerald-300 bg-emerald-50' : 'border-red-300 bg-red-100'}>
-                  {clearResult.success ? (
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                  ) : (
-                    <AlertCircle className="w-4 h-4 text-red-600" />
-                  )}
-                  <AlertDescription className={clearResult.success ? 'text-emerald-800' : 'text-red-800'}>
-                    {clearResult.message}
-                  </AlertDescription>
-                </Alert>
-              )}
-
-              {/* Show logs during clearing */}
-              {clearing && logs.length > 0 && (
-                <div className="bg-slate-900 text-slate-100 rounded-lg p-3 font-mono text-xs max-h-48 overflow-y-auto">
-                  {logs.map((log, i) => (
-                    <div key={i} className="whitespace-pre-wrap">{log}</div>
-                  ))}
-                </div>
-              )}
-
-              <Button
-                variant="destructive"
-                onClick={handleClearDataOnly}
-                disabled={clearing || importing}
-                className="w-full"
-              >
-                {clearing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Clearing Data...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Clear All Data Now
-                  </>
-                )}
-              </Button>
             </CardContent>
           </Card>
         )}
@@ -2388,15 +1995,6 @@ export default function ImportLoandisc() {
                   </div>
                 </div>
 
-                {clearData && (
-                  <Alert className="border-red-200 bg-red-50">
-                    <Trash2 className="w-4 h-4 text-red-600" />
-                    <AlertDescription className="text-red-800">
-                      <strong>Data will be cleared:</strong> All existing borrowers, loans, and transactions will be deleted before import.
-                    </AlertDescription>
-                  </Alert>
-                )}
-
                 <Alert className="border-blue-200 bg-blue-50">
                   <Link2 className="w-4 h-4 text-blue-600" />
                   <AlertDescription className="text-blue-800">
@@ -2421,7 +2019,7 @@ export default function ImportLoandisc() {
                   <Button
                     onClick={handleImport}
                     disabled={importing || (summary.borrowers === 0 && summary.loans === 0 && summary.repayments === 0)}
-                    className={clearData ? 'bg-red-600 hover:bg-red-700' : 'bg-emerald-600 hover:bg-emerald-700'}
+                    className="bg-emerald-600 hover:bg-emerald-700"
                   >
                     {importing ? (
                       <>
@@ -2431,7 +2029,7 @@ export default function ImportLoandisc() {
                     ) : (
                       <>
                         <Play className="w-4 h-4 mr-2" />
-                        {clearData ? 'Clear & Import' : 'Start Import'}
+                        Start Import
                       </>
                     )}
                   </Button>

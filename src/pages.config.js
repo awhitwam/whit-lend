@@ -6,6 +6,7 @@ import Dashboard from './pages/Dashboard';
 import Expenses from './pages/Expenses';
 import ImportBorrowers from './pages/ImportBorrowers';
 import ImportDisbursements from './pages/ImportDisbursements';
+import ImportExpenses from './pages/ImportExpenses';
 import ImportLoandisc from './pages/ImportLoandisc';
 import ImportTransactions from './pages/ImportTransactions';
 import InvestorDetails from './pages/InvestorDetails';
@@ -32,6 +33,7 @@ export const PAGES = {
     "Expenses": Expenses,
     "ImportBorrowers": ImportBorrowers,
     "ImportDisbursements": ImportDisbursements,
+    "ImportExpenses": ImportExpenses,
     "ImportLoandisc": ImportLoandisc,
     "ImportTransactions": ImportTransactions,
     "InvestorDetails": InvestorDetails,
