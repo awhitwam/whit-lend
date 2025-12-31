@@ -144,7 +144,7 @@ function parseInterestRate(rateStr) {
 function mapLoanStatus(loandiscStatus) {
   const statusMap = {
     'Current': 'Live',
-    'Fully Paid': 'Fully Paid',
+    'Fully Paid': 'Closed',  // Map to Closed (Settled)
     'Restructured': 'Restructured',
     'Write-Off': 'Default',
     'Past Maturity': 'Live',

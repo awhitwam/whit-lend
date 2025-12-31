@@ -30,7 +30,8 @@ import {
   Clock,
   AlertTriangle,
   LayoutList,
-  RefreshCw
+  RefreshCw,
+  Banknote
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
@@ -79,6 +80,7 @@ const navigation = [
           { name: 'Loandisc Import', href: 'ImportLoandisc', icon: FileSpreadsheet },
           { name: 'Import Borrowers', href: 'ImportBorrowers', icon: Users },
           { name: 'Import Transactions', href: 'ImportTransactions', icon: CreditCard },
+          { name: 'Import Disbursements', href: 'ImportDisbursements', icon: Banknote },
         ]
       },
       { name: 'Audit Log', href: 'AuditLog', icon: History },
@@ -102,7 +104,7 @@ export default function Layout({ children, currentPageName }) {
   const location = useLocation();
 
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'Ledger', 'Expenses', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportBorrowers', 'ImportTransactions', 'AuditLog', 'SuperAdmin'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'Ledger', 'Expenses', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'AuditLog', 'SuperAdmin'];
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {
