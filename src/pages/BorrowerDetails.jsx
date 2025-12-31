@@ -1,15 +1,15 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useRef, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { getOrgJSON, setOrgJSON } from '@/lib/orgStorage';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import {
   ArrowLeft,
@@ -33,6 +33,7 @@ import {
   EyeOff
 } from 'lucide-react';
 import { Switch } from "@/components/ui/switch";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import BorrowerForm from '@/components/borrower/BorrowerForm';
 import BorrowerPaymentModal from '@/components/borrower/BorrowerPaymentModal';
 import { formatCurrency, applyManualPayment } from '@/components/loan/LoanCalculator';
@@ -347,11 +348,282 @@ export default function BorrowerDetails() {
   };
 
   const getStatusLabel = (status) => {
-    return status === 'Closed' ? 'Settled' : status;
+    const labels = {
+      'Closed': 'Settled',
+      'Restructured': 'Restruct',
+      'Defaulted': 'Default'
+    };
+    return labels[status] || status;
+  };
+
+  // Product name abbreviation
+  const getProductAbbreviation = (productName) => {
+    if (!productName) return '-';
+    const name = productName.toLowerCase();
+    const abbreviations = {
+      'bridging': 'BRG',
+      'development': 'DEV',
+      'commercial': 'COM',
+      'residential': 'RES',
+      'buy to let': 'BTL',
+      'btl': 'BTL',
+      'refurbishment': 'REF',
+      'refurb': 'REF',
+      'rolled up': 'RU',
+      'roll up': 'RU',
+      'interest only': 'IO',
+      'amortizing': 'AMT',
+      'bullet': 'BLT',
+      'mezzanine': 'MEZ',
+      'senior': 'SNR',
+      'junior': 'JNR',
+      'first charge': '1ST',
+      'second charge': '2ND',
+    };
+
+    let abbr = '';
+    for (const [keyword, code] of Object.entries(abbreviations)) {
+      if (name.includes(keyword)) {
+        abbr += (abbr ? '-' : '') + code;
+      }
+    }
+
+    if (!abbr) {
+      const words = productName.split(/[\s-]+/);
+      abbr = words.map(w => w[0]?.toUpperCase()).join('').slice(0, 4);
+    }
+
+    return abbr || productName.slice(0, 4).toUpperCase();
   };
 
   const liveCount = loans.filter(l => l.status === 'Live' || l.status === 'Active').length;
   const nonLiveCount = loans.length - liveCount;
+
+  // Column configuration - order and widths
+  const defaultColumnOrder = ['loan_number', 'description', 'date', 'product', 'principal', 'outstanding', 'last_payment', 'next_due', 'status'];
+  const defaultColumnWidths = {
+    loan_number: 80,
+    description: 150,
+    date: 75,
+    product: 55,
+    principal: 90,
+    outstanding: 90,
+    last_payment: 80,
+    next_due: 80,
+    status: 70,
+  };
+
+  const [columnOrder, setColumnOrder] = useState(() => {
+    const saved = getOrgJSON('borrower_loans_column_order', null);
+    return saved || defaultColumnOrder;
+  });
+  const [columnWidths, setColumnWidths] = useState(() => {
+    const saved = getOrgJSON('borrower_loans_column_widths', null);
+    return saved ? { ...defaultColumnWidths, ...saved } : defaultColumnWidths;
+  });
+  const resizingRef = useRef(null);
+  const dragRef = useRef(null);
+
+  // Save column settings to localStorage when they change
+  useEffect(() => {
+    setOrgJSON('borrower_loans_column_widths', columnWidths);
+  }, [columnWidths]);
+
+  useEffect(() => {
+    setOrgJSON('borrower_loans_column_order', columnOrder);
+  }, [columnOrder]);
+
+  // Column resize handlers
+  const startResize = (column, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizingRef.current = {
+      column,
+      startX: e.clientX,
+      startWidth: columnWidths[column]
+    };
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResize);
+  };
+
+  const handleMouseMove = (e) => {
+    if (!resizingRef.current) return;
+    const { column, startX, startWidth } = resizingRef.current;
+    const diff = e.clientX - startX;
+    const newWidth = Math.max(40, startWidth + diff);
+    setColumnWidths(prev => ({ ...prev, [column]: newWidth }));
+  };
+
+  const stopResize = () => {
+    resizingRef.current = null;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', stopResize);
+  };
+
+  // Column drag handlers for reordering
+  const handleDragStart = (e, column) => {
+    dragRef.current = column;
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/plain', column);
+    e.currentTarget.style.opacity = '0.5';
+  };
+
+  const handleDragEnd = (e) => {
+    e.currentTarget.style.opacity = '1';
+    dragRef.current = null;
+  };
+
+  const handleDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = (e, targetColumn) => {
+    e.preventDefault();
+    const sourceColumn = dragRef.current;
+    if (!sourceColumn || sourceColumn === targetColumn) return;
+
+    const newOrder = [...columnOrder];
+    const sourceIndex = newOrder.indexOf(sourceColumn);
+    const targetIndex = newOrder.indexOf(targetColumn);
+
+    newOrder.splice(sourceIndex, 1);
+    newOrder.splice(targetIndex, 0, sourceColumn);
+    setColumnOrder(newOrder);
+  };
+
+  const ResizeHandle = ({ column }) => (
+    <div
+      className="absolute right-0 top-0 bottom-0 w-1 cursor-col-resize hover:bg-blue-400 group-hover:bg-slate-300"
+      onMouseDown={(e) => startResize(column, e)}
+    />
+  );
+
+  // Column definitions with render functions
+  const columnDefs = {
+    loan_number: {
+      header: 'Loan#',
+      sortKey: 'loan_number',
+      align: 'left',
+      render: (loan) => (
+        <span className="font-mono font-semibold text-slate-700 text-sm">
+          {loan.loan_number || '-'}
+        </span>
+      )
+    },
+    description: {
+      header: 'Description',
+      sortKey: null,
+      align: 'left',
+      render: (loan) => (
+        <span className="text-sm text-slate-600">
+          {loan.description || '-'}
+        </span>
+      )
+    },
+    date: {
+      header: 'Date',
+      sortKey: 'start_date',
+      align: 'left',
+      render: (loan) => (
+        <span className="text-sm text-slate-600">
+          {loan.start_date ? format(new Date(loan.start_date), 'dd/MM/yy') : '-'}
+        </span>
+      )
+    },
+    product: {
+      header: 'Prod',
+      sortKey: 'product_name',
+      align: 'center',
+      render: (loan) => (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="font-mono text-sm font-medium text-slate-700 cursor-help">
+              {getProductAbbreviation(loan.product_name)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <p className="text-sm">{loan.product_name}</p>
+          </TooltipContent>
+        </Tooltip>
+      )
+    },
+    principal: {
+      header: 'Principal',
+      sortKey: 'principal_amount',
+      align: 'right',
+      render: (loan, { totalPrincipal }) => (
+        <span className="font-mono font-semibold text-sm text-slate-700">
+          {formatCurrency(totalPrincipal)}
+        </span>
+      )
+    },
+    outstanding: {
+      header: 'Outstanding',
+      sortKey: null,
+      align: 'right',
+      render: (loan, { totalOutstandingLoan }) => (
+        <span className={`font-mono font-medium text-sm ${totalOutstandingLoan <= 0 ? 'text-emerald-600' : 'text-red-600'} ${loan.status === 'Closed' && totalOutstandingLoan > 0 ? 'line-through opacity-60' : ''}`}>
+          {totalOutstandingLoan <= 0 ? '£0' : formatCurrency(totalOutstandingLoan)}
+        </span>
+      )
+    },
+    last_payment: {
+      header: 'Last Pay',
+      sortKey: 'last_payment',
+      align: 'left',
+      render: (loan, { lastPayment }) => (
+        lastPayment ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="text-sm font-medium text-slate-700 cursor-help">
+                {format(new Date(lastPayment.date), 'dd/MM/yy')}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="text-sm">{formatCurrency(lastPayment.amount)}</p>
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <span className="text-sm text-slate-400">-</span>
+        )
+      )
+    },
+    next_due: {
+      header: 'Next Due',
+      sortKey: 'next_due',
+      align: 'left',
+      render: (loan, { nextDue }) => (
+        nextDue ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className={`text-sm font-medium cursor-help ${new Date(nextDue.due_date) < new Date() ? 'text-red-600' : 'text-slate-700'}`}>
+                {format(new Date(nextDue.due_date), 'dd/MM/yy')}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>
+              <p className="text-sm">
+                {formatCurrency(nextDue.total_due || nextDue.interest_amount || 0)}
+                {new Date(nextDue.due_date) < new Date() && ' (Overdue)'}
+              </p>
+            </TooltipContent>
+          </Tooltip>
+        ) : (
+          <span className="text-sm text-slate-400">-</span>
+        )
+      )
+    },
+    status: {
+      header: 'Status',
+      sortKey: 'status',
+      align: 'left',
+      render: (loan) => (
+        <Badge className={`${getStatusColor(loan.status)} text-xs px-1.5 py-0`}>
+          {getStatusLabel(loan.status)}
+        </Badge>
+      )
+    }
+  };
 
   if (borrowerLoading) {
     return (
@@ -644,149 +916,88 @@ export default function BorrowerDetails() {
                 </CardContent>
               </Card>
             ) : (
-              <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-slate-50">
-                      <TableHead className="w-20">
-                        <button
-                          onClick={() => handleSort('loan_number')}
-                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
-                        >
-                          Loan #
-                          <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead className="w-24">
-                        <button
-                          onClick={() => handleSort('start_date')}
-                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
-                        >
-                          Date
-                          <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead>
-                        <button
-                          onClick={() => handleSort('product_name')}
-                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
-                        >
-                          Product
-                          <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead className="text-right">
-                        <button
-                          onClick={() => handleSort('principal_amount')}
-                          className="flex items-center gap-1 ml-auto hover:text-slate-900 font-semibold"
-                        >
-                          Principal
-                          <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead className="text-right">Outstanding</TableHead>
-                      <TableHead>
-                        <button
-                          onClick={() => handleSort('last_payment')}
-                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
-                        >
-                          Last Payment
-                          <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead>
-                        <button
-                          onClick={() => handleSort('next_due')}
-                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
-                        >
-                          Next Due
-                          <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead>
-                        <button
-                          onClick={() => handleSort('status')}
-                          className="flex items-center gap-1 hover:text-slate-900 font-semibold"
-                        >
-                          Status
-                          <ArrowUpDown className="w-3 h-3" />
-                        </button>
-                      </TableHead>
-                      <TableHead className="w-10"></TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {sortedLoans.map((loan) => {
-                      const loanDisbursements = getDisbursementsForLoan(loan.id);
-                      const actualPayments = getActualPaymentsForLoan(loan.id);
-                      const totalPrincipal = loan.principal_amount + loanDisbursements;
-                      const principalRemaining = totalPrincipal - actualPayments.principalPaid;
-                      const interestRemaining = (loan.total_interest || 0) - actualPayments.interestPaid;
-                      const totalOutstandingLoan = principalRemaining + interestRemaining;
-                      const lastPayment = getLastPaymentForLoan(loan.id);
-                      const nextDue = getNextDueForLoan(loan.id);
+              <TooltipProvider>
+                <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                  <div className="overflow-x-auto">
+                    <table className="w-full text-sm table-fixed" style={{ minWidth: '700px' }}>
+                      <thead>
+                        <tr className="bg-slate-50 border-b border-slate-200">
+                          {columnOrder.map((colKey) => {
+                            const col = columnDefs[colKey];
+                            if (!col) return null;
+                            return (
+                              <th
+                                key={colKey}
+                                className={`relative group px-2 py-2 font-medium text-slate-600 cursor-grab active:cursor-grabbing select-none text-${col.align} overflow-hidden`}
+                                style={{ width: columnWidths[colKey] }}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, colKey)}
+                                onDragEnd={handleDragEnd}
+                                onDragOver={handleDragOver}
+                                onDrop={(e) => handleDrop(e, colKey)}
+                              >
+                                {col.sortKey ? (
+                                  <button
+                                    onClick={() => handleSort(col.sortKey)}
+                                    className={`flex items-center gap-1 hover:text-slate-900 ${col.align === 'right' ? 'ml-auto' : col.align === 'center' ? 'mx-auto' : ''}`}
+                                  >
+                                    {col.header} <ArrowUpDown className="w-3 h-3" />
+                                  </button>
+                                ) : (
+                                  <span className={col.align === 'right' ? 'block text-right' : col.align === 'center' ? 'block text-center' : ''}>
+                                    {col.header}
+                                  </span>
+                                )}
+                                <ResizeHandle column={colKey} />
+                              </th>
+                            );
+                          })}
+                          <th className="w-6 px-1"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {sortedLoans.map((loan) => {
+                          const loanDisbursements = getDisbursementsForLoan(loan.id);
+                          const actualPayments = getActualPaymentsForLoan(loan.id);
+                          const totalPrincipal = loan.principal_amount + loanDisbursements;
+                          const principalRemaining = totalPrincipal - actualPayments.principalPaid;
+                          const interestRemaining = (loan.total_interest || 0) - actualPayments.interestPaid;
+                          const totalOutstandingLoan = principalRemaining + interestRemaining;
+                          const lastPayment = getLastPaymentForLoan(loan.id);
+                          const nextDue = getNextDueForLoan(loan.id);
 
-                      return (
-                        <TableRow
-                          key={loan.id}
-                          className="hover:bg-slate-50 cursor-pointer"
-                          onClick={() => navigate(createPageUrl(`LoanDetails?id=${loan.id}`))}
-                        >
-                          <TableCell className="font-mono font-semibold text-slate-700 text-sm">
-                            {loan.loan_number || '-'}
-                          </TableCell>
-                          <TableCell className="text-sm text-slate-600">
-                            {loan.start_date ? format(new Date(loan.start_date), 'dd/MM/yy') : '-'}
-                          </TableCell>
-                          <TableCell className="font-medium">
-                            <div className="text-sm">{loan.product_name}</div>
-                            {loan.description && (
-                              <div className="text-xs text-slate-500 font-normal truncate max-w-36">{loan.description}</div>
-                            )}
-                          </TableCell>
-                          <TableCell className="text-right font-mono font-semibold text-sm">
-                            {formatCurrency(totalPrincipal)}
-                          </TableCell>
-                          <TableCell className={`text-right font-mono font-medium text-sm ${totalOutstandingLoan <= 0 ? 'text-emerald-600' : 'text-red-600'} ${loan.status === 'Closed' && totalOutstandingLoan > 0 ? 'line-through opacity-60' : ''}`}>
-                            {totalOutstandingLoan <= 0 ? '£0.00' : formatCurrency(totalOutstandingLoan)}
-                          </TableCell>
-                          <TableCell>
-                            {lastPayment ? (
-                              <div>
-                                <div className="text-sm font-semibold text-slate-700">{format(new Date(lastPayment.date), 'dd/MM/yy')}</div>
-                                <div className="text-xs text-emerald-600">{formatCurrency(lastPayment.amount)}</div>
-                              </div>
-                            ) : (
-                              <span className="text-xs text-slate-400">No payments</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            {nextDue ? (
-                              <div>
-                                <div className={`text-sm font-semibold ${new Date(nextDue.due_date) < new Date() ? 'text-red-600' : 'text-slate-700'}`}>
-                                  {format(new Date(nextDue.due_date), 'dd/MM/yy')}
-                                  {new Date(nextDue.due_date) < new Date() && <span className="text-xs font-normal ml-1">(overdue)</span>}
-                                </div>
-                                <div className="text-xs text-slate-500">{formatCurrency(nextDue.total_due || nextDue.interest_amount || 0)}</div>
-                              </div>
-                            ) : (
-                              <span className="text-xs text-slate-400">{loan.status === 'Closed' ? 'Settled' : 'No schedule'}</span>
-                            )}
-                          </TableCell>
-                          <TableCell>
-                            <Badge className={getStatusColor(loan.status)}>
-                              {getStatusLabel(loan.status)}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <ChevronRight className="w-4 h-4 text-slate-400" />
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </div>
+                          const cellContext = { totalPrincipal, totalOutstandingLoan, lastPayment, nextDue };
+
+                          return (
+                            <tr
+                              key={loan.id}
+                              className="hover:bg-slate-50 cursor-pointer h-9"
+                              onClick={() => navigate(createPageUrl(`LoanDetails?id=${loan.id}`))}
+                            >
+                              {columnOrder.map((colKey) => {
+                                const col = columnDefs[colKey];
+                                if (!col) return null;
+                                return (
+                                  <td
+                                    key={colKey}
+                                    className={`px-2 py-1.5 text-${col.align} overflow-hidden whitespace-nowrap`}
+                                    style={{ maxWidth: columnWidths[colKey] }}
+                                  >
+                                    {col.render(loan, cellContext)}
+                                  </td>
+                                );
+                              })}
+                              <td className="px-1 py-1.5">
+                                <ChevronRight className="w-3 h-3 text-slate-400" />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </TooltipProvider>
             )}
           </TabsContent>
 
