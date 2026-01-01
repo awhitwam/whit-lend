@@ -318,7 +318,7 @@ const DEFAULT_LOAN_MAPPINGS = {
   'Non Deductable Fees': '_ignore',
   'Penalty Amount': '_ignore',
   'Next Due Date': '_ignore',
-  'Deductable Fees': '_ignore',
+  'Deductable Fees': 'arrangement_fee',
   'Loan Officer': '_ignore',
   'Collateral Status': '_ignore',
   'Borrower Mobile': '_ignore',
@@ -1106,12 +1106,15 @@ export default function ImportLoandisc() {
               duration: duration,
               status: mapLoanStatus(row['Loan Status Name']),
               description: loanTitle,
-              arrangement_fee: parseAmount(row['Arragement Fee']),
+              arrangement_fee: parseAmount(row['Deductable Fees']) || parseAmount(row['Arragement Fee']),
               exit_fee: parseAmount(row['Facility Exit Fee']),
               override_interest_rate: rateInfo.rate > 0,
               overridden_rate: rateInfo.rate,
               restructured_from_loan_number: restructuredFromNumber || null
             };
+
+            // Calculate net_disbursed (amount sent to borrower = principal - fees held back)
+            loanData.net_disbursed = loanData.principal_amount - (loanData.arrangement_fee || 0);
 
             // Filter to only valid database fields
             filteredLoanData = filterFields(loanData, VALID_LOAN_FIELDS);
