@@ -10,7 +10,12 @@
       "Bash(grep:*)",
       "Bash(find:*)",
       "Bash(npm run build:*)",
-      "Bash(node --check:*)"
+      "Bash(node --check:*)",
+      "Bash(npx vite build)",
+      "Bash(timeout 60 npm run build:*)",
+      "Bash(timeout 90 npm run build:*)",
+      "Bash(npx vite build:*)",
+      "Bash(pushd:*)"
     ]
   }
 }

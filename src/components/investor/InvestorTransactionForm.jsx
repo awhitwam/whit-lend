@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,14 +7,31 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 
-export default function InvestorTransactionForm({ investor, monthlyInterestDue, onSubmit, onCancel, isLoading }) {
+export default function InvestorTransactionForm({ investor, transaction, monthlyInterestDue, onSubmit, onCancel, isLoading }) {
+  const isEditing = !!transaction;
+
   const [formData, setFormData] = useState({
     type: 'capital_in',
     amount: '',
     date: format(new Date(), 'yyyy-MM-dd'),
     reference: '',
-    notes: ''
+    notes: '',
+    description: ''
   });
+
+  // Populate form when editing
+  useEffect(() => {
+    if (transaction) {
+      setFormData({
+        type: transaction.type || 'capital_in',
+        amount: transaction.amount?.toString() || '',
+        date: transaction.date || format(new Date(), 'yyyy-MM-dd'),
+        reference: transaction.reference || '',
+        notes: transaction.notes || '',
+        description: transaction.description || ''
+      });
+    }
+  }, [transaction]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -44,6 +61,7 @@ export default function InvestorTransactionForm({ investor, monthlyInterestDue, 
           <SelectContent>
             <SelectItem value="capital_in">Capital In</SelectItem>
             <SelectItem value="capital_out">Capital Out</SelectItem>
+            <SelectItem value="interest_accrual">Interest Accrued</SelectItem>
             <SelectItem value="interest_payment">Interest Payment</SelectItem>
           </SelectContent>
         </Select>
@@ -76,6 +94,16 @@ export default function InvestorTransactionForm({ investor, monthlyInterestDue, 
       </div>
 
       <div className="space-y-2">
+        <Label htmlFor="description">Description</Label>
+        <Input
+          id="description"
+          value={formData.description}
+          onChange={(e) => setFormData({...formData, description: e.target.value})}
+          placeholder="e.g. Monthly interest payment"
+        />
+      </div>
+
+      <div className="space-y-2">
         <Label htmlFor="reference">Reference</Label>
         <Input
           id="reference"
@@ -101,7 +129,7 @@ export default function InvestorTransactionForm({ investor, monthlyInterestDue, 
         </Button>
         <Button type="submit" disabled={isLoading}>
           {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-          Add Transaction
+          {isEditing ? 'Save Transaction' : 'Add Transaction'}
         </Button>
       </div>
     </form>

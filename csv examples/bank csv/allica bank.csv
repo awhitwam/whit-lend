@@ -1,0 +1,60 @@
+Date,TYPE,Transaction Type,Description,Amount,Balance
+10/10/2025,CRDT,Payment in,"From 360 FUNDING LTD, TRANSFER",29500,29500
+13/10/2025,DBIT,Payment out,"To Starling Bank, SBBB15575107952",-516,28984
+19/10/2025,CRDT,Payment in,"From M Welch, NOT PROVIDED",962.5,29946.5
+21/10/2025,DBIT,Card payment,403Pin* Loandisk         Coomera      AU,-44.04,29902.46
+28/10/2025,CRDT,Payment in,"From C & F Developments Ltd, Paid with Starling",5000,34902.46
+31/10/2025,DBIT,Payment out,"To Andrew Pearse, Expenses",-511.4,34391.06
+31/10/2025,CRDT,Payment in,"From MCL SOLUTIONS LIMI, MCL/CORNISH MIMS",6500,40891.06
+01/11/2025,CRDT,Cashback reward,Monthly cashback,0.44,40891.5
+02/11/2025,DBIT,Card payment,Google GSUITE_360funds.coDublin       IE,-42,40849.5
+03/11/2025,CRDT,Payment in,"From TLC CARE MANAGEMEN, TLC CARE MANAGEMEN",5025,45874.5
+03/11/2025,CRDT,Payment in,"From 360 FUNDING LTD, JOHNSON M P",1000,46874.5
+03/11/2025,DBIT,Payment out,"To ADW Enterprises Ltd, NOV Interest",-36388.9,10485.6
+03/11/2025,DBIT,Payment out,"To Andrew Whitwam, Expenses ",-521.2,9964.4
+03/11/2025,CRDT,Payment in,"From 360 FUNDING LTD, CHRIS GEORGIOU",1200,11164.4
+03/11/2025,CRDT,Payment in,"From 360 FUNDING LTD, CUBE YOR",2065.65,13230.05
+05/11/2025,CRDT,Payment in,"From NEST EGG INVESTMENTS (NORTHERN) LIMITED, Interest",2750,15980.05
+06/11/2025,CRDT,Payment in,"From 360 FUNDING LTD, MASHAM",650,16630.05
+06/11/2025,DBIT,Card payment,34SP.com Ltd             Prestwich    GB,-11.95,16618.1
+06/11/2025,CRDT,Payment in,"From SSG HOMES LIMITED, SHIPLEY",1425,18043.1
+06/11/2025,CRDT,Payment in,"From 360 FUNDING LTD, CUBE YOR LTD",4050,22093.1
+10/11/2025,CRDT,Payment in,"From NEST EGG INVESTMENTS (NORTHERN) LIMITED, Interest",1550,23643.1
+13/11/2025,DBIT,Payment out,"To Starling Bank, SBBB15575107952",-516.4,23126.7
+19/11/2025,CRDT,Payment in,"From M Welch, NOT PROVIDED",962.5,24089.2
+30/11/2025,DBIT,Payment out,"To Andrew Pearse, November expenses",-488.5,23600.7
+01/12/2025,CRDT,Payment in,"From TLC CARE MANAGEMEN, TLC CARE MANAGEMEN",5025,28625.7
+01/12/2025,CRDT,Payment in,"From C & F Developments Ltd, Paid with Starling",5000,33625.7
+01/12/2025,CRDT,Payment in,"From NEST EGG INVESTMENTS (NORTHERN) LIMITED, Interest",2000,35625.7
+01/12/2025,CRDT,Cashback reward,Monthly cashback,0.54,35626.24
+01/12/2025,CRDT,Payment in,"From 360 FUNDING LTD, TRANSFER",1000,36626.24
+01/12/2025,CRDT,Payment in,"From NEST EGG INVESTMENTS (NORTHERN) LIMITED, Interest",1000,37626.24
+01/12/2025,CRDT,Payment in,"From MCL SOLUTIONS LIMI, MCL/CORNISH MIMS",6500,44126.24
+01/12/2025,CRDT,Payment in,"From MCL SOLUTIONS LIMI, MCL/CORNISH MIMS",6500,50626.24
+01/12/2025,DBIT,Payment out,"To ADW Enterprises Ltd, Dec25 Interest",-35235.01,15391.23
+02/12/2025,DBIT,Payment out,"To Shared Equity Limited, VO18826",-34,15357.23
+02/12/2025,DBIT,Payment out,"To Shared Equity Limited, VO18841",-120,15237.23
+02/12/2025,DBIT,Payment out,"To Andrew Whitwam, Nov26 Expenses ",-496,14741.23
+02/12/2025,CRDT,Payment in,"From Chris Georgiou, G.F.LTD",1200,15941.23
+02/12/2025,CRDT,Payment in,"From SSG HOMES LIMITED, SHIPLEY",1425,17366.23
+02/12/2025,DBIT,Card payment,Google GSUITE_360funds.coDublin       IE,-42,17324.23
+04/12/2025,CRDT,Payment in,"From GOLD PLA LTD SW, CUBE",2065.65,19389.88
+05/12/2025,CRDT,Payment in,"From MASHAM HOL, REID MORTON HSE",650,20039.88
+06/12/2025,DBIT,Card payment,34SP.com Ltd             Prestwich    GB,-11.95,20027.93
+06/12/2025,DBIT,Card payment,WWW.LOANDISK.COM         +61280056782 AU,-96.85,19931.08
+08/12/2025,CRDT,Payment in,"From GOLD PLA LTD SW, CUBE",4050,23981.08
+09/12/2025,CRDT,Payment in,"From 360 FUNDING LTD, ADW LOAN",50000,73981.08
+12/12/2025,CRDT,Payment in,"From 360 FUNDING LTD, CUBE",2065.65,76046.73
+12/12/2025,CRDT,Payment in,"From 360 FUNDING LTD, CUBE",4050,80096.73
+12/12/2025,DBIT,Payment out,"To Starling Bank, BB Loan",-513.74,79582.99
+12/12/2025,DBIT,Payment out,"To Hethertons Solicitors Limited, TH/2025/4944",-50000,29582.99
+12/12/2025,DBIT,Payment out,"To Grove park Finance Ltd, TLC Variation",-1000,28582.99
+15/12/2025,DBIT,Payment out,"To Cube (Yorkshire) Ltd, Return of Funds ",-2065.65,26517.34
+15/12/2025,DBIT,Payment out,"To Cube (Yorkshire) Ltd, Return of Funds ",-4050,22467.34
+18/12/2025,DBIT,Direct Debit,"To ICO               , ZA591057",-47,22420.34
+19/12/2025,DBIT,Card payment,Starbucks 28696          York         GB,-7.4,22412.94
+19/12/2025,CRDT,Payment in,"From M Welch, NOT PROVIDED",962.5,23375.44
+20/12/2025,DBIT,Card payment,WWW.LOANDISK.COM         +61280056782 AU,-96.6,23278.84
+24/12/2025,DBIT,Card payment,CLAUDE.AI SUBSCRIPTION   +14152360599 US,-180,23098.84
+29/12/2025,DBIT,Card payment,WWW.LOANDISK.COM         +61280056782 AU,-63.09,23035.75
+29/12/2025,DBIT,Payment out,"To Andrew Pearse, Dec 25 Expenses ",-515.25,22520.5

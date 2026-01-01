@@ -19,6 +19,7 @@ const tableMap = {
   ExpenseType: 'expense_types',
   Investor: 'Investor',  // PascalCase in database
   InvestorTransaction: 'InvestorTransaction',  // PascalCase in database
+  InvestorProduct: 'investor_products',
   Organization: 'organizations',
   OrganizationMember: 'organization_members',
   Invitation: 'invitations',
@@ -28,7 +29,13 @@ const tableMap = {
   Property: 'properties',
   LoanProperty: 'loan_properties',
   ValueHistory: 'value_history',
-  FirstChargeHolder: 'first_charge_holders'
+  FirstChargeHolder: 'first_charge_holders',
+  // Scheduled job tracking
+  NightlyJobRun: 'nightly_job_runs',
+  // Bank reconciliation
+  BankStatement: 'bank_statements',
+  ReconciliationEntry: 'reconciliation_entries',
+  ReconciliationPattern: 'reconciliation_patterns'
 };
 
 // Tables that should have organization_id filter applied
@@ -43,13 +50,18 @@ const orgScopedTables = [
   'expense_types',
   'Investor',
   'InvestorTransaction',
+  'investor_products',
   'audit_logs',
   'invitations',  // SECURITY: Invitations are org-scoped
   // Security/Property tables
   'properties',
   'loan_properties',
   'value_history',
-  'first_charge_holders'
+  'first_charge_holders',
+  // Bank reconciliation
+  'bank_statements',
+  'reconciliation_entries',
+  'reconciliation_patterns'
 ];
 
 // Map column names that differ between code and database
@@ -62,6 +74,9 @@ const columnMap = {
     created_date: 'created_at'
   },
   loan_products: {
+    created_date: 'created_at'
+  },
+  investor_products: {
     created_date: 'created_at'
   }
 };

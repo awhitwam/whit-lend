@@ -174,7 +174,7 @@ export default function ImportDisbursements() {
       amount: Math.abs(amount),
       principal_applied: Math.abs(amount),
       interest_applied: 0,
-      fee_applied: 0,
+      fees_applied: 0,
       description: row[columnMapping.description] || `Disbursement - Imported`,
       is_deleted: false
     };

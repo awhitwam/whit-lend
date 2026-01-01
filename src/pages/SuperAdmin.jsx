@@ -4,11 +4,13 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
-import { ShieldCheck, Building2, Plus, Trash2, AlertTriangle, Loader2, Receipt, FileText } from 'lucide-react';
+import { ShieldCheck, Building2, Plus, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, Clock, Play, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
 import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
 import { useOrganization } from '@/lib/OrganizationContext';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
+import { supabase } from '@/lib/supabaseClient';
+import { format } from 'date-fns';
 
 export default function SuperAdmin() {
   const { canAdmin, currentOrganization } = useOrganization();
@@ -20,6 +22,64 @@ export default function SuperAdmin() {
   const [clearResult, setClearResult] = useState(null);
   const [logs, setLogs] = useState([]);
   const [clearProgress, setClearProgress] = useState({ current: 0, total: 0, step: '' });
+
+  // Nightly jobs state
+  const [runningJob, setRunningJob] = useState(null);
+  const [jobResult, setJobResult] = useState(null);
+
+  // Fetch recent job runs
+  const { data: recentJobRuns = [] } = useQuery({
+    queryKey: ['nightly-job-runs'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('nightly_job_runs')
+        .select('*')
+        .order('run_date', { ascending: false })
+        .limit(10);
+      if (error) throw error;
+      return data || [];
+    }
+  });
+
+  // Run nightly job mutation
+  const runNightlyJobMutation = useMutation({
+    mutationFn: async (tasks) => {
+      setRunningJob(tasks.join(', '));
+      setJobResult(null);
+
+      const { data: { session } } = await supabase.auth.getSession();
+
+      const response = await fetch(
+        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/nightly-jobs`,
+        {
+          method: 'POST',
+          headers: {
+            'Authorization': `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY}`,
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({ tasks })
+        }
+      );
+
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || 'Failed to run nightly jobs');
+      }
+
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setJobResult(data);
+      setRunningJob(null);
+      queryClient.invalidateQueries({ queryKey: ['nightly-job-runs'] });
+      queryClient.invalidateQueries({ queryKey: ['investors'] });
+      queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+    },
+    onError: (error) => {
+      setJobResult({ error: error.message });
+      setRunningJob(null);
+    }
+  });
 
   const addLog = (message) => {
     setLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
@@ -308,6 +368,68 @@ export default function SuperAdmin() {
     addLog('Data cleared successfully');
   };
 
+  // Clear investor data only function
+  const clearInvestorDataOnly = async () => {
+    addLog('Clearing investor data...');
+
+    // 1. Delete investor transactions first (references investors via investor_id)
+    setClearProgress({ current: 1, total: 2, step: 'Deleting investor transactions...' });
+    try {
+      const investorTx = await api.entities.InvestorTransaction.list();
+      if (investorTx.length > 0) {
+        addLog(`  Found ${investorTx.length} investor transactions to delete...`);
+        let deletedCount = 0;
+        for (const tx of investorTx) {
+          await api.entities.InvestorTransaction.delete(tx.id);
+          deletedCount++;
+          if (deletedCount % 50 === 0) {
+            addLog(`    Deleted ${deletedCount} of ${investorTx.length} transactions...`);
+          }
+        }
+        addLog(`  Investor transactions deletion complete: ${deletedCount} deleted`);
+      } else {
+        addLog(`  No investor transactions found to delete`);
+      }
+    } catch (e) {
+      throw new Error(`Could not delete investor transactions: ${e.message}`);
+    }
+
+    // 2. Delete investors
+    setClearProgress({ current: 2, total: 2, step: 'Deleting investors...' });
+    try {
+      const investors = await api.entities.Investor.list();
+      if (investors.length > 0) {
+        addLog(`  Found ${investors.length} investors to delete...`);
+        let deletedCount = 0;
+        let investorErrors = 0;
+        for (const inv of investors) {
+          try {
+            await api.entities.Investor.delete(inv.id);
+            deletedCount++;
+            if (deletedCount % 50 === 0) {
+              addLog(`    Deleted ${deletedCount} of ${investors.length} investors...`);
+            }
+          } catch (err) {
+            investorErrors++;
+            if (investorErrors <= 3) {
+              addLog(`    Error deleting investor ${inv.name}: ${err.message}`);
+            }
+          }
+        }
+        addLog(`  Investors deletion complete: ${deletedCount} deleted`);
+        if (investorErrors > 0) {
+          addLog(`  Failed to delete ${investorErrors} investors`);
+        }
+      } else {
+        addLog(`  No investors found to delete`);
+      }
+    } catch (e) {
+      throw new Error(`Could not list/delete investors: ${e.message}`);
+    }
+
+    addLog('Investor data cleared successfully');
+  };
+
   // Clear expenses only function
   const clearExpensesOnly = async () => {
     addLog('Clearing expenses...');
@@ -374,6 +496,28 @@ export default function SuperAdmin() {
       await clearAllData();
       setClearResult({ success: true, message: 'All data cleared successfully!' });
       queryClient.invalidateQueries();
+    } catch (err) {
+      setClearResult({ success: false, message: err.message });
+    } finally {
+      setClearing(false);
+    }
+  };
+
+  // Handle clear investor data only
+  const handleClearInvestorData = async () => {
+    if (!window.confirm(`Are you sure you want to delete ALL investor data for "${currentOrganization?.name}"?\n\nThis will delete:\n• All investor transactions\n• All investor accounts\n\nInvestor products will be preserved. This action CANNOT be undone!`)) {
+      return;
+    }
+
+    setClearing(true);
+    setClearResult(null);
+    setLogs([]);
+
+    try {
+      await clearInvestorDataOnly();
+      setClearResult({ success: true, message: 'All investor data cleared successfully!' });
+      queryClient.invalidateQueries(['investors']);
+      queryClient.invalidateQueries(['investorTransactions']);
     } catch (err) {
       setClearResult({ success: false, message: err.message });
     } finally {
@@ -494,6 +638,199 @@ export default function SuperAdmin() {
                   </>
                 )}
               </Button>
+            </CardContent>
+          </Card>
+
+          {/* Clear Investor Data Only */}
+          <Card className="border-blue-200">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-blue-900">
+                <TrendingUp className="w-5 h-5" />
+                Clear Investor Data
+              </CardTitle>
+              <CardDescription className="text-blue-700">
+                Delete all investors and transactions for {currentOrganization?.name || 'current organization'}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-slate-600 mb-4">
+                This will permanently delete all investor accounts and their transactions.
+                Investor products will be preserved. Use this before re-importing investors from Loandisc.
+              </p>
+              <Button
+                variant="outline"
+                onClick={handleClearInvestorData}
+                disabled={clearing}
+                className="border-blue-300 text-blue-900 hover:bg-blue-100"
+              >
+                {clearing ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Clearing...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Clear All Investor Data
+                  </>
+                )}
+              </Button>
+            </CardContent>
+          </Card>
+
+          {/* Nightly Jobs */}
+          <Card className="border-slate-200 md:col-span-2">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="w-5 h-5 text-slate-600" />
+                Nightly Jobs
+              </CardTitle>
+              <CardDescription>
+                Run scheduled maintenance tasks manually or view recent automated runs
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => runNightlyJobMutation.mutate(['investor_interest'])}
+                  disabled={!!runningJob}
+                  className="justify-start"
+                >
+                  {runningJob?.includes('investor_interest') ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4 mr-2" />
+                  )}
+                  Post Investor Interest
+                </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={() => runNightlyJobMutation.mutate(['loan_schedules'])}
+                  disabled={!!runningJob}
+                  className="justify-start"
+                >
+                  {runningJob?.includes('loan_schedules') ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4 mr-2" />
+                  )}
+                  Update Loan Schedules
+                </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={() => runNightlyJobMutation.mutate(['recalculate_balances'])}
+                  disabled={!!runningJob}
+                  className="justify-start"
+                >
+                  {runningJob?.includes('recalculate_balances') ? (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  ) : (
+                    <Play className="w-4 h-4 mr-2" />
+                  )}
+                  Recalculate Balances
+                </Button>
+              </div>
+
+              <Button
+                onClick={() => runNightlyJobMutation.mutate(['investor_interest', 'loan_schedules'])}
+                disabled={!!runningJob}
+                className="w-full"
+              >
+                {runningJob ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Running: {runningJob}
+                  </>
+                ) : (
+                  <>
+                    <Play className="w-4 h-4 mr-2" />
+                    Run All Nightly Jobs
+                  </>
+                )}
+              </Button>
+
+              {/* Job Result */}
+              {jobResult && (
+                <Alert className={jobResult.error ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}>
+                  {jobResult.error ? (
+                    <XCircle className="w-4 h-4 text-red-600" />
+                  ) : (
+                    <CheckCircle className="w-4 h-4 text-emerald-600" />
+                  )}
+                  <AlertDescription className={jobResult.error ? 'text-red-800' : 'text-emerald-800'}>
+                    {jobResult.error ? (
+                      <span>Error: {jobResult.error}</span>
+                    ) : (
+                      <div className="space-y-1">
+                        <p className="font-medium">Job completed successfully</p>
+                        <p className="text-sm">
+                          Processed: {jobResult.summary?.total_processed || 0} |
+                          Succeeded: {jobResult.summary?.total_succeeded || 0} |
+                          Failed: {jobResult.summary?.total_failed || 0} |
+                          Skipped: {jobResult.summary?.total_skipped || 0}
+                        </p>
+                      </div>
+                    )}
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Recent Job Runs */}
+              {recentJobRuns.length > 0 && (
+                <div className="mt-4">
+                  <h4 className="text-sm font-medium text-slate-700 mb-2">Recent Job Runs</h4>
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-50 border-b">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Date</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Task</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Status</th>
+                          <th className="px-3 py-2 text-right font-medium text-slate-600">Results</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {recentJobRuns.map((run) => (
+                          <tr key={run.id} className="hover:bg-slate-50">
+                            <td className="px-3 py-2 text-slate-700">
+                              {format(new Date(run.run_date), 'dd MMM HH:mm')}
+                            </td>
+                            <td className="px-3 py-2 text-slate-700">
+                              {run.task_name === 'investor_interest' && 'Investor Interest'}
+                              {run.task_name === 'loan_schedules' && 'Loan Schedules'}
+                              {run.task_name === 'recalculate_balances' && 'Balance Recalc'}
+                            </td>
+                            <td className="px-3 py-2">
+                              {run.status === 'success' && (
+                                <span className="inline-flex items-center gap-1 text-emerald-700">
+                                  <CheckCircle className="w-3.5 h-3.5" /> Success
+                                </span>
+                              )}
+                              {run.status === 'partial' && (
+                                <span className="inline-flex items-center gap-1 text-amber-700">
+                                  <AlertCircle className="w-3.5 h-3.5" /> Partial
+                                </span>
+                              )}
+                              {run.status === 'failed' && (
+                                <span className="inline-flex items-center gap-1 text-red-700">
+                                  <XCircle className="w-3.5 h-3.5" /> Failed
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right text-slate-600">
+                              {run.succeeded}/{run.processed}
+                              {run.skipped > 0 && ` (${run.skipped} skipped)`}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </CardContent>
           </Card>
 

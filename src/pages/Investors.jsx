@@ -20,7 +20,7 @@ export default function Investors() {
 
   const { data: investors = [], isLoading } = useQuery({
     queryKey: ['investors'],
-    queryFn: () => api.entities.Investor.list('-created_date')
+    queryFn: () => api.entities.Investor.list()
   });
 
   const createMutation = useMutation({

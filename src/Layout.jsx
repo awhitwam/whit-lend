@@ -31,7 +31,9 @@ import {
   AlertTriangle,
   LayoutList,
   RefreshCw,
-  Banknote
+  Banknote,
+  FileCheck,
+  DollarSign
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
@@ -63,9 +65,23 @@ const navigation = [
       { name: 'All Loans', href: 'Loans?status=all', icon: LayoutList },
     ]
   },
-  { name: 'Investors', href: 'Investors', icon: TrendingUp },
-  { name: 'Ledger', href: 'Ledger', icon: Building2 },
-  { name: 'Expenses', href: 'Expenses', icon: Receipt },
+  {
+    name: 'Investors',
+    icon: TrendingUp,
+    children: [
+      { name: 'All Investors', href: 'Investors', icon: List },
+      { name: 'Investor Products', href: 'InvestorProducts', icon: Package },
+    ]
+  },
+  {
+    name: 'Finance',
+    icon: DollarSign,
+    children: [
+      { name: 'Ledger', href: 'Ledger', icon: Building2 },
+      { name: 'Bank Reconciliation', href: 'BankReconciliation', icon: FileCheck },
+      { name: 'Expenses', href: 'Expenses', icon: Receipt },
+    ]
+  },
   {
     name: 'Settings',
     icon: Settings,
@@ -82,6 +98,8 @@ const navigation = [
           { name: 'Import Borrowers', href: 'ImportBorrowers', icon: Users },
           { name: 'Import Transactions', href: 'ImportTransactions', icon: CreditCard },
           { name: 'Import Disbursements', href: 'ImportDisbursements', icon: Banknote },
+          { name: 'Import Investors', href: 'ImportInvestors', icon: TrendingUp },
+          { name: 'Import Investor Txns', href: 'ImportInvestorTransactions', icon: CreditCard },
         ]
       },
       { name: 'Audit Log', href: 'AuditLog', icon: History },
@@ -105,7 +123,7 @@ export default function Layout({ children, currentPageName }) {
   const location = useLocation();
 
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'Ledger', 'Expenses', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'AuditLog', 'SuperAdmin'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'BankReconciliation', 'Expenses', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin'];
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {

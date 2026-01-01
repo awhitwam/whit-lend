@@ -256,7 +256,7 @@ export default function ImportTransactions() {
       amount: Math.abs(amount),
       principal_applied: Math.abs(principalApplied),
       interest_applied: Math.abs(interestApplied),
-      fee_applied: Math.abs(feeApplied),
+      fees_applied: Math.abs(feeApplied),
       description: row[columnMapping.description] || `${rawType} - Imported from ${loanNumber}`,
       original_loan_number: loanNumber !== targetLoanNumber ? loanNumber : null,
       is_deleted: false
@@ -293,7 +293,7 @@ export default function ImportTransactions() {
       for (const transaction of transactions) {
         try {
           if (transaction.amount > 0 || transaction.principal_applied > 0 ||
-              transaction.interest_applied > 0 || transaction.fee_applied > 0) {
+              transaction.interest_applied > 0 || transaction.fees_applied > 0) {
             validTransactions.push(transaction);
           } else {
             skipped++;

@@ -7,9 +7,12 @@ import Expenses from './pages/Expenses';
 import ImportBorrowers from './pages/ImportBorrowers';
 import ImportDisbursements from './pages/ImportDisbursements';
 import ImportExpenses from './pages/ImportExpenses';
+import ImportInvestors from './pages/ImportInvestors';
+import ImportInvestorTransactions from './pages/ImportInvestorTransactions';
 import ImportLoandisc from './pages/ImportLoandisc';
 import ImportTransactions from './pages/ImportTransactions';
 import InvestorDetails from './pages/InvestorDetails';
+import InvestorProducts from './pages/InvestorProducts';
 import Investors from './pages/Investors';
 import Ledger from './pages/Ledger';
 import Loans from './pages/Loans';
@@ -21,6 +24,7 @@ import Login from './pages/Login';
 import Users from './pages/Users';
 import AuditLog from './pages/AuditLog';
 import SuperAdmin from './pages/SuperAdmin';
+import BankReconciliation from './pages/BankReconciliation';
 import __Layout from './Layout.jsx';
 
 
@@ -34,9 +38,12 @@ export const PAGES = {
     "ImportBorrowers": ImportBorrowers,
     "ImportDisbursements": ImportDisbursements,
     "ImportExpenses": ImportExpenses,
+    "ImportInvestors": ImportInvestors,
+    "ImportInvestorTransactions": ImportInvestorTransactions,
     "ImportLoandisc": ImportLoandisc,
     "ImportTransactions": ImportTransactions,
     "InvestorDetails": InvestorDetails,
+    "InvestorProducts": InvestorProducts,
     "Investors": Investors,
     "Ledger": Ledger,
     "Loans": Loans,
@@ -48,6 +55,7 @@ export const PAGES = {
     "Users": Users,
     "AuditLog": AuditLog,
     "SuperAdmin": SuperAdmin,
+    "BankReconciliation": BankReconciliation,
 }
 
 export const pagesConfig = {
