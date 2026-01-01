@@ -331,7 +331,7 @@ const DEFAULT_LOAN_MAPPINGS = {
   'Pending Due': '_ignore',
   'Last Repayment': '_ignore',
   'Total Principal Balance': '_ignore',
-  'Total Principal Paid': '_ignore',
+  'Total Principal Paid': '_total_principal_paid',
   'Total Interest Paid': '_ignore',
   'Total Penalty Paid': '_ignore',
   'Total Fees Paid': '_ignore',
@@ -340,7 +340,7 @@ const DEFAULT_LOAN_MAPPINGS = {
   'Group Name': '_ignore',
   'Borrower Age': '_ignore',
   'Borrower Date 0f Birth': '_ignore',
-  'Principal Released After Deductable Fees': '_ignore',
+  'Principal Released After Deductable Fees': '_principal_released',
   'Days Past Maturity': '_ignore',
   'Total Penalty Balance': '_ignore',
   'Total Fees Balance': '_ignore',
@@ -548,7 +548,12 @@ function applyMappings(row, mappings, parseOptions = {}) {
       noteParts.push(`${csvColumn}: ${value.trim()}`);
     } else if (targetField.startsWith('_')) {
       // Special handling fields (like _borrower_number, _loan_number, etc.)
-      result[targetField] = value.trim();
+      // Still apply amount parsing if specified in amountFields
+      let parsedValue = value.trim();
+      if (parseOptions.amountFields?.includes(targetField)) {
+        parsedValue = parseAmount(parsedValue);
+      }
+      result[targetField] = parsedValue;
     } else {
       // Regular field - apply parsing if needed
       let parsedValue = value.trim();
@@ -728,7 +733,7 @@ export default function ImportLoandisc() {
   const transformLoan = (row) => {
     const mapped = applyMappings(row, loanMappings, {
       dateFields: ['start_date'],
-      amountFields: ['principal_amount', 'arrangement_fee', 'exit_fee']
+      amountFields: ['principal_amount', 'arrangement_fee', 'exit_fee', '_total_principal_paid', '_principal_released']
     });
 
     // Parse interest rate if provided
@@ -749,6 +754,31 @@ export default function ImportLoandisc() {
       }
     }
 
+    // For active loans, calculate arrangement fee if missing
+    // arrangement_fee = Total Principal Paid - Principal Released After Deductable Fees
+    const loandiscStatus = mapped._status || '';
+    const isActiveLoan = ['Current', 'Past Maturity', 'Missed Repayment', 'Arrears'].includes(loandiscStatus);
+    let arrangementFee = mapped.arrangement_fee || 0;
+    let netDisbursed = null;
+
+    if (isActiveLoan) {
+      const totalPrincipalPaid = mapped._total_principal_paid || 0;
+      const principalReleased = mapped._principal_released || 0;
+
+      // Calculate arrangement fee if not provided and we have the required fields
+      if (arrangementFee === 0 && totalPrincipalPaid > 0 && principalReleased > 0) {
+        const calculatedFee = totalPrincipalPaid - principalReleased;
+        if (calculatedFee > 0) {
+          arrangementFee = calculatedFee;
+        }
+      }
+
+      // Use Principal Released After Deductable Fees as net_disbursed
+      if (principalReleased > 0) {
+        netDisbursed = principalReleased;
+      }
+    }
+
     // Only use Loan Title as description - nothing else
     return {
       loan_number: loanNumber,
@@ -757,8 +787,9 @@ export default function ImportLoandisc() {
       borrower_name: mapped.borrower_name || '',
       _product_name: mapped._product_name || '',
       principal_amount: mapped.principal_amount || 0,
-      arrangement_fee: mapped.arrangement_fee || 0,
+      arrangement_fee: arrangementFee,
       exit_fee: mapped.exit_fee || 0,
+      net_disbursed: netDisbursed,
       start_date: mapped.start_date || null,
       duration: mapped.duration ? parseInt(mapped.duration) : null,
       status: mapped._status ? mapLoanStatus(mapped._status) : 'Live',

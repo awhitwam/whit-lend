@@ -10,7 +10,8 @@
  * @returns {string} The org-scoped key (e.g., "uuid_baseKey")
  */
 export function getOrgStorageKey(baseKey) {
-  const orgId = localStorage.getItem('currentOrganizationId');
+  // Use sessionStorage for org ID (per-tab isolation)
+  const orgId = sessionStorage.getItem('currentOrganizationId');
   if (!orgId) return baseKey; // Fallback for unauthenticated state
   return `${orgId}_${baseKey}`;
 }

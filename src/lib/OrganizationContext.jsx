@@ -80,8 +80,9 @@ export const OrganizationProvider = ({ children }) => {
 
       setOrganizations(orgs);
 
-      // Set current organization from localStorage or default to first
-      const savedOrgId = localStorage.getItem('currentOrganizationId');
+      // Set current organization from sessionStorage or default to first
+      // Using sessionStorage (not localStorage) so each browser tab/window can have its own organization
+      const savedOrgId = sessionStorage.getItem('currentOrganizationId');
       const savedOrg = orgs.find(o => o.id === savedOrgId);
 
       if (savedOrg) {
@@ -90,7 +91,7 @@ export const OrganizationProvider = ({ children }) => {
       } else if (orgs.length > 0) {
         setCurrentOrganization(orgs[0]);
         setMemberRole(orgs[0].role);
-        localStorage.setItem('currentOrganizationId', orgs[0].id);
+        sessionStorage.setItem('currentOrganizationId', orgs[0].id);
       }
     } catch (error) {
       console.error('Error fetching organizations:', error);
@@ -104,7 +105,7 @@ export const OrganizationProvider = ({ children }) => {
     if (org) {
       setCurrentOrganization(org);
       setMemberRole(org.role);
-      localStorage.setItem('currentOrganizationId', organizationId);
+      sessionStorage.setItem('currentOrganizationId', organizationId);
 
       // Invalidate all queries to refetch with new organization context
       // This will be handled by queryClient in consuming components

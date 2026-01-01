@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Upload, CheckCircle2, AlertCircle, Loader2, Search, FileCheck,
   ArrowUpRight, ArrowDownLeft, Check, Link2, Unlink,
-  Sparkles, Wand2, Zap, CheckSquare
+  Sparkles, Wand2, Zap, CheckSquare, Receipt
 } from 'lucide-react';
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -177,6 +177,32 @@ export default function BankReconciliation() {
   // Bulk selection state
   const [selectedEntries, setSelectedEntries] = useState(new Set());
   const [isBulkMatching, setIsBulkMatching] = useState(false);
+  const [bulkMatchProgress, setBulkMatchProgress] = useState({ current: 0, total: 0 });
+
+  // Bulk expense creation state
+  const [entryExpenseTypes, setEntryExpenseTypes] = useState(new Map()); // Map of entryId -> expenseTypeId
+  const [isBulkCreatingExpenses, setIsBulkCreatingExpenses] = useState(false);
+  const [bulkExpenseProgress, setBulkExpenseProgress] = useState({ current: 0, total: 0 });
+
+  const setEntryExpenseType = (entryId, expenseTypeId) => {
+    setEntryExpenseTypes(prev => {
+      const next = new Map(prev);
+      if (expenseTypeId) {
+        next.set(entryId, expenseTypeId);
+      } else {
+        next.delete(entryId);
+      }
+      return next;
+    });
+    // Auto-select the row when an expense type is assigned
+    if (expenseTypeId) {
+      setSelectedEntries(prev => {
+        const next = new Set(prev);
+        next.add(entryId);
+        return next;
+      });
+    }
+  };
 
   // State for viewing/un-reconciling entries
   const [isUnreconciling, setIsUnreconciling] = useState(false);
@@ -1200,6 +1226,10 @@ export default function BankReconciliation() {
             throw new Error(`Entries don't balance. Net: ${formatCurrency(netAmount)}`);
           }
 
+          // Generate a unique group ID to link these offset entries together
+          const offsetGroupId = `offset_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          const notesWithGroupId = `[${offsetGroupId}] ${offsetNotes}`;
+
           // Mark all entries as reconciled and create reconciliation entries
           for (const entry of allEntries) {
             await api.entities.BankStatement.update(entry.id, {
@@ -1211,7 +1241,7 @@ export default function BankReconciliation() {
               bank_statement_id: entry.id,
               reconciliation_type: 'offset',
               amount: entry.amount,
-              notes: offsetNotes
+              notes: notesWithGroupId
             });
           }
 
@@ -1338,6 +1368,33 @@ export default function BankReconciliation() {
             } : null
           };
         }
+      } else if (re.reconciliation_type === 'offset') {
+        // For offset entries, find all other bank statements reconciled together
+        // They share the same offset group ID (extracted from notes: "[offset_xxx] reason")
+        const groupIdMatch = re.notes?.match(/^\[offset_[^\]]+\]/);
+        const groupId = groupIdMatch ? groupIdMatch[0] : null;
+
+        // Extract the user-readable notes (without the group ID prefix)
+        const displayNotes = re.notes?.replace(/^\[offset_[^\]]+\]\s*/, '') || '';
+
+        const offsetPartners = groupId ? reconciliationEntries
+          .filter(other =>
+            other.reconciliation_type === 'offset' &&
+            other.bank_statement_id !== entryId &&
+            other.notes?.startsWith(groupId)
+          )
+          .map(other => {
+            const stmt = bankStatements.find(s => s.id === other.bank_statement_id);
+            return stmt;
+          })
+          .filter(Boolean) : [];
+
+        entityType = 'Offset';
+        entityDetails = {
+          amount: re.amount,
+          notes: displayNotes,
+          offsetPartners
+        };
       }
 
       return {
@@ -1564,7 +1621,8 @@ export default function BankReconciliation() {
 
   // Quick match - instantly reconcile a single entry with its suggestion (no review)
   // silent=true suppresses alert for bulk operations
-  const handleQuickMatch = async (entry, suggestion, silent = false) => {
+  // skipInvalidation=true skips query invalidation (for bulk operations that invalidate at the end)
+  const handleQuickMatch = async (entry, suggestion, silent = false, skipInvalidation = false) => {
     if (!suggestion) return;
 
     try {
@@ -1609,12 +1667,14 @@ export default function BankReconciliation() {
           reconciled_at: new Date().toISOString()
         });
 
-        // Refresh data
-        queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
-        queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
-        queryClient.invalidateQueries({ queryKey: ['transactions'] });
-        if (isInvestorGroup) {
-          queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+        // Refresh data (skip if bulk operation will do it at the end)
+        if (!skipInvalidation) {
+          queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+          queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+          queryClient.invalidateQueries({ queryKey: ['transactions'] });
+          if (isInvestorGroup) {
+            queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+          }
         }
 
         return; // Early return since we handled everything
@@ -1742,14 +1802,16 @@ export default function BankReconciliation() {
           }
         }
 
-        // Refresh data
-        queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
-        queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
-        queryClient.invalidateQueries({ queryKey: ['reconciliation-patterns'] });
-        queryClient.invalidateQueries({ queryKey: ['transactions'] });
-        queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
-        queryClient.invalidateQueries({ queryKey: ['investors'] });
-        queryClient.invalidateQueries({ queryKey: ['expenses'] });
+        // Refresh data (skip if bulk operation will do it at the end)
+        if (!skipInvalidation) {
+          queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+          queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+          queryClient.invalidateQueries({ queryKey: ['reconciliation-patterns'] });
+          queryClient.invalidateQueries({ queryKey: ['transactions'] });
+          queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+          queryClient.invalidateQueries({ queryKey: ['investors'] });
+          queryClient.invalidateQueries({ queryKey: ['expenses'] });
+        }
       } else {
         // No transaction was created or linked - show error
         console.error('Quick match failed - no transaction created/linked:', {
@@ -1773,29 +1835,48 @@ export default function BankReconciliation() {
   const handleBulkMatch = async () => {
     if (selectedEntries.size === 0) return;
 
+    // Count entries that will be processed
+    const entriesToProcess = [...selectedEntries].filter(id => {
+      const entry = bankStatements.find(s => s.id === id);
+      const suggestion = suggestedMatches.get(id);
+      return entry && suggestion && !entry.is_reconciled;
+    });
+
     setIsBulkMatching(true);
+    setBulkMatchProgress({ current: 0, total: entriesToProcess.length });
+
     let succeeded = 0;
     let failed = 0;
     const errors = [];
 
-    for (const entryId of selectedEntries) {
+    for (const entryId of entriesToProcess) {
       const entry = bankStatements.find(s => s.id === entryId);
       const suggestion = suggestedMatches.get(entryId);
 
-      if (entry && suggestion && !entry.is_reconciled) {
-        try {
-          await handleQuickMatch(entry, suggestion, true); // silent mode for bulk
-          succeeded++;
-        } catch (error) {
-          console.error('Bulk match error for entry:', entryId, error);
-          errors.push(`${entry.description?.substring(0, 30) || entryId}: ${error.message}`);
-          failed++;
-        }
+      try {
+        await handleQuickMatch(entry, suggestion, true, true); // silent mode + skip invalidation for bulk
+        succeeded++;
+      } catch (error) {
+        console.error('Bulk match error for entry:', entryId, error);
+        errors.push(`${entry.description?.substring(0, 30) || entryId}: ${error.message}`);
+        failed++;
       }
+
+      setBulkMatchProgress({ current: succeeded + failed, total: entriesToProcess.length });
     }
+
+    // Invalidate all queries once at the end (much faster than per-entry)
+    queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+    queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+    queryClient.invalidateQueries({ queryKey: ['reconciliation-patterns'] });
+    queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+    queryClient.invalidateQueries({ queryKey: ['investors'] });
+    queryClient.invalidateQueries({ queryKey: ['expenses'] });
 
     setSelectedEntries(new Set());
     setIsBulkMatching(false);
+    setBulkMatchProgress({ current: 0, total: 0 });
     setAutoMatchResults({ succeeded, failed });
 
     // Show summary of errors if any
@@ -1852,6 +1933,83 @@ export default function BankReconciliation() {
     if (failed > 0) {
       alert(`Un-reconciled ${succeeded} entries. ${failed} failed.`);
     }
+  };
+
+  // Bulk create expenses - create expense records for selected entries with assigned expense types
+  const handleBulkCreateExpenses = async () => {
+    // Get selected entries that have expense types assigned
+    const entriesToCreate = [...selectedEntries]
+      .map(id => bankStatements.find(s => s.id === id))
+      .filter(entry => entry && !entry.is_reconciled && entryExpenseTypes.has(entry.id));
+
+    if (entriesToCreate.length === 0) return;
+
+    if (!window.confirm(`Create ${entriesToCreate.length} expense records and reconcile them?`)) {
+      return;
+    }
+
+    setIsBulkCreatingExpenses(true);
+    setBulkExpenseProgress({ current: 0, total: entriesToCreate.length });
+
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const entry of entriesToCreate) {
+      try {
+        const expenseTypeId = entryExpenseTypes.get(entry.id);
+        const expenseType = expenseTypes.find(t => t.id === expenseTypeId);
+        const amount = Math.abs(entry.amount);
+
+        // Create expense record
+        const expense = await api.entities.Expense.create({
+          type_id: expenseTypeId,
+          type_name: expenseType?.name || null,
+          amount: amount,
+          date: entry.statement_date,
+          description: entry.description
+        });
+
+        // Create reconciliation entry
+        await api.entities.ReconciliationEntry.create({
+          bank_statement_id: entry.id,
+          expense_id: expense.id,
+          amount: amount,
+          reconciliation_type: 'expense',
+          notes: 'Bulk created expense'
+        });
+
+        // Mark bank statement as reconciled
+        await api.entities.BankStatement.update(entry.id, {
+          is_reconciled: true,
+          reconciled_at: new Date().toISOString()
+        });
+
+        succeeded++;
+      } catch (error) {
+        console.error('Bulk expense create error:', entry.id, error);
+        failed++;
+      }
+
+      setBulkExpenseProgress({ current: succeeded + failed, total: entriesToCreate.length });
+    }
+
+    // Invalidate queries once at end
+    queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+    queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+    queryClient.invalidateQueries({ queryKey: ['expenses'] });
+
+    // Clear selections and expense type assignments for created entries
+    setSelectedEntries(new Set());
+    // Only clear expense types for successfully processed entries
+    setEntryExpenseTypes(prev => {
+      const next = new Map(prev);
+      for (const entry of entriesToCreate) {
+        next.delete(entry.id);
+      }
+      return next;
+    });
+    setIsBulkCreatingExpenses(false);
+    setAutoMatchResults({ succeeded, failed });
   };
 
   // Quick un-reconcile from list view (single entry)
@@ -2197,6 +2355,10 @@ export default function BankReconciliation() {
             const entry = bankStatements.find(s => s.id === id);
             return entry?.is_reconciled;
           }).length;
+          const selectedWithExpenseType = [...selectedEntries].filter(id => {
+            const entry = bankStatements.find(s => s.id === id);
+            return entry && !entry.is_reconciled && entryExpenseTypes.has(id);
+          }).length;
 
           return (
             <div className="flex items-center gap-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
@@ -2210,18 +2372,39 @@ export default function BankReconciliation() {
                   <Button
                     size="sm"
                     onClick={handleBulkMatch}
-                    disabled={isBulkMatching || isBulkUnreconciling}
+                    disabled={isBulkMatching || isBulkUnreconciling || isBulkCreatingExpenses}
                     className="bg-purple-600 hover:bg-purple-700"
                   >
                     {isBulkMatching ? (
                       <>
                         <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Matching...
+                        Matching {bulkMatchProgress.current}/{bulkMatchProgress.total}...
                       </>
                     ) : (
                       <>
                         <Zap className="w-4 h-4 mr-2" />
                         Match Selected ({selectedUnreconciledWithSuggestion})
+                      </>
+                    )}
+                  </Button>
+                )}
+                {/* Show Create Expenses if entries with expense types are selected */}
+                {selectedWithExpenseType > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={handleBulkCreateExpenses}
+                    disabled={isBulkMatching || isBulkUnreconciling || isBulkCreatingExpenses}
+                    className="bg-amber-600 hover:bg-amber-700"
+                  >
+                    {isBulkCreatingExpenses ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Creating {bulkExpenseProgress.current}/{bulkExpenseProgress.total}...
+                      </>
+                    ) : (
+                      <>
+                        <Receipt className="w-4 h-4 mr-2" />
+                        Create Expenses ({selectedWithExpenseType})
                       </>
                     )}
                   </Button>
@@ -2316,9 +2499,9 @@ export default function BankReconciliation() {
                         />
                       </th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase">Type</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase">Description</th>
                       <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase w-40">Expense Type</th>
                       <th className="px-3 py-2 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
                       <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
                     </tr>
@@ -2328,7 +2511,12 @@ export default function BankReconciliation() {
                       const suggestion = suggestedMatches.get(entry.id);
                       // Can select unreconciled entries with high-confidence suggestions OR reconciled entries (for un-reconcile)
                       const canSelectForMatch = !entry.is_reconciled && suggestion && suggestion.confidence >= 0.9;
-                      const canSelect = canSelectForMatch || entry.is_reconciled;
+                      // Can also select if unreconciled debit with expense type assigned (for bulk expense creation)
+                      const hasExpenseTypeAssigned = entryExpenseTypes.has(entry.id);
+                      const canSelectForExpense = !entry.is_reconciled && entry.amount < 0 && hasExpenseTypeAssigned;
+                      // Show expense type dropdown for unreconciled debits without high-confidence suggestions
+                      const showExpenseTypeDropdown = !entry.is_reconciled && entry.amount < 0 && (!suggestion || suggestion.confidence < 0.7);
+                      const canSelect = canSelectForMatch || canSelectForExpense || entry.is_reconciled;
                       return (
                         <tr key={entry.id} className={`hover:bg-slate-50 ${suggestion ? 'bg-purple-50/30' : ''} ${selectedEntries.has(entry.id) ? 'bg-purple-100/50' : ''}`}>
                           <td className="px-2 py-1.5">
@@ -2344,18 +2532,6 @@ export default function BankReconciliation() {
                             {entry.statement_date && isValid(parseISO(entry.statement_date))
                               ? format(parseISO(entry.statement_date), 'dd MMM yyyy')
                               : '-'}
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <div className="flex items-center gap-1.5">
-                              {entry.amount > 0 ? (
-                                <ArrowDownLeft className="w-3.5 h-3.5 text-emerald-500" />
-                              ) : (
-                                <ArrowUpRight className="w-3.5 h-3.5 text-red-500" />
-                              )}
-                              <span className="text-xs text-slate-600">
-                                {entry.transaction_type || (entry.amount > 0 ? 'Credit' : 'Debit')}
-                              </span>
-                            </div>
                           </td>
                           <td className="px-3 py-1.5">
                             <button
@@ -2388,6 +2564,25 @@ export default function BankReconciliation() {
                             <span className={`text-sm font-medium ${entry.amount > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {entry.amount > 0 ? '+' : ''}{formatCurrency(entry.amount)}
                             </span>
+                          </td>
+                          <td className="px-3 py-1.5 w-40">
+                            {showExpenseTypeDropdown ? (
+                              <Select
+                                value={entryExpenseTypes.get(entry.id) || ''}
+                                onValueChange={(value) => setEntryExpenseType(entry.id, value || null)}
+                              >
+                                <SelectTrigger className="h-7 text-xs">
+                                  <SelectValue placeholder="Select..." />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {expenseTypes.map(type => (
+                                    <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            ) : (
+                              <span className="text-xs text-slate-400">-</span>
+                            )}
                           </td>
                           <td className="px-3 py-1.5 text-center">
                             {entry.is_reconciled ? (
@@ -2878,6 +3073,48 @@ export default function BankReconciliation() {
                                   </div>
                                 )}
                               </>
+                            )}
+
+                            {/* Offset specific */}
+                            {detail.entityType === 'Offset' && detail.entityDetails.offsetPartners && (
+                              <div className="col-span-2">
+                                <p className="text-xs text-slate-400 uppercase mb-2">Offset With</p>
+                                <div className="space-y-2">
+                                  {detail.entityDetails.offsetPartners.map((partner, pIdx) => (
+                                    <div key={pIdx} className="bg-white rounded p-2 border border-emerald-100">
+                                      <div className="flex justify-between items-center">
+                                        <div>
+                                          <p className="text-xs text-slate-500">
+                                            {partner.statement_date && isValid(parseISO(partner.statement_date))
+                                              ? format(parseISO(partner.statement_date), 'dd MMM yyyy')
+                                              : '-'}
+                                          </p>
+                                          <p className="text-sm text-slate-700 truncate max-w-xs" title={partner.description}>
+                                            {partner.description}
+                                          </p>
+                                        </div>
+                                        <p className={`text-sm font-medium ${partner.amount > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                          {partner.amount > 0 ? '+' : ''}{formatCurrency(partner.amount)}
+                                        </p>
+                                      </div>
+                                    </div>
+                                  ))}
+                                </div>
+                                <div className="mt-3 pt-2 border-t border-emerald-100">
+                                  <div className="flex justify-between text-sm">
+                                    <span className="text-slate-500">This entry:</span>
+                                    <span className={`font-medium ${selectedEntry.amount > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                      {selectedEntry.amount > 0 ? '+' : ''}{formatCurrency(selectedEntry.amount)}
+                                    </span>
+                                  </div>
+                                  <div className="flex justify-between text-sm mt-1">
+                                    <span className="text-slate-500">Net:</span>
+                                    <span className="font-bold text-slate-700">
+                                      {formatCurrency(selectedEntry.amount + detail.entityDetails.offsetPartners.reduce((sum, p) => sum + p.amount, 0))}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
                             )}
                           </div>
 

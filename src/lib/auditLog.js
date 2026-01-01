@@ -103,9 +103,9 @@ export async function logAudit({
       userId = user?.id || null;
     }
 
-    // Get organization ID from localStorage if not provided
+    // Get organization ID from sessionStorage if not provided (per-tab isolation)
     if (!organizationId) {
-      organizationId = localStorage.getItem('currentOrganizationId');
+      organizationId = sessionStorage.getItem('currentOrganizationId');
     }
 
     const auditEntry = {
