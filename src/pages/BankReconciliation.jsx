@@ -16,7 +16,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Upload, CheckCircle2, AlertCircle, Loader2, Search, FileCheck,
   ArrowUpRight, ArrowDownLeft, Check, Link2, Unlink,
-  Sparkles, Wand2, Zap, CheckSquare, Receipt
+  Sparkles, Wand2, Zap, CheckSquare, Receipt, Coins
 } from 'lucide-react';
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -165,7 +165,6 @@ export default function BankReconciliation() {
   const [selectedExistingTx, setSelectedExistingTx] = useState(null);
   const [entitySearch, setEntitySearch] = useState('');
   const [splitAmounts, setSplitAmounts] = useState({ capital: 0, interest: 0, fees: 0 });
-  const [investorSplitAmounts, setInvestorSplitAmounts] = useState({ capital: 0, interest: 0 });
   const [expenseDescription, setExpenseDescription] = useState('');
   const [isReconciling, setIsReconciling] = useState(false);
   const [savePattern, setSavePattern] = useState(true);
@@ -196,6 +195,31 @@ export default function BankReconciliation() {
     });
     // Auto-select the row when an expense type is assigned
     if (expenseTypeId) {
+      setSelectedEntries(prev => {
+        const next = new Set(prev);
+        next.add(entryId);
+        return next;
+      });
+    }
+  };
+
+  // Bulk other income creation state
+  const [entryOtherIncome, setEntryOtherIncome] = useState(new Set()); // Set of entryIds marked as Other Income
+  const [isBulkCreatingOtherIncome, setIsBulkCreatingOtherIncome] = useState(false);
+  const [bulkOtherIncomeProgress, setBulkOtherIncomeProgress] = useState({ current: 0, total: 0 });
+
+  const toggleEntryOtherIncome = (entryId, checked) => {
+    setEntryOtherIncome(prev => {
+      const next = new Set(prev);
+      if (checked) {
+        next.add(entryId);
+      } else {
+        next.delete(entryId);
+      }
+      return next;
+    });
+    // Auto-select the row when marked as other income
+    if (checked) {
       setSelectedEntries(prev => {
         const next = new Set(prev);
         next.add(entryId);
@@ -235,6 +259,12 @@ export default function BankReconciliation() {
   const { data: investors = [] } = useQuery({
     queryKey: ['investors'],
     queryFn: () => api.entities.Investor.list()
+  });
+
+  // Fetch investor products (to check for manual entry type)
+  const { data: investorProducts = [] } = useQuery({
+    queryKey: ['investor-products'],
+    queryFn: () => api.entities.InvestorProduct.list('name')
   });
 
   // Fetch expense types
@@ -469,12 +499,14 @@ export default function BankReconciliation() {
       }
 
       // 2. Match against existing UNRECONCILED investor transactions by date/amount
+      // Note: Only capital transactions (capital_in, capital_out) are in InvestorTransaction now
+      // Interest withdrawals are tracked separately in investor_interest table
       for (const tx of investorTransactions) {
         if (reconciledTxIds.has(tx.id)) continue;
 
-        // Check direction matches
+        // Check direction matches - only capital transactions
         const txIsCredit = tx.type === 'capital_in';
-        const txIsDebit = tx.type === 'capital_out' || tx.type === 'interest_payment';
+        const txIsDebit = tx.type === 'capital_out';
 
         if ((isCredit && txIsCredit) || (!isCredit && txIsDebit)) {
           const score = calculateMatchScore(entry, tx, 'date');
@@ -482,9 +514,7 @@ export default function BankReconciliation() {
             bestScore = score;
             const investor = investors.find(i => i.id === tx.investor_id);
             const investorName = investor?.business_name || investor?.name || 'Unknown';
-            let matchType = 'investor_credit';
-            if (tx.type === 'capital_out') matchType = 'investor_withdrawal';
-            if (tx.type === 'interest_payment') matchType = 'investor_interest';
+            const matchType = tx.type === 'capital_in' ? 'investor_credit' : 'investor_withdrawal';
 
             bestMatch = {
               type: matchType,
@@ -494,65 +524,6 @@ export default function BankReconciliation() {
               confidence: score,
               reason: `Investor match: ${investorName} - ${formatCurrency(tx.amount)} on ${tx.date ? format(parseISO(tx.date), 'dd/MM') : '?'}`
             };
-          }
-        }
-      }
-
-      // 2b. GROUPED INVESTOR MATCH: Check if capital_out + interest_payment from same investor sum to this amount
-      // This handles combined capital + interest withdrawals where interest was credited first
-      if (!isCredit && bestScore < 0.9) {
-        // Group unreconciled outgoing investor transactions by investor_id
-        const txByInvestor = new Map();
-
-        for (const tx of investorTransactions) {
-          if (reconciledTxIds.has(tx.id)) continue;
-          // Only consider outgoing transactions (capital_out, interest_payment)
-          if (tx.type !== 'capital_out' && tx.type !== 'interest_payment') continue;
-          // Check if date is within 3 days of bank entry
-          if (!datesWithinDays(entry.statement_date, tx.date, 3)) continue;
-
-          const key = tx.investor_id;
-          if (!txByInvestor.has(key)) {
-            txByInvestor.set(key, []);
-          }
-          txByInvestor.get(key).push(tx);
-        }
-
-        // Check each investor's group of transactions
-        for (const [investorId, txGroup] of txByInvestor) {
-          if (txGroup.length < 2) continue; // Only interested in groups of 2+
-
-          const groupTotal = txGroup.reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0);
-
-          if (amountsMatch(entryAmount, groupTotal, 1)) {
-            const allSameDay = txGroup.every(tx =>
-              datesWithinDays(tx.date, entry.statement_date, 1)
-            );
-
-            const score = allSameDay ? 0.92 : 0.85;
-
-            if (score > bestScore) {
-              bestScore = score;
-              const investor = investors.find(i => i.id === investorId);
-              const investorName = investor?.business_name || investor?.name || 'Unknown';
-              const hasCapital = txGroup.some(tx => tx.type === 'capital_out');
-              const hasInterest = txGroup.some(tx => tx.type === 'interest_payment');
-              const capitalAmount = txGroup.filter(tx => tx.type === 'capital_out').reduce((s, tx) => s + parseFloat(tx.amount), 0);
-              const interestAmount = txGroup.filter(tx => tx.type === 'interest_payment').reduce((s, tx) => s + parseFloat(tx.amount), 0);
-
-              bestMatch = {
-                type: 'investor_combined',
-                matchMode: 'match_group',
-                existingTransactions: txGroup,
-                investor_id: investorId,
-                confidence: score,
-                reason: `Combined investor payment: ${investorName} - ${hasCapital ? `Capital: ${formatCurrency(capitalAmount)}` : ''}${hasCapital && hasInterest ? ' + ' : ''}${hasInterest ? `Interest: ${formatCurrency(interestAmount)}` : ''} = ${formatCurrency(groupTotal)}`,
-                suggestedSplit: {
-                  capital: capitalAmount,
-                  interest: interestAmount
-                }
-              };
-            }
           }
         }
       }
@@ -685,7 +656,7 @@ export default function BankReconciliation() {
               let matchType = 'investor_credit';
               if (!isCredit) {
                 matchType = entry.description?.toLowerCase().includes('interest')
-                  ? 'investor_interest'
+                  ? 'interest_withdrawal'
                   : 'investor_withdrawal';
               }
               bestMatch = {
@@ -1024,24 +995,24 @@ export default function BankReconciliation() {
   const handleReconcile = async () => {
     if (!selectedEntry) return;
 
-    // Handle grouped match from review suggestion
+    // Handle grouped match from review suggestion (e.g., multiple loan repayments summing to bank amount)
     if (reviewingSuggestion?.matchMode === 'match_group' && reviewingSuggestion.existingTransactions) {
       setIsReconciling(true);
       try {
         const txGroup = reviewingSuggestion.existingTransactions;
         const amount = Math.abs(selectedEntry.amount);
-        const isInvestorGroup = reviewingSuggestion.type === 'investor_combined';
 
         // Create a reconciliation entry for each transaction in the group
         for (const tx of txGroup) {
           await api.entities.ReconciliationEntry.create({
             bank_statement_id: selectedEntry.id,
-            loan_transaction_id: isInvestorGroup ? null : tx.id,
-            investor_transaction_id: isInvestorGroup ? tx.id : null,
+            loan_transaction_id: tx.id,
+            investor_transaction_id: null,
             expense_id: null,
             amount: parseFloat(tx.amount) || 0,
-            reconciliation_type: isInvestorGroup ? 'investor_combined' : 'loan_repayment',
-            notes: `Grouped match: ${txGroup.length} ${isInvestorGroup ? 'investor transactions' : 'repayments'} totaling ${formatCurrency(amount)}`
+            reconciliation_type: 'loan_repayment',
+            notes: `Grouped match: ${txGroup.length} repayments totaling ${formatCurrency(amount)}`,
+            was_created: false
           });
         }
 
@@ -1055,9 +1026,6 @@ export default function BankReconciliation() {
         queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
         queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
         queryClient.invalidateQueries({ queryKey: ['transactions'] });
-        if (isInvestorGroup) {
-          queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
-        }
 
         setSelectedEntry(null);
         setReviewingSuggestion(null);
@@ -1078,6 +1046,8 @@ export default function BankReconciliation() {
       let transactionId = null;
       let investorTransactionId = null;
       let expenseId = null;
+      let otherIncomeId = null;
+      let interestId = null;
 
       if (matchMode === 'match' && selectedExistingTx) {
         if (reconciliationType === 'loan_repayment' || reconciliationType === 'loan_disbursement') {
@@ -1149,62 +1119,17 @@ export default function BankReconciliation() {
             current_capital_balance: (selectedInvestor.current_capital_balance || 0) - amount
           });
 
-        } else if (reconciliationType === 'investor_interest' && selectedInvestor) {
-          const txData = {
+        } else if (reconciliationType === 'interest_withdrawal' && selectedInvestor) {
+          // Create a debit entry in the investor_interest ledger
+          const interestEntry = await api.entities.InvestorInterest.create({
             investor_id: selectedInvestor.id,
-            type: 'interest_payment',
+            type: 'debit',
             amount: amount,
             date: selectedEntry.statement_date,
             description: selectedEntry.description,
             reference: selectedEntry.external_reference
-          };
-          const created = await api.entities.InvestorTransaction.create(txData);
-          investorTransactionId = created.id;
-
-          await api.entities.Investor.update(selectedInvestor.id, {
-            total_interest_paid: (selectedInvestor.total_interest_paid || 0) + amount
           });
-
-        } else if (reconciliationType === 'investor_combined' && selectedInvestor) {
-          // Create two transactions: capital withdrawal + interest payment
-          const createdTxIds = [];
-
-          // Capital withdrawal transaction (if capital > 0)
-          if (investorSplitAmounts.capital > 0) {
-            const capitalTxData = {
-              investor_id: selectedInvestor.id,
-              type: 'capital_out',
-              amount: investorSplitAmounts.capital,
-              date: selectedEntry.statement_date,
-              description: `${selectedEntry.description} (Capital)`,
-              reference: selectedEntry.external_reference
-            };
-            const capitalTx = await api.entities.InvestorTransaction.create(capitalTxData);
-            createdTxIds.push(capitalTx.id);
-          }
-
-          // Interest payment transaction (if interest > 0)
-          if (investorSplitAmounts.interest > 0) {
-            const interestTxData = {
-              investor_id: selectedInvestor.id,
-              type: 'interest_payment',
-              amount: investorSplitAmounts.interest,
-              date: selectedEntry.statement_date,
-              description: `${selectedEntry.description} (Interest)`,
-              reference: selectedEntry.external_reference
-            };
-            const interestTx = await api.entities.InvestorTransaction.create(interestTxData);
-            createdTxIds.push(interestTx.id);
-          }
-
-          // Use first transaction ID for reconciliation entry (primary link)
-          investorTransactionId = createdTxIds[0];
-
-          // Update investor balances
-          await api.entities.Investor.update(selectedInvestor.id, {
-            current_capital_balance: (selectedInvestor.current_capital_balance || 0) - investorSplitAmounts.capital,
-            total_interest_paid: (selectedInvestor.total_interest_paid || 0) + investorSplitAmounts.interest
-          });
+          interestId = interestEntry.id;
 
         } else if (reconciliationType === 'expense') {
           const expenseData = {
@@ -1216,6 +1141,14 @@ export default function BankReconciliation() {
           };
           const created = await api.entities.Expense.create(expenseData);
           expenseId = created.id;
+        } else if (reconciliationType === 'other_income') {
+          const otherIncomeData = {
+            amount: amount,
+            date: selectedEntry.statement_date,
+            description: selectedEntry.description
+          };
+          const created = await api.entities.OtherIncome.create(otherIncomeData);
+          otherIncomeId = created.id;
         } else if (reconciliationType === 'offset') {
           // Handle offset reconciliation - mark all entries as reconciled together
           const allEntries = [selectedEntry, ...selectedOffsetEntries];
@@ -1241,7 +1174,8 @@ export default function BankReconciliation() {
               bank_statement_id: entry.id,
               reconciliation_type: 'offset',
               amount: entry.amount,
-              notes: notesWithGroupId
+              notes: notesWithGroupId,
+              was_created: false
             });
           }
 
@@ -1262,9 +1196,12 @@ export default function BankReconciliation() {
         loan_transaction_id: transactionId,
         investor_transaction_id: investorTransactionId,
         expense_id: expenseId,
+        other_income_id: otherIncomeId,
+        interest_id: interestId,
         amount: amount,
         reconciliation_type: reconciliationType,
-        notes: matchMode === 'match' ? 'Matched to existing transaction' : 'Created new transaction'
+        notes: matchMode === 'match' ? 'Matched to existing transaction' : 'Created new transaction',
+        was_created: matchMode === 'create'
       });
 
       // Mark bank statement as reconciled
@@ -1296,6 +1233,7 @@ export default function BankReconciliation() {
       queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
       queryClient.invalidateQueries({ queryKey: ['transactions'] });
       queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['investor-interest'] });
       queryClient.invalidateQueries({ queryKey: ['investors'] });
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['loans'] });
@@ -1342,8 +1280,7 @@ export default function BankReconciliation() {
           const investor = investors.find(i => i.id === tx.investor_id);
           linkedEntity = tx;
           entityType = tx.type === 'capital_in' ? 'Investor Credit' :
-                       tx.type === 'capital_out' ? 'Investor Withdrawal' :
-                       tx.type === 'interest_payment' ? 'Investor Interest' : 'Investor Transaction';
+                       tx.type === 'capital_out' ? 'Investor Withdrawal' : 'Investor Transaction';
           entityDetails = {
             investorName: investor?.business_name || investor?.name,
             date: tx.date,
@@ -1410,17 +1347,82 @@ export default function BankReconciliation() {
     });
   };
 
+  // Helper to delete records that were created during reconciliation
+  const deleteCreatedRecords = async (bankStatementId) => {
+    // Get reconciliation entries for this bank statement
+    const entries = reconciliationEntries.filter(re => re.bank_statement_id === bankStatementId);
+
+    for (const entry of entries) {
+      // Only delete if the record was created during reconciliation
+      if (!entry.was_created) continue;
+
+      try {
+        if (entry.loan_transaction_id) {
+          await api.entities.Transaction.delete(entry.loan_transaction_id);
+        }
+
+        if (entry.investor_transaction_id) {
+          // Get the investor transaction to reverse balance changes
+          const invTx = investorTransactions.find(t => t.id === entry.investor_transaction_id);
+          if (invTx) {
+            const investor = investors.find(i => i.id === invTx.investor_id);
+            if (investor) {
+              // Reverse the balance changes based on transaction type
+              if (invTx.type === 'capital_in') {
+                await api.entities.Investor.update(investor.id, {
+                  current_capital_balance: (investor.current_capital_balance || 0) - invTx.amount,
+                  total_capital_contributed: (investor.total_capital_contributed || 0) - invTx.amount
+                });
+              } else if (invTx.type === 'capital_out') {
+                await api.entities.Investor.update(investor.id, {
+                  current_capital_balance: (investor.current_capital_balance || 0) + invTx.amount
+                });
+              }
+            }
+          }
+          await api.entities.InvestorTransaction.delete(entry.investor_transaction_id);
+        }
+
+        if (entry.interest_id) {
+          // Delete interest ledger entry
+          await api.entities.InvestorInterest.delete(entry.interest_id);
+        }
+
+        if (entry.expense_id) {
+          await api.entities.Expense.delete(entry.expense_id);
+        }
+
+        if (entry.other_income_id) {
+          await api.entities.OtherIncome.delete(entry.other_income_id);
+        }
+      } catch (err) {
+        console.error('Error deleting created record:', err, entry);
+      }
+    }
+  };
+
   // Handle un-reconciling a bank statement
   const handleUnreconcile = async () => {
     if (!selectedEntry || !selectedEntry.is_reconciled) return;
 
-    if (!window.confirm('Are you sure you want to un-reconcile this entry? The linked transactions will NOT be deleted, only the reconciliation link will be removed.')) {
+    // Check if any created records will be deleted
+    const entries = reconciliationEntries.filter(re => re.bank_statement_id === selectedEntry.id);
+    const hasCreatedRecords = entries.some(e => e.was_created);
+
+    const message = hasCreatedRecords
+      ? 'Are you sure you want to un-reconcile this entry? The transactions/records that were created during reconciliation will be DELETED.'
+      : 'Are you sure you want to un-reconcile this entry? The linked transactions will remain.';
+
+    if (!window.confirm(message)) {
       return;
     }
 
     setIsUnreconciling(true);
 
     try {
+      // Delete any records that were created during reconciliation
+      await deleteCreatedRecords(selectedEntry.id);
+
       // Delete all reconciliation entries for this bank statement
       await api.entities.ReconciliationEntry.deleteWhere({ bank_statement_id: selectedEntry.id });
 
@@ -1434,6 +1436,11 @@ export default function BankReconciliation() {
       // Refresh data
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['investors'] });
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['other-income'] });
 
       setSelectedEntry(null);
     } catch (error) {
@@ -1471,6 +1478,7 @@ export default function BankReconciliation() {
         let transactionId = null;
         let investorTransactionId = null;
         let expenseId = null;
+        let interestId = null;
 
         // If matching to existing transaction, just link it
         if (suggestion.matchMode === 'match') {
@@ -1539,13 +1547,12 @@ export default function BankReconciliation() {
                 total_capital_contributed: (investor.total_capital_contributed || 0) + amount
               });
             }
-          } else if ((suggestion.type === 'investor_withdrawal' || suggestion.type === 'investor_interest') && suggestion.investor_id) {
+          } else if (suggestion.type === 'investor_withdrawal' && suggestion.investor_id) {
             const investor = investors.find(i => i.id === suggestion.investor_id);
             if (investor) {
-              const txType = suggestion.type === 'investor_interest' ? 'interest_payment' : 'capital_out';
               const txData = {
                 investor_id: investor.id,
-                type: txType,
+                type: 'capital_out',
                 amount: amount,
                 date: entry.statement_date,
                 description: entry.description,
@@ -1554,29 +1561,36 @@ export default function BankReconciliation() {
               const created = await api.entities.InvestorTransaction.create(txData);
               investorTransactionId = created.id;
 
-              if (suggestion.type === 'investor_withdrawal') {
-                await api.entities.Investor.update(investor.id, {
-                  current_capital_balance: (investor.current_capital_balance || 0) - amount
-                });
-              } else {
-                await api.entities.Investor.update(investor.id, {
-                  total_interest_paid: (investor.total_interest_paid || 0) + amount
-                });
-              }
+              await api.entities.Investor.update(investor.id, {
+                current_capital_balance: (investor.current_capital_balance || 0) - amount
+              });
             }
+          } else if (suggestion.type === 'interest_withdrawal' && suggestion.investor_id) {
+            // Create a debit entry in the investor_interest ledger
+            const interestEntry = await api.entities.InvestorInterest.create({
+              investor_id: suggestion.investor_id,
+              type: 'debit',
+              amount: amount,
+              date: entry.statement_date,
+              description: entry.description,
+              reference: entry.external_reference
+            });
+            interestId = interestEntry.id;
           }
         }
 
         // Create reconciliation entry
-        if (transactionId || investorTransactionId || expenseId) {
+        if (transactionId || investorTransactionId || expenseId || interestId) {
           await api.entities.ReconciliationEntry.create({
             bank_statement_id: entry.id,
             loan_transaction_id: transactionId,
             investor_transaction_id: investorTransactionId,
             expense_id: expenseId,
+            interest_id: interestId,
             amount: amount,
             reconciliation_type: suggestion.type,
-            notes: `Auto-reconciled (${suggestion.matchMode === 'match' ? 'matched' : 'created'}) with ${Math.round(suggestion.confidence * 100)}% confidence`
+            notes: `Auto-reconciled (${suggestion.matchMode === 'match' ? 'matched' : 'created'}) with ${Math.round(suggestion.confidence * 100)}% confidence`,
+            was_created: suggestion.matchMode === 'create'
           });
 
           await api.entities.BankStatement.update(entry.id, {
@@ -1630,6 +1644,7 @@ export default function BankReconciliation() {
       let transactionId = null;
       let investorTransactionId = null;
       let expenseId = null;
+      let interestId = null;
 
       if (suggestion.matchMode === 'match' && (suggestion.existingTransaction || suggestion.existingExpense)) {
         // Link to existing single transaction
@@ -1644,20 +1659,20 @@ export default function BankReconciliation() {
           expenseId = suggestion.existingExpense.id;
         }
       } else if (suggestion.matchMode === 'match_group' && suggestion.existingTransactions) {
-        // Link to multiple existing transactions (grouped repayments or investor transactions)
+        // Link to multiple existing transactions (grouped loan repayments)
         const txGroup = suggestion.existingTransactions;
-        const isInvestorGroup = suggestion.type === 'investor_combined';
 
         // Create a reconciliation entry for each transaction in the group
         for (const tx of txGroup) {
           await api.entities.ReconciliationEntry.create({
             bank_statement_id: entry.id,
-            loan_transaction_id: isInvestorGroup ? null : tx.id,
-            investor_transaction_id: isInvestorGroup ? tx.id : null,
+            loan_transaction_id: tx.id,
+            investor_transaction_id: null,
             expense_id: null,
             amount: parseFloat(tx.amount) || 0,
-            reconciliation_type: isInvestorGroup ? 'investor_combined' : 'loan_repayment',
-            notes: `Grouped match: ${txGroup.length} ${isInvestorGroup ? 'investor transactions' : 'repayments'} totaling ${formatCurrency(amount)} with ${Math.round(suggestion.confidence * 100)}% confidence`
+            reconciliation_type: 'loan_repayment',
+            notes: `Grouped match: ${txGroup.length} repayments totaling ${formatCurrency(amount)} with ${Math.round(suggestion.confidence * 100)}% confidence`,
+            was_created: false
           });
         }
 
@@ -1672,9 +1687,6 @@ export default function BankReconciliation() {
           queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
           queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
           queryClient.invalidateQueries({ queryKey: ['transactions'] });
-          if (isInvestorGroup) {
-            queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
-          }
         }
 
         return; // Early return since we handled everything
@@ -1734,13 +1746,12 @@ export default function BankReconciliation() {
               total_capital_contributed: (investor.total_capital_contributed || 0) + amount
             });
           }
-        } else if ((suggestion.type === 'investor_withdrawal' || suggestion.type === 'investor_interest') && suggestion.investor_id) {
+        } else if (suggestion.type === 'investor_withdrawal' && suggestion.investor_id) {
           const investor = investors.find(i => i.id === suggestion.investor_id);
           if (investor) {
-            const txType = suggestion.type === 'investor_interest' ? 'interest_payment' : 'capital_out';
             const txData = {
               investor_id: investor.id,
-              type: txType,
+              type: 'capital_out',
               amount: amount,
               date: entry.statement_date,
               description: entry.description,
@@ -1749,16 +1760,21 @@ export default function BankReconciliation() {
             const created = await api.entities.InvestorTransaction.create(txData);
             investorTransactionId = created.id;
 
-            if (suggestion.type === 'investor_withdrawal') {
-              await api.entities.Investor.update(investor.id, {
-                current_capital_balance: (investor.current_capital_balance || 0) - amount
-              });
-            } else {
-              await api.entities.Investor.update(investor.id, {
-                total_interest_paid: (investor.total_interest_paid || 0) + amount
-              });
-            }
+            await api.entities.Investor.update(investor.id, {
+              current_capital_balance: (investor.current_capital_balance || 0) - amount
+            });
           }
+        } else if (suggestion.type === 'interest_withdrawal' && suggestion.investor_id) {
+          // Create a debit entry in the investor_interest ledger
+          const interestEntry = await api.entities.InvestorInterest.create({
+            investor_id: suggestion.investor_id,
+            type: 'debit',
+            amount: amount,
+            date: entry.statement_date,
+            description: entry.description,
+            reference: entry.external_reference
+          });
+          interestId = interestEntry.id;
         } else if (suggestion.type === 'expense' && suggestion.expense_type_id) {
           const expType = expenseTypes.find(t => t.id === suggestion.expense_type_id);
           const expenseData = {
@@ -1774,15 +1790,17 @@ export default function BankReconciliation() {
       }
 
       // Create reconciliation entry
-      if (transactionId || investorTransactionId || expenseId) {
+      if (transactionId || investorTransactionId || expenseId || interestId) {
         await api.entities.ReconciliationEntry.create({
           bank_statement_id: entry.id,
           loan_transaction_id: transactionId,
           investor_transaction_id: investorTransactionId,
           expense_id: expenseId,
+          interest_id: interestId,
           amount: amount,
           reconciliation_type: suggestion.type,
-          notes: `Quick matched (${suggestion.matchMode === 'match' ? 'matched' : 'created'}) with ${Math.round(suggestion.confidence * 100)}% confidence`
+          notes: `Quick matched (${suggestion.matchMode === 'match' ? 'matched' : 'created'}) with ${Math.round(suggestion.confidence * 100)}% confidence`,
+          was_created: suggestion.matchMode === 'create'
         });
 
         await api.entities.BankStatement.update(entry.id, {
@@ -1809,6 +1827,7 @@ export default function BankReconciliation() {
           queryClient.invalidateQueries({ queryKey: ['reconciliation-patterns'] });
           queryClient.invalidateQueries({ queryKey: ['transactions'] });
           queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+          queryClient.invalidateQueries({ queryKey: ['investor-interest'] });
           queryClient.invalidateQueries({ queryKey: ['investors'] });
           queryClient.invalidateQueries({ queryKey: ['expenses'] });
         }
@@ -1899,7 +1918,17 @@ export default function BankReconciliation() {
       return;
     }
 
-    if (!window.confirm(`Are you sure you want to un-reconcile ${reconciledSelected.length} entries? The linked transactions will NOT be deleted, only the reconciliation links will be removed.`)) {
+    // Check if any entries have created records
+    const hasAnyCreatedRecords = reconciledSelected.some(entryId => {
+      const recEntries = reconciliationEntries.filter(re => re.bank_statement_id === entryId);
+      return recEntries.some(e => e.was_created);
+    });
+
+    const message = hasAnyCreatedRecords
+      ? `Are you sure you want to un-reconcile ${reconciledSelected.length} entries? Transactions/records that were created during reconciliation will be DELETED.`
+      : `Are you sure you want to un-reconcile ${reconciledSelected.length} entries? The linked transactions will remain.`;
+
+    if (!window.confirm(message)) {
       return;
     }
 
@@ -1909,6 +1938,9 @@ export default function BankReconciliation() {
 
     for (const entryId of reconciledSelected) {
       try {
+        // Delete any records that were created during reconciliation
+        await deleteCreatedRecords(entryId);
+
         // Delete all reconciliation entries for this bank statement
         await api.entities.ReconciliationEntry.deleteWhere({ bank_statement_id: entryId });
 
@@ -1927,6 +1959,11 @@ export default function BankReconciliation() {
 
     queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
     queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+    queryClient.invalidateQueries({ queryKey: ['transactions'] });
+    queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+    queryClient.invalidateQueries({ queryKey: ['investors'] });
+    queryClient.invalidateQueries({ queryKey: ['expenses'] });
+    queryClient.invalidateQueries({ queryKey: ['other-income'] });
     setSelectedEntries(new Set());
     setIsBulkUnreconciling(false);
 
@@ -1975,7 +2012,8 @@ export default function BankReconciliation() {
           expense_id: expense.id,
           amount: amount,
           reconciliation_type: 'expense',
-          notes: 'Bulk created expense'
+          notes: 'Bulk created expense',
+          was_created: true
         });
 
         // Mark bank statement as reconciled
@@ -2012,15 +2050,99 @@ export default function BankReconciliation() {
     setAutoMatchResults({ succeeded, failed });
   };
 
+  // Bulk create other income handler
+  const handleBulkCreateOtherIncome = async () => {
+    // Get selected entries that are marked as other income
+    const entriesToCreate = [...selectedEntries]
+      .map(id => bankStatements.find(s => s.id === id))
+      .filter(entry => entry && !entry.is_reconciled && entryOtherIncome.has(entry.id));
+
+    if (entriesToCreate.length === 0) return;
+
+    if (!window.confirm(`Create ${entriesToCreate.length} other income records and reconcile them?`)) {
+      return;
+    }
+
+    setIsBulkCreatingOtherIncome(true);
+    setBulkOtherIncomeProgress({ current: 0, total: entriesToCreate.length });
+
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const entry of entriesToCreate) {
+      try {
+        const amount = Math.abs(entry.amount);
+
+        // Create other income record
+        const otherIncome = await api.entities.OtherIncome.create({
+          amount: amount,
+          date: entry.statement_date,
+          description: entry.description
+        });
+
+        // Create reconciliation entry
+        await api.entities.ReconciliationEntry.create({
+          bank_statement_id: entry.id,
+          other_income_id: otherIncome.id,
+          amount: amount,
+          reconciliation_type: 'other_income',
+          notes: 'Bulk created other income',
+          was_created: true
+        });
+
+        // Mark bank statement as reconciled
+        await api.entities.BankStatement.update(entry.id, {
+          is_reconciled: true,
+          reconciled_at: new Date().toISOString()
+        });
+
+        succeeded++;
+      } catch (error) {
+        console.error('Bulk other income create error:', entry.id, error);
+        failed++;
+      }
+
+      setBulkOtherIncomeProgress({ current: succeeded + failed, total: entriesToCreate.length });
+    }
+
+    // Invalidate queries once at end
+    queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+    queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+    queryClient.invalidateQueries({ queryKey: ['other-income'] });
+
+    // Clear selections and other income marks for created entries
+    setSelectedEntries(new Set());
+    setEntryOtherIncome(prev => {
+      const next = new Set(prev);
+      for (const entry of entriesToCreate) {
+        next.delete(entry.id);
+      }
+      return next;
+    });
+    setIsBulkCreatingOtherIncome(false);
+    setAutoMatchResults({ succeeded, failed });
+  };
+
   // Quick un-reconcile from list view (single entry)
   const handleQuickUnreconcile = async (entry) => {
     if (!entry.is_reconciled) return;
 
-    if (!window.confirm('Un-reconcile this entry? The linked transaction will NOT be deleted.')) {
+    // Check if any created records will be deleted
+    const recEntries = reconciliationEntries.filter(re => re.bank_statement_id === entry.id);
+    const hasCreatedRecords = recEntries.some(e => e.was_created);
+
+    const message = hasCreatedRecords
+      ? 'Un-reconcile this entry? The transactions/records that were created will be DELETED.'
+      : 'Un-reconcile this entry? The linked transactions will remain.';
+
+    if (!window.confirm(message)) {
       return;
     }
 
     try {
+      // Delete any records that were created during reconciliation
+      await deleteCreatedRecords(entry.id);
+
       await api.entities.ReconciliationEntry.deleteWhere({ bank_statement_id: entry.id });
       await api.entities.BankStatement.update(entry.id, {
         is_reconciled: false,
@@ -2029,6 +2151,11 @@ export default function BankReconciliation() {
       });
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
       queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+      queryClient.invalidateQueries({ queryKey: ['transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+      queryClient.invalidateQueries({ queryKey: ['investors'] });
+      queryClient.invalidateQueries({ queryKey: ['expenses'] });
+      queryClient.invalidateQueries({ queryKey: ['other-income'] });
     } catch (error) {
       alert(`Error: ${error.message}`);
     }
@@ -2359,6 +2486,10 @@ export default function BankReconciliation() {
             const entry = bankStatements.find(s => s.id === id);
             return entry && !entry.is_reconciled && entryExpenseTypes.has(id);
           }).length;
+          const selectedWithOtherIncome = [...selectedEntries].filter(id => {
+            const entry = bankStatements.find(s => s.id === id);
+            return entry && !entry.is_reconciled && entryOtherIncome.has(id);
+          }).length;
 
           return (
             <div className="flex items-center gap-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
@@ -2405,6 +2536,27 @@ export default function BankReconciliation() {
                       <>
                         <Receipt className="w-4 h-4 mr-2" />
                         Create Expenses ({selectedWithExpenseType})
+                      </>
+                    )}
+                  </Button>
+                )}
+                {/* Show Create Other Income if entries marked as other income are selected */}
+                {selectedWithOtherIncome > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={handleBulkCreateOtherIncome}
+                    disabled={isBulkMatching || isBulkUnreconciling || isBulkCreatingExpenses || isBulkCreatingOtherIncome}
+                    className="bg-emerald-600 hover:bg-emerald-700"
+                  >
+                    {isBulkCreatingOtherIncome ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Creating {bulkOtherIncomeProgress.current}/{bulkOtherIncomeProgress.total}...
+                      </>
+                    ) : (
+                      <>
+                        <Coins className="w-4 h-4 mr-2" />
+                        Create Other Income ({selectedWithOtherIncome})
                       </>
                     )}
                   </Button>
@@ -2502,6 +2654,7 @@ export default function BankReconciliation() {
                       <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase">Description</th>
                       <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase w-40">Expense Type</th>
+                      <th className="px-3 py-2 text-center text-xs font-medium text-slate-500 uppercase w-28">Other Income</th>
                       <th className="px-3 py-2 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
                       <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
                     </tr>
@@ -2516,7 +2669,12 @@ export default function BankReconciliation() {
                       const canSelectForExpense = !entry.is_reconciled && entry.amount < 0 && hasExpenseTypeAssigned;
                       // Show expense type dropdown for unreconciled debits without high-confidence suggestions
                       const showExpenseTypeDropdown = !entry.is_reconciled && entry.amount < 0 && (!suggestion || suggestion.confidence < 0.7);
-                      const canSelect = canSelectForMatch || canSelectForExpense || entry.is_reconciled;
+                      // Can also select if marked as other income (for credits)
+                      const isMarkedAsOtherIncome = entryOtherIncome.has(entry.id);
+                      const canSelectForOtherIncome = !entry.is_reconciled && entry.amount > 0 && isMarkedAsOtherIncome;
+                      // Show other income checkbox for unreconciled credits without high-confidence suggestions
+                      const showOtherIncomeCheckbox = !entry.is_reconciled && entry.amount > 0 && (!suggestion || suggestion.confidence < 0.7);
+                      const canSelect = canSelectForMatch || canSelectForExpense || canSelectForOtherIncome || entry.is_reconciled;
                       return (
                         <tr key={entry.id} className={`hover:bg-slate-50 ${suggestion ? 'bg-purple-50/30' : ''} ${selectedEntries.has(entry.id) ? 'bg-purple-100/50' : ''}`}>
                           <td className="px-2 py-1.5">
@@ -2580,6 +2738,17 @@ export default function BankReconciliation() {
                                   ))}
                                 </SelectContent>
                               </Select>
+                            ) : (
+                              <span className="text-xs text-slate-400">-</span>
+                            )}
+                          </td>
+                          <td className="px-3 py-1.5 text-center w-28">
+                            {showOtherIncomeCheckbox ? (
+                              <Checkbox
+                                checked={entryOtherIncome.has(entry.id)}
+                                onCheckedChange={(checked) => toggleEntryOtherIncome(entry.id, checked)}
+                                className="border-emerald-400 data-[state=checked]:bg-emerald-600"
+                              />
                             ) : (
                               <span className="text-xs text-slate-400">-</span>
                             )}
@@ -2801,7 +2970,7 @@ export default function BankReconciliation() {
                           : 'New Entry'}
                     </p>
 
-                    {/* Grouped transactions view */}
+                    {/* Grouped transactions view (loan repayments only) */}
                     {isGrouped ? (
                       <div className="space-y-3">
                         <div>
@@ -2809,35 +2978,26 @@ export default function BankReconciliation() {
                           <p className={`text-lg font-bold ${amountMatches ? 'text-emerald-600' : 'text-slate-700'}`}>
                             {formatCurrency(matchAmount)}
                             {amountMatches && ' ✓'}
-                            <span className={`text-xs font-normal ml-2 ${reviewingSuggestion.type === 'investor_combined' ? 'text-red-500' : 'text-emerald-500'}`}>
-                              ({reviewingSuggestion.type === 'investor_combined' ? 'Debit' : 'Credit'})
+                            <span className="text-xs font-normal ml-2 text-emerald-500">
+                              (Credit)
                             </span>
                           </p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-400 uppercase">
-                            {reviewingSuggestion.type === 'investor_combined' ? 'Investor' : 'Borrower'}
-                          </p>
+                          <p className="text-xs text-slate-400 uppercase">Borrower</p>
                           <p className="text-sm text-slate-700">
-                            {reviewingSuggestion.type === 'investor_combined'
-                              ? (investors.find(i => i.id === reviewingSuggestion.investor_id)?.business_name || investors.find(i => i.id === reviewingSuggestion.investor_id)?.name || 'Unknown')
-                              : getBorrowerName(reviewingSuggestion.borrower_id)}
+                            {getBorrowerName(reviewingSuggestion.borrower_id)}
                           </p>
                         </div>
                         <div>
                           <p className="text-xs text-slate-400 uppercase mb-2">Transactions Breakdown</p>
                           <div className="space-y-2 max-h-32 overflow-y-auto">
                             {txGroup.map((t, idx) => {
-                              // Handle both loan transactions and investor transactions
-                              const isInvestorTx = t.investor_id || reviewingSuggestion.type === 'investor_combined';
-                              const loan = !isInvestorTx ? loans.find(l => l.id === t.loan_id) : null;
-                              const txLabel = isInvestorTx
-                                ? (t.type === 'capital_out' ? 'Capital' : t.type === 'interest_payment' ? 'Interest' : t.type)
-                                : (loan?.loan_number || '?');
+                              const loan = loans.find(l => l.id === t.loan_id);
                               return (
                                 <div key={idx} className="flex justify-between text-sm bg-white/50 rounded px-2 py-1">
                                   <span className="text-slate-600">
-                                    {txLabel} - {t.date && isValid(parseISO(t.date)) ? format(parseISO(t.date), 'dd/MM') : '?'}
+                                    {loan?.loan_number || '?'} - {t.date && isValid(parseISO(t.date)) ? format(parseISO(t.date), 'dd/MM') : '?'}
                                   </span>
                                   <span className="font-medium text-slate-700">{formatCurrency(t.amount)}</span>
                                 </div>
@@ -2867,7 +3027,7 @@ export default function BankReconciliation() {
                             {amountMatches && ' ✓'}
                             {(() => {
                               // Determine direction label based on transaction type - use Credit/Debit to match bank terminology
-                              const isDebit = ['loan_disbursement', 'investor_withdrawal', 'investor_interest', 'expense'].includes(reviewingSuggestion.type) ||
+                              const isDebit = ['loan_disbursement', 'investor_withdrawal', 'interest_withdrawal', 'expense'].includes(reviewingSuggestion.type) ||
                                 tx?.type === 'Disbursement' || exp;
                               return (
                                 <span className={`text-xs font-normal ml-2 ${isDebit ? 'text-red-500' : 'text-emerald-500'}`}>
@@ -2886,8 +3046,7 @@ export default function BankReconciliation() {
                               (reviewingSuggestion.type === 'loan_disbursement' && 'Loan Disbursement') ||
                               (reviewingSuggestion.type === 'investor_credit' && 'Investor Credit') ||
                               (reviewingSuggestion.type === 'investor_withdrawal' && 'Investor Withdrawal') ||
-                              (reviewingSuggestion.type === 'investor_interest' && 'Investor Interest') ||
-                              (reviewingSuggestion.type === 'investor_combined' && 'Investor Capital + Interest') ||
+                              (reviewingSuggestion.type === 'interest_withdrawal' && 'Interest Withdrawal') ||
                               (reviewingSuggestion.type === 'expense' && 'Expense')}
                           </p>
                         </div>
@@ -3203,12 +3362,6 @@ export default function BankReconciliation() {
                       setEntitySearch('');
                       setSelectedOffsetEntries([]);
                       setOffsetNotes('');
-                      // Initialize investor split amounts when selecting investor_combined
-                      if (value === 'investor_combined') {
-                        setInvestorSplitAmounts({ capital: Math.abs(selectedEntry.amount), interest: 0 });
-                      } else {
-                        setInvestorSplitAmounts({ capital: 0, interest: 0 });
-                      }
                     }}
                     className="grid grid-cols-2 gap-2"
                   >
@@ -3221,6 +3374,10 @@ export default function BankReconciliation() {
                         <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
                           <RadioGroupItem value="investor_credit" id="investor_credit" />
                           <Label htmlFor="investor_credit" className="cursor-pointer">Investor Credit</Label>
+                        </div>
+                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
+                          <RadioGroupItem value="other_income" id="other_income" />
+                          <Label htmlFor="other_income" className="cursor-pointer">Other Income</Label>
                         </div>
                         <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
                           <RadioGroupItem value="offset" id="offset" />
@@ -3238,12 +3395,8 @@ export default function BankReconciliation() {
                           <Label htmlFor="investor_withdrawal" className="cursor-pointer">Investor Withdrawal</Label>
                         </div>
                         <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="investor_interest" id="investor_interest" />
-                          <Label htmlFor="investor_interest" className="cursor-pointer">Investor Interest</Label>
-                        </div>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="investor_combined" id="investor_combined" />
-                          <Label htmlFor="investor_combined" className="cursor-pointer">Investor Capital + Interest</Label>
+                          <RadioGroupItem value="interest_withdrawal" id="interest_withdrawal" />
+                          <Label htmlFor="interest_withdrawal" className="cursor-pointer">Interest Withdrawal</Label>
                         </div>
                         <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
                           <RadioGroupItem value="expense" id="expense" />
@@ -3259,7 +3412,7 @@ export default function BankReconciliation() {
                 </div>
 
                 {/* Match or Create Toggle */}
-                {reconciliationType && reconciliationType !== 'expense' && reconciliationType !== 'offset' && (
+                {reconciliationType && reconciliationType !== 'expense' && reconciliationType !== 'offset' && reconciliationType !== 'other_income' && (
                   <Tabs value={matchMode} onValueChange={setMatchMode}>
                     <TabsList className="grid w-full grid-cols-2">
                       <TabsTrigger value="create">Create New</TabsTrigger>
@@ -3349,7 +3502,7 @@ export default function BankReconciliation() {
                       )}
 
                       {/* Investor Selection */}
-                      {(reconciliationType === 'investor_credit' || reconciliationType === 'investor_withdrawal' || reconciliationType === 'investor_interest' || reconciliationType === 'investor_combined') && (
+                      {(reconciliationType === 'investor_credit' || reconciliationType === 'investor_withdrawal' || reconciliationType === 'interest_withdrawal') && (
                         <div className="space-y-3">
                           <Label>Select Investor</Label>
                           <div className="relative">
@@ -3384,41 +3537,6 @@ export default function BankReconciliation() {
                             )}
                           </div>
 
-                          {/* Split Amounts for Combined Investor Payments */}
-                          {reconciliationType === 'investor_combined' && selectedInvestor && (
-                            <div className="bg-slate-50 rounded-lg p-4 space-y-3 mt-4">
-                              <Label className="text-base">Payment Split</Label>
-                              <div className="grid grid-cols-2 gap-3">
-                                <div>
-                                  <Label className="text-xs">Capital Withdrawal</Label>
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    value={investorSplitAmounts.capital}
-                                    onChange={(e) => setInvestorSplitAmounts(prev => ({ ...prev, capital: parseFloat(e.target.value) || 0 }))}
-                                  />
-                                </div>
-                                <div>
-                                  <Label className="text-xs">Interest Payment</Label>
-                                  <Input
-                                    type="number"
-                                    step="0.01"
-                                    value={investorSplitAmounts.interest}
-                                    onChange={(e) => setInvestorSplitAmounts(prev => ({ ...prev, interest: parseFloat(e.target.value) || 0 }))}
-                                  />
-                                </div>
-                              </div>
-                              <p className="text-sm text-slate-500">
-                                Total: {formatCurrency(investorSplitAmounts.capital + investorSplitAmounts.interest)} /
-                                Bank: {formatCurrency(Math.abs(selectedEntry.amount))}
-                                {Math.abs((investorSplitAmounts.capital + investorSplitAmounts.interest) - Math.abs(selectedEntry.amount)) > 0.01 && (
-                                  <span className="text-amber-600 ml-2">
-                                    (Difference: {formatCurrency(Math.abs(selectedEntry.amount) - (investorSplitAmounts.capital + investorSplitAmounts.interest))})
-                                  </span>
-                                )}
-                              </p>
-                            </div>
-                          )}
                         </div>
                       )}
 
@@ -3518,6 +3636,21 @@ export default function BankReconciliation() {
                       <Label htmlFor="savePatternExpense" className="text-sm text-slate-600 cursor-pointer">
                         Remember this match for future auto-reconciliation
                       </Label>
+                    </div>
+                  </div>
+                )}
+
+                {/* Other Income Form */}
+                {reconciliationType === 'other_income' && (
+                  <div className="space-y-4">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-3">
+                      <p className="text-sm text-emerald-700">
+                        This will create an Other Income record with the description from the bank statement.
+                      </p>
+                    </div>
+                    <div className="bg-slate-50 rounded-lg p-3">
+                      <p className="text-sm font-medium text-slate-700">Amount: <span className="text-emerald-600">{formatCurrency(Math.abs(selectedEntry.amount))}</span></p>
+                      <p className="text-sm text-slate-600 mt-1">Description: {selectedEntry.description}</p>
                     </div>
                   </div>
                 )}
@@ -3673,7 +3806,7 @@ export default function BankReconciliation() {
                       (reconciliationType === 'loan_repayment' && matchMode === 'create' && !selectedLoan) ||
                       (reconciliationType === 'loan_disbursement' && matchMode === 'create' && !selectedLoan) ||
                       (reconciliationType.startsWith('investor_') && matchMode === 'create' && !selectedInvestor) ||
-                      (reconciliationType === 'investor_combined' && matchMode === 'create' && (investorSplitAmounts.capital + investorSplitAmounts.interest) <= 0) ||
+                      (reconciliationType === 'interest_withdrawal' && matchMode === 'create' && !selectedInvestor) ||
                       (matchMode === 'match' && !selectedExistingTx && reconciliationType !== 'offset') ||
                       (reconciliationType === 'offset' && (selectedOffsetEntries.length === 0 || !offsetNotes.trim() || Math.abs(selectedEntry.amount + selectedOffsetEntries.reduce((sum, e) => sum + e.amount, 0)) >= 0.01))
                     }

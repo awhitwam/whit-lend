@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Loader2 } from 'lucide-react';
 import { format } from 'date-fns';
 
-export default function InvestorTransactionForm({ investor, transaction, monthlyInterestDue, onSubmit, onCancel, isLoading }) {
+export default function InvestorTransactionForm({ investor, transaction, onSubmit, onCancel, isLoading }) {
   const isEditing = !!transaction;
 
   const [formData, setFormData] = useState({
@@ -47,13 +47,7 @@ export default function InvestorTransactionForm({ investor, transaction, monthly
         <Label htmlFor="type">Transaction Type *</Label>
         <Select
           value={formData.type}
-          onValueChange={(value) => {
-            const newData = {...formData, type: value};
-            if (value === 'interest_payment' && monthlyInterestDue && !formData.amount) {
-              newData.amount = monthlyInterestDue.toString();
-            }
-            setFormData(newData);
-          }}
+          onValueChange={(value) => setFormData({...formData, type: value})}
         >
           <SelectTrigger>
             <SelectValue />
@@ -61,13 +55,11 @@ export default function InvestorTransactionForm({ investor, transaction, monthly
           <SelectContent>
             <SelectItem value="capital_in">Capital In</SelectItem>
             <SelectItem value="capital_out">Capital Out</SelectItem>
-            <SelectItem value="interest_accrual">Interest Accrued</SelectItem>
-            <SelectItem value="interest_payment">Interest Payment</SelectItem>
           </SelectContent>
         </Select>
-        {formData.type === 'interest_payment' && monthlyInterestDue > 0 && (
-          <p className="text-xs text-amber-600">Monthly interest due: £{monthlyInterestDue.toFixed(2)}</p>
-        )}
+        <p className="text-xs text-slate-500">
+          Note: Interest transactions are managed separately via the Interest Ledger.
+        </p>
       </div>
 
       <div className="space-y-2">

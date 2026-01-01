@@ -35,7 +35,11 @@ const tableMap = {
   // Bank reconciliation
   BankStatement: 'bank_statements',
   ReconciliationEntry: 'reconciliation_entries',
-  ReconciliationPattern: 'reconciliation_patterns'
+  ReconciliationPattern: 'reconciliation_patterns',
+  // Other income
+  OtherIncome: 'other_income',
+  // Investor interest ledger
+  InvestorInterest: 'investor_interest'
 };
 
 // Tables that should have organization_id filter applied
@@ -61,7 +65,11 @@ const orgScopedTables = [
   // Bank reconciliation
   'bank_statements',
   'reconciliation_entries',
-  'reconciliation_patterns'
+  'reconciliation_patterns',
+  // Other income
+  'other_income',
+  // Investor interest ledger
+  'investor_interest'
 ];
 
 // Map column names that differ between code and database

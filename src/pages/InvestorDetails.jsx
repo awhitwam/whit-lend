@@ -8,8 +8,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Calculator, Loader2, Calendar, Percent, Building2, Pencil, EyeOff, RefreshCw } from 'lucide-react';
-import { Switch } from "@/components/ui/switch";
+import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Calculator, Loader2, Calendar, Percent, Building2, Pencil, RefreshCw } from 'lucide-react';
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import InvestorForm from '@/components/investor/InvestorForm';
 import InvestorTransactionForm from '@/components/investor/InvestorTransactionForm';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -21,11 +23,18 @@ export default function InvestorDetails() {
   const investorId = urlParams.get('id');
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isTransactionOpen, setIsTransactionOpen] = useState(false);
+  const [isInterestDialogOpen, setIsInterestDialogOpen] = useState(false);
   const [isPostingInterest, setIsPostingInterest] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
-  const [hideCancelledTransactions, setHideCancelledTransactions] = useState(false);
+  const [editingInterest, setEditingInterest] = useState(null);
+  const [interestFormData, setInterestFormData] = useState({
+    type: 'credit',
+    amount: '',
+    date: new Date().toISOString().split('T')[0],
+    description: ''
+  });
   const queryClient = useQueryClient();
-  const _navigate = useNavigate(); // Prefixed with _ to suppress unused warning
+  const _navigate = useNavigate();
 
   const { data: investor, isLoading: investorLoading } = useQuery({
     queryKey: ['investor', investorId],
@@ -36,9 +45,17 @@ export default function InvestorDetails() {
     enabled: !!investorId
   });
 
+  // Capital transactions only (no interest types)
   const { data: transactions = [] } = useQuery({
     queryKey: ['investor-transactions', investorId],
     queryFn: () => api.entities.InvestorTransaction.filter({ investor_id: investorId }, '-date'),
+    enabled: !!investorId
+  });
+
+  // Interest ledger entries
+  const { data: interestEntries = [] } = useQuery({
+    queryKey: ['investor-interest', investorId],
+    queryFn: () => api.entities.InvestorInterest.filter({ investor_id: investorId }, '-date'),
     enabled: !!investorId
   });
 
@@ -125,15 +142,12 @@ export default function InvestorDetails() {
     mutationFn: async (data) => {
       const oldTransaction = transactions.find(t => t.id === editingTransaction.id);
 
-      // Update the transaction
       await api.entities.InvestorTransaction.update(editingTransaction.id, {
         ...data,
         investor_id: investorId,
         investor_name: investor.name
       });
 
-      // Calculate capital balance changes
-      // First, reverse the old transaction's effect
       let capitalChange = 0;
       if (oldTransaction.type === 'capital_in') {
         capitalChange -= oldTransaction.amount;
@@ -141,14 +155,12 @@ export default function InvestorDetails() {
         capitalChange += oldTransaction.amount;
       }
 
-      // Then apply the new transaction's effect
       if (data.type === 'capital_in') {
         capitalChange += data.amount;
       } else if (data.type === 'capital_out') {
         capitalChange -= data.amount;
       }
 
-      // Update investor balance if there's a capital change
       if (capitalChange !== 0 || oldTransaction.type !== data.type) {
         const oldCapitalIn = oldTransaction.type === 'capital_in' ? oldTransaction.amount : 0;
         const newCapitalIn = data.type === 'capital_in' ? data.amount : 0;
@@ -169,24 +181,61 @@ export default function InvestorDetails() {
     }
   });
 
+  // Interest ledger mutations
+  const createInterestMutation = useMutation({
+    mutationFn: async (data) => {
+      await api.entities.InvestorInterest.create({
+        investor_id: investorId,
+        type: data.type,
+        amount: parseFloat(data.amount),
+        date: data.date,
+        description: data.description
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
+      setIsInterestDialogOpen(false);
+      setInterestFormData({ type: 'credit', amount: '', date: new Date().toISOString().split('T')[0], description: '' });
+    }
+  });
+
+  const updateInterestMutation = useMutation({
+    mutationFn: async (data) => {
+      await api.entities.InvestorInterest.update(editingInterest.id, {
+        type: data.type,
+        amount: parseFloat(data.amount),
+        date: data.date,
+        description: data.description
+      });
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
+      setIsInterestDialogOpen(false);
+      setEditingInterest(null);
+      setInterestFormData({ type: 'credit', amount: '', date: new Date().toISOString().split('T')[0], description: '' });
+    }
+  });
+
+  const deleteInterestMutation = useMutation({
+    mutationFn: (id) => api.entities.InvestorInterest.delete(id),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
+    }
+  });
+
   // Recalculate balance from transactions
   const recalculateBalanceMutation = useMutation({
     mutationFn: async () => {
-      // Calculate totals from all transactions
       const calculatedCapitalIn = transactions.filter(t => t.type === 'capital_in').reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
       const calculatedCapitalOut = transactions.filter(t => t.type === 'capital_out').reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
-      const calculatedInterestPaid = transactions.filter(t => t.type === 'interest_payment').reduce((sum, t) => sum + (parseFloat(t.amount) || 0), 0);
-
       const calculatedBalance = calculatedCapitalIn - calculatedCapitalOut;
 
-      // Update investor with recalculated values
       await api.entities.Investor.update(investorId, {
         current_capital_balance: calculatedBalance,
-        total_capital_contributed: calculatedCapitalIn,
-        total_interest_paid: calculatedInterestPaid
+        total_capital_contributed: calculatedCapitalIn
       });
 
-      return { calculatedBalance, calculatedCapitalIn, calculatedCapitalOut, calculatedInterestPaid };
+      return { calculatedBalance, calculatedCapitalIn, calculatedCapitalOut };
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
@@ -194,36 +243,31 @@ export default function InvestorDetails() {
     }
   });
 
-  // Post interest payment
+  // Post accrued interest (creates a credit entry in interest ledger)
   const postInterestMutation = useMutation({
     mutationFn: async () => {
       const frequency = product?.interest_posting_frequency || 'monthly';
       const periodStart = investor.last_accrual_date || getPeriodStart(frequency);
       const periodEnd = new Date();
 
-      // Create interest payment transaction
-      await api.entities.InvestorTransaction.create({
+      // Create interest credit in the new ledger
+      await api.entities.InvestorInterest.create({
         investor_id: investorId,
-        investor_name: investor.name,
-        type: 'interest_payment',
+        type: 'credit',
         amount: accruedInterest.accruedInterest,
         date: new Date().toISOString().split('T')[0],
-        description: `Interest payment for period ${format(new Date(periodStart), 'MMM dd')} - ${format(periodEnd, 'MMM dd, yyyy')}`,
-        is_auto_generated: false,
-        accrual_period_start: periodStart,
-        accrual_period_end: periodEnd.toISOString().split('T')[0]
+        description: `Interest for period ${format(new Date(periodStart), 'MMM dd')} - ${format(periodEnd, 'MMM dd, yyyy')} (${accruedInterest.days} days at ${annualRate}% p.a.)`
       });
 
-      // Update investor with new accrual date and total interest paid
+      // Update investor with new accrual date
       await api.entities.Investor.update(investorId, {
         accrued_interest: 0,
-        last_accrual_date: new Date().toISOString().split('T')[0],
-        total_interest_paid: (investor.total_interest_paid || 0) + accruedInterest.accruedInterest
+        last_accrual_date: new Date().toISOString().split('T')[0]
       });
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
-      queryClient.invalidateQueries({ queryKey: ['investor-transactions', investorId] });
+      queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
       queryClient.invalidateQueries({ queryKey: ['investors'] });
       setIsPostingInterest(false);
     }
@@ -253,52 +297,80 @@ export default function InvestorDetails() {
     );
   }
 
-  const capitalIn = transactions.filter(t => t.type === 'capital_in').reduce((sum, t) => sum + t.amount, 0);
-  const capitalOut = transactions.filter(t => t.type === 'capital_out').reduce((sum, t) => sum + t.amount, 0);
-  const interestPaid = transactions.filter(t => t.type === 'interest_payment').reduce((sum, t) => sum + t.amount, 0);
-  const interestAccrued = transactions.filter(t => t.type === 'interest_accrual').reduce((sum, t) => sum + t.amount, 0);
+  // Filter to only capital transactions (exclude old interest types for display)
+  const capitalTransactions = transactions.filter(t => t.type === 'capital_in' || t.type === 'capital_out');
 
-  // Sort transactions: by date descending, with interest_accrual appearing before interest_payment on same day
-  // Since display is newest-first, interest_payment shows at top, then interest_accrual below it
-  // Reading down the list: payment -> accrual (chronologically: accrual happened first, then payment)
-  const sortedTransactions = [...transactions].sort((a, b) => {
-    const dateA = new Date(a.date).getTime();
-    const dateB = new Date(b.date).getTime();
-    if (dateA !== dateB) return dateB - dateA; // Descending by date
-    // Same date: interest_payment appears first (top), interest_accrual below
-    const typeOrder = { interest_payment: 0, capital_out: 1, capital_in: 2, interest_accrual: 3 };
-    return (typeOrder[a.type] ?? 99) - (typeOrder[b.type] ?? 99);
-  });
+  const capitalIn = capitalTransactions.filter(t => t.type === 'capital_in').reduce((sum, t) => sum + t.amount, 0);
+  const capitalOut = capitalTransactions.filter(t => t.type === 'capital_out').reduce((sum, t) => sum + t.amount, 0);
+
+  // Calculate interest balance from new ledger
+  const interestCredits = interestEntries.filter(e => e.type === 'credit').reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+  const interestDebits = interestEntries.filter(e => e.type === 'debit').reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+  const interestBalance = interestCredits - interestDebits;
+
+  // Merge capital transactions and interest entries for unified display
+  const mergedItems = [
+    ...capitalTransactions.map(t => ({
+      ...t,
+      itemType: 'capital',
+      sortDate: new Date(t.date).getTime()
+    })),
+    ...interestEntries.map(e => ({
+      ...e,
+      itemType: 'interest',
+      sortDate: new Date(e.date).getTime()
+    }))
+  ].sort((a, b) => b.sortDate - a.sortDate);
 
   // Calculate interest accrual
   const annualRate = investor.annual_interest_rate || product?.interest_rate_per_annum || 0;
   const currentBalance = investor.current_capital_balance || 0;
   const minBalanceForInterest = product?.min_balance_for_interest || 0;
 
-  // Calculate accrued interest if balance meets minimum
   const accruedInterest = currentBalance >= minBalanceForInterest
     ? calculateAccruedInterest(currentBalance, annualRate, investor.last_accrual_date)
     : { accruedInterest: 0, days: 0, dailyRate: 0 };
 
-  // Calculate monthly interest estimate
-  const monthlyInterestDue = investor.interest_calculation_type === 'manual_amount'
-    ? investor.manual_interest_amount || 0
-    : currentBalance * (annualRate / 100 / 12);
-
   const getTransactionIcon = (type) => {
     if (type === 'capital_in') return { icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-100' };
     if (type === 'capital_out') return { icon: TrendingDown, color: 'text-red-600', bg: 'bg-red-100' };
-    if (type === 'interest_accrual') return { icon: Percent, color: 'text-amber-600', bg: 'bg-amber-100' };
-    if (type === 'interest_payment') return { icon: DollarSign, color: 'text-blue-600', bg: 'bg-blue-100' };
     return { icon: DollarSign, color: 'text-slate-600', bg: 'bg-slate-100' };
   };
 
   const getTransactionLabel = (type) => {
     if (type === 'capital_in') return 'Capital In';
     if (type === 'capital_out') return 'Capital Out';
-    if (type === 'interest_accrual') return 'Interest Accrued';
-    if (type === 'interest_payment') return 'Interest Payment';
     return type;
+  };
+
+  const openInterestDialog = (entry = null) => {
+    if (entry) {
+      setEditingInterest(entry);
+      setInterestFormData({
+        type: entry.type,
+        amount: entry.amount.toString(),
+        date: entry.date,
+        description: entry.description || ''
+      });
+    } else {
+      setEditingInterest(null);
+      setInterestFormData({
+        type: 'credit',
+        amount: '',
+        date: new Date().toISOString().split('T')[0],
+        description: ''
+      });
+    }
+    setIsInterestDialogOpen(true);
+  };
+
+  const handleInterestSubmit = (e) => {
+    e.preventDefault();
+    if (editingInterest) {
+      updateInterestMutation.mutate(interestFormData);
+    } else {
+      createInterestMutation.mutate(interestFormData);
+    }
   };
 
   return (
@@ -340,7 +412,7 @@ export default function InvestorDetails() {
                   variant="secondary"
                   size="sm"
                   onClick={() => {
-                    if (window.confirm('Recalculate balance from transactions? This will update the stored balance to match the sum of all transactions.')) {
+                    if (window.confirm('Recalculate capital balance from transactions?')) {
                       recalculateBalanceMutation.mutate();
                     }
                   }}
@@ -361,7 +433,7 @@ export default function InvestorDetails() {
             </div>
           </div>
           <CardContent className="p-6">
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
               <div>
                 <p className="text-xs text-slate-500 mb-1">Interest Rate</p>
                 <p className="font-semibold">
@@ -378,21 +450,15 @@ export default function InvestorDetails() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500 mb-1">Accrued Interest</p>
-                <p className="text-xl font-bold text-amber-600">
-                  {formatCurrency(accruedInterest.accruedInterest)}
+                <p className="text-xs text-slate-500 mb-1">Interest Balance</p>
+                <p className={`text-xl font-bold ${interestBalance >= 0 ? 'text-amber-600' : 'text-red-600'}`}>
+                  {formatCurrency(interestBalance)}
                 </p>
               </div>
               <div>
                 <p className="text-xs text-slate-500 mb-1">Total Contributed</p>
                 <p className="text-xl font-bold">
                   {formatCurrency(investor.total_capital_contributed || 0)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs text-slate-500 mb-1">Total Interest Paid</p>
-                <p className="text-xl font-bold text-blue-600">
-                  {formatCurrency(investor.total_interest_paid || interestPaid)}
                 </p>
               </div>
             </div>
@@ -419,7 +485,7 @@ export default function InvestorDetails() {
                   ) : (
                     <DollarSign className="w-4 h-4 mr-2" />
                   )}
-                  Post Interest Payment
+                  Post Interest Credit
                 </Button>
               </div>
             </CardHeader>
@@ -442,7 +508,7 @@ export default function InvestorDetails() {
                 <div className="bg-white p-4 rounded-lg">
                   <div className="flex items-center gap-2 mb-2">
                     <TrendingUp className="w-4 h-4 text-slate-500" />
-                    <p className="text-xs text-slate-500">Last Accrual</p>
+                    <p className="text-xs text-slate-500">Last Posted</p>
                   </div>
                   <p className="text-lg font-semibold">
                     {investor.last_accrual_date
@@ -513,7 +579,7 @@ export default function InvestorDetails() {
           </Card>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <Card>
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
@@ -544,8 +610,21 @@ export default function InvestorDetails() {
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-slate-500">Interest Paid</p>
-                  <p className="text-2xl font-bold text-blue-600">{formatCurrency(interestPaid)}</p>
+                  <p className="text-sm text-slate-500">Interest Credits</p>
+                  <p className="text-2xl font-bold text-amber-600">{formatCurrency(interestCredits)}</p>
+                </div>
+                <div className="p-3 rounded-xl bg-amber-100">
+                  <Percent className="w-5 h-5 text-amber-600" />
+                </div>
+              </div>
+            </CardContent>
+          </Card>
+          <Card>
+            <CardContent className="p-5">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm text-slate-500">Interest Withdrawn</p>
+                  <p className="text-2xl font-bold text-blue-600">{formatCurrency(interestDebits)}</p>
                 </div>
                 <div className="p-3 rounded-xl bg-blue-100">
                   <DollarSign className="w-5 h-5 text-blue-600" />
@@ -558,57 +637,27 @@ export default function InvestorDetails() {
         <Card>
           <CardHeader>
             <div className="flex items-center justify-between">
-              <CardTitle>Transactions</CardTitle>
-              <div className="flex items-center gap-4">
-                <label className="flex items-center gap-2 text-sm text-slate-600 cursor-pointer">
-                  <Switch
-                    checked={hideCancelledTransactions}
-                    onCheckedChange={setHideCancelledTransactions}
-                  />
-                  <EyeOff className="w-4 h-4" />
-                  <span>Hide paid interest</span>
-                </label>
+              <CardTitle>Transactions & Interest</CardTitle>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="outline" onClick={() => openInterestDialog()}>
+                  <Percent className="w-4 h-4 mr-2" />
+                  Add Interest Entry
+                </Button>
                 <Button size="sm" onClick={() => setIsTransactionOpen(true)}>
                   <Plus className="w-4 h-4 mr-2" />
-                  Add Transaction
+                  Add Capital Transaction
                 </Button>
               </div>
             </div>
           </CardHeader>
           <CardContent>
-            {transactions.length === 0 ? (
+            {mergedItems.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
                 <p>No transactions yet</p>
               </div>
             ) : (
               <div className="overflow-x-auto">
-                {/* Find cancelled out interest pairs (accrual + payment with same amount, payment on same day or later) */}
-                {(() => {
-                  const cancelledIds = new Set();
-                  // Sort accruals by date ascending (oldest first) to match with earliest payment
-                  const accruals = sortedTransactions
-                    .filter(t => t.type === 'interest_accrual')
-                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-                  const payments = sortedTransactions
-                    .filter(t => t.type === 'interest_payment')
-                    .sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
-
-                  accruals.forEach(accrual => {
-                    // Find a payment with same amount that occurs on or after the accrual date
-                    const accrualDate = new Date(accrual.date).getTime();
-                    const matchingPayment = payments.find(payment =>
-                      new Date(payment.date).getTime() >= accrualDate &&
-                      Math.abs(payment.amount - accrual.amount) < 0.01 &&
-                      !cancelledIds.has(payment.id)
-                    );
-                    if (matchingPayment) {
-                      cancelledIds.add(accrual.id);
-                      cancelledIds.add(matchingPayment.id);
-                    }
-                  });
-
-                  return (
                 <table className="w-full">
                   <thead>
                     <tr className="border-b text-left">
@@ -621,41 +670,50 @@ export default function InvestorDetails() {
                     </tr>
                   </thead>
                   <tbody className="divide-y">
-                    {sortedTransactions
-                      .filter(tx => !hideCancelledTransactions || !cancelledIds.has(tx.id))
-                      .map((tx) => {
-                      const { icon: Icon, color, bg } = getTransactionIcon(tx.type);
-                      // Debit = money going OUT (capital_out, interest_payment paid out)
-                      // Credit = money coming IN (capital_in, interest_accrual added to balance)
-                      const isDebit = tx.type === 'capital_out' || tx.type === 'interest_payment';
-                      const isCredit = tx.type === 'capital_in' || tx.type === 'interest_accrual';
-                      const isCancelled = cancelledIds.has(tx.id);
+                    {mergedItems.map((item) => {
+                      const isInterest = item.itemType === 'interest';
+                      const isDebit = isInterest ? item.type === 'debit' : item.type === 'capital_out';
+                      const isCredit = isInterest ? item.type === 'credit' : item.type === 'capital_in';
+
+                      let Icon, color, bg, label;
+                      if (isInterest) {
+                        Icon = item.type === 'credit' ? Percent : DollarSign;
+                        color = item.type === 'credit' ? 'text-amber-600' : 'text-blue-600';
+                        bg = item.type === 'credit' ? 'bg-amber-100' : 'bg-blue-100';
+                        label = item.type === 'credit' ? 'Interest Credit' : 'Interest Debit';
+                      } else {
+                        const txStyle = getTransactionIcon(item.type);
+                        Icon = txStyle.icon;
+                        color = txStyle.color;
+                        bg = txStyle.bg;
+                        label = getTransactionLabel(item.type);
+                      }
 
                       return (
-                        <tr key={tx.id} className={`hover:bg-slate-50 ${isCancelled ? 'opacity-60' : ''}`}>
+                        <tr key={`${item.itemType}-${item.id}`} className="hover:bg-slate-50">
                           <td className="py-1.5 pr-4 whitespace-nowrap">
-                            <p className="text-sm font-medium">{format(new Date(tx.date), 'dd MMM yyyy')}</p>
+                            <p className="text-sm font-medium">{format(new Date(item.date), 'dd MMM yyyy')}</p>
                           </td>
                           <td className="py-1.5 pr-4 whitespace-nowrap">
                             <div className="flex items-center gap-2">
                               <div className={`p-1 rounded ${bg}`}>
                                 <Icon className={`w-3 h-3 ${color}`} />
                               </div>
-                              <span className="text-sm">{getTransactionLabel(tx.type)}</span>
-                              {tx.is_auto_generated && (
-                                <Badge variant="outline" className="text-xs">Auto</Badge>
+                              <span className={`text-sm ${isInterest ? 'italic' : ''}`}>{label}</span>
+                              {isInterest && (
+                                <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">Interest</Badge>
                               )}
                             </div>
                           </td>
                           <td className="py-1.5 pr-4">
-                            {(tx.description || tx.notes) ? (
+                            {(item.description || item.notes) ? (
                               <div className="group relative">
                                 <p className="text-sm text-slate-700 max-w-lg truncate cursor-default">
-                                  {tx.description || tx.notes}
+                                  {item.description || item.notes}
                                 </p>
-                                {(tx.description || tx.notes || '').length > 60 && (
+                                {(item.description || item.notes || '').length > 60 && (
                                   <div className="hidden group-hover:block absolute z-10 left-0 top-full mt-1 p-3 bg-slate-900 text-white text-sm rounded-lg shadow-lg max-w-xl whitespace-pre-wrap">
-                                    {tx.description || tx.notes}
+                                    {item.description || item.notes}
                                   </div>
                                 )}
                               </div>
@@ -665,14 +723,14 @@ export default function InvestorDetails() {
                           </td>
                           <td className="py-1.5 pr-4 text-right whitespace-nowrap">
                             {isDebit ? (
-                              <p className={`font-semibold text-red-600 ${isCancelled ? 'line-through' : ''}`}>{formatCurrency(tx.amount)}</p>
+                              <p className="font-semibold text-red-600">{formatCurrency(item.amount)}</p>
                             ) : (
                               <p className="text-slate-300">-</p>
                             )}
                           </td>
                           <td className="py-1.5 pr-4 text-right whitespace-nowrap">
                             {isCredit ? (
-                              <p className={`font-semibold text-emerald-600 ${isCancelled ? 'line-through' : ''}`}>{formatCurrency(tx.amount)}</p>
+                              <p className="font-semibold text-emerald-600">{formatCurrency(item.amount)}</p>
                             ) : (
                               <p className="text-slate-300">-</p>
                             )}
@@ -684,8 +742,12 @@ export default function InvestorDetails() {
                                 size="icon"
                                 className="h-6 w-6 text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                                 onClick={() => {
-                                  setEditingTransaction(tx);
-                                  setIsTransactionOpen(true);
+                                  if (isInterest) {
+                                    openInterestDialog(item);
+                                  } else {
+                                    setEditingTransaction(item);
+                                    setIsTransactionOpen(true);
+                                  }
                                 }}
                               >
                                 <Pencil className="w-3.5 h-3.5" />
@@ -695,8 +757,12 @@ export default function InvestorDetails() {
                                 size="icon"
                                 className="h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
                                 onClick={() => {
-                                  if (window.confirm('Delete this transaction?')) {
-                                    deleteTransactionMutation.mutate(tx.id);
+                                  if (window.confirm(`Delete this ${isInterest ? 'interest entry' : 'transaction'}?`)) {
+                                    if (isInterest) {
+                                      deleteInterestMutation.mutate(item.id);
+                                    } else {
+                                      deleteTransactionMutation.mutate(item.id);
+                                    }
                                   }
                                 }}
                               >
@@ -712,17 +778,15 @@ export default function InvestorDetails() {
                     <tr className="border-t-2 border-slate-200 bg-slate-50">
                       <td colSpan="3" className="py-2 pr-4 text-sm font-semibold text-slate-700">Totals</td>
                       <td className="py-2 pr-4 text-right font-bold text-red-600">
-                        {formatCurrency(capitalOut + interestPaid)}
+                        {formatCurrency(capitalOut + interestDebits)}
                       </td>
                       <td className="py-2 pr-4 text-right font-bold text-emerald-600">
-                        {formatCurrency(capitalIn + interestAccrued)}
+                        {formatCurrency(capitalIn + interestCredits)}
                       </td>
                       <td></td>
                     </tr>
                   </tfoot>
                 </table>
-                  );
-                })()}
               </div>
             )}
           </CardContent>
@@ -748,12 +812,11 @@ export default function InvestorDetails() {
           }}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>{editingTransaction ? 'Edit Transaction' : 'Add Transaction'}</DialogTitle>
+              <DialogTitle>{editingTransaction ? 'Edit Transaction' : 'Add Capital Transaction'}</DialogTitle>
             </DialogHeader>
             <InvestorTransactionForm
               investor={investor}
               transaction={editingTransaction}
-              monthlyInterestDue={monthlyInterestDue}
               onSubmit={(data) => {
                 if (editingTransaction) {
                   updateTransactionMutation.mutate(data);
@@ -770,15 +833,90 @@ export default function InvestorDetails() {
           </DialogContent>
         </Dialog>
 
+        {/* Interest Entry Dialog */}
+        <Dialog open={isInterestDialogOpen} onOpenChange={(open) => {
+            setIsInterestDialogOpen(open);
+            if (!open) {
+              setEditingInterest(null);
+              setInterestFormData({ type: 'credit', amount: '', date: new Date().toISOString().split('T')[0], description: '' });
+            }
+          }}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle>{editingInterest ? 'Edit Interest Entry' : 'Add Interest Entry'}</DialogTitle>
+            </DialogHeader>
+            <form onSubmit={handleInterestSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Type</Label>
+                <Select
+                  value={interestFormData.type}
+                  onValueChange={(value) => setInterestFormData(prev => ({ ...prev, type: value }))}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="credit">Credit (Interest Added)</SelectItem>
+                    <SelectItem value="debit">Debit (Interest Withdrawn)</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label>Amount</Label>
+                <Input
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={interestFormData.amount}
+                  onChange={(e) => setInterestFormData(prev => ({ ...prev, amount: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Date</Label>
+                <Input
+                  type="date"
+                  value={interestFormData.date}
+                  onChange={(e) => setInterestFormData(prev => ({ ...prev, date: e.target.value }))}
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Description</Label>
+                <Input
+                  value={interestFormData.description}
+                  onChange={(e) => setInterestFormData(prev => ({ ...prev, description: e.target.value }))}
+                  placeholder="Optional description"
+                />
+              </div>
+              <div className="flex justify-end gap-3">
+                <Button type="button" variant="outline" onClick={() => setIsInterestDialogOpen(false)}>
+                  Cancel
+                </Button>
+                <Button
+                  type="submit"
+                  disabled={createInterestMutation.isPending || updateInterestMutation.isPending}
+                  className={interestFormData.type === 'credit' ? 'bg-amber-600 hover:bg-amber-700' : 'bg-blue-600 hover:bg-blue-700'}
+                >
+                  {(createInterestMutation.isPending || updateInterestMutation.isPending) && (
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  )}
+                  {editingInterest ? 'Update' : 'Add'} {interestFormData.type === 'credit' ? 'Credit' : 'Debit'}
+                </Button>
+              </div>
+            </form>
+          </DialogContent>
+        </Dialog>
+
         {/* Confirm Interest Posting Dialog */}
         <Dialog open={isPostingInterest} onOpenChange={setIsPostingInterest}>
           <DialogContent className="sm:max-w-md">
             <DialogHeader>
-              <DialogTitle>Post Interest Payment</DialogTitle>
+              <DialogTitle>Post Interest Credit</DialogTitle>
             </DialogHeader>
             <div className="space-y-4">
               <p className="text-slate-600">
-                This will create an interest payment transaction for the accrued interest.
+                This will create an interest credit entry for the accrued interest.
               </p>
               <div className="bg-amber-50 p-4 rounded-lg">
                 <p className="text-sm text-slate-500">Amount to post:</p>

@@ -103,19 +103,22 @@ function parseDate(dateStr) {
 }
 
 // Map CSV transaction type to database type
-function mapTransactionType(csvType) {
+// Returns { type, isInterest, interestType } where interestType is 'credit' or 'debit'
+function mapTransactionType(csvType, isCredit = true) {
   const type = csvType?.toLowerCase()?.trim();
-  if (type === 'deposit') return 'capital_in';
-  if (type === 'withdrawal') return 'capital_out';
-  // Preserve already-mapped types from alternative format processing
-  if (type === 'interest_accrual') return 'interest_accrual';
-  if (type === 'interest_payment') return 'interest_payment';
-  // Handle various interest-related types (original format defaults to payment)
-  if (type === 'interest' ||
+  if (type === 'deposit') return { type: 'capital_in', isInterest: false };
+  if (type === 'withdrawal') return { type: 'capital_out', isInterest: false };
+  // Interest types now go to the investor_interest ledger table
+  // Credit = interest accrued (added to balance), Debit = interest withdrawn
+  if (type === 'interest_accrual' ||
+      type === 'interest_payment' ||
+      type === 'interest' ||
       type === 'investor interest payment' ||
       type === 'system generated interest' ||
-      type.includes('interest')) return 'interest_payment';
-  return 'capital_in'; // Default
+      type.includes('interest')) {
+    return { type: 'interest', isInterest: true, interestType: isCredit ? 'credit' : 'debit' };
+  }
+  return { type: 'capital_in', isInterest: false }; // Default
 }
 
 // Transform a single transaction row
@@ -147,6 +150,7 @@ function transformTransactionData(row, investors, isFirstRow = false) {
   // then fall back to Transaction Balance (original format)
   let amount = 0;
   let transactionType = '';
+  let isCredit = true; // For determining interest type
 
   const debitStr = (row['Debit'] || '').replace(/,/g, '').trim();
   const creditStr = (row['Credit'] || '').replace(/,/g, '').trim();
@@ -161,28 +165,20 @@ function transformTransactionData(row, investors, isFirstRow = false) {
 
     if (creditAmount > 0) {
       amount = creditAmount;
-      // Credit entries: deposits OR interest being credited to account
-      if (typeFromCsv.includes('interest')) {
-        // Interest credited to account (accrued interest)
-        transactionType = 'interest_accrual';
-      } else {
-        transactionType = typeFromCsv || 'deposit';
-      }
+      isCredit = true;
+      transactionType = typeFromCsv || 'deposit';
     } else {
       amount = debitAmount;
-      // Debit entries: withdrawals OR interest being paid out
-      if (typeFromCsv.includes('interest')) {
-        // Interest paid out to investor
-        transactionType = 'interest_payment';
-      } else {
-        transactionType = typeFromCsv || 'withdrawal';
-      }
+      isCredit = false;
+      transactionType = typeFromCsv || 'withdrawal';
     }
   } else {
     // Original format - use Transaction Balance
     const amountStr = (row['Transaction Balance'] || '').replace(/,/g, '');
     amount = parseFloat(amountStr) || 0;
     transactionType = row['Transaction Type']?.toLowerCase()?.trim() || '';
+    // For original format, assume positive is credit
+    isCredit = amount >= 0;
   }
 
   // Debug: log if amount is 0
@@ -201,9 +197,14 @@ function transformTransactionData(row, investors, isFirstRow = false) {
   // Get description - alternative format uses "Description", original uses "Transaction Description"
   const description = (row['Description'] || row['Transaction Description'])?.trim() || null;
 
+  // Map transaction type - may return interest type info
+  const mappedType = mapTransactionType(transactionType, isCredit);
+
   return {
     investor_id: matchedInvestor.id,
-    type: mapTransactionType(transactionType),
+    type: mappedType.type,
+    isInterest: mappedType.isInterest,
+    interestType: mappedType.interestType, // 'credit' or 'debit' for interest entries
     amount: amount,
     date: date,
     transaction_id: row['Transaction Id']?.trim() || null,
@@ -241,8 +242,9 @@ export default function ImportInvestorTransactions() {
       const text = await file.text();
       const rows = parseCSV(text);
 
-      // Fetch existing transactions
+      // Fetch existing transactions for duplicate checking
       const existingTransactions = await api.entities.InvestorTransaction.list();
+      const existingInterest = await api.entities.InvestorInterest.list();
 
       let created = 0;
       let skipped = 0;
@@ -254,7 +256,7 @@ export default function ImportInvestorTransactions() {
           const txData = transformTransactionData(row, investors, rowIndex === 0);
 
           if (!txData) {
-            const accountNum = row['Account Number']?.trim();
+            const accountNum = row['Account Number']?.trim() || row['Account#']?.trim();
             const reason = accountNum
               ? `Investor not found for account ${accountNum}`
               : 'Missing account number or date';
@@ -263,6 +265,34 @@ export default function ImportInvestorTransactions() {
             continue;
           }
 
+          // Handle interest entries separately - they go to investor_interest table
+          if (txData.isInterest) {
+            // Check for duplicate interest entry by date and amount
+            const existingEntry = existingInterest.find(e =>
+              e.investor_id === txData.investor_id &&
+              e.date === txData.date &&
+              Math.abs(e.amount - txData.amount) < 0.01
+            );
+
+            if (existingEntry) {
+              skipped++;
+              continue;
+            }
+
+            // Create interest entry in the new ledger table
+            await api.entities.InvestorInterest.create({
+              investor_id: txData.investor_id,
+              date: txData.date,
+              type: txData.interestType, // 'credit' or 'debit'
+              amount: txData.amount,
+              description: txData.description,
+              reference: txData.transaction_id
+            });
+            created++;
+            continue;
+          }
+
+          // Handle capital transactions (capital_in, capital_out)
           // Check if transaction already exists by transaction_id
           const existing = txData.transaction_id && existingTransactions.find(tx =>
             tx.transaction_id === txData.transaction_id
@@ -273,8 +303,17 @@ export default function ImportInvestorTransactions() {
             continue;
           }
 
-          // Create new transaction
-          await api.entities.InvestorTransaction.create(txData);
+          // Create new capital transaction
+          await api.entities.InvestorTransaction.create({
+            investor_id: txData.investor_id,
+            type: txData.type,
+            amount: txData.amount,
+            date: txData.date,
+            transaction_id: txData.transaction_id,
+            description: txData.description,
+            bank_account: txData.bank_account,
+            is_auto_generated: txData.is_auto_generated
+          });
           created++;
 
         } catch (error) {
@@ -292,6 +331,7 @@ export default function ImportInvestorTransactions() {
 
       // Refresh data
       queryClient.invalidateQueries({ queryKey: ['investorTransactions'] });
+      queryClient.invalidateQueries({ queryKey: ['investor-interest'] });
       queryClient.invalidateQueries({ queryKey: ['investors'] });
 
     } catch (error) {

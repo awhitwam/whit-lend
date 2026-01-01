@@ -33,7 +33,8 @@ import {
   RefreshCw,
   Banknote,
   FileCheck,
-  DollarSign
+  DollarSign,
+  Coins
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
@@ -80,6 +81,7 @@ const navigation = [
       { name: 'Ledger', href: 'Ledger', icon: Building2 },
       { name: 'Bank Reconciliation', href: 'BankReconciliation', icon: FileCheck },
       { name: 'Expenses', href: 'Expenses', icon: Receipt },
+      { name: 'Other Income', href: 'OtherIncome', icon: Coins },
     ]
   },
   {
@@ -123,7 +125,7 @@ export default function Layout({ children, currentPageName }) {
   const location = useLocation();
 
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'BankReconciliation', 'Expenses', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'BankReconciliation', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin'];
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {

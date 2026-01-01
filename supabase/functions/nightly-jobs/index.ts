@@ -269,23 +269,20 @@ async function processInvestorInterest(supabase: any): Promise<TaskResult> {
 
         console.log(`[InvestorInterest] Investor ${investor.name}: Posting ${accruedInterest} interest for ${days} days`)
 
-        // Create interest accrual transaction
+        // Create interest credit entry in the new investor_interest ledger
         const { error: txError } = await supabase
-          .from('InvestorTransaction')
+          .from('investor_interest')
           .insert({
+            organization_id: investor.organization_id,
             investor_id: investor.id,
-            investor_name: investor.name,
-            type: 'interest_accrual',
-            amount: accruedInterest,
             date: todayStr,
-            description: `Interest accrued: ${days} days at ${product.interest_rate_per_annum}% p.a.`,
-            is_auto_generated: true,
-            accrual_period_start: investor.last_accrual_date || todayStr,
-            accrual_period_end: todayStr
+            type: 'credit',
+            amount: accruedInterest,
+            description: `Interest accrued: ${days} days at ${product.interest_rate_per_annum}% p.a.`
           })
 
         if (txError) {
-          throw new Error(`Failed to create transaction: ${txError.message}`)
+          throw new Error(`Failed to create interest entry: ${txError.message}`)
         }
 
         // Update investor record
@@ -454,7 +451,7 @@ async function recalculateInvestorBalances(supabase: any): Promise<TaskResult> {
     result.processed++
 
     try {
-      // Fetch all transactions for this investor
+      // Fetch all capital transactions for this investor
       const { data: transactions, error: txError } = await supabase
         .from('InvestorTransaction')
         .select('type, amount')
@@ -462,6 +459,16 @@ async function recalculateInvestorBalances(supabase: any): Promise<TaskResult> {
 
       if (txError) {
         throw new Error(`Failed to fetch transactions: ${txError.message}`)
+      }
+
+      // Fetch interest entries from the investor_interest ledger
+      const { data: interestEntries, error: interestError } = await supabase
+        .from('investor_interest')
+        .select('type, amount')
+        .eq('investor_id', investor.id)
+
+      if (interestError) {
+        throw new Error(`Failed to fetch interest entries: ${interestError.message}`)
       }
 
       // Calculate expected values
@@ -473,9 +480,16 @@ async function recalculateInvestorBalances(supabase: any): Promise<TaskResult> {
         .filter((t: any) => t.type === 'capital_out')
         .reduce((sum: number, t: any) => sum + (parseFloat(t.amount) || 0), 0)
 
-      const interestPaid = (transactions || [])
-        .filter((t: any) => t.type === 'interest_payment' || t.type === 'interest_accrual')
-        .reduce((sum: number, t: any) => sum + (parseFloat(t.amount) || 0), 0)
+      // Calculate interest from the new ledger: credits - debits
+      const interestCredits = (interestEntries || [])
+        .filter((e: any) => e.type === 'credit')
+        .reduce((sum: number, e: any) => sum + (parseFloat(e.amount) || 0), 0)
+
+      const interestDebits = (interestEntries || [])
+        .filter((e: any) => e.type === 'debit')
+        .reduce((sum: number, e: any) => sum + (parseFloat(e.amount) || 0), 0)
+
+      const interestPaid = interestCredits
 
       const expectedBalance = capitalIn - capitalOut
       const currentBalance = investor.current_capital_balance || 0

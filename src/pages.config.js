@@ -25,6 +25,7 @@ import Users from './pages/Users';
 import AuditLog from './pages/AuditLog';
 import SuperAdmin from './pages/SuperAdmin';
 import BankReconciliation from './pages/BankReconciliation';
+import OtherIncome from './pages/OtherIncome';
 import __Layout from './Layout.jsx';
 
 
@@ -56,6 +57,7 @@ export const PAGES = {
     "AuditLog": AuditLog,
     "SuperAdmin": SuperAdmin,
     "BankReconciliation": BankReconciliation,
+    "OtherIncome": OtherIncome,
 }
 
 export const pagesConfig = {
