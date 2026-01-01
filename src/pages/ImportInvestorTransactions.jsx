@@ -103,22 +103,26 @@ function parseDate(dateStr) {
 }
 
 // Map CSV transaction type to database type
-// Returns { type, isInterest, interestType } where interestType is 'credit' or 'debit'
+// Returns { type, isInterest, isInterestDebit }
+// Interest accruals (credits) are SKIPPED - the nightly job handles accruals automatically
+// Only interest payments/withdrawals (debits) are imported
 function mapTransactionType(csvType, isCredit = true) {
   const type = csvType?.toLowerCase()?.trim();
-  if (type === 'deposit') return { type: 'capital_in', isInterest: false };
-  if (type === 'withdrawal') return { type: 'capital_out', isInterest: false };
-  // Interest types now go to the investor_interest ledger table
-  // Credit = interest accrued (added to balance), Debit = interest withdrawn
+  if (type === 'deposit') return { type: 'capital_in', isInterest: false, isInterestDebit: false };
+  if (type === 'withdrawal') return { type: 'capital_out', isInterest: false, isInterestDebit: false };
+  // Interest handling:
+  // - Interest accruals (credits) are SKIPPED - system calculates these automatically via nightly job
+  // - Interest payments/withdrawals (debits) are imported to track actual payments made to investors
   if (type === 'interest_accrual' ||
       type === 'interest_payment' ||
       type === 'interest' ||
       type === 'investor interest payment' ||
       type === 'system generated interest' ||
       type.includes('interest')) {
-    return { type: 'interest', isInterest: true, interestType: isCredit ? 'credit' : 'debit' };
+    // Only import interest debits (actual payments), skip credits (accruals)
+    return { type: 'interest', isInterest: true, isInterestDebit: !isCredit };
   }
-  return { type: 'capital_in', isInterest: false }; // Default
+  return { type: 'capital_in', isInterest: false, isInterestDebit: false }; // Default
 }
 
 // Transform a single transaction row
@@ -204,7 +208,7 @@ function transformTransactionData(row, investors, isFirstRow = false) {
     investor_id: matchedInvestor.id,
     type: mappedType.type,
     isInterest: mappedType.isInterest,
-    interestType: mappedType.interestType, // 'credit' or 'debit' for interest entries
+    isInterestDebit: mappedType.isInterestDebit, // true for interest payments (debits only)
     amount: amount,
     date: date,
     transaction_id: row['Transaction Id']?.trim() || null,
@@ -265,12 +269,20 @@ export default function ImportInvestorTransactions() {
             continue;
           }
 
-          // Handle interest entries separately - they go to investor_interest table
+          // Handle interest entries - only import DEBITS (actual payments to investors)
+          // Interest accruals (credits) are SKIPPED - the nightly job handles accruals automatically
           if (txData.isInterest) {
-            // Check for duplicate interest entry by date and amount
+            // Skip interest accruals (credits) - system calculates these automatically
+            if (!txData.isInterestDebit) {
+              skipped++;
+              continue;
+            }
+
+            // Check for duplicate interest debit entry by date and amount
             const existingEntry = existingInterest.find(e =>
               e.investor_id === txData.investor_id &&
               e.date === txData.date &&
+              e.type === 'debit' &&
               Math.abs(e.amount - txData.amount) < 0.01
             );
 
@@ -279,11 +291,11 @@ export default function ImportInvestorTransactions() {
               continue;
             }
 
-            // Create interest entry in the new ledger table
+            // Create interest debit entry (actual payment to investor)
             await api.entities.InvestorInterest.create({
               investor_id: txData.investor_id,
               date: txData.date,
-              type: txData.interestType, // 'credit' or 'debit'
+              type: 'debit', // Always debit for imported interest payments
               amount: txData.amount,
               description: txData.description,
               reference: txData.transaction_id

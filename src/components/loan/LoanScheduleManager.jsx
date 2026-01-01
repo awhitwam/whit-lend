@@ -710,6 +710,24 @@ export async function applyScheduleToNewLoan(loanData, product, options = {}) {
     });
   }
 
+  // Create initial Disbursement transaction if loan is released (has start_date)
+  if (loan.start_date && loan.status !== 'Pending') {
+    const disbursementAmount = loan.net_disbursed || (loan.principal_amount - (loan.arrangement_fee || 0));
+    if (disbursementAmount > 0) {
+      await api.entities.Transaction.create({
+        loan_id: loan.id,
+        borrower_id: loan.borrower_id,
+        date: loan.start_date,
+        type: 'Disbursement',
+        amount: disbursementAmount,
+        principal_applied: disbursementAmount,
+        interest_applied: 0,
+        fees_applied: 0,
+        notes: 'Initial loan disbursement'
+      });
+    }
+  }
+
   return { loan, schedule, summary: { totalInterest, totalRepayable } };
 }
 

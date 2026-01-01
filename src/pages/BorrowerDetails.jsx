@@ -400,13 +400,15 @@ export default function BorrowerDetails() {
   const nonLiveCount = loans.length - liveCount;
 
   // Column configuration - order and widths
-  const defaultColumnOrder = ['loan_number', 'description', 'date', 'product', 'principal', 'outstanding', 'last_payment', 'next_due', 'status'];
+  const defaultColumnOrder = ['loan_number', 'description', 'date', 'product', 'principal', 'arr_fee', 'exit_fee', 'outstanding', 'last_payment', 'next_due', 'status'];
   const defaultColumnWidths = {
     loan_number: 80,
     description: 150,
     date: 75,
     product: 55,
     principal: 90,
+    arr_fee: 75,
+    exit_fee: 75,
     outstanding: 90,
     last_payment: 80,
     next_due: 80,
@@ -555,6 +557,26 @@ export default function BorrowerDetails() {
       render: (loan, { totalPrincipal }) => (
         <span className="font-mono font-semibold text-sm text-slate-700">
           {formatCurrency(totalPrincipal)}
+        </span>
+      )
+    },
+    arr_fee: {
+      header: 'Arr Fee',
+      sortKey: 'arrangement_fee',
+      align: 'right',
+      render: (loan) => (
+        <span className="font-mono text-sm text-slate-600">
+          {loan.arrangement_fee > 0 ? formatCurrency(loan.arrangement_fee) : '-'}
+        </span>
+      )
+    },
+    exit_fee: {
+      header: 'Exit Fee',
+      sortKey: 'exit_fee',
+      align: 'right',
+      render: (loan) => (
+        <span className="font-mono text-sm text-slate-600">
+          {loan.exit_fee > 0 ? formatCurrency(loan.exit_fee) : '-'}
         </span>
       )
     },

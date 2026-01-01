@@ -4,7 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Progress } from "@/components/ui/progress";
-import { ShieldCheck, Building2, Plus, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, Clock, Play, CheckCircle, XCircle, AlertCircle } from 'lucide-react';
+import { ShieldCheck, Building2, Plus, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, Clock, Play, CheckCircle, XCircle, AlertCircle, FileSpreadsheet } from 'lucide-react';
 import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
@@ -479,6 +479,131 @@ export default function SuperAdmin() {
     addLog('Expenses cleared successfully');
   };
 
+  // Clear bank reconciliation data function
+  const clearBankReconciliationData = async () => {
+    addLog('Clearing bank reconciliation data...');
+
+    // 1. Delete reconciliation entries first (references bank_statements)
+    setClearProgress({ current: 1, total: 3, step: 'Deleting reconciliation entries...' });
+    try {
+      const entries = await api.entities.ReconciliationEntry.list();
+      if (entries.length > 0) {
+        addLog(`  Found ${entries.length} reconciliation entries to delete...`);
+        let deletedCount = 0;
+        let entryErrors = 0;
+
+        for (const entry of entries) {
+          try {
+            await api.entities.ReconciliationEntry.delete(entry.id);
+            deletedCount++;
+            if (deletedCount % 100 === 0) {
+              addLog(`    Deleted ${deletedCount} of ${entries.length} entries...`);
+            }
+          } catch (err) {
+            entryErrors++;
+            if (entryErrors <= 3) {
+              addLog(`    Error deleting entry ${entry.id}: ${err.message}`);
+            }
+          }
+        }
+
+        addLog(`  Reconciliation entries deletion complete: ${deletedCount} deleted`);
+        if (entryErrors > 0) {
+          addLog(`  Failed to delete ${entryErrors} entries`);
+        }
+      } else {
+        addLog(`  No reconciliation entries found to delete`);
+      }
+    } catch (e) {
+      throw new Error(`Could not delete reconciliation entries: ${e.message}`);
+    }
+
+    // 2. Delete reconciliation patterns
+    setClearProgress({ current: 2, total: 3, step: 'Deleting reconciliation patterns...' });
+    try {
+      const patterns = await api.entities.ReconciliationPattern.list();
+      if (patterns.length > 0) {
+        addLog(`  Found ${patterns.length} reconciliation patterns to delete...`);
+        let deletedCount = 0;
+
+        for (const pattern of patterns) {
+          try {
+            await api.entities.ReconciliationPattern.delete(pattern.id);
+            deletedCount++;
+          } catch (err) {
+            addLog(`    Error deleting pattern ${pattern.id}: ${err.message}`);
+          }
+        }
+
+        addLog(`  Reconciliation patterns deletion complete: ${deletedCount} deleted`);
+      } else {
+        addLog(`  No reconciliation patterns found to delete`);
+      }
+    } catch (e) {
+      addLog(`  Note: Could not list/delete reconciliation patterns: ${e.message}`);
+    }
+
+    // 3. Delete bank statements
+    setClearProgress({ current: 3, total: 3, step: 'Deleting bank statements...' });
+    try {
+      const statements = await api.entities.BankStatement.list();
+      if (statements.length > 0) {
+        addLog(`  Found ${statements.length} bank statements to delete...`);
+        let deletedCount = 0;
+        let statementErrors = 0;
+
+        for (const stmt of statements) {
+          try {
+            await api.entities.BankStatement.delete(stmt.id);
+            deletedCount++;
+            if (deletedCount % 100 === 0) {
+              addLog(`    Deleted ${deletedCount} of ${statements.length} statements...`);
+            }
+          } catch (err) {
+            statementErrors++;
+            if (statementErrors <= 3) {
+              addLog(`    Error deleting statement ${stmt.id}: ${err.message}`);
+            }
+          }
+        }
+
+        addLog(`  Bank statements deletion complete: ${deletedCount} deleted`);
+        if (statementErrors > 0) {
+          addLog(`  Failed to delete ${statementErrors} statements`);
+        }
+      } else {
+        addLog(`  No bank statements found to delete`);
+      }
+    } catch (e) {
+      throw new Error(`Could not delete bank statements: ${e.message}`);
+    }
+
+    addLog('Bank reconciliation data cleared successfully');
+  };
+
+  // Handle clear bank reconciliation data
+  const handleClearBankReconciliation = async () => {
+    if (!window.confirm(`Are you sure you want to delete ALL bank reconciliation data for "${currentOrganization?.name}"?\n\nThis will delete:\n• All bank statement entries\n• All reconciliation links\n• All learned reconciliation patterns\n\nThis action CANNOT be undone!`)) {
+      return;
+    }
+
+    setClearing(true);
+    setClearResult(null);
+    setLogs([]);
+
+    try {
+      await clearBankReconciliationData();
+      setClearResult({ success: true, message: 'All bank reconciliation data cleared successfully!' });
+      queryClient.invalidateQueries(['bank-statements']);
+      queryClient.invalidateQueries(['reconciliation-entries']);
+      queryClient.invalidateQueries(['reconciliation-patterns']);
+    } catch (err) {
+      setClearResult({ success: false, message: err.message });
+    } finally {
+      setClearing(false);
+    }
+  };
+
   // Handle clear all data
   const handleClearAllData = async () => {
     if (!window.confirm(`Are you sure you want to delete ALL data for "${currentOrganization?.name}"?\n\nThis will delete:\n• All borrowers\n• All loans\n• All transactions\n• All repayment schedules\n• All properties and security\n• All expenses\n• All investors and investor transactions\n• All audit logs\n\nThis action CANNOT be undone!`)) {
@@ -822,6 +947,25 @@ export default function SuperAdmin() {
                     <>
                       <TrendingUp className="w-4 h-4 mr-2" />
                       Clear Investor Data
+                    </>
+                  )}
+                </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={handleClearBankReconciliation}
+                  disabled={clearing}
+                  className="border-red-300 text-red-900 hover:bg-red-50"
+                >
+                  {clearing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Clearing...
+                    </>
+                  ) : (
+                    <>
+                      <FileSpreadsheet className="w-4 h-4 mr-2" />
+                      Clear Bank Reconciliation
                     </>
                   )}
                 </Button>

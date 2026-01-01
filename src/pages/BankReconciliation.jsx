@@ -766,14 +766,18 @@ export default function BankReconciliation() {
     const entryAmount = Math.abs(selectedEntry.amount);
 
     if (reconciliationType === 'loan_repayment' || reconciliationType === 'loan_disbursement') {
+      // Filter by transaction type: Disbursement for loan_disbursement, Repayment for loan_repayment
+      const expectedType = reconciliationType === 'loan_disbursement' ? 'Disbursement' : 'Repayment';
       return loanTransactions
         .filter(tx => {
           if (tx.is_deleted) return false;
+          // Only show transactions of the matching type
+          if (tx.type !== expectedType) return false;
           const isReconciled = reconciliationEntries.some(re => re.loan_transaction_id === tx.id);
           if (isReconciled) return false;
-          const txDate = parseISO(tx.date);
+          const txDate = tx.date ? parseISO(tx.date) : null;
           const amountMatch = Math.abs(tx.amount - entryAmount) / entryAmount < 0.01;
-          const dateMatch = Math.abs(entryDate - txDate) <= 3 * 24 * 60 * 60 * 1000;
+          const dateMatch = txDate && Math.abs(entryDate.getTime() - txDate.getTime()) <= 3 * 24 * 60 * 60 * 1000;
           return amountMatch || dateMatch;
         })
         .slice(0, 10);
@@ -785,8 +789,8 @@ export default function BankReconciliation() {
           const isReconciled = reconciliationEntries.some(re => re.investor_transaction_id === tx.id);
           if (isReconciled) return false;
           const amountMatch = Math.abs(tx.amount - entryAmount) / entryAmount < 0.01;
-          const txDate = parseISO(tx.date);
-          const dateMatch = Math.abs(entryDate - txDate) <= 3 * 24 * 60 * 60 * 1000;
+          const txDate = tx.date ? parseISO(tx.date) : null;
+          const dateMatch = txDate && Math.abs(entryDate.getTime() - txDate.getTime()) <= 3 * 24 * 60 * 60 * 1000;
           return amountMatch || dateMatch;
         })
         .slice(0, 10);

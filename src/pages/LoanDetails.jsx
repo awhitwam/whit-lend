@@ -225,6 +225,32 @@ export default function LoanDetails() {
         principal_paid: totalPrincipalPaid,
         interest_paid: totalInterestPaid
       });
+
+      // Create Disbursement transaction if loan is now released and doesn't have one
+      const updatedLoan = await api.entities.Loan.get(loanId);
+      if (updatedLoan.start_date && updatedLoan.status !== 'Pending') {
+        // Check if Disbursement transaction already exists
+        const existingDisbursement = transactions.find(
+          t => t.type === 'Disbursement' && !t.is_deleted
+        );
+        if (!existingDisbursement) {
+          const disbursementAmount = updatedLoan.net_disbursed ||
+            (updatedLoan.principal_amount - (updatedLoan.arrangement_fee || 0));
+          if (disbursementAmount > 0) {
+            await api.entities.Transaction.create({
+              loan_id: loanId,
+              borrower_id: updatedLoan.borrower_id,
+              date: updatedLoan.start_date,
+              type: 'Disbursement',
+              amount: disbursementAmount,
+              principal_applied: disbursementAmount,
+              interest_applied: 0,
+              fees_applied: 0,
+              notes: 'Initial loan disbursement'
+            });
+          }
+        }
+      }
     },
     onSuccess: async () => {
       setProcessingMessage('Refreshing data...');

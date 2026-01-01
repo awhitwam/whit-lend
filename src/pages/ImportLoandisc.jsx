@@ -1159,6 +1159,28 @@ export default function ImportLoandisc() {
               if (isDebugLoan) {
                 addLog(`[DEBUG LOAN ${loanNumber}] Created new loan (id: ${created.id})`);
               }
+
+              // Create initial Disbursement transaction if loan is released (has start_date)
+              if (created.start_date && created.status !== 'Pending') {
+                const disbursementAmount = created.net_disbursed ||
+                  (created.principal_amount - (created.arrangement_fee || 0));
+                if (disbursementAmount > 0) {
+                  await api.entities.Transaction.create({
+                    loan_id: created.id,
+                    borrower_id: created.borrower_id,
+                    date: created.start_date,
+                    type: 'Disbursement',
+                    amount: disbursementAmount,
+                    principal_applied: disbursementAmount,
+                    interest_applied: 0,
+                    fees_applied: 0,
+                    notes: 'Initial loan disbursement (import)'
+                  });
+                  if (isDebugLoan) {
+                    addLog(`[DEBUG LOAN ${loanNumber}] Created Disbursement transaction: ${disbursementAmount}`);
+                  }
+                }
+              }
             }
           } catch (err) {
             result.loans.errors++;
