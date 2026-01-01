@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -26,6 +26,14 @@ export default function SuperAdmin() {
   // Nightly jobs state
   const [runningJob, setRunningJob] = useState(null);
   const [jobResult, setJobResult] = useState(null);
+
+  // Reset clear data state when organization changes
+  useEffect(() => {
+    setClearing(false);
+    setClearResult(null);
+    setLogs([]);
+    setClearProgress({ current: 0, total: 0, step: '' });
+  }, [currentOrganization?.id]);
 
   // Fetch recent job runs
   const { data: recentJobRuns = [] } = useQuery({
@@ -604,80 +612,6 @@ export default function SuperAdmin() {
             </CardContent>
           </Card>
 
-          {/* Clear Expenses Only */}
-          <Card className="border-amber-200">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-amber-900">
-                <Receipt className="w-5 h-5" />
-                Clear Expenses
-              </CardTitle>
-              <CardDescription className="text-amber-700">
-                Delete all expenses for {currentOrganization?.name || 'current organization'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-600 mb-4">
-                This will permanently delete all expense records. Expense types will be preserved.
-                Use this before re-importing expenses from Loandisc.
-              </p>
-              <Button
-                variant="outline"
-                onClick={handleClearExpenses}
-                disabled={clearing}
-                className="border-amber-300 text-amber-900 hover:bg-amber-100"
-              >
-                {clearing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Clearing...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Clear All Expenses
-                  </>
-                )}
-              </Button>
-            </CardContent>
-          </Card>
-
-          {/* Clear Investor Data Only */}
-          <Card className="border-blue-200">
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2 text-blue-900">
-                <TrendingUp className="w-5 h-5" />
-                Clear Investor Data
-              </CardTitle>
-              <CardDescription className="text-blue-700">
-                Delete all investors and transactions for {currentOrganization?.name || 'current organization'}
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-600 mb-4">
-                This will permanently delete all investor accounts and their transactions.
-                Investor products will be preserved. Use this before re-importing investors from Loandisc.
-              </p>
-              <Button
-                variant="outline"
-                onClick={handleClearInvestorData}
-                disabled={clearing}
-                className="border-blue-300 text-blue-900 hover:bg-blue-100"
-              >
-                {clearing ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Clearing...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="w-4 h-4 mr-2" />
-                    Clear All Investor Data
-                  </>
-                )}
-              </Button>
-            </CardContent>
-          </Card>
-
           {/* Nightly Jobs */}
           <Card className="border-slate-200 md:col-span-2">
             <CardHeader>
@@ -834,28 +768,64 @@ export default function SuperAdmin() {
             </CardContent>
           </Card>
 
-          {/* Clear All Data */}
+          {/* Danger Zone */}
           <Card className="border-red-200 md:col-span-2">
             <CardHeader>
               <CardTitle className="flex items-center gap-2 text-red-900">
                 <AlertTriangle className="w-5 h-5" />
-                Danger Zone: Clear All Data
+                Danger Zone
               </CardTitle>
               <CardDescription className="text-red-700">
-                Permanently delete all data for {currentOrganization?.name || 'current organization'}
+                Destructive actions for {currentOrganization?.name || 'current organization'}
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Alert className="border-red-300 bg-red-50">
                 <AlertTriangle className="w-4 h-4 text-red-600" />
                 <AlertDescription className="text-red-800">
-                  <strong>Warning:</strong> This will permanently delete ALL borrowers, loans, transactions,
-                  repayment schedules, properties, expenses, investors, and audit logs.
-                  Loan products and expense types will be preserved. This action cannot be undone!
+                  <strong>Warning:</strong> These actions permanently delete data and cannot be undone.
                 </AlertDescription>
               </Alert>
 
-              <div className="flex items-center gap-4">
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  variant="outline"
+                  onClick={handleClearExpenses}
+                  disabled={clearing}
+                  className="border-red-300 text-red-900 hover:bg-red-50"
+                >
+                  {clearing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Clearing...
+                    </>
+                  ) : (
+                    <>
+                      <Receipt className="w-4 h-4 mr-2" />
+                      Clear Expenses
+                    </>
+                  )}
+                </Button>
+
+                <Button
+                  variant="outline"
+                  onClick={handleClearInvestorData}
+                  disabled={clearing}
+                  className="border-red-300 text-red-900 hover:bg-red-50"
+                >
+                  {clearing ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Clearing...
+                    </>
+                  ) : (
+                    <>
+                      <TrendingUp className="w-4 h-4 mr-2" />
+                      Clear Investor Data
+                    </>
+                  )}
+                </Button>
+
                 <Button
                   variant="destructive"
                   onClick={handleClearAllData}
@@ -864,7 +834,7 @@ export default function SuperAdmin() {
                   {clearing ? (
                     <>
                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      Clearing Data...
+                      Clearing...
                     </>
                   ) : (
                     <>
