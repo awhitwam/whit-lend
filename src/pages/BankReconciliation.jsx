@@ -1,4 +1,5 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { api } from '@/api/dataClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
@@ -14,7 +15,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
   Upload, CheckCircle2, AlertCircle, Loader2, Search, FileCheck,
-  ArrowUpRight, ArrowDownLeft, Check, Link2,
+  ArrowUpRight, ArrowDownLeft, Check, Link2, Unlink,
   Sparkles, Wand2, Zap, CheckSquare
 } from 'lucide-react';
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
@@ -136,6 +137,7 @@ function calculateMatchScore(bankEntry, transaction, dateField = 'date') {
 
 export default function BankReconciliation() {
   const queryClient = useQueryClient();
+  const [searchParams, setSearchParams] = useSearchParams();
 
   // Import state
   const [bankSource, setBankSource] = useState('allica');
@@ -163,6 +165,7 @@ export default function BankReconciliation() {
   const [selectedExistingTx, setSelectedExistingTx] = useState(null);
   const [entitySearch, setEntitySearch] = useState('');
   const [splitAmounts, setSplitAmounts] = useState({ capital: 0, interest: 0, fees: 0 });
+  const [investorSplitAmounts, setInvestorSplitAmounts] = useState({ capital: 0, interest: 0 });
   const [expenseDescription, setExpenseDescription] = useState('');
   const [isReconciling, setIsReconciling] = useState(false);
   const [savePattern, setSavePattern] = useState(true);
@@ -254,6 +257,23 @@ export default function BankReconciliation() {
     });
     return ids;
   }, [reconciliationEntries]);
+
+  // Handle URL parameter to open a specific bank statement
+  useEffect(() => {
+    const viewId = searchParams.get('view');
+    if (viewId && bankStatements.length > 0 && !statementsLoading) {
+      const entry = bankStatements.find(s => s.id === viewId);
+      if (entry) {
+        setSelectedEntry(entry);
+        // Switch to reconciled filter if viewing a reconciled entry
+        if (entry.is_reconciled) {
+          setFilter('reconciled');
+        }
+        // Clear the URL parameter after opening
+        setSearchParams({}, { replace: true });
+      }
+    }
+  }, [searchParams, bankStatements, statementsLoading, setSearchParams]);
 
   // Auto-match suggestions using date/amount matching (primary) and patterns (secondary)
   const suggestedMatches = useMemo(() => {
@@ -448,6 +468,65 @@ export default function BankReconciliation() {
               confidence: score,
               reason: `Investor match: ${investorName} - ${formatCurrency(tx.amount)} on ${tx.date ? format(parseISO(tx.date), 'dd/MM') : '?'}`
             };
+          }
+        }
+      }
+
+      // 2b. GROUPED INVESTOR MATCH: Check if capital_out + interest_payment from same investor sum to this amount
+      // This handles combined capital + interest withdrawals where interest was credited first
+      if (!isCredit && bestScore < 0.9) {
+        // Group unreconciled outgoing investor transactions by investor_id
+        const txByInvestor = new Map();
+
+        for (const tx of investorTransactions) {
+          if (reconciledTxIds.has(tx.id)) continue;
+          // Only consider outgoing transactions (capital_out, interest_payment)
+          if (tx.type !== 'capital_out' && tx.type !== 'interest_payment') continue;
+          // Check if date is within 3 days of bank entry
+          if (!datesWithinDays(entry.statement_date, tx.date, 3)) continue;
+
+          const key = tx.investor_id;
+          if (!txByInvestor.has(key)) {
+            txByInvestor.set(key, []);
+          }
+          txByInvestor.get(key).push(tx);
+        }
+
+        // Check each investor's group of transactions
+        for (const [investorId, txGroup] of txByInvestor) {
+          if (txGroup.length < 2) continue; // Only interested in groups of 2+
+
+          const groupTotal = txGroup.reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0);
+
+          if (amountsMatch(entryAmount, groupTotal, 1)) {
+            const allSameDay = txGroup.every(tx =>
+              datesWithinDays(tx.date, entry.statement_date, 1)
+            );
+
+            const score = allSameDay ? 0.92 : 0.85;
+
+            if (score > bestScore) {
+              bestScore = score;
+              const investor = investors.find(i => i.id === investorId);
+              const investorName = investor?.business_name || investor?.name || 'Unknown';
+              const hasCapital = txGroup.some(tx => tx.type === 'capital_out');
+              const hasInterest = txGroup.some(tx => tx.type === 'interest_payment');
+              const capitalAmount = txGroup.filter(tx => tx.type === 'capital_out').reduce((s, tx) => s + parseFloat(tx.amount), 0);
+              const interestAmount = txGroup.filter(tx => tx.type === 'interest_payment').reduce((s, tx) => s + parseFloat(tx.amount), 0);
+
+              bestMatch = {
+                type: 'investor_combined',
+                matchMode: 'match_group',
+                existingTransactions: txGroup,
+                investor_id: investorId,
+                confidence: score,
+                reason: `Combined investor payment: ${investorName} - ${hasCapital ? `Capital: ${formatCurrency(capitalAmount)}` : ''}${hasCapital && hasInterest ? ' + ' : ''}${hasInterest ? `Interest: ${formatCurrency(interestAmount)}` : ''} = ${formatCurrency(groupTotal)}`,
+                suggestedSplit: {
+                  capital: capitalAmount,
+                  interest: interestAmount
+                }
+              };
+            }
           }
         }
       }
@@ -925,17 +1004,18 @@ export default function BankReconciliation() {
       try {
         const txGroup = reviewingSuggestion.existingTransactions;
         const amount = Math.abs(selectedEntry.amount);
+        const isInvestorGroup = reviewingSuggestion.type === 'investor_combined';
 
         // Create a reconciliation entry for each transaction in the group
         for (const tx of txGroup) {
           await api.entities.ReconciliationEntry.create({
             bank_statement_id: selectedEntry.id,
-            loan_transaction_id: tx.id,
-            investor_transaction_id: null,
+            loan_transaction_id: isInvestorGroup ? null : tx.id,
+            investor_transaction_id: isInvestorGroup ? tx.id : null,
             expense_id: null,
             amount: parseFloat(tx.amount) || 0,
-            reconciliation_type: 'loan_repayment',
-            notes: `Grouped match: ${txGroup.length} repayments totaling ${formatCurrency(amount)}`
+            reconciliation_type: isInvestorGroup ? 'investor_combined' : 'loan_repayment',
+            notes: `Grouped match: ${txGroup.length} ${isInvestorGroup ? 'investor transactions' : 'repayments'} totaling ${formatCurrency(amount)}`
           });
         }
 
@@ -949,6 +1029,9 @@ export default function BankReconciliation() {
         queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
         queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
         queryClient.invalidateQueries({ queryKey: ['transactions'] });
+        if (isInvestorGroup) {
+          queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+        }
 
         setSelectedEntry(null);
         setReviewingSuggestion(null);
@@ -1054,6 +1137,47 @@ export default function BankReconciliation() {
 
           await api.entities.Investor.update(selectedInvestor.id, {
             total_interest_paid: (selectedInvestor.total_interest_paid || 0) + amount
+          });
+
+        } else if (reconciliationType === 'investor_combined' && selectedInvestor) {
+          // Create two transactions: capital withdrawal + interest payment
+          const createdTxIds = [];
+
+          // Capital withdrawal transaction (if capital > 0)
+          if (investorSplitAmounts.capital > 0) {
+            const capitalTxData = {
+              investor_id: selectedInvestor.id,
+              type: 'capital_out',
+              amount: investorSplitAmounts.capital,
+              date: selectedEntry.statement_date,
+              description: `${selectedEntry.description} (Capital)`,
+              reference: selectedEntry.external_reference
+            };
+            const capitalTx = await api.entities.InvestorTransaction.create(capitalTxData);
+            createdTxIds.push(capitalTx.id);
+          }
+
+          // Interest payment transaction (if interest > 0)
+          if (investorSplitAmounts.interest > 0) {
+            const interestTxData = {
+              investor_id: selectedInvestor.id,
+              type: 'interest_payment',
+              amount: investorSplitAmounts.interest,
+              date: selectedEntry.statement_date,
+              description: `${selectedEntry.description} (Interest)`,
+              reference: selectedEntry.external_reference
+            };
+            const interestTx = await api.entities.InvestorTransaction.create(interestTxData);
+            createdTxIds.push(interestTx.id);
+          }
+
+          // Use first transaction ID for reconciliation entry (primary link)
+          investorTransactionId = createdTxIds[0];
+
+          // Update investor balances
+          await api.entities.Investor.update(selectedInvestor.id, {
+            current_capital_balance: (selectedInvestor.current_capital_balance || 0) - investorSplitAmounts.capital,
+            total_interest_paid: (selectedInvestor.total_interest_paid || 0) + investorSplitAmounts.interest
           });
 
         } else if (reconciliationType === 'expense') {
@@ -1462,19 +1586,20 @@ export default function BankReconciliation() {
           expenseId = suggestion.existingExpense.id;
         }
       } else if (suggestion.matchMode === 'match_group' && suggestion.existingTransactions) {
-        // Link to multiple existing transactions (grouped repayments)
+        // Link to multiple existing transactions (grouped repayments or investor transactions)
         const txGroup = suggestion.existingTransactions;
+        const isInvestorGroup = suggestion.type === 'investor_combined';
 
         // Create a reconciliation entry for each transaction in the group
         for (const tx of txGroup) {
           await api.entities.ReconciliationEntry.create({
             bank_statement_id: entry.id,
-            loan_transaction_id: tx.id,
-            investor_transaction_id: null,
+            loan_transaction_id: isInvestorGroup ? null : tx.id,
+            investor_transaction_id: isInvestorGroup ? tx.id : null,
             expense_id: null,
             amount: parseFloat(tx.amount) || 0,
-            reconciliation_type: 'loan_repayment',
-            notes: `Grouped match: ${txGroup.length} repayments totaling ${formatCurrency(amount)} with ${Math.round(suggestion.confidence * 100)}% confidence`
+            reconciliation_type: isInvestorGroup ? 'investor_combined' : 'loan_repayment',
+            notes: `Grouped match: ${txGroup.length} ${isInvestorGroup ? 'investor transactions' : 'repayments'} totaling ${formatCurrency(amount)} with ${Math.round(suggestion.confidence * 100)}% confidence`
           });
         }
 
@@ -1488,6 +1613,9 @@ export default function BankReconciliation() {
         queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
         queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
         queryClient.invalidateQueries({ queryKey: ['transactions'] });
+        if (isInvestorGroup) {
+          queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+        }
 
         return; // Early return since we handled everything
       } else if (suggestion.matchMode === 'create') {
@@ -1676,6 +1804,78 @@ export default function BankReconciliation() {
     }
   };
 
+  // Bulk un-reconcile - un-reconcile all selected reconciled entries
+  const [isBulkUnreconciling, setIsBulkUnreconciling] = useState(false);
+
+  const handleBulkUnreconcile = async () => {
+    const reconciledSelected = [...selectedEntries].filter(id => {
+      const entry = bankStatements.find(s => s.id === id);
+      return entry?.is_reconciled;
+    });
+
+    if (reconciledSelected.length === 0) {
+      alert('No reconciled entries selected');
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to un-reconcile ${reconciledSelected.length} entries? The linked transactions will NOT be deleted, only the reconciliation links will be removed.`)) {
+      return;
+    }
+
+    setIsBulkUnreconciling(true);
+    let succeeded = 0;
+    let failed = 0;
+
+    for (const entryId of reconciledSelected) {
+      try {
+        // Delete all reconciliation entries for this bank statement
+        await api.entities.ReconciliationEntry.deleteWhere({ bank_statement_id: entryId });
+
+        // Mark bank statement as not reconciled
+        await api.entities.BankStatement.update(entryId, {
+          is_reconciled: false,
+          reconciled_at: null,
+          reconciled_by: null
+        });
+        succeeded++;
+      } catch (error) {
+        console.error('Bulk un-reconcile error for entry:', entryId, error);
+        failed++;
+      }
+    }
+
+    queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+    queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+    setSelectedEntries(new Set());
+    setIsBulkUnreconciling(false);
+
+    if (failed > 0) {
+      alert(`Un-reconciled ${succeeded} entries. ${failed} failed.`);
+    }
+  };
+
+  // Quick un-reconcile from list view (single entry)
+  const handleQuickUnreconcile = async (entry) => {
+    if (!entry.is_reconciled) return;
+
+    if (!window.confirm('Un-reconcile this entry? The linked transaction will NOT be deleted.')) {
+      return;
+    }
+
+    try {
+      await api.entities.ReconciliationEntry.deleteWhere({ bank_statement_id: entry.id });
+      await api.entities.BankStatement.update(entry.id, {
+        is_reconciled: false,
+        reconciled_at: null,
+        reconciled_by: null
+      });
+      queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+    } catch (error) {
+      alert(`Error: ${error.message}`);
+    }
+  };
+
   // Toggle entry selection
   const toggleEntrySelection = (entryId) => {
     setSelectedEntries(prev => {
@@ -1689,16 +1889,23 @@ export default function BankReconciliation() {
     });
   };
 
-  // Select all visible entries with high-confidence suggestions (90%+)
-  const selectAllWithSuggestions = () => {
-    const eligibleIds = filteredStatements
-      .filter(s => {
-        if (s.is_reconciled) return false;
-        const suggestion = suggestedMatches.get(s.id);
-        return suggestion && suggestion.confidence >= 0.9;
-      })
-      .map(s => s.id);
-    setSelectedEntries(new Set(eligibleIds));
+  // Select all visible entries based on current filter view
+  const selectAllVisible = () => {
+    if (filter === 'reconciled') {
+      // Select all reconciled entries (for un-reconcile)
+      const eligibleIds = filteredStatements.filter(s => s.is_reconciled).map(s => s.id);
+      setSelectedEntries(new Set(eligibleIds));
+    } else {
+      // Select all unreconciled entries with high-confidence suggestions (90%+)
+      const eligibleIds = filteredStatements
+        .filter(s => {
+          if (s.is_reconciled) return false;
+          const suggestion = suggestedMatches.get(s.id);
+          return suggestion && suggestion.confidence >= 0.9;
+        })
+        .map(s => s.id);
+      setSelectedEntries(new Set(eligibleIds));
+    }
   };
 
   // Clear selection
@@ -1978,49 +2185,90 @@ export default function BankReconciliation() {
         )}
 
         {/* Bulk Actions Bar */}
-        {selectedEntries.size > 0 && (
-          <div className="flex items-center gap-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
-            <div className="flex items-center gap-2">
-              <CheckSquare className="w-5 h-5 text-purple-600" />
-              <span className="font-medium text-purple-800">{selectedEntries.size} selected</span>
-            </div>
-            <div className="flex gap-2">
-              <Button
-                size="sm"
-                onClick={handleBulkMatch}
-                disabled={isBulkMatching}
-                className="bg-purple-600 hover:bg-purple-700"
-              >
-                {isBulkMatching ? (
-                  <>
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Matching...
-                  </>
-                ) : (
-                  <>
-                    <Zap className="w-4 h-4 mr-2" />
-                    Match Selected
-                  </>
+        {selectedEntries.size > 0 && (() => {
+          // Count selected by type
+          const selectedUnreconciledWithSuggestion = [...selectedEntries].filter(id => {
+            const entry = bankStatements.find(s => s.id === id);
+            if (!entry || entry.is_reconciled) return false;
+            const suggestion = suggestedMatches.get(id);
+            return suggestion && suggestion.confidence >= 0.9;
+          }).length;
+          const selectedReconciled = [...selectedEntries].filter(id => {
+            const entry = bankStatements.find(s => s.id === id);
+            return entry?.is_reconciled;
+          }).length;
+
+          return (
+            <div className="flex items-center gap-4 p-3 bg-purple-50 border border-purple-200 rounded-lg">
+              <div className="flex items-center gap-2">
+                <CheckSquare className="w-5 h-5 text-purple-600" />
+                <span className="font-medium text-purple-800">{selectedEntries.size} selected</span>
+              </div>
+              <div className="flex gap-2">
+                {/* Only show Match Selected if unreconciled entries with suggestions are selected */}
+                {selectedUnreconciledWithSuggestion > 0 && (
+                  <Button
+                    size="sm"
+                    onClick={handleBulkMatch}
+                    disabled={isBulkMatching || isBulkUnreconciling}
+                    className="bg-purple-600 hover:bg-purple-700"
+                  >
+                    {isBulkMatching ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Matching...
+                      </>
+                    ) : (
+                      <>
+                        <Zap className="w-4 h-4 mr-2" />
+                        Match Selected ({selectedUnreconciledWithSuggestion})
+                      </>
+                    )}
+                  </Button>
                 )}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={clearSelection}
-              >
-                Clear Selection
-              </Button>
+                {/* Only show Un-reconcile Selected if reconciled entries are selected */}
+                {selectedReconciled > 0 && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={handleBulkUnreconcile}
+                    disabled={isBulkMatching || isBulkUnreconciling}
+                    className="border-amber-300 text-amber-700 hover:bg-amber-50"
+                  >
+                    {isBulkUnreconciling ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Un-reconciling...
+                      </>
+                    ) : (
+                      <>
+                        <Unlink className="w-4 h-4 mr-2" />
+                        Un-reconcile Selected ({selectedReconciled})
+                      </>
+                    )}
+                  </Button>
+                )}
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={clearSelection}
+                >
+                  Clear Selection
+                </Button>
+              </div>
+              {filter !== 'reconciled' && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={selectAllVisible}
+                  className="ml-auto text-purple-600 hover:text-purple-700"
+                >
+                  Select All 90%+ Matches
+                </Button>
+              )}
             </div>
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={selectAllWithSuggestions}
-              className="ml-auto text-purple-600 hover:text-purple-700"
-            >
-              Select All 90%+ Matches
-            </Button>
-          </div>
-        )}
+          );
+        })()}
 
         {/* Statements Table */}
         <Card>
@@ -2042,13 +2290,24 @@ export default function BankReconciliation() {
                     <tr className="border-b bg-slate-50">
                       <th className="px-2 py-2 w-8">
                         <Checkbox
-                          checked={selectedEntries.size > 0 && filteredStatements.filter(s => {
-                            const suggestion = suggestedMatches.get(s.id);
-                            return !s.is_reconciled && suggestion && suggestion.confidence >= 0.9;
-                          }).every(s => selectedEntries.has(s.id))}
+                          checked={(() => {
+                            if (selectedEntries.size === 0) return false;
+                            if (filter === 'reconciled') {
+                              // Check if all reconciled entries are selected
+                              const allReconciled = filteredStatements.filter(s => s.is_reconciled);
+                              return allReconciled.length > 0 && allReconciled.every(s => selectedEntries.has(s.id));
+                            } else {
+                              // Check if all entries with 90%+ suggestions are selected
+                              const eligible = filteredStatements.filter(s => {
+                                const suggestion = suggestedMatches.get(s.id);
+                                return !s.is_reconciled && suggestion && suggestion.confidence >= 0.9;
+                              });
+                              return eligible.length > 0 && eligible.every(s => selectedEntries.has(s.id));
+                            }
+                          })()}
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              selectAllWithSuggestions();
+                              selectAllVisible();
                             } else {
                               clearSelection();
                             }
@@ -2067,7 +2326,9 @@ export default function BankReconciliation() {
                   <tbody className="divide-y">
                     {filteredStatements.map((entry) => {
                       const suggestion = suggestedMatches.get(entry.id);
-                      const canSelect = !entry.is_reconciled && suggestion && suggestion.confidence >= 0.9;
+                      // Can select unreconciled entries with high-confidence suggestions OR reconciled entries (for un-reconcile)
+                      const canSelectForMatch = !entry.is_reconciled && suggestion && suggestion.confidence >= 0.9;
+                      const canSelect = canSelectForMatch || entry.is_reconciled;
                       return (
                         <tr key={entry.id} className={`hover:bg-slate-50 ${suggestion ? 'bg-purple-50/30' : ''} ${selectedEntries.has(entry.id) ? 'bg-purple-100/50' : ''}`}>
                           <td className="px-2 py-1.5">
@@ -2189,14 +2450,25 @@ export default function BankReconciliation() {
                                   </Button>
                                 </>
                               ) : (
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => openReconcileModal(entry)}
-                                  className="h-7 text-xs px-2"
-                                >
-                                  View
-                                </Button>
+                                <>
+                                  <Button
+                                    size="sm"
+                                    variant="outline"
+                                    onClick={() => openReconcileModal(entry)}
+                                    className="h-7 text-xs px-2"
+                                  >
+                                    View
+                                  </Button>
+                                  <Button
+                                    size="icon"
+                                    variant="outline"
+                                    onClick={() => handleQuickUnreconcile(entry)}
+                                    title="Un-reconcile"
+                                    className="h-7 w-7 border-amber-300 text-amber-600 hover:bg-amber-50"
+                                  >
+                                    <Unlink className="w-3.5 h-3.5" />
+                                  </Button>
+                                </>
                               )}
                             </div>
                           </td>
@@ -2342,22 +2614,35 @@ export default function BankReconciliation() {
                           <p className={`text-lg font-bold ${amountMatches ? 'text-emerald-600' : 'text-slate-700'}`}>
                             {formatCurrency(matchAmount)}
                             {amountMatches && ' ✓'}
-                            <span className="text-xs font-normal ml-2 text-emerald-500">(Credit)</span>
+                            <span className={`text-xs font-normal ml-2 ${reviewingSuggestion.type === 'investor_combined' ? 'text-red-500' : 'text-emerald-500'}`}>
+                              ({reviewingSuggestion.type === 'investor_combined' ? 'Debit' : 'Credit'})
+                            </span>
                           </p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-400 uppercase">Borrower</p>
-                          <p className="text-sm text-slate-700">{getBorrowerName(reviewingSuggestion.borrower_id)}</p>
+                          <p className="text-xs text-slate-400 uppercase">
+                            {reviewingSuggestion.type === 'investor_combined' ? 'Investor' : 'Borrower'}
+                          </p>
+                          <p className="text-sm text-slate-700">
+                            {reviewingSuggestion.type === 'investor_combined'
+                              ? (investors.find(i => i.id === reviewingSuggestion.investor_id)?.business_name || investors.find(i => i.id === reviewingSuggestion.investor_id)?.name || 'Unknown')
+                              : getBorrowerName(reviewingSuggestion.borrower_id)}
+                          </p>
                         </div>
                         <div>
-                          <p className="text-xs text-slate-400 uppercase mb-2">Payments Breakdown</p>
+                          <p className="text-xs text-slate-400 uppercase mb-2">Transactions Breakdown</p>
                           <div className="space-y-2 max-h-32 overflow-y-auto">
                             {txGroup.map((t, idx) => {
-                              const loan = loans.find(l => l.id === t.loan_id);
+                              // Handle both loan transactions and investor transactions
+                              const isInvestorTx = t.investor_id || reviewingSuggestion.type === 'investor_combined';
+                              const loan = !isInvestorTx ? loans.find(l => l.id === t.loan_id) : null;
+                              const txLabel = isInvestorTx
+                                ? (t.type === 'capital_out' ? 'Capital' : t.type === 'interest_payment' ? 'Interest' : t.type)
+                                : (loan?.loan_number || '?');
                               return (
                                 <div key={idx} className="flex justify-between text-sm bg-white/50 rounded px-2 py-1">
                                   <span className="text-slate-600">
-                                    {loan?.loan_number || '?'} - {t.date && isValid(parseISO(t.date)) ? format(parseISO(t.date), 'dd/MM') : '?'}
+                                    {txLabel} - {t.date && isValid(parseISO(t.date)) ? format(parseISO(t.date), 'dd/MM') : '?'}
                                   </span>
                                   <span className="font-medium text-slate-700">{formatCurrency(t.amount)}</span>
                                 </div>
@@ -2407,6 +2692,7 @@ export default function BankReconciliation() {
                               (reviewingSuggestion.type === 'investor_credit' && 'Investor Credit') ||
                               (reviewingSuggestion.type === 'investor_withdrawal' && 'Investor Withdrawal') ||
                               (reviewingSuggestion.type === 'investor_interest' && 'Investor Interest') ||
+                              (reviewingSuggestion.type === 'investor_combined' && 'Investor Capital + Interest') ||
                               (reviewingSuggestion.type === 'expense' && 'Expense')}
                           </p>
                         </div>
@@ -2680,6 +2966,12 @@ export default function BankReconciliation() {
                       setEntitySearch('');
                       setSelectedOffsetEntries([]);
                       setOffsetNotes('');
+                      // Initialize investor split amounts when selecting investor_combined
+                      if (value === 'investor_combined') {
+                        setInvestorSplitAmounts({ capital: Math.abs(selectedEntry.amount), interest: 0 });
+                      } else {
+                        setInvestorSplitAmounts({ capital: 0, interest: 0 });
+                      }
                     }}
                     className="grid grid-cols-2 gap-2"
                   >
@@ -2711,6 +3003,10 @@ export default function BankReconciliation() {
                         <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
                           <RadioGroupItem value="investor_interest" id="investor_interest" />
                           <Label htmlFor="investor_interest" className="cursor-pointer">Investor Interest</Label>
+                        </div>
+                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
+                          <RadioGroupItem value="investor_combined" id="investor_combined" />
+                          <Label htmlFor="investor_combined" className="cursor-pointer">Investor Capital + Interest</Label>
                         </div>
                         <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
                           <RadioGroupItem value="expense" id="expense" />
@@ -2816,7 +3112,7 @@ export default function BankReconciliation() {
                       )}
 
                       {/* Investor Selection */}
-                      {(reconciliationType === 'investor_credit' || reconciliationType === 'investor_withdrawal' || reconciliationType === 'investor_interest') && (
+                      {(reconciliationType === 'investor_credit' || reconciliationType === 'investor_withdrawal' || reconciliationType === 'investor_interest' || reconciliationType === 'investor_combined') && (
                         <div className="space-y-3">
                           <Label>Select Investor</Label>
                           <div className="relative">
@@ -2850,6 +3146,42 @@ export default function BankReconciliation() {
                               <p className="p-3 text-sm text-slate-500">No matching investors found</p>
                             )}
                           </div>
+
+                          {/* Split Amounts for Combined Investor Payments */}
+                          {reconciliationType === 'investor_combined' && selectedInvestor && (
+                            <div className="bg-slate-50 rounded-lg p-4 space-y-3 mt-4">
+                              <Label className="text-base">Payment Split</Label>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <Label className="text-xs">Capital Withdrawal</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    value={investorSplitAmounts.capital}
+                                    onChange={(e) => setInvestorSplitAmounts(prev => ({ ...prev, capital: parseFloat(e.target.value) || 0 }))}
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Interest Payment</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    value={investorSplitAmounts.interest}
+                                    onChange={(e) => setInvestorSplitAmounts(prev => ({ ...prev, interest: parseFloat(e.target.value) || 0 }))}
+                                  />
+                                </div>
+                              </div>
+                              <p className="text-sm text-slate-500">
+                                Total: {formatCurrency(investorSplitAmounts.capital + investorSplitAmounts.interest)} /
+                                Bank: {formatCurrency(Math.abs(selectedEntry.amount))}
+                                {Math.abs((investorSplitAmounts.capital + investorSplitAmounts.interest) - Math.abs(selectedEntry.amount)) > 0.01 && (
+                                  <span className="text-amber-600 ml-2">
+                                    (Difference: {formatCurrency(Math.abs(selectedEntry.amount) - (investorSplitAmounts.capital + investorSplitAmounts.interest))})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -3104,6 +3436,7 @@ export default function BankReconciliation() {
                       (reconciliationType === 'loan_repayment' && matchMode === 'create' && !selectedLoan) ||
                       (reconciliationType === 'loan_disbursement' && matchMode === 'create' && !selectedLoan) ||
                       (reconciliationType.startsWith('investor_') && matchMode === 'create' && !selectedInvestor) ||
+                      (reconciliationType === 'investor_combined' && matchMode === 'create' && (investorSplitAmounts.capital + investorSplitAmounts.interest) <= 0) ||
                       (matchMode === 'match' && !selectedExistingTx && reconciliationType !== 'offset') ||
                       (reconciliationType === 'offset' && (selectedOffsetEntries.length === 0 || !offsetNotes.trim() || Math.abs(selectedEntry.amount + selectedOffsetEntries.reduce((sum, e) => sum + e.amount, 0)) >= 0.01))
                     }

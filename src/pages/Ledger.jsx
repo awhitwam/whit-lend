@@ -7,11 +7,14 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, TrendingUp, TrendingDown, DollarSign, ArrowUpDown, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import { Search, TrendingUp, TrendingDown, DollarSign, ArrowUpDown, ChevronLeft, ChevronRight, FileCheck, ExternalLink } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
+import { useNavigate } from 'react-router-dom';
 
 export default function Ledger() {
+  const navigate = useNavigate();
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('date');
   const [sortDirection, setSortDirection] = useState('desc');
@@ -38,7 +41,44 @@ export default function Ledger() {
     queryFn: () => api.entities.InvestorTransaction.list('-date')
   });
 
-  const isLoading = transactionsLoading || loansLoading || expensesLoading || investorTxLoading;
+  const { data: reconciliationEntries = [], isLoading: reconcilingLoading } = useQuery({
+    queryKey: ['reconciliation-entries'],
+    queryFn: () => api.entities.ReconciliationEntry.list('-created_at')
+  });
+
+  const { data: bankStatements = [], isLoading: bankStatementsLoading } = useQuery({
+    queryKey: ['bank-statements'],
+    queryFn: () => api.entities.BankStatement.list('-statement_date')
+  });
+
+  const isLoading = transactionsLoading || loansLoading || expensesLoading || investorTxLoading || reconcilingLoading || bankStatementsLoading;
+
+  // Create lookup maps for reconciliation
+  // Map from transaction ID to bank statement info
+  const txToReconciliation = {};
+  const invTxToReconciliation = {};
+  const expToReconciliation = {};
+
+  reconciliationEntries.forEach(re => {
+    const bankStatement = bankStatements.find(bs => bs.id === re.bank_statement_id);
+    const reconInfo = {
+      bankStatementId: re.bank_statement_id,
+      bankDate: bankStatement?.statement_date,
+      bankDescription: bankStatement?.description,
+      bankAmount: bankStatement?.amount,
+      reconciliationType: re.reconciliation_type
+    };
+
+    if (re.loan_transaction_id) {
+      txToReconciliation[re.loan_transaction_id] = reconInfo;
+    }
+    if (re.investor_transaction_id) {
+      invTxToReconciliation[re.investor_transaction_id] = reconInfo;
+    }
+    if (re.expense_id) {
+      expToReconciliation[re.expense_id] = reconInfo;
+    }
+  });
 
   // Create loan lookup map
   const loanMap = {};
@@ -56,6 +96,7 @@ export default function Ledger() {
       .filter(t => !t.is_deleted && t.type === 'Repayment')
       .map(t => {
         const loan = loanMap[t.loan_id];
+        const recon = txToReconciliation[t.id];
         return {
           id: `tx-${t.id}`,
           date: t.date,
@@ -66,13 +107,35 @@ export default function Ledger() {
           reference: t.reference,
           amount_in: t.amount,
           amount_out: 0,
-          balance: 0
+          balance: 0,
+          reconciliation: recon || null
         };
       }),
-    
-    // Disbursements (money out)
+
+    // Disbursements (money out) - check for disbursement transactions
+    ...transactions
+      .filter(t => !t.is_deleted && t.type === 'Disbursement')
+      .map(t => {
+        const loan = loanMap[t.loan_id];
+        const recon = txToReconciliation[t.id];
+        return {
+          id: `tx-disb-${t.id}`,
+          date: t.date,
+          type: 'disbursement',
+          description: `Loan Disbursement - ${loan?.borrower_name || 'Unknown'}`,
+          borrower: loan?.borrower_name || null,
+          loanId: loan?.displayId || null,
+          reference: t.reference,
+          amount_in: 0,
+          amount_out: t.amount,
+          balance: 0,
+          reconciliation: recon || null
+        };
+      }),
+
+    // Loan start disbursements (fallback for loans without disbursement transactions)
     ...loans
-      .filter(l => !l.is_deleted && l.status !== 'Pending')
+      .filter(l => !l.is_deleted && l.status !== 'Pending' && !transactions.some(t => t.loan_id === l.id && t.type === 'Disbursement'))
       .map(l => {
         const loan = loanMap[l.id];
         return {
@@ -85,71 +148,88 @@ export default function Ledger() {
           reference: l.product_name,
           amount_in: 0,
           amount_out: l.net_disbursed || l.principal_amount,
-          balance: 0
+          balance: 0,
+          reconciliation: null
         };
       }),
-    
+
     // Expenses (money out)
-    ...expenses.map(e => ({
-      id: `exp-${e.id}`,
-      date: e.date,
-      type: 'expense',
-      description: `${e.type_name} - ${e.description || 'Business expense'}`,
-      borrower: e.borrower_name || null,
-      loanId: null,
-      reference: null,
-      amount_in: 0,
-      amount_out: e.amount,
-      balance: 0
-    })),
+    ...expenses.map(e => {
+      const recon = expToReconciliation[e.id];
+      return {
+        id: `exp-${e.id}`,
+        date: e.date,
+        type: 'expense',
+        description: `${e.type_name} - ${e.description || 'Business expense'}`,
+        borrower: e.borrower_name || null,
+        loanId: null,
+        reference: null,
+        amount_in: 0,
+        amount_out: e.amount,
+        balance: 0,
+        reconciliation: recon || null
+      };
+    }),
 
     // Investor capital in (money in from investors)
     ...investorTransactions
       .filter(t => t.type === 'capital_in')
-      .map(t => ({
-        id: `inv-in-${t.id}`,
-        date: t.date,
-        type: 'investor_capital_in',
-        description: `Capital from Investor - ${t.investor_name}`,
-        borrower: null,
-        loanId: null,
-        reference: t.reference,
-        amount_in: t.amount,
-        amount_out: 0,
-        balance: 0
-      })),
+      .map(t => {
+        const recon = invTxToReconciliation[t.id];
+        return {
+          id: `inv-in-${t.id}`,
+          date: t.date,
+          type: 'investor_capital_in',
+          description: `Capital from Investor - ${t.investor_name}`,
+          borrower: null,
+          loanId: null,
+          reference: t.reference,
+          amount_in: t.amount,
+          amount_out: 0,
+          balance: 0,
+          reconciliation: recon || null
+        };
+      }),
 
     // Investor capital out (money out to investors)
     ...investorTransactions
       .filter(t => t.type === 'capital_out')
-      .map(t => ({
-        id: `inv-out-${t.id}`,
-        date: t.date,
-        type: 'investor_capital_out',
-        description: `Capital Withdrawal - ${t.investor_name}`,
-        borrower: null,
-        loanId: null,
-        reference: t.reference,
-        amount_in: 0,
-        amount_out: t.amount,
-        balance: 0
-      })),
+      .map(t => {
+        const recon = invTxToReconciliation[t.id];
+        return {
+          id: `inv-out-${t.id}`,
+          date: t.date,
+          type: 'investor_capital_out',
+          description: `Capital Withdrawal - ${t.investor_name}`,
+          borrower: null,
+          loanId: null,
+          reference: t.reference,
+          amount_in: 0,
+          amount_out: t.amount,
+          balance: 0,
+          reconciliation: recon || null
+        };
+      }),
 
     // Investor interest payments (money out to investors)
     ...investorTransactions
       .filter(t => t.type === 'interest_payment')
-      .map(t => ({
-        id: `inv-int-${t.id}`,
-        date: t.date,
-        type: 'investor_interest',
-        description: `Interest Payment - ${t.investor_name}`,
-        borrower: null,
-        loanId: null,
-        reference: t.reference,
-        amount_in: 0,
-        amount_out: t.amount,
-        balance: 0
-      }))
+      .map(t => {
+        const recon = invTxToReconciliation[t.id];
+        return {
+          id: `inv-int-${t.id}`,
+          date: t.date,
+          type: 'investor_interest',
+          description: `Interest Payment - ${t.investor_name}`,
+          borrower: null,
+          loanId: null,
+          reference: t.reference,
+          amount_in: 0,
+          amount_out: t.amount,
+          balance: 0,
+          reconciliation: recon || null
+        };
+      })
   ];
 
   // Sort entries
@@ -347,6 +427,7 @@ export default function Ledger() {
                 ))}
               </div>
             ) : (
+              <TooltipProvider>
               <div className="overflow-x-auto">
                 <Table>
                   <TableHeader>
@@ -375,12 +456,20 @@ export default function Ledger() {
                       <TableHead className="text-right">Money In</TableHead>
                       <TableHead className="text-right">Money Out</TableHead>
                       <TableHead className="text-right">Balance</TableHead>
+                      <TableHead className="text-center w-12">
+                        <Tooltip>
+                          <TooltipTrigger>
+                            <FileCheck className="w-4 h-4 text-slate-400" />
+                          </TooltipTrigger>
+                          <TooltipContent>Reconciled with bank</TooltipContent>
+                        </Tooltip>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {paginatedEntries.length === 0 ? (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center py-12 text-slate-500">
+                        <TableCell colSpan={9} className="text-center py-12 text-slate-500">
                           No transactions found
                         </TableCell>
                       </TableRow>
@@ -418,12 +507,51 @@ export default function Ledger() {
                           <TableCell className="text-right font-mono font-bold text-slate-900">
                             {formatCurrency(entry.balance)}
                           </TableCell>
+                          <TableCell className="text-center">
+                            {entry.reconciliation ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <button
+                                    onClick={() => navigate(`/BankReconciliation?view=${entry.reconciliation.bankStatementId}`)}
+                                    className="inline-flex items-center justify-center p-1.5 rounded-full bg-emerald-100 hover:bg-emerald-200 transition-colors"
+                                  >
+                                    <FileCheck className="w-4 h-4 text-emerald-600" />
+                                  </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="max-w-xs">
+                                  <div className="space-y-1">
+                                    <p className="font-medium text-emerald-600">Reconciled</p>
+                                    {entry.reconciliation.bankDate && (
+                                      <p className="text-xs">
+                                        Bank date: {format(new Date(entry.reconciliation.bankDate), 'dd MMM yyyy')}
+                                      </p>
+                                    )}
+                                    {entry.reconciliation.bankAmount && (
+                                      <p className="text-xs">
+                                        Bank amount: {formatCurrency(Math.abs(entry.reconciliation.bankAmount))}
+                                      </p>
+                                    )}
+                                    {entry.reconciliation.bankDescription && (
+                                      <p className="text-xs truncate">
+                                        {entry.reconciliation.bankDescription.substring(0, 50)}
+                                        {entry.reconciliation.bankDescription.length > 50 ? '...' : ''}
+                                      </p>
+                                    )}
+                                    <p className="text-xs text-slate-400 pt-1">Click to view in Bank Reconciliation</p>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : (
+                              <span className="text-slate-300">-</span>
+                            )}
+                          </TableCell>
                         </TableRow>
                       ))
                     )}
                   </TableBody>
                 </Table>
               </div>
+              </TooltipProvider>
             )}
 
             {/* Pagination */}
