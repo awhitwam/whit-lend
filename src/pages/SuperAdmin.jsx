@@ -440,9 +440,10 @@ export default function SuperAdmin() {
 
   // Clear expenses only function
   const clearExpensesOnly = async () => {
-    addLog('Clearing expenses...');
-    setClearProgress({ current: 1, total: 1, step: 'Deleting expenses...' });
+    addLog('Clearing expenses and expense types...');
 
+    // 1. Delete expenses first (they reference expense_types)
+    setClearProgress({ current: 1, total: 2, step: 'Deleting expenses...' });
     try {
       const expenses = await api.entities.Expense.list();
       if (expenses.length > 0) {
@@ -476,7 +477,39 @@ export default function SuperAdmin() {
       throw new Error(`Could not list/delete expenses: ${e.message}`);
     }
 
-    addLog('Expenses cleared successfully');
+    // 2. Delete expense types
+    setClearProgress({ current: 2, total: 2, step: 'Deleting expense types...' });
+    try {
+      const expenseTypes = await api.entities.ExpenseType.list();
+      if (expenseTypes.length > 0) {
+        addLog(`  Found ${expenseTypes.length} expense types to delete...`);
+        let deletedCount = 0;
+        let typeErrors = 0;
+
+        for (const et of expenseTypes) {
+          try {
+            await api.entities.ExpenseType.delete(et.id);
+            deletedCount++;
+          } catch (err) {
+            typeErrors++;
+            if (typeErrors <= 3) {
+              addLog(`    Error deleting expense type ${et.name}: ${err.message}`);
+            }
+          }
+        }
+
+        addLog(`  Expense types deletion complete: ${deletedCount} deleted`);
+        if (typeErrors > 0) {
+          addLog(`  Failed to delete ${typeErrors} expense types`);
+        }
+      } else {
+        addLog(`  No expense types found to delete`);
+      }
+    } catch (e) {
+      addLog(`  Note: Could not list/delete expense types: ${e.message}`);
+    }
+
+    addLog('Expenses and expense types cleared successfully');
   };
 
   // Clear bank reconciliation data function
@@ -660,7 +693,7 @@ export default function SuperAdmin() {
 
   // Handle clear expenses only
   const handleClearExpenses = async () => {
-    if (!window.confirm(`Are you sure you want to delete ALL expenses for "${currentOrganization?.name}"?\n\nThis action CANNOT be undone!`)) {
+    if (!window.confirm(`Are you sure you want to delete ALL expenses and expense types for "${currentOrganization?.name}"?\n\nThis will delete:\n• All expense records\n• All expense types/categories\n\nThis action CANNOT be undone!`)) {
       return;
     }
 
@@ -670,8 +703,9 @@ export default function SuperAdmin() {
 
     try {
       await clearExpensesOnly();
-      setClearResult({ success: true, message: 'All expenses cleared successfully!' });
+      setClearResult({ success: true, message: 'All expenses and expense types cleared successfully!' });
       queryClient.invalidateQueries(['expenses']);
+      queryClient.invalidateQueries(['expense-types']);
     } catch (err) {
       setClearResult({ success: false, message: err.message });
     } finally {

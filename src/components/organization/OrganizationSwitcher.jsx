@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useAuth } from '@/lib/AuthContext';
 import {
@@ -25,6 +26,7 @@ export default function OrganizationSwitcher() {
   } = useOrganization();
   const { logout } = useAuth();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
   const [isSwitching, setIsSwitching] = useState(false);
 
   const handleSwitch = async (orgId) => {
@@ -38,12 +40,13 @@ export default function OrganizationSwitcher() {
     await queryClient.cancelQueries();
     queryClient.clear();
 
-    // Switch organization (updates localStorage synchronously)
+    // Switch organization (updates sessionStorage synchronously)
     switchOrganization(orgId);
 
-    // Force complete page reload to Dashboard
+    // Navigate to Dashboard using React Router (no page reload)
     setTimeout(() => {
-      window.location.href = '/Dashboard';
+      navigate('/Dashboard');
+      setIsSwitching(false);
     }, 300);
   };
 
