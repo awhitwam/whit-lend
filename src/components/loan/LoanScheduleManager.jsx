@@ -77,8 +77,9 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   
-  // Calculate dynamic principal outstanding from transactions
-  const totalDisbursed = loan.principal_amount + transactions
+  // Calculate dynamic principal outstanding from actual disbursement transactions
+  // (Don't add loan.principal_amount - disbursements already represent the principal)
+  const totalDisbursed = transactions
     .filter(t => t.type === 'Disbursement')
     .reduce((sum, t) => sum + t.amount, 0);
   
@@ -711,20 +712,25 @@ export async function applyScheduleToNewLoan(loanData, product, options = {}) {
   }
 
   // Create initial Disbursement transaction if loan is released (has start_date)
-  if (loan.start_date && loan.status !== 'Pending') {
-    const disbursementAmount = loan.net_disbursed || (loan.principal_amount - (loan.arrangement_fee || 0));
-    if (disbursementAmount > 0) {
-      await api.entities.Transaction.create({
-        loan_id: loan.id,
-        borrower_id: loan.borrower_id,
-        date: loan.start_date,
-        type: 'Disbursement',
-        amount: disbursementAmount,
-        principal_applied: disbursementAmount,
-        interest_applied: 0,
-        fees_applied: 0,
-        notes: 'Initial loan disbursement'
-      });
+  // Skip if already created (e.g., during import) via options.skipDisbursement
+  if (loan.start_date && loan.status !== 'Pending' && !options.skipDisbursement) {
+    // Check if a disbursement already exists for this loan
+    const existingDisbursements = transactions.filter(t => t.type === 'Disbursement');
+    if (existingDisbursements.length === 0) {
+      const disbursementAmount = loan.net_disbursed || (loan.principal_amount - (loan.arrangement_fee || 0));
+      if (disbursementAmount > 0) {
+        await api.entities.Transaction.create({
+          loan_id: loan.id,
+          borrower_id: loan.borrower_id,
+          date: loan.start_date,
+          type: 'Disbursement',
+          amount: disbursementAmount,
+          principal_applied: disbursementAmount,
+          interest_applied: 0,
+          fees_applied: 0,
+          notes: 'Initial loan disbursement'
+        });
+      }
     }
   }
 

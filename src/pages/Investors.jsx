@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { logInvestorEvent, AuditAction } from '@/lib/auditLog';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +26,14 @@ export default function Investors() {
 
   const createMutation = useMutation({
     mutationFn: (data) => api.entities.Investor.create(data),
-    onSuccess: () => {
+    onSuccess: (newInvestor, variables) => {
+      logInvestorEvent(AuditAction.INVESTOR_CREATE, newInvestor, {
+        name: variables.name,
+        email: variables.email,
+        interest_calculation_type: variables.interest_calculation_type,
+        annual_interest_rate: variables.annual_interest_rate,
+        status: variables.status
+      });
       queryClient.invalidateQueries({ queryKey: ['investors'] });
       setIsFormOpen(false);
       setEditingInvestor(null);
@@ -34,7 +42,8 @@ export default function Investors() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => api.entities.Investor.update(id, data),
-    onSuccess: () => {
+    onSuccess: (updatedInvestor, variables) => {
+      logInvestorEvent(AuditAction.INVESTOR_UPDATE, updatedInvestor, variables.data, editingInvestor);
       queryClient.invalidateQueries({ queryKey: ['investors'] });
       setIsFormOpen(false);
       setEditingInvestor(null);

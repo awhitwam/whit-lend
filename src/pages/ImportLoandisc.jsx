@@ -39,6 +39,7 @@ import {
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { getOrgItem, setOrgItem, removeOrgItem } from '@/lib/orgStorage';
+import { logBulkImportEvent, AuditAction } from '@/lib/auditLog';
 
 // CSV Parser that handles quoted fields
 function parseCSV(text) {
@@ -1095,26 +1096,34 @@ export default function ImportLoandisc() {
             }
 
             // Build loan data
+            // Parse gross principal and arrangement fee from CSV
+            const grossPrincipal = parseAmount(row['Principal Amount']);
+            const arrangementFee = parseAmount(row['Deductable Fees']) || parseAmount(row['Arragement Fee']) || 0;
+
+            // principal_amount should be what the borrower owes (net amount after fees deducted upfront)
+            // If there's an arrangement fee that was deducted, the borrower only received and owes the net amount
+            const netPrincipal = grossPrincipal - arrangementFee;
+
             const loanData = {
               loan_number: loanNumber,
               borrower_id: borrowerId,
               borrower_name: row['Business Name']?.trim() || row['Full Name']?.trim(),
               product_id: product?.id,
               product_name: product?.name,
-              principal_amount: parseAmount(row['Principal Amount']),
+              principal_amount: netPrincipal > 0 ? netPrincipal : grossPrincipal, // Use net if fee was deducted, otherwise gross
               start_date: startDate,
               duration: duration,
               status: mapLoanStatus(row['Loan Status Name']),
               description: loanTitle,
-              arrangement_fee: parseAmount(row['Deductable Fees']) || parseAmount(row['Arragement Fee']),
+              arrangement_fee: arrangementFee,
               exit_fee: parseAmount(row['Facility Exit Fee']),
               override_interest_rate: rateInfo.rate > 0,
               overridden_rate: rateInfo.rate,
               restructured_from_loan_number: restructuredFromNumber || null
             };
 
-            // Calculate net_disbursed (amount sent to borrower = principal - fees held back)
-            loanData.net_disbursed = loanData.principal_amount - (loanData.arrangement_fee || 0);
+            // net_disbursed = amount actually sent to borrower (same as principal_amount when fee is deducted)
+            loanData.net_disbursed = loanData.principal_amount;
 
             // Filter to only valid database fields
             filteredLoanData = filterFields(loanData, VALID_LOAN_FIELDS);
@@ -1126,7 +1135,10 @@ export default function ImportLoandisc() {
               addLog(`  Raw Loan #: "${rawLoanNumber}"`);
               addLog(`  Borrower #: "${borrowerNumber}"`);
               addLog(`  Business Name: "${row['Business Name']?.trim() || ''}"`);
-              addLog(`  Principal Amount: "${row['Principal Amount']}"`);
+              addLog(`  Principal Amount (CSV): "${row['Principal Amount']}" → gross: ${grossPrincipal}`);
+              addLog(`  Deductable Fees (CSV): "${row['Deductable Fees'] || row['Arragement Fee']}" → fee: ${arrangementFee}`);
+              addLog(`  Calculated: gross ${grossPrincipal} - fee ${arrangementFee} = net ${netPrincipal}`);
+              addLog(`  Final principal_amount: ${loanData.principal_amount}`);
               addLog(`  Interest Rate: "${row['Interest Rate']}" → parsed as ${rateInfo.rate}% (converted: ${rateInfo.wasConverted})`);
               addLog(`  Released Date: "${row['Released Date']}" → "${startDate}"`);
               addLog(`  Maturity Date: "${row['Maturity Date']}" → "${maturityDate}"`);
@@ -1429,7 +1441,7 @@ export default function ImportLoandisc() {
                 addLog(`[DEBUG SCHEDULE ${loan.loan_number}] Starting schedule regeneration...`);
                 addLog(`  Loan: id=${loan.id}, auto_extend=${loan.auto_extend}, duration=${loan.duration}, status=${loan.status}`);
               }
-              const scheduleResult = await regenerateLoanSchedule(loan.id, { endDate: new Date() });
+              const scheduleResult = await regenerateLoanSchedule(loan.id, { endDate: new Date(), skipDisbursement: true });
               if (isDebugLoan) {
                 addLog(`[DEBUG SCHEDULE ${loan.loan_number}] Generated ${scheduleResult.schedule.length} schedule entries`);
                 addLog(`  Total interest: ${scheduleResult.summary.totalInterest}, Total repayable: ${scheduleResult.summary.totalRepayable}`);
@@ -1468,6 +1480,15 @@ export default function ImportLoandisc() {
       setProgress({ stage: 'Complete', current: 1, total: 1, percent: 100 });
       setImportResult(result);
       addLog('Import completed successfully!');
+
+      // Log the bulk import
+      logBulkImportEvent(AuditAction.BULK_IMPORT_LOANS, 'loandisc', {
+        borrowers: result.borrowers,
+        loans: result.loans,
+        repayments: result.repayments,
+        products: result.products,
+        restructureChains: result.restructureChains
+      });
 
       // Mark queries as stale - they'll refetch when the user navigates to those pages
       // Using refetchType: 'none' prevents immediate refetching which would block the UI

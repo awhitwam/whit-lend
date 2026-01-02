@@ -9,6 +9,7 @@ import { createPageUrl } from '@/utils';
 import BorrowerTable from '@/components/borrower/BorrowerTable';
 import BorrowerForm from '@/components/borrower/BorrowerForm';
 import EmptyState from '@/components/ui/EmptyState';
+import { logBorrowerEvent, AuditAction } from '@/lib/auditLog';
 
 export default function Borrowers() {
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -74,7 +75,26 @@ export default function Borrowers() {
       }
     });
 
-    // Second pass: calculate payments and disbursements from transactions
+    // Second pass: calculate payments and further advances from transactions
+    // Group disbursements by loan to identify which are "further advances" (not the initial disbursement)
+    const disbursementsByLoan = {};
+    allTransactions
+      .filter(t => !t.is_deleted && t.type === 'Disbursement')
+      .forEach(t => {
+        if (!disbursementsByLoan[t.loan_id]) {
+          disbursementsByLoan[t.loan_id] = [];
+        }
+        disbursementsByLoan[t.loan_id].push(t);
+      });
+
+    // Sort each loan's disbursements by date and identify further advances (skip first)
+    const furtherAdvanceIds = new Set();
+    Object.values(disbursementsByLoan).forEach(disbursements => {
+      disbursements.sort((a, b) => new Date(a.date) - new Date(b.date));
+      // Skip the first disbursement (initial principal), mark rest as further advances
+      disbursements.slice(1).forEach(d => furtherAdvanceIds.add(d.id));
+    });
+
     allTransactions.filter(t => !t.is_deleted).forEach(transaction => {
       if (!transaction.borrower_id || !metrics[transaction.borrower_id]) return;
 
@@ -83,7 +103,10 @@ export default function Borrowers() {
       if (!loan || (loan.status !== 'Live' && loan.status !== 'Active' && loan.status !== 'Defaulted')) return;
 
       if (transaction.type === 'Disbursement') {
-        metrics[transaction.borrower_id].disbursements += transaction.amount || 0;
+        // Only count further advances (not the initial disbursement)
+        if (furtherAdvanceIds.has(transaction.id)) {
+          metrics[transaction.borrower_id].disbursements += transaction.amount || 0;
+        }
       } else if (transaction.type === 'Repayment') {
         metrics[transaction.borrower_id].principalPaid += transaction.principal_applied || 0;
         metrics[transaction.borrower_id].interestPaid += transaction.interest_applied || 0;
@@ -123,7 +146,14 @@ export default function Borrowers() {
 
   const createMutation = useMutation({
     mutationFn: (data) => api.entities.Borrower.create(data),
-    onSuccess: () => {
+    onSuccess: (newBorrower, variables) => {
+      logBorrowerEvent(AuditAction.BORROWER_CREATE, newBorrower || { id: null, name: variables.full_name }, {
+        full_name: variables.full_name,
+        business: variables.business,
+        email: variables.email,
+        phone: variables.phone,
+        unique_number: variables.unique_number
+      });
       queryClient.invalidateQueries({ queryKey: ['borrowers'] });
       setIsFormOpen(false);
     }
@@ -131,7 +161,12 @@ export default function Borrowers() {
 
   const updateMutation = useMutation({
     mutationFn: ({ id, data }) => api.entities.Borrower.update(id, data),
-    onSuccess: () => {
+    onSuccess: (updatedBorrower, variables) => {
+      logBorrowerEvent(AuditAction.BORROWER_UPDATE,
+        updatedBorrower || { id: variables.id, name: variables.data.full_name || editingBorrower?.full_name },
+        variables.data,
+        editingBorrower
+      );
       queryClient.invalidateQueries({ queryKey: ['borrowers'] });
       setIsFormOpen(false);
       setEditingBorrower(null);

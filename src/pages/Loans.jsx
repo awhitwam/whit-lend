@@ -172,10 +172,15 @@ export default function Loans() {
     queryFn: () => api.entities.RepaymentSchedule.list()
   });
 
+  // Calculate further advances per loan (disbursements beyond the first one)
+  // The first disbursement represents the initial principal, so we skip it
   const getDisbursementsForLoan = (loanId) => {
-    return allTransactions
+    const disbursements = allTransactions
       .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Disbursement')
-      .reduce((sum, t) => sum + (t.amount || 0), 0);
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    // Skip the first disbursement (initial principal) and sum only further advances
+    const furtherAdvances = disbursements.slice(1);
+    return furtherAdvances.reduce((sum, t) => sum + (t.amount || 0), 0);
   };
 
   const getActualPaymentsForLoan = (loanId) => {

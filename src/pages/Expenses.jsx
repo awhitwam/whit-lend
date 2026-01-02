@@ -15,6 +15,7 @@ import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import ExpenseForm from '@/components/expense/ExpenseForm';
 import EmptyState from '@/components/ui/EmptyState';
+import { logExpenseEvent, AuditAction } from '@/lib/auditLog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,7 +53,17 @@ export default function Expenses() {
   });
 
   const createExpenseMutation = useMutation({
-    mutationFn: (data) => api.entities.Expense.create(data),
+    mutationFn: async (data) => {
+      const result = await api.entities.Expense.create(data);
+      logExpenseEvent(AuditAction.EXPENSE_CREATE, result || { id: 'new', ...data }, {
+        amount: data.amount,
+        type_name: data.type_name,
+        date: data.date,
+        description: data.description,
+        loan_id: data.loan_id
+      });
+      return result;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       setIsExpenseDialogOpen(false);
@@ -61,7 +72,17 @@ export default function Expenses() {
   });
 
   const updateExpenseMutation = useMutation({
-    mutationFn: ({ id, data }) => api.entities.Expense.update(id, data),
+    mutationFn: async ({ id, data, previousExpense }) => {
+      const result = await api.entities.Expense.update(id, data);
+      logExpenseEvent(AuditAction.EXPENSE_UPDATE, result || { id, ...data }, {
+        amount: data.amount,
+        type_name: data.type_name,
+        date: data.date,
+        description: data.description,
+        loan_id: data.loan_id
+      }, previousExpense);
+      return result;
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       setIsExpenseDialogOpen(false);
@@ -70,7 +91,15 @@ export default function Expenses() {
   });
 
   const deleteExpenseMutation = useMutation({
-    mutationFn: (id) => api.entities.Expense.delete(id),
+    mutationFn: async ({ id, expense }) => {
+      await api.entities.Expense.delete(id);
+      logExpenseEvent(AuditAction.EXPENSE_DELETE, expense, {
+        amount: expense.amount,
+        type_name: expense.type_name,
+        date: expense.date,
+        description: expense.description
+      });
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
     }
@@ -105,7 +134,7 @@ export default function Expenses() {
 
   const handleExpenseSubmit = (data) => {
     if (editingExpense) {
-      updateExpenseMutation.mutate({ id: editingExpense.id, data });
+      updateExpenseMutation.mutate({ id: editingExpense.id, data, previousExpense: editingExpense });
     } else {
       createExpenseMutation.mutate(data);
     }
@@ -304,11 +333,11 @@ export default function Expenses() {
                             <Edit className="w-4 h-4 mr-2" />
                             Edit
                           </DropdownMenuItem>
-                          <DropdownMenuItem 
+                          <DropdownMenuItem
                             className="text-red-600"
                             onClick={() => {
                               if (confirm('Delete this expense?')) {
-                                deleteExpenseMutation.mutate(expense.id);
+                                deleteExpenseMutation.mutate({ id: expense.id, expense });
                               }
                             }}
                           >

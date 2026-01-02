@@ -34,6 +34,7 @@ import {
   Banknote
 } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
+import { logBulkImportEvent, AuditAction } from '@/lib/auditLog';
 
 function parseCSV(text) {
   const lines = text.trim().split('\n');
@@ -237,6 +238,14 @@ export default function ImportDisbursements() {
         skipped,
         errors,
         total: csvData.data.length
+      });
+
+      // Log the bulk import
+      logBulkImportEvent(AuditAction.BULK_IMPORT_DISBURSEMENTS, 'disbursements', {
+        created,
+        skipped,
+        total: csvData.data.length,
+        errorCount: errors.length
       });
 
       // Refresh data

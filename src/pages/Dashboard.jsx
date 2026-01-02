@@ -95,11 +95,15 @@ export default function Dashboard() {
   const pendingLoans = loans.filter(l => l.status === 'Pending');
   const defaultedLoans = loans.filter(l => l.status === 'Defaulted' || l.status === 'Default');
 
-  // Helper to get disbursements for a loan
+  // Calculate further advances per loan (disbursements beyond the first one)
+  // The first disbursement represents the initial principal, so we skip it
   const getDisbursementsForLoan = (loanId) => {
-    return transactions
+    const disbursements = transactions
       .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Disbursement')
-      .reduce((sum, t) => sum + (t.amount || 0), 0);
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    // Skip the first disbursement (initial principal) and sum only further advances
+    const furtherAdvances = disbursements.slice(1);
+    return furtherAdvances.reduce((sum, t) => sum + (t.amount || 0), 0);
   };
 
   // Calculate repayments from transactions

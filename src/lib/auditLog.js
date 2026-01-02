@@ -34,6 +34,10 @@ export const AuditAction = {
   INVESTOR_CREATE: 'investor_create',
   INVESTOR_UPDATE: 'investor_update',
   INVESTOR_DELETE: 'investor_delete',
+  INVESTOR_TRANSACTION_CREATE: 'investor_transaction_create',
+  INVESTOR_TRANSACTION_UPDATE: 'investor_transaction_update',
+  INVESTOR_TRANSACTION_DELETE: 'investor_transaction_delete',
+  INVESTOR_INTEREST_POST: 'investor_interest_post',
 
   // Expenses
   EXPENSE_CREATE: 'expense_create',
@@ -44,6 +48,19 @@ export const AuditAction = {
   ORG_MEMBER_INVITE: 'org_member_invite',
   ORG_MEMBER_REMOVE: 'org_member_remove',
   ORG_SETTINGS_UPDATE: 'org_settings_update',
+
+  // Bulk Imports
+  BULK_IMPORT: 'bulk_import',
+  BULK_IMPORT_TRANSACTIONS: 'bulk_import_transactions',
+  BULK_IMPORT_DISBURSEMENTS: 'bulk_import_disbursements',
+  BULK_IMPORT_LOANS: 'bulk_import_loans',
+  BULK_IMPORT_INVESTORS: 'bulk_import_investors',
+  BULK_IMPORT_INVESTOR_TRANSACTIONS: 'bulk_import_investor_transactions',
+
+  // Bank Reconciliation
+  RECONCILIATION_MATCH: 'reconciliation_match',
+  RECONCILIATION_CREATE: 'reconciliation_create',
+  RECONCILIATION_UNMATCH: 'reconciliation_unmatch',
 
   // Security/Properties
   PROPERTY_CREATE: 'property_create',
@@ -63,13 +80,16 @@ export const EntityType = {
   BORROWER: 'borrower',
   PRODUCT: 'loan_product',
   INVESTOR: 'investor',
+  INVESTOR_TRANSACTION: 'investor_transaction',
   EXPENSE: 'expense',
   ORGANIZATION: 'organization',
   PAGE: 'page',
   PROPERTY: 'property',
   LOAN_PROPERTY: 'loan_property',
   VALUATION: 'valuation',
-  FIRST_CHARGE_HOLDER: 'first_charge_holder'
+  FIRST_CHARGE_HOLDER: 'first_charge_holder',
+  BULK_IMPORT: 'bulk_import',
+  RECONCILIATION: 'reconciliation'
 };
 
 /**
@@ -255,5 +275,92 @@ export async function logLoanPropertyEvent(action, loanProperty, loan = null, pr
       charge_type: loanProperty.charge_type,
       ...details
     }
+  });
+}
+
+/**
+ * Helper to log investor events
+ */
+export async function logInvestorEvent(action, investor, details = null, previousValues = null) {
+  await logAudit({
+    action,
+    entityType: EntityType.INVESTOR,
+    entityId: investor.id,
+    entityName: investor.name,
+    details,
+    previousValues,
+    newValues: action.includes('update') ? details : null
+  });
+}
+
+/**
+ * Helper to log investor transaction events (capital deposits/withdrawals, interest ledger)
+ */
+export async function logInvestorTransactionEvent(action, transaction, investorInfo = null, details = null, previousValues = null) {
+  await logAudit({
+    action,
+    entityType: EntityType.INVESTOR_TRANSACTION,
+    entityId: transaction.id,
+    entityName: `${transaction.type || transaction.transaction_type} - £${Number(transaction.amount || 0).toLocaleString()}`,
+    details: {
+      investor_id: transaction.investor_id,
+      investor_name: investorInfo?.name,
+      amount: transaction.amount,
+      type: transaction.type || transaction.transaction_type,
+      date: transaction.date || transaction.transaction_date,
+      ...details
+    },
+    previousValues,
+    newValues: action.includes('update') ? details : null
+  });
+}
+
+/**
+ * Helper to log expense events
+ */
+export async function logExpenseEvent(action, expense, details = null, previousValues = null) {
+  await logAudit({
+    action,
+    entityType: EntityType.EXPENSE,
+    entityId: expense.id,
+    entityName: expense.description || expense.category || `Expense £${Number(expense.amount || 0).toLocaleString()}`,
+    details: {
+      amount: expense.amount,
+      category: expense.category,
+      date: expense.date,
+      ...details
+    },
+    previousValues,
+    newValues: action.includes('update') ? details : null
+  });
+}
+
+/**
+ * Helper to log bulk import events
+ */
+export async function logBulkImportEvent(action, entityType, summary, details = null) {
+  await logAudit({
+    action,
+    entityType: EntityType.BULK_IMPORT,
+    entityId: null,
+    entityName: `${entityType} Import`,
+    details: {
+      entityType,
+      ...summary,
+      ...details
+    }
+  });
+}
+
+/**
+ * Helper to log bank reconciliation events
+ */
+export async function logReconciliationEvent(action, details = null) {
+  await logAudit({
+    action,
+    entityType: EntityType.RECONCILIATION,
+    entityId: details?.transaction_id || details?.bank_transaction_id || null,
+    entityName: details?.description || 'Bank Reconciliation',
+    details
   });
 }

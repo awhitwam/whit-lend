@@ -5,6 +5,7 @@ import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { getOrgJSON, setOrgJSON } from '@/lib/orgStorage';
+import { logBorrowerEvent, AuditAction } from '@/lib/auditLog';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -93,7 +94,12 @@ export default function BorrowerDetails() {
 
   const updateMutation = useMutation({
     mutationFn: (data) => api.entities.Borrower.update(borrowerId, data),
-    onSuccess: () => {
+    onSuccess: (_result, variables) => {
+      logBorrowerEvent(AuditAction.BORROWER_UPDATE,
+        { id: borrowerId, name: borrower?.full_name },
+        variables,
+        borrower
+      );
       queryClient.invalidateQueries({ queryKey: ['borrower', borrowerId] });
       setIsEditOpen(false);
     }
@@ -115,7 +121,19 @@ export default function BorrowerDetails() {
         return { action: 'archived' };
       }
     },
-    onSuccess: () => {
+    onSuccess: (result) => {
+      // Log the delete or archive action
+      if (result.action === 'deleted') {
+        logBorrowerEvent(AuditAction.BORROWER_DELETE, { id: borrowerId, name: borrower?.full_name }, {
+          reason: 'No loans associated'
+        });
+      } else {
+        logBorrowerEvent(AuditAction.BORROWER_UPDATE, { id: borrowerId, name: borrower?.full_name }, {
+          is_archived: true,
+          archived_by: user?.email,
+          archived_date: new Date().toISOString()
+        }, borrower);
+      }
       queryClient.invalidateQueries({ queryKey: ['borrowers'] });
       navigate(createPageUrl('Borrowers'));
     }
@@ -228,11 +246,15 @@ export default function BorrowerDetails() {
     }
   };
 
-  // Calculate disbursements per loan
+  // Calculate further advances per loan (disbursements beyond the first one)
+  // The first disbursement represents the initial principal, so we skip it
   const getDisbursementsForLoan = (loanId) => {
-    return transactions
+    const disbursements = transactions
       .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Disbursement')
-      .reduce((sum, t) => sum + (t.amount || 0), 0);
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+    // Skip the first disbursement (initial principal) and sum only further advances
+    const furtherAdvances = disbursements.slice(1);
+    return furtherAdvances.reduce((sum, t) => sum + (t.amount || 0), 0);
   };
 
   // Calculate actual payments from transactions

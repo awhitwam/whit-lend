@@ -22,6 +22,7 @@ import {
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { parseBankStatement, getBankSources, parseCSV, detectBankFormat } from '@/lib/bankStatementParsers';
+import { logReconciliationEvent, AuditAction } from '@/lib/auditLog';
 
 // Fuzzy matching utilities
 function extractKeywords(text) {
@@ -880,9 +881,12 @@ export default function BankReconciliation() {
       filtered = filtered.filter(s => {
         const suggestion = suggestedMatches.get(s.id);
         if (confidenceFilter === 'none') {
-          return !suggestion; // No suggestion
+          // No suggestion OR suggestion is not a match (create mode without good match)
+          return !suggestion || (suggestion.matchMode !== 'match' && suggestion.matchMode !== 'match_group');
         }
+        // For confidence filters, only consider actual match suggestions (not create mode)
         if (!suggestion) return false;
+        if (suggestion.matchMode !== 'match' && suggestion.matchMode !== 'match_group') return false;
         const confidence = Math.round(suggestion.confidence * 100);
         // Ranges aligned with calculateMatchScore outputs:
         // 95 = exact match same day, 85 = exact within 3 days, 75 = exact within 7 days
@@ -1135,6 +1139,13 @@ export default function BankReconciliation() {
         } else if (suggestion.existingExpense) {
           setSelectedExistingTx(suggestion.existingExpense);
         }
+      } else if (suggestion.matchMode === 'match_group' && suggestion.existingTransactions) {
+        // Grouped match - should default to "Match Existing" tab
+        setMatchMode('match');
+        // Pre-select the first transaction from the group for display
+        if (suggestion.existingTransactions.length > 0) {
+          setSelectedExistingTx(suggestion.existingTransactions[0]);
+        }
       } else {
         setMatchMode('create');
       }
@@ -1294,6 +1305,15 @@ export default function BankReconciliation() {
         await api.entities.BankStatement.update(selectedEntry.id, {
           is_reconciled: true,
           reconciled_at: new Date().toISOString()
+        });
+
+        // Log the grouped match reconciliation
+        logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
+          bank_statement_id: selectedEntry.id,
+          description: selectedEntry.description,
+          amount: amount,
+          transaction_count: txGroup.length,
+          match_type: 'grouped_repayments'
         });
 
         // Refresh data
@@ -1519,6 +1539,25 @@ export default function BankReconciliation() {
           splitRatios
         );
       }
+
+      // Log the reconciliation
+      logReconciliationEvent(
+        matchMode === 'match' ? AuditAction.RECONCILIATION_MATCH : AuditAction.RECONCILIATION_CREATE,
+        {
+          bank_statement_id: selectedEntry.id,
+          description: selectedEntry.description,
+          amount: amount,
+          reconciliation_type: reconciliationType,
+          match_mode: matchMode,
+          loan_id: selectedLoan?.id,
+          loan_number: selectedLoan?.loan_number,
+          investor_id: selectedInvestor?.id,
+          investor_name: selectedInvestor?.name,
+          transaction_id: transactionId,
+          investor_transaction_id: investorTransactionId,
+          expense_id: expenseId
+        }
+      );
 
       // Refresh data
       queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
@@ -1770,6 +1809,14 @@ export default function BankReconciliation() {
         is_reconciled: false,
         reconciled_at: null,
         reconciled_by: null
+      });
+
+      // Log the un-reconcile action
+      logReconciliationEvent(AuditAction.RECONCILIATION_UNMATCH, {
+        bank_statement_id: selectedEntry.id,
+        description: selectedEntry.description,
+        amount: selectedEntry.amount,
+        deleted_created_records: hasCreatedRecords
       });
 
       // Refresh data

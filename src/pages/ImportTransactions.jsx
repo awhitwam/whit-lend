@@ -37,6 +37,7 @@ import {
   Trash2
 } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
+import { logBulkImportEvent, AuditAction } from '@/lib/auditLog';
 
 function parseCSV(text) {
   const lines = text.trim().split('\n');
@@ -334,13 +335,24 @@ export default function ImportTransactions() {
         }
       }
 
-      setImportResult({
+      const importSummary = {
         success: true,
         created,
         skipped,
         errors,
         total: csvData.data.length,
         chainsProcessed: restructureChains.filter(c => c.masterLoanNumber && c.sourceLoanNumbers?.length).length
+      };
+
+      setImportResult(importSummary);
+
+      // Log the bulk import
+      logBulkImportEvent(AuditAction.BULK_IMPORT_TRANSACTIONS, 'transactions', {
+        created,
+        skipped,
+        total: csvData.data.length,
+        chainsProcessed: importSummary.chainsProcessed,
+        errorCount: errors.length
       });
 
       // Refresh data

@@ -153,22 +153,28 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
       const periodRate = (loan.interest_rate / 100) / periodsPerYear;
 
-      // Add disbursement row
-      allRows.push({
-        date: new Date(loan.start_date),
-        dateStr: format(new Date(loan.start_date), 'yyyy-MM-dd'),
-        isDisbursement: true,
-        transactions: [],
-        scheduleEntry: null,
-        daysDifference: null,
-        rowType: 'disbursement'
-      });
-
       // Get active repayment transactions
       const repaymentTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
 
-      // Get further advance (disbursement) transactions
-      const disbursementTransactions = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
+      // Get disbursement transactions sorted by date (first one is initial disbursement)
+      const disbursementTransactions = transactions
+        .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+        .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      // Add the first disbursement as the initial "Loan Disbursement" row
+      if (disbursementTransactions.length > 0) {
+        const firstDisbursement = disbursementTransactions[0];
+        allRows.push({
+          date: new Date(firstDisbursement.date),
+          dateStr: format(new Date(firstDisbursement.date), 'yyyy-MM-dd'),
+          isDisbursement: true,
+          transactions: [firstDisbursement],
+          scheduleEntry: null,
+          daysDifference: null,
+          rowType: 'disbursement',
+          amount: firstDisbursement.amount
+        });
+      }
 
       // Add ALL schedule entries as separate rows with dynamically calculated expected interest/charge
       effectiveSchedule.forEach(row => {
@@ -211,8 +217,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
         });
       });
 
-      // Add further advance (disbursement) transactions as separate rows
-      disbursementTransactions.forEach(tx => {
+      // Add further advance (disbursement) transactions as separate rows (skip first one, already added above)
+      disbursementTransactions.slice(1).forEach(tx => {
         allRows.push({
           date: new Date(tx.date),
           dateStr: format(new Date(tx.date), 'yyyy-MM-dd'),
@@ -941,7 +947,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
                 const totalDisbursements = allDisbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
                 const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-                const totalExpectedPrincipal = loan.principal_amount + totalDisbursements;
+                // Use loan.principal_amount as the base - disbursement transactions should equal this
+                // (further advances beyond initial principal are handled separately if needed)
+                const totalExpectedPrincipal = loan.principal_amount;
                 const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
                 const interestOutstanding = totalExpectedInterest - totalInterestPaid;
                 const totalOutstanding = principalOutstanding + interestOutstanding;
@@ -1082,31 +1090,23 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   const repaymentTransactions = transactions
                     .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
-                  const furtherAdvanceTransactions = transactions
+                  const disbursementTransactions = transactions
                     .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
                   // Build all rows
                   const rows = [];
 
-                  // Add initial disbursement
-                  rows.push({
-                    type: 'disbursement',
-                    date: new Date(loan.start_date),
-                    description: 'Loan Disbursement',
-                    principal: loan.principal_amount,
-                    sortOrder: 0
-                  });
-
-                  // Add further advances
-                  furtherAdvanceTransactions.forEach(tx => {
+                  // First disbursement transaction is the initial "Loan Disbursement"
+                  // Subsequent disbursement transactions are "Further Advances"
+                  disbursementTransactions.forEach((tx, index) => {
                     rows.push({
-                      type: 'further_advance',
+                      type: index === 0 ? 'disbursement' : 'further_advance',
                       date: new Date(tx.date),
-                      description: 'Further Advance',
+                      description: index === 0 ? 'Loan Disbursement' : 'Further Advance',
                       principal: tx.amount,
                       transaction: tx,
-                      sortOrder: 1
+                      sortOrder: index === 0 ? 0 : 1
                     });
                   });
 
@@ -1254,7 +1254,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   const repaymentTransactions = transactions
                     .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
-                  const furtherAdvanceTransactions = transactions
+                  const disbursementTransactions = transactions
                     .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
@@ -1288,28 +1288,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   // Build rows WITHOUT running balances first, then sort, then calculate balances
                   const rows = [];
 
-                  // Add disbursement row
-                  rows.push({
-                    type: 'disbursement',
-                    date: new Date(loan.start_date),
-                    description: 'Loan Disbursement',
-                    principal: loan.principal_amount,
-                    interest: 0,
-                    balance: 0, // Will be calculated after sorting
-                    sortOrder: 0 // Disbursement always first on its date
-                  });
-
-                  // Add further advance rows (balance calculated after sorting)
-                  furtherAdvanceTransactions.forEach(tx => {
+                  // First disbursement transaction is the initial "Loan Disbursement"
+                  // Subsequent disbursement transactions are "Further Advances"
+                  disbursementTransactions.forEach((tx, index) => {
                     rows.push({
-                      type: 'further_advance',
+                      type: index === 0 ? 'disbursement' : 'further_advance',
                       date: new Date(tx.date),
-                      description: 'Further Advance',
+                      description: index === 0 ? 'Loan Disbursement' : 'Further Advance',
                       principal: tx.amount,
                       interest: 0,
                       balance: 0, // Will be calculated after sorting
                       transaction: tx,
-                      sortOrder: 1 // Further advances after disbursement on same date
+                      sortOrder: index === 0 ? 0 : 1
                     });
                   });
 
@@ -1783,9 +1773,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 const totalPrincipalPaid = allRepayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
                 const totalInterestPaid = allRepayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
                 const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
-                const totalDisbursements = allDisbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+                // Further advances are disbursements beyond the first one (which is the initial principal)
+                const sortedDisbursements = [...allDisbursements].sort((a, b) => new Date(a.date) - new Date(b.date));
+                const furtherAdvances = sortedDisbursements.slice(1);
+                const totalFurtherAdvances = furtherAdvances.reduce((sum, tx) => sum + (tx.amount || 0), 0);
                 const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-                const totalExpectedPrincipal = loan.principal_amount + totalDisbursements;
+                // Total expected principal = original principal + any further advances
+                const totalExpectedPrincipal = loan.principal_amount + totalFurtherAdvances;
                 const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
                 const interestOutstanding = totalExpectedInterest - totalInterestPaid;
                 const totalOutstanding = principalOutstanding + interestOutstanding;
@@ -2159,9 +2153,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               const totalPrincipalPaid = allRepayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
               const totalInterestPaid = allRepayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
               const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
-              const totalDisbursements = allDisbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+              // Further advances are disbursements beyond the first one (which is the initial principal)
+              const sortedDisbursements = [...allDisbursements].sort((a, b) => new Date(a.date) - new Date(b.date));
+              const furtherAdvances = sortedDisbursements.slice(1);
+              const totalFurtherAdvances = furtherAdvances.reduce((sum, tx) => sum + (tx.amount || 0), 0);
               const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-              const totalExpectedPrincipal = loan.principal_amount + totalDisbursements;
+              // Total expected principal = original principal + any further advances
+              const totalExpectedPrincipal = loan.principal_amount + totalFurtherAdvances;
               const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
               const interestOutstanding = totalExpectedInterest - totalInterestPaid;
               const totalOutstanding = principalOutstanding + interestOutstanding;

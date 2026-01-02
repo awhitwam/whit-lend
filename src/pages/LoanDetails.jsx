@@ -666,13 +666,15 @@ export default function LoanDetails() {
     .filter(t => !t.is_deleted && t.type === 'Repayment')
     .reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
 
-  // Calculate total disbursements (further advances)
-  const totalDisbursements = transactions
+  // Calculate further advances (disbursements beyond the first one, which is the initial principal)
+  const allDisbursements = transactions
     .filter(t => !t.is_deleted && t.type === 'Disbursement')
-    .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const furtherAdvances = allDisbursements.slice(1); // Skip the first disbursement (initial principal)
+  const totalFurtherAdvances = furtherAdvances.reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
-  // Total principal = initial amount + all disbursements
-  const totalPrincipal = loan.principal_amount + totalDisbursements;
+  // Total principal = initial amount + further advances only (not the initial disbursement again)
+  const totalPrincipal = loan.principal_amount + totalFurtherAdvances;
 
   // Calculate totals from repayment schedule
   const schedulePrincipalPaid = schedule.reduce((sum, row) => sum + (row.principal_paid || 0), 0);

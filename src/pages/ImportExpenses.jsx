@@ -33,6 +33,7 @@ import {
 } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
+import { logBulkImportEvent, AuditAction } from '@/lib/auditLog';
 
 // CSV Parser that handles quoted fields AND multi-line values
 function parseCSV(text) {
@@ -406,6 +407,14 @@ export function ExpensesImportContent() {
     setImportResults({ created, errors, typesCreated });
     setIsImporting(false);
     setStep('complete');
+
+    // Log the bulk import
+    logBulkImportEvent(AuditAction.BULK_IMPORT, 'expenses', {
+      created,
+      typesCreated,
+      total: csvData.length,
+      errorCount: errors.length
+    });
 
     // Refresh data
     queryClient.invalidateQueries({ queryKey: ['expenses'] });

@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { logInvestorEvent, logInvestorTransactionEvent, AuditAction } from '@/lib/auditLog';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -72,14 +73,15 @@ export default function InvestorDetails() {
 
   const updateMutation = useMutation({
     mutationFn: (data) => api.entities.Investor.update(investorId, data),
-    onSuccess: () => {
+    onSuccess: (_updatedInvestor, variables) => {
+      logInvestorEvent(AuditAction.INVESTOR_UPDATE, { id: investorId, name: investor?.name }, variables, investor);
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
       setIsEditOpen(false);
     }
   });
 
   const createTransactionMutation = useMutation({
-    mutationFn: async (data) => {
+    mutationFn: async (/** @type {{type: string, amount: number, date: string, notes?: string}} */ data) => {
       await api.entities.InvestorTransaction.create({
         ...data,
         investor_id: investorId,
@@ -101,6 +103,13 @@ export default function InvestorDetails() {
             : investor.total_capital_contributed
         });
       }
+
+      // Log audit event
+      logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_CREATE,
+        { id: null, investor_id: investorId, type: data.type, amount: data.amount, date: data.date },
+        { name: investor?.name },
+        { description: data.notes }
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
@@ -130,6 +139,13 @@ export default function InvestorDetails() {
             : investor.total_capital_contributed
         });
       }
+
+      // Log the deletion
+      logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_DELETE,
+        { id: transactionId, investor_id: investorId, type: transaction.type, amount: transaction.amount, date: transaction.date },
+        { name: investor?.name },
+        { reason: 'User deleted transaction' }
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
@@ -139,7 +155,7 @@ export default function InvestorDetails() {
   });
 
   const updateTransactionMutation = useMutation({
-    mutationFn: async (data) => {
+    mutationFn: async (/** @type {{type: string, amount: number, date: string, notes?: string}} */ data) => {
       const oldTransaction = transactions.find(t => t.id === editingTransaction.id);
 
       await api.entities.InvestorTransaction.update(editingTransaction.id, {
@@ -171,6 +187,14 @@ export default function InvestorDetails() {
           total_capital_contributed: (investor.total_capital_contributed || 0) + contributedChange
         });
       }
+
+      // Log the update with before/after values
+      logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_UPDATE,
+        { id: editingTransaction.id, investor_id: investorId, type: data.type, amount: data.amount, date: data.date },
+        { name: investor?.name },
+        { new_type: data.type, new_amount: data.amount, new_date: data.date },
+        { old_type: oldTransaction.type, old_amount: oldTransaction.amount, old_date: oldTransaction.date }
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
@@ -183,7 +207,7 @@ export default function InvestorDetails() {
 
   // Interest ledger mutations
   const createInterestMutation = useMutation({
-    mutationFn: async (data) => {
+    mutationFn: async (/** @type {{type: string, amount: string, date: string, description?: string}} */ data) => {
       await api.entities.InvestorInterest.create({
         investor_id: investorId,
         type: data.type,
@@ -191,6 +215,13 @@ export default function InvestorDetails() {
         date: data.date,
         description: data.description
       });
+
+      // Log interest entry creation
+      logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_CREATE,
+        { id: null, investor_id: investorId, type: `interest_${data.type}`, amount: parseFloat(data.amount), date: data.date },
+        { name: investor?.name },
+        { interest_type: data.type, description: data.description }
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
@@ -200,13 +231,21 @@ export default function InvestorDetails() {
   });
 
   const updateInterestMutation = useMutation({
-    mutationFn: async (data) => {
+    mutationFn: async (/** @type {{type: string, amount: string, date: string, description?: string}} */ data) => {
       await api.entities.InvestorInterest.update(editingInterest.id, {
         type: data.type,
         amount: parseFloat(data.amount),
         date: data.date,
         description: data.description
       });
+
+      // Log interest entry update
+      logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_UPDATE,
+        { id: editingInterest.id, investor_id: investorId, type: `interest_${data.type}`, amount: parseFloat(data.amount), date: data.date },
+        { name: investor?.name },
+        { new_type: data.type, new_amount: parseFloat(data.amount), new_date: data.date },
+        { old_type: editingInterest.type, old_amount: editingInterest.amount, old_date: editingInterest.date }
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
@@ -217,7 +256,19 @@ export default function InvestorDetails() {
   });
 
   const deleteInterestMutation = useMutation({
-    mutationFn: (id) => api.entities.InvestorInterest.delete(id),
+    mutationFn: async (id) => {
+      const entry = interestEntries.find(e => e.id === id);
+      await api.entities.InvestorInterest.delete(id);
+
+      // Log interest entry deletion
+      if (entry) {
+        logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_DELETE,
+          { id, investor_id: investorId, type: `interest_${entry.type}`, amount: entry.amount, date: entry.date },
+          { name: investor?.name },
+          { reason: 'User deleted interest entry' }
+        );
+      }
+    },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
     }
@@ -326,6 +377,7 @@ export default function InvestorDetails() {
       const frequency = product?.interest_posting_frequency || 'monthly';
       const periodStart = investor.last_accrual_date || getPeriodStart(frequency);
       const periodEnd = new Date();
+      const description = `Interest for period ${format(new Date(periodStart), 'MMM dd')} - ${format(periodEnd, 'MMM dd, yyyy')} (${accruedInterest.days} days at ${annualRate}% p.a.)`;
 
       // Create interest credit in the new ledger
       await api.entities.InvestorInterest.create({
@@ -333,7 +385,7 @@ export default function InvestorDetails() {
         type: 'credit',
         amount: accruedInterest.accruedInterest,
         date: new Date().toISOString().split('T')[0],
-        description: `Interest for period ${format(new Date(periodStart), 'MMM dd')} - ${format(periodEnd, 'MMM dd, yyyy')} (${accruedInterest.days} days at ${annualRate}% p.a.)`
+        description
       });
 
       // Update investor with new accrual date
@@ -341,6 +393,13 @@ export default function InvestorDetails() {
         accrued_interest: 0,
         last_accrual_date: new Date().toISOString().split('T')[0]
       });
+
+      // Log the interest posting
+      logInvestorTransactionEvent(AuditAction.INVESTOR_INTEREST_POST,
+        { id: null, investor_id: investorId, type: 'interest_credit', amount: accruedInterest.accruedInterest, date: new Date().toISOString().split('T')[0] },
+        { name: investor?.name },
+        { days: accruedInterest.days, annual_rate: annualRate, daily_rate: accruedInterest.dailyRate, description }
+      );
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });

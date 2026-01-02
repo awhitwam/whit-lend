@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { ArrowLeft, Upload, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
+import { logBulkImportEvent, AuditAction } from '@/lib/auditLog';
 
 // CSV Parser that handles quoted fields AND multi-line values
 function parseCSV(text) {
@@ -339,6 +340,14 @@ export default function ImportInvestorTransactions() {
         skipped,
         errors,
         total: rows.length
+      });
+
+      // Log the bulk import
+      logBulkImportEvent(AuditAction.BULK_IMPORT_INVESTOR_TRANSACTIONS, 'investor_transactions', {
+        created,
+        skipped,
+        total: rows.length,
+        errorCount: errors.length
       });
 
       // Refresh data
