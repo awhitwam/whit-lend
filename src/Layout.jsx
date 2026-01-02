@@ -35,13 +35,15 @@ import {
   FileCheck,
   DollarSign,
   Coins,
-  Info
+  Info,
+  Crown
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useOrganization } from '@/lib/OrganizationContext';
+import { useAuth } from '@/lib/AuthContext';
 import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 
 const navigation = [
@@ -105,11 +107,43 @@ const navigation = [
         ]
       },
       { name: 'Audit Log', href: 'AuditLog', icon: History },
-      { name: 'Super Admin', href: 'SuperAdmin', icon: ShieldCheck },
+      { name: 'Org Admin', href: 'OrgAdmin', icon: ShieldCheck, requiresAdmin: true },
+      { name: 'Super Admin', href: 'SuperAdmin', icon: Crown, requiresSuperAdmin: true },
       { name: 'About', href: 'About', icon: Info },
     ]
   },
 ];
+
+// Function to filter navigation based on permissions
+const getFilteredNavigation = (canAdmin, isSuperAdmin) => {
+  const filterChildren = (children) => {
+    return children
+      .filter(child => {
+        if (child.requiresSuperAdmin && !isSuperAdmin) return false;
+        if (child.requiresAdmin && !canAdmin) return false;
+        return true;
+      })
+      .map(child => {
+        if (child.children) {
+          return { ...child, children: filterChildren(child.children) };
+        }
+        return child;
+      });
+  };
+
+  return navigation
+    .filter(item => {
+      if (item.requiresSuperAdmin && !isSuperAdmin) return false;
+      if (item.requiresAdmin && !canAdmin) return false;
+      return true;
+    })
+    .map(item => {
+      if (item.children) {
+        return { ...item, children: filterChildren(item.children) };
+      }
+      return item;
+    });
+};
 
 export default function Layout({ children, currentPageName }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
@@ -121,12 +155,16 @@ export default function Layout({ children, currentPageName }) {
     const saved = getOrgItem('expandedMenus');
     return saved ? JSON.parse(saved) : ['Settings'];
   });
-  const { currentTheme, currentOrganization } = useOrganization();
+  const { currentTheme, currentOrganization, canAdmin } = useOrganization();
+  const { isSuperAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
 
+  // Get filtered navigation based on user permissions
+  const filteredNavigation = getFilteredNavigation(canAdmin(), isSuperAdmin);
+
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'BankReconciliation', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'About'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'BankReconciliation', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {
@@ -447,7 +485,7 @@ export default function Layout({ children, currentPageName }) {
 
             {/* Navigation */}
             <nav className="flex-1 space-y-1 px-2 py-4 overflow-y-auto">
-              {navigation.map((item) => renderNavItem(item, false))}
+              {filteredNavigation.map((item) => renderNavItem(item, false))}
             </nav>
 
             {/* Footer */}
@@ -503,7 +541,7 @@ export default function Layout({ children, currentPageName }) {
                 <OrganizationSwitcher />
               </div>
               <nav className="p-2">
-                {navigation.map((item) => renderNavItem(item, true))}
+                {filteredNavigation.map((item) => renderNavItem(item, true))}
               </nav>
             </div>
           </div>

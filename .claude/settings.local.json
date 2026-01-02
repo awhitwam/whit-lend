@@ -20,7 +20,8 @@
       "Bash(cd:*)",
       "Bash(timeout 120 npm run build:*)",
       "Bash(timeout 90 npx vite build:*)",
-      "Bash(echo:*)"
+      "Bash(echo:*)",
+      "Bash(npx supabase:*)"
     ]
   }
 }

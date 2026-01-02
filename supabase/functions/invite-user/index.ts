@@ -18,12 +18,6 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 }
 
-interface InviteRequest {
-  email: string
-  role: 'Admin' | 'Manager' | 'Viewer'
-  organization_id: string
-}
-
 Deno.serve(async (req) => {
   // Handle CORS preflight requests
   if (req.method === 'OPTIONS') {
@@ -71,9 +65,25 @@ Deno.serve(async (req) => {
     }
 
     // Parse request body
-    const { email, role, organization_id }: InviteRequest = await req.json()
+    console.log('[InviteUser] About to parse request body...')
+    let email: string, role: string, organization_id: string
+    try {
+      const body = await req.json()
+      console.log('[InviteUser] Raw body:', JSON.stringify(body))
+      email = body.email
+      role = body.role
+      organization_id = body.organization_id
+    } catch (parseError) {
+      console.error('[InviteUser] Failed to parse request body:', parseError)
+      return new Response(JSON.stringify({ error: 'Invalid request body' }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+    console.log('[InviteUser] Request body:', { email, role, organization_id })
 
     if (!email || !role || !organization_id) {
+      console.log('[InviteUser] Missing required fields')
       return new Response(JSON.stringify({ error: 'Missing required fields: email, role, organization_id' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -82,6 +92,7 @@ Deno.serve(async (req) => {
 
     // Validate role
     if (!['Admin', 'Manager', 'Viewer'].includes(role)) {
+      console.log('[InviteUser] Invalid role:', role)
       return new Response(JSON.stringify({ error: 'Invalid role. Must be Admin, Manager, or Viewer' }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -89,6 +100,7 @@ Deno.serve(async (req) => {
     }
 
     // Verify the requesting user is an Admin of the organization
+    console.log('[InviteUser] Checking membership for user:', user.id, 'in org:', organization_id)
     const { data: membership, error: membershipError } = await supabaseAdmin
       .from('organization_members')
       .select('role')
@@ -97,7 +109,10 @@ Deno.serve(async (req) => {
       .eq('is_active', true)
       .single()
 
+    console.log('[InviteUser] Membership result:', { membership, error: membershipError?.message })
+
     if (membershipError || !membership) {
+      console.log('[InviteUser] User is not a member of this organization')
       return new Response(JSON.stringify({ error: 'You are not a member of this organization' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -105,12 +120,14 @@ Deno.serve(async (req) => {
     }
 
     if (membership.role !== 'Admin') {
+      console.log('[InviteUser] User is not an Admin, role:', membership.role)
       return new Response(JSON.stringify({ error: 'Only Admins can invite users' }), {
         status: 403,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
+    console.log('[InviteUser] User is Admin, fetching org details')
     // Get organization details for the email
     const { data: org, error: orgError } = await supabaseAdmin
       .from('organizations')
@@ -118,7 +135,10 @@ Deno.serve(async (req) => {
       .eq('id', organization_id)
       .single()
 
+    console.log('[InviteUser] Org result:', { org, error: orgError?.message })
+
     if (orgError || !org) {
+      console.log('[InviteUser] Organization not found')
       return new Response(JSON.stringify({ error: 'Organization not found' }), {
         status: 404,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -126,26 +146,63 @@ Deno.serve(async (req) => {
     }
 
     // Check if user already exists
-    const { data: existingUsers } = await supabaseAdmin.auth.admin.listUsers()
+    console.log('[InviteUser] Checking if user already exists:', email)
+    const { data: existingUsers, error: listUsersError } = await supabaseAdmin.auth.admin.listUsers()
+    console.log('[InviteUser] List users result:', { count: existingUsers?.users?.length, error: listUsersError?.message })
     const existingUser = existingUsers?.users?.find(u => u.email?.toLowerCase() === email.toLowerCase())
+    console.log('[InviteUser] Existing user found:', !!existingUser, existingUser?.id)
 
     if (existingUser) {
-      // Check if already a member of this org
-      const { data: existingMember } = await supabaseAdmin
+      // Check if already a member of this org (active or inactive)
+      console.log('[InviteUser] Checking existing membership for user:', existingUser.id)
+      const { data: existingMember, error: existingMemberError } = await supabaseAdmin
         .from('organization_members')
-        .select('id')
+        .select('id, is_active')
         .eq('organization_id', organization_id)
         .eq('user_id', existingUser.id)
         .single()
 
+      console.log('[InviteUser] Existing membership check:', { existingMember, error: existingMemberError?.message })
+
       if (existingMember) {
-        return new Response(JSON.stringify({ error: 'User is already a member of this organization' }), {
-          status: 400,
+        if (existingMember.is_active) {
+          console.log('[InviteUser] User is already an active member')
+          return new Response(JSON.stringify({ error: 'User is already an active member of this organization' }), {
+            status: 400,
+            headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+          })
+        }
+
+        // Reactivate inactive membership
+        console.log('[InviteUser] Reactivating inactive membership')
+        const { error: reactivateError } = await supabaseAdmin
+          .from('organization_members')
+          .update({
+            is_active: true,
+            role,
+            invited_by: user.id,
+            invited_at: new Date().toISOString(),
+            joined_at: new Date().toISOString()
+          })
+          .eq('id', existingMember.id)
+
+        if (reactivateError) {
+          console.error('[InviteUser] Failed to reactivate:', reactivateError.message)
+          throw new Error(`Failed to reactivate member: ${reactivateError.message}`)
+        }
+
+        console.log('[InviteUser] Successfully reactivated membership')
+        return new Response(JSON.stringify({
+          success: true,
+          message: `${email} has been re-added to the organization`,
+          existingUser: true
+        }), {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
       }
 
       // Add existing user directly to organization
+      console.log('[InviteUser] Adding existing user to organization')
       const { error: addError } = await supabaseAdmin
         .from('organization_members')
         .insert({
@@ -159,9 +216,11 @@ Deno.serve(async (req) => {
         })
 
       if (addError) {
+        console.error('[InviteUser] Failed to add member:', addError.message)
         throw new Error(`Failed to add member: ${addError.message}`)
       }
 
+      console.log('[InviteUser] Successfully added existing user to organization')
       return new Response(JSON.stringify({
         success: true,
         message: `${email} has been added to the organization`,
@@ -172,7 +231,9 @@ Deno.serve(async (req) => {
     }
 
     // Invite new user via Supabase Auth
-    const siteUrl = Deno.env.get('SITE_URL') || 'http://localhost:5173'
+    let siteUrl = Deno.env.get('SITE_URL') || 'http://localhost:5173'
+    // Remove trailing slash to avoid double slashes in URL
+    siteUrl = siteUrl.replace(/\/$/, '')
 
     const { data: inviteData, error: inviteError } = await supabaseAdmin.auth.admin.inviteUserByEmail(
       email,

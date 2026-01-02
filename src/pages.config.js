@@ -24,6 +24,7 @@ import Login from './pages/Login';
 import Users from './pages/Users';
 import AuditLog from './pages/AuditLog';
 import SuperAdmin from './pages/SuperAdmin';
+import OrgAdmin from './pages/OrgAdmin';
 import BankReconciliation from './pages/BankReconciliation';
 import OtherIncome from './pages/OtherIncome';
 import About from './pages/About';
@@ -57,6 +58,7 @@ export const PAGES = {
     "Users": Users,
     "AuditLog": AuditLog,
     "SuperAdmin": SuperAdmin,
+    "OrgAdmin": OrgAdmin,
     "BankReconciliation": BankReconciliation,
     "OtherIncome": OtherIncome,
     "About": About,

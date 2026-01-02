@@ -51,6 +51,8 @@ export const OrganizationProvider = ({ children }) => {
       }
 
       if (!memberships || memberships.length === 0) {
+        // No active memberships - user needs to accept pending invitations
+        // through the AcceptInvitation flow, not auto-activated here
         setOrganizations([]);
         setIsLoadingOrgs(false);
         return;

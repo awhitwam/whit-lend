@@ -1,22 +1,26 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '@/lib/supabaseClient';
-import { useAuth } from '@/lib/AuthContext';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Loader2, CheckCircle2, XCircle, Building2, User } from 'lucide-react';
+import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Loader2, CheckCircle2, XCircle, User, Eye, EyeOff } from 'lucide-react';
 
 export default function AcceptInvitation() {
   const navigate = useNavigate();
-  const { user, isAuthenticated } = useAuth();
-  const [status, setStatus] = useState('loading'); // loading, needs_profile, accepted, error
+  const [status, setStatus] = useState('loading'); // loading, needs_setup, accepted, error
   const [errorMessage, setErrorMessage] = useState('');
   const [orgName, setOrgName] = useState('');
   const [role, setRole] = useState('');
   const [fullName, setFullName] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [passwordError, setPasswordError] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [needsPassword, setNeedsPassword] = useState(true); // New users need to set password
 
   useEffect(() => {
     handleInviteCallback();
@@ -96,16 +100,26 @@ export default function AcceptInvitation() {
         // Don't fail - the user might already be active
       }
 
-      // Check if user has a profile
+      // Check if user has a profile with name set
       const { data: profile } = await supabase
         .from('user_profiles')
         .select('full_name')
         .eq('id', authUser.id)
         .single();
 
-      if (!profile?.full_name) {
-        // Need to collect user's name
-        setStatus('needs_profile');
+      // Check if this is a new invite (user created via invite vs existing user)
+      // New users from inviteUserByEmail have identities but no confirmed_at initially
+      // or were created very recently (within last few minutes)
+      const userCreatedAt = new Date(authUser.created_at);
+      const isRecentlyCreated = (Date.now() - userCreatedAt.getTime()) < 5 * 60 * 1000; // 5 minutes
+
+      // If no profile name or recently created, need to complete setup
+      if (!profile?.full_name || isRecentlyCreated) {
+        // Check if user has a password set by checking if they have an email identity
+        // Users invited via magic link need to set a password
+        const hasEmailIdentity = authUser.identities?.some(i => i.provider === 'email');
+        setNeedsPassword(isRecentlyCreated && hasEmailIdentity);
+        setStatus('needs_setup');
         return;
       }
 
@@ -125,11 +139,41 @@ export default function AcceptInvitation() {
     }
   };
 
+  const validatePassword = (pwd) => {
+    if (pwd.length < 8) {
+      return 'Password must be at least 8 characters';
+    }
+    if (!/[A-Z]/.test(pwd)) {
+      return 'Password must contain at least one uppercase letter';
+    }
+    if (!/[a-z]/.test(pwd)) {
+      return 'Password must contain at least one lowercase letter';
+    }
+    if (!/[0-9]/.test(pwd)) {
+      return 'Password must contain at least one number';
+    }
+    return null;
+  };
+
   const handleProfileSubmit = async (e) => {
     e.preventDefault();
+    setPasswordError('');
 
     if (!fullName.trim()) {
       return;
+    }
+
+    // Validate password if needed
+    if (needsPassword) {
+      const pwdError = validatePassword(password);
+      if (pwdError) {
+        setPasswordError(pwdError);
+        return;
+      }
+      if (password !== confirmPassword) {
+        setPasswordError('Passwords do not match');
+        return;
+      }
     }
 
     setIsSubmitting(true);
@@ -141,11 +185,23 @@ export default function AcceptInvitation() {
         throw new Error('User not found');
       }
 
+      // Set password if needed (new user from invite)
+      if (needsPassword && password) {
+        const { error: passwordError } = await supabase.auth.updateUser({
+          password: password
+        });
+
+        if (passwordError) {
+          throw new Error(`Failed to set password: ${passwordError.message}`);
+        }
+      }
+
       // Create or update user profile
       const { error: upsertError } = await supabase
         .from('user_profiles')
         .upsert({
           id: authUser.id,
+          email: authUser.email,
           full_name: fullName.trim(),
           updated_at: new Date().toISOString()
         });
@@ -184,18 +240,21 @@ export default function AcceptInvitation() {
     );
   }
 
-  if (status === 'needs_profile') {
+  if (status === 'needs_setup') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-50 to-slate-100 p-6">
         <Card className="w-full max-w-md">
           <CardHeader>
+            <div className="flex justify-center mb-4">
+              <img src="/logo.png" alt="Whit-Lend" className="h-16" />
+            </div>
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 rounded-full bg-blue-100 flex items-center justify-center">
                 <User className="w-6 h-6 text-blue-600" />
               </div>
               <div>
                 <CardTitle>Welcome!</CardTitle>
-                <CardDescription>Complete your profile to continue</CardDescription>
+                <CardDescription>Complete your account setup to continue</CardDescription>
               </div>
             </div>
           </CardHeader>
@@ -205,6 +264,12 @@ export default function AcceptInvitation() {
                 You've been invited to join <strong>{orgName}</strong> as a <strong>{role}</strong>.
               </p>
             </div>
+
+            {passwordError && (
+              <Alert className="mb-4 border-red-200 bg-red-50">
+                <AlertDescription className="text-red-800">{passwordError}</AlertDescription>
+              </Alert>
+            )}
 
             <form onSubmit={handleProfileSubmit} className="space-y-4">
               <div className="space-y-2">
@@ -220,9 +285,52 @@ export default function AcceptInvitation() {
                 />
               </div>
 
-              <Button type="submit" className="w-full" disabled={isSubmitting}>
+              {needsPassword && (
+                <>
+                  <div className="space-y-2">
+                    <Label htmlFor="password">Create Password</Label>
+                    <div className="relative">
+                      <Input
+                        id="password"
+                        type={showPassword ? "text" : "password"}
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        placeholder="Enter a strong password"
+                        required
+                        disabled={isSubmitting}
+                        className="pr-10"
+                      />
+                      <button
+                        type="button"
+                        onClick={() => setShowPassword(!showPassword)}
+                        className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-500">
+                      At least 8 characters with uppercase, lowercase, and number
+                    </p>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="confirmPassword">Confirm Password</Label>
+                    <Input
+                      id="confirmPassword"
+                      type={showPassword ? "text" : "password"}
+                      value={confirmPassword}
+                      onChange={(e) => setConfirmPassword(e.target.value)}
+                      placeholder="Confirm your password"
+                      required
+                      disabled={isSubmitting}
+                    />
+                  </div>
+                </>
+              )}
+
+              <Button type="submit" className="w-full" disabled={isSubmitting || (needsPassword && (!password || !confirmPassword))}>
                 {isSubmitting && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                Continue
+                {needsPassword ? 'Create Account' : 'Continue'}
               </Button>
             </form>
           </CardContent>

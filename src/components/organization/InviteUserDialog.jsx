@@ -41,11 +41,16 @@ export default function InviteUserDialog({ open, onClose }) {
         }
       });
 
+      // Handle edge function errors - check both error object and data.error
       if (error) {
-        throw new Error(error.message || 'Failed to send invitation');
+        // Try to extract error message from response body if available
+        const errorMessage = error.context?.body
+          ? (typeof error.context.body === 'string' ? JSON.parse(error.context.body)?.error : error.context.body?.error)
+          : error.message;
+        throw new Error(errorMessage || 'Failed to send invitation');
       }
 
-      if (data.error) {
+      if (data?.error) {
         throw new Error(data.error);
       }
 

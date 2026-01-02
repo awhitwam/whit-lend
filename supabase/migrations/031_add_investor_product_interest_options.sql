@@ -14,9 +14,17 @@ ALTER TABLE public.investor_products
   ADD COLUMN IF NOT EXISTS interest_posting_day integer DEFAULT 1;
 
 -- Add constraint to ensure valid day of month (1-28 to handle all months)
-ALTER TABLE public.investor_products
-  ADD CONSTRAINT investor_products_posting_day_check
-  CHECK (interest_posting_day >= 1 AND interest_posting_day <= 28);
+-- Use DO block to handle case where constraint already exists
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'investor_products_posting_day_check'
+  ) THEN
+    ALTER TABLE public.investor_products
+      ADD CONSTRAINT investor_products_posting_day_check
+      CHECK (interest_posting_day >= 1 AND interest_posting_day <= 28);
+  END IF;
+END $$;
 
 -- Add comment
 COMMENT ON COLUMN public.investor_products.interest_calculation_type IS 'automatic = system calculates interest, manual = user enters amounts';

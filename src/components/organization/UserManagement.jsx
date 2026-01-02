@@ -30,7 +30,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { UserPlus, Trash2, Loader2, Shield, Edit } from 'lucide-react';
+import { UserPlus, Trash2, Loader2, Shield, Edit, RefreshCw, XCircle, Clock, CheckCircle } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
@@ -57,18 +57,20 @@ export default function UserManagement() {
     queryFn: async () => {
       if (!currentOrganization) return [];
 
+      // Fetch ALL members (both active and pending/inactive)
       const { data, error } = await supabase
         .from('organization_members')
         .select(`
           id,
           role,
           joined_at,
+          invited_at,
           is_active,
           user_id
         `)
         .eq('organization_id', currentOrganization.id)
-        .eq('is_active', true)
-        .order('joined_at', { ascending: false });
+        .order('is_active', { ascending: false }) // Active first
+        .order('invited_at', { ascending: false });
 
       if (error) throw error;
 
@@ -83,6 +85,10 @@ export default function UserManagement() {
         console.error('Error fetching profiles:', profilesError);
       }
 
+      // Also fetch emails from auth.users for users without profiles
+      // We'll use the Supabase auth admin API via an edge function if needed
+      // For now, try to get email from user metadata if profile doesn't have it
+
       // Map profiles to members
       const profilesMap = profiles?.reduce((acc, profile) => {
         acc[profile.id] = profile;
@@ -92,7 +98,8 @@ export default function UserManagement() {
       return data.map(member => ({
         ...member,
         full_name: profilesMap[member.user_id]?.full_name || null,
-        email: profilesMap[member.user_id]?.email || 'Unknown'
+        email: profilesMap[member.user_id]?.email || 'Pending...',
+        status: member.is_active ? 'active' : 'pending'
       }));
     },
     enabled: !!currentOrganization
@@ -160,6 +167,55 @@ export default function UserManagement() {
     }
   });
 
+  // Cancel a pending invitation
+  const cancelInviteMutation = useMutation({
+    mutationFn: async (memberId) => {
+      const { error } = await supabase
+        .from('organization_members')
+        .delete()
+        .eq('id', memberId)
+        .eq('is_active', false); // Only delete if still pending
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ['organization-members', currentOrganization?.id]
+      });
+      toast.success('Invitation cancelled');
+    },
+    onError: (error) => {
+      console.error('Error cancelling invitation:', error);
+      toast.error('Failed to cancel invitation', {
+        description: error.message
+      });
+    }
+  });
+
+  // Resend invitation - calls edge function
+  const resendInviteMutation = useMutation({
+    mutationFn: async ({ email, role }) => {
+      const { data, error } = await supabase.functions.invoke('invite-user', {
+        body: {
+          email: email.toLowerCase().trim(),
+          role,
+          organization_id: currentOrganization.id
+        }
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+      return data;
+    },
+    onSuccess: () => {
+      toast.success('Invitation resent successfully');
+    },
+    onError: (error) => {
+      console.error('Error resending invitation:', error);
+      toast.error('Failed to resend invitation', {
+        description: error.message
+      });
+    }
+  });
+
   const handleEditMember = (member) => {
     setMemberToEdit(member);
     setEditForm({ full_name: member.full_name || '' });
@@ -186,7 +242,8 @@ export default function UserManagement() {
     );
   }
 
-  const adminCount = members.filter(m => m.role === 'Admin').length;
+  // Only count active admins for "last admin" protection
+  const adminCount = members.filter(m => m.role === 'Admin' && m.status === 'active').length;
 
   return (
     <>
@@ -221,21 +278,36 @@ export default function UserManagement() {
                 <TableRow>
                   <TableHead>Name</TableHead>
                   <TableHead>Email</TableHead>
+                  <TableHead>Status</TableHead>
                   <TableHead>Role</TableHead>
-                  <TableHead>Joined</TableHead>
-                  <TableHead className="w-[120px]">Actions</TableHead>
+                  <TableHead>Date</TableHead>
+                  <TableHead className="w-[150px]">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {members.map((member) => {
                   const isLastAdmin = member.role === 'Admin' && adminCount === 1;
+                  const isPending = member.status === 'pending';
 
                   return (
-                    <TableRow key={member.id}>
+                    <TableRow key={member.id} className={isPending ? 'bg-amber-50/50' : ''}>
                       <TableCell className="font-medium">
-                        {member.full_name || <span className="text-slate-400 italic">Not set</span>}
+                        {member.full_name || <span className="text-slate-400 italic">{isPending ? 'Pending acceptance' : 'Not set'}</span>}
                       </TableCell>
                       <TableCell className="text-slate-600">{member.email}</TableCell>
+                      <TableCell>
+                        {isPending ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
+                            <Clock className="w-3 h-3" />
+                            Pending
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                            <CheckCircle className="w-3 h-3" />
+                            Active
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell>
                         <Select
                           value={member.role}
@@ -245,7 +317,7 @@ export default function UserManagement() {
                               role
                             })
                           }
-                          disabled={isLastAdmin || updateRoleMutation.isPending}
+                          disabled={isLastAdmin || updateRoleMutation.isPending || isPending}
                         >
                           <SelectTrigger className="w-32">
                             <SelectValue />
@@ -258,27 +330,64 @@ export default function UserManagement() {
                         </Select>
                       </TableCell>
                       <TableCell className="text-sm text-slate-500">
-                        {new Date(member.joined_at).toLocaleDateString()}
+                        {isPending ? (
+                          <span title="Invited">
+                            {member.invited_at ? new Date(member.invited_at).toLocaleDateString() : '-'}
+                          </span>
+                        ) : (
+                          <span title="Joined">
+                            {member.joined_at ? new Date(member.joined_at).toLocaleDateString() : '-'}
+                          </span>
+                        )}
                       </TableCell>
                       <TableCell>
                         <div className="flex items-center gap-1">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => handleEditMember(member)}
-                            title="Edit member"
-                          >
-                            <Edit className="w-4 h-4 text-slate-600" />
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            onClick={() => setMemberToRemove(member)}
-                            disabled={isLastAdmin || removeMemberMutation.isPending}
-                            title={isLastAdmin ? 'Cannot remove the last admin' : 'Remove member'}
-                          >
-                            <Trash2 className="w-4 h-4 text-red-600" />
-                          </Button>
+                          {isPending ? (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => resendInviteMutation.mutate({ email: member.email, role: member.role })}
+                                disabled={resendInviteMutation.isPending}
+                                title="Resend invitation"
+                              >
+                                {resendInviteMutation.isPending ? (
+                                  <Loader2 className="w-4 h-4 animate-spin text-blue-600" />
+                                ) : (
+                                  <RefreshCw className="w-4 h-4 text-blue-600" />
+                                )}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => cancelInviteMutation.mutate(member.id)}
+                                disabled={cancelInviteMutation.isPending}
+                                title="Cancel invitation"
+                              >
+                                <XCircle className="w-4 h-4 text-red-600" />
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => handleEditMember(member)}
+                                title="Edit member"
+                              >
+                                <Edit className="w-4 h-4 text-slate-600" />
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                onClick={() => setMemberToRemove(member)}
+                                disabled={isLastAdmin || removeMemberMutation.isPending}
+                                title={isLastAdmin ? 'Cannot remove the last admin' : 'Remove member'}
+                              >
+                                <Trash2 className="w-4 h-4 text-red-600" />
+                              </Button>
+                            </>
+                          )}
                         </div>
                       </TableCell>
                     </TableRow>
