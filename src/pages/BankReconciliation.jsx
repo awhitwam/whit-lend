@@ -935,12 +935,24 @@ export default function BankReconciliation() {
         setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
       }
     } else {
-      // Default behavior
+      // Default behavior - use amount-based heuristics
       setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
+
+      // Apply amount-based heuristics for default type selection
       if (entry.amount > 0) {
-        setReconciliationType('loan_repayment');
+        // Credits (money in)
+        if (amount < 10000) {
+          setReconciliationType('loan_repayment');  // Small credit = likely loan repayment
+        } else {
+          setReconciliationType('investor_credit');  // Large credit = likely investor capital
+        }
       } else {
-        setReconciliationType('expense');
+        // Debits (money out)
+        if (amount < 2000) {
+          setReconciliationType('expense');  // Small debit = likely expense
+        } else {
+          setReconciliationType('loan_disbursement');  // Large debit = investor payment or loan disbursement
+        }
       }
       setMatchMode('create');
     }

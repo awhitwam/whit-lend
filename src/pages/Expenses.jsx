@@ -30,6 +30,7 @@ export default function Expenses() {
   const [editingType, setEditingType] = useState(null);
   const [typeName, setTypeName] = useState('');
   const [typeDescription, setTypeDescription] = useState('');
+  const [typeSearchTerm, setTypeSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   
@@ -384,37 +385,46 @@ export default function Expenses() {
             setEditingType(null);
             setTypeName('');
             setTypeDescription('');
+            setTypeSearchTerm('');
           }
         }}>
-          <DialogContent className="sm:max-w-2xl">
+          <DialogContent className="sm:max-w-3xl max-h-[85vh] flex flex-col">
             <DialogHeader>
               <DialogTitle>Manage Expense Types</DialogTitle>
+              <p className="text-sm text-slate-500">
+                {expenseTypes.length} expense type{expenseTypes.length !== 1 ? 's' : ''} configured
+              </p>
             </DialogHeader>
-            
-            <form onSubmit={handleTypeSubmit} className="space-y-4 mb-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-2">
-                  <Input
-                    placeholder="Type name"
-                    value={typeName}
-                    onChange={(e) => setTypeName(e.target.value)}
-                    required
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Input
-                    placeholder="Description (optional)"
-                    value={typeDescription}
-                    onChange={(e) => setTypeDescription(e.target.value)}
-                  />
-                </div>
+
+            {/* Add/Edit Form */}
+            <form onSubmit={handleTypeSubmit} className="space-y-3 p-4 bg-slate-50 rounded-lg border">
+              <div className="text-sm font-medium text-slate-700">
+                {editingType ? 'Edit Type' : 'Add New Type'}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <Input
+                  placeholder="Type name *"
+                  value={typeName}
+                  onChange={(e) => setTypeName(e.target.value)}
+                  required
+                />
+                <Input
+                  placeholder="Description (optional)"
+                  value={typeDescription}
+                  onChange={(e) => setTypeDescription(e.target.value)}
+                />
               </div>
               <div className="flex gap-2">
-                <Button type="submit" disabled={createTypeMutation.isPending || updateTypeMutation.isPending}>
-                  {editingType ? 'Update' : 'Add'} Type
+                <Button
+                  type="submit"
+                  size="sm"
+                  disabled={createTypeMutation.isPending || updateTypeMutation.isPending}
+                >
+                  <Plus className="w-4 h-4 mr-1" />
+                  {editingType ? 'Update Type' : 'Add Type'}
                 </Button>
                 {editingType && (
-                  <Button type="button" variant="outline" onClick={() => {
+                  <Button type="button" variant="outline" size="sm" onClick={() => {
                     setEditingType(null);
                     setTypeName('');
                     setTypeDescription('');
@@ -422,55 +432,95 @@ export default function Expenses() {
                     Cancel
                   </Button>
                 )}
-                {!editingType && (
-                  <Button type="button" variant="outline" onClick={() => setIsTypeDialogOpen(false)}>
-                    Done
-                  </Button>
-                )}
               </div>
             </form>
 
-            <div className="border-t pt-4">
-              <h4 className="font-medium mb-3">Existing Types</h4>
-              <div className="space-y-2">
-                {typesLoading ? (
-                  <div className="text-sm text-slate-500">Loading...</div>
-                ) : expenseTypes.length === 0 ? (
-                  <div className="text-sm text-slate-500">No types yet</div>
-                ) : (
-                  expenseTypes.map(type => (
-                    <div key={type.id} className="flex items-center justify-between p-3 bg-slate-50 rounded-lg">
-                      <div>
-                        <p className="font-medium">{type.name}</p>
-                        {type.description && (
-                          <p className="text-xs text-slate-500">{type.description}</p>
-                        )}
+            {/* Search */}
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-slate-400 w-4 h-4" />
+              <Input
+                placeholder="Search expense types..."
+                value={typeSearchTerm}
+                onChange={(e) => setTypeSearchTerm(e.target.value)}
+                className="pl-9"
+              />
+            </div>
+
+            {/* Types Grid */}
+            <div className="flex-1 overflow-y-auto min-h-0">
+              {typesLoading ? (
+                <div className="text-sm text-slate-500 text-center py-8">Loading...</div>
+              ) : expenseTypes.length === 0 ? (
+                <div className="text-center py-8">
+                  <Receipt className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+                  <p className="text-sm text-slate-500">No expense types yet</p>
+                  <p className="text-xs text-slate-400">Add your first type above</p>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                  {expenseTypes
+                    .filter(type =>
+                      !typeSearchTerm ||
+                      type.name.toLowerCase().includes(typeSearchTerm.toLowerCase()) ||
+                      (type.description && type.description.toLowerCase().includes(typeSearchTerm.toLowerCase()))
+                    )
+                    .map(type => (
+                      <div
+                        key={type.id}
+                        className={`flex items-center justify-between p-3 rounded-lg border transition-colors ${
+                          editingType?.id === type.id
+                            ? 'bg-blue-50 border-blue-200'
+                            : 'bg-white hover:bg-slate-50 border-slate-200'
+                        }`}
+                      >
+                        <div className="min-w-0 flex-1">
+                          <p className="font-medium text-sm truncate">{type.name}</p>
+                          {type.description && (
+                            <p className="text-xs text-slate-500 truncate">{type.description}</p>
+                          )}
+                        </div>
+                        <div className="flex gap-1 ml-2 flex-shrink-0">
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0"
+                            onClick={() => handleEditType(type)}
+                          >
+                            <Edit className="w-3.5 h-3.5" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 w-8 p-0 text-red-600 hover:text-red-700 hover:bg-red-50"
+                            onClick={() => {
+                              if (confirm(`Delete "${type.name}"?`)) {
+                                deleteTypeMutation.mutate(type.id);
+                              }
+                            }}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex gap-2">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => handleEditType(type)}
-                        >
-                          <Edit className="w-4 h-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          className="text-red-600"
-                          onClick={() => {
-                            if (confirm('Delete this type?')) {
-                              deleteTypeMutation.mutate(type.id);
-                            }
-                          }}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </Button>
-                      </div>
+                    ))
+                  }
+                  {typeSearchTerm && expenseTypes.filter(type =>
+                    type.name.toLowerCase().includes(typeSearchTerm.toLowerCase()) ||
+                    (type.description && type.description.toLowerCase().includes(typeSearchTerm.toLowerCase()))
+                  ).length === 0 && (
+                    <div className="col-span-2 text-center py-6 text-sm text-slate-500">
+                      No types matching "{typeSearchTerm}"
                     </div>
-                  ))
-                )}
-              </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Footer */}
+            <div className="flex justify-end pt-3 border-t">
+              <Button variant="outline" onClick={() => setIsTypeDialogOpen(false)}>
+                Done
+              </Button>
             </div>
           </DialogContent>
         </Dialog>

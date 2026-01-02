@@ -470,6 +470,45 @@ function calculateMatchScore(bankEntry, systemTransaction) {
 }
 ```
 
+### Amount-Based Heuristics (Default Type Suggestions)
+
+When no exact match is found, the system suggests a likely transaction type based on amount thresholds:
+
+**Debits (Money Out)**
+| Amount | Likely Type | Reasoning |
+|--------|-------------|-----------|
+| < £2,000 | Expense | Small operational costs |
+| ≥ £2,000 | Investor Payment OR Loan Disbursement | Large outflows are typically investor withdrawals or loan releases |
+
+**Credits (Money In)**
+| Amount | Likely Type | Reasoning |
+|--------|-------------|-----------|
+| < £10,000 | Loan Repayment | Regular borrower payments |
+| ≥ £10,000 | Investor Capital OR Capital Repayment | Large inflows are typically investor deposits or loan payoffs |
+
+```javascript
+function suggestReconciliationType(bankEntry) {
+  const amount = Math.abs(bankEntry.amount);
+  const isCredit = bankEntry.transaction_type === 'CRDT' || bankEntry.amount > 0;
+
+  if (isCredit) {
+    // Money coming IN
+    if (amount < 10000) {
+      return 'loan_repayment';  // Small credit = likely loan repayment
+    } else {
+      return 'investor_credit';  // Large credit = likely investor capital
+    }
+  } else {
+    // Money going OUT
+    if (amount < 2000) {
+      return 'expense';  // Small debit = likely expense
+    } else {
+      return 'loan_disbursement';  // Large debit = investor payment or disbursement
+    }
+  }
+}
+```
+
 ### Pattern Learning
 
 When a user manually reconciles, the system saves patterns:
