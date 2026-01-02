@@ -4,7 +4,7 @@ import { queryClientInstance } from '@/lib/query-client'
 import VisualEditAgent from '@/lib/VisualEditAgent'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
-import { BrowserRouter as Router, Route, Routes } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { OrganizationProvider } from '@/lib/OrganizationContext';
@@ -19,7 +19,8 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   : <>{children}</>;
 
 const AuthenticatedApp = () => {
-  const { isLoadingAuth, authError } = useAuth();
+  const { isLoadingAuth, isAuthenticated, authError } = useAuth();
+  const location = useLocation();
 
   // Show loading spinner while checking auth
   if (isLoadingAuth) {
@@ -34,17 +35,12 @@ const AuthenticatedApp = () => {
   if (authError) {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
-    } else if (authError.type === 'auth_required') {
-      // Show error message for now
-      return (
-        <div className="fixed inset-0 flex items-center justify-center">
-          <div className="text-center">
-            <h2 className="text-xl font-semibold mb-2">Authentication Required</h2>
-            <p className="text-slate-600">Please log in to continue.</p>
-          </div>
-        </div>
-      );
     }
+  }
+
+  // If not authenticated and not already on Login page, redirect to Login
+  if (!isAuthenticated && location.pathname !== '/Login') {
+    return <Navigate to="/Login" replace />;
   }
 
   // Render the main app

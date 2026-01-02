@@ -1,1 +1,1 @@
-# Base44 App
+[Read the documentation](SYSTEM_DOCUMENTATION.md)
