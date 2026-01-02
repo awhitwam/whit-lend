@@ -31,7 +31,9 @@ const Login = () => {
   return (
     <div className="flex items-center justify-center min-h-screen bg-slate-100">
       <form onSubmit={handleSubmit} className="p-8 bg-white rounded shadow-md w-96">
-        <h1 className="mb-6 text-2xl font-bold text-center">Lending App Login</h1>
+        <div className="flex justify-center mb-6">
+          <img src="/logo.png" alt="Whit-Lend" className="h-24" />
+        </div>
         {showTimeoutMessage && (
           <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-amber-800 text-sm text-center">
             Your session has expired due to inactivity. Please log in again.

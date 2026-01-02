@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -16,7 +17,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Upload, CheckCircle2, AlertCircle, Loader2, Search, FileCheck,
   ArrowUpRight, ArrowDownLeft, Check, Link2, Unlink,
-  Sparkles, Wand2, Zap, CheckSquare, Receipt, Coins
+  Sparkles, Wand2, Zap, CheckSquare, Receipt, Coins, Tag, Plus, X
 } from 'lucide-react';
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -135,6 +136,84 @@ function calculateMatchScore(bankEntry, transaction, dateField = 'date') {
   return score;
 }
 
+// Enhanced keyword extraction for vendor names - cleans messy bank descriptions
+function extractVendorKeywords(text) {
+  if (!text) return [];
+
+  let cleaned = text.toLowerCase();
+
+  // Remove URLs and domains (www., .com, .co.uk, etc.)
+  cleaned = cleaned.replace(/www\./gi, ' ');
+  cleaned = cleaned.replace(/https?:\/\/[^\s]+/gi, ' ');
+  cleaned = cleaned.replace(/\.(com|co\.uk|org|net|io|app|co|uk|au|de|fr|es|it|nl|ie|ca|nz)/gi, ' ');
+
+  // Remove phone numbers (various formats)
+  cleaned = cleaned.replace(/\+?\d{1,4}[\s\-]?\d{6,14}/g, ' '); // +61280056782 format
+  cleaned = cleaned.replace(/\d{3}[\s\-]?\d{3}[\s\-]?\d{4}/g, ' '); // 123-456-7890 format
+
+  // Remove 2-letter country codes at word boundaries
+  const countryCodes = ['gb', 'uk', 'au', 'us', 'de', 'fr', 'es', 'it', 'nl', 'ie', 'ca', 'nz'];
+  cleaned = cleaned.replace(/\b([a-z]{2})\b/g, (match) =>
+    countryCodes.includes(match) ? ' ' : match
+  );
+
+  // Remove common reference patterns
+  cleaned = cleaned.replace(/\b\d{5,}\b/g, ' '); // Reference numbers (5+ digits)
+  cleaned = cleaned.replace(/\b[a-z]{1,2}\d{5,}\b/gi, ' '); // Codes like AB12345
+
+  // Remove non-alphanumeric (keep spaces)
+  cleaned = cleaned.replace(/[^a-z0-9\s]/g, ' ');
+
+  // Stop words including payment-related terms
+  const stopWords = [
+    'from', 'to', 'the', 'and', 'for', 'with', 'payment', 'transfer',
+    'in', 'out', 'ltd', 'limited', 'plc', 'inc', 'corp', 'llc',
+    'card', 'visa', 'mastercard', 'debit', 'credit', 'pos', 'atm',
+    'ref', 'reference', 'direct', 'faster', 'bacs', 'chaps', 'fps',
+    'gbp', 'usd', 'eur', 'aud', 'purchase', 'sale', 'fee', 'charge'
+  ];
+
+  return cleaned
+    .split(/\s+/)
+    .filter(word => word.length > 2 && !stopWords.includes(word))
+    .slice(0, 5); // Keep only top 5 keywords for matching
+}
+
+// Levenshtein distance-based similarity (0-1 scale)
+function levenshteinSimilarity(s1, s2) {
+  if (!s1 || !s2) return 0;
+  if (s1 === s2) return 1;
+
+  const len1 = s1.length;
+  const len2 = s2.length;
+  const maxLen = Math.max(len1, len2);
+
+  // Quick reject for very different lengths
+  if (Math.abs(len1 - len2) / maxLen > 0.5) return 0;
+
+  // Create distance matrix
+  const matrix = [];
+  for (let i = 0; i <= len1; i++) {
+    matrix[i] = [i];
+  }
+  for (let j = 0; j <= len2; j++) {
+    matrix[0][j] = j;
+  }
+
+  for (let i = 1; i <= len1; i++) {
+    for (let j = 1; j <= len2; j++) {
+      const cost = s1[i - 1] === s2[j - 1] ? 0 : 1;
+      matrix[i][j] = Math.min(
+        matrix[i - 1][j] + 1,      // deletion
+        matrix[i][j - 1] + 1,      // insertion
+        matrix[i - 1][j - 1] + cost // substitution
+      );
+    }
+  }
+
+  return 1 - matrix[len1][len2] / maxLen;
+}
+
 export default function BankReconciliation() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -165,6 +244,7 @@ export default function BankReconciliation() {
   const [selectedExistingTx, setSelectedExistingTx] = useState(null);
   const [entitySearch, setEntitySearch] = useState('');
   const [splitAmounts, setSplitAmounts] = useState({ capital: 0, interest: 0, fees: 0 });
+  const [investorWithdrawalSplit, setInvestorWithdrawalSplit] = useState({ capital: 0, interest: 0 });
   const [expenseDescription, setExpenseDescription] = useState('');
   const [isReconciling, setIsReconciling] = useState(false);
   const [savePattern, setSavePattern] = useState(true);
@@ -289,6 +369,12 @@ export default function BankReconciliation() {
   const { data: investorTransactions = [] } = useQuery({
     queryKey: ['investor-transactions'],
     queryFn: () => api.entities.InvestorTransaction.list('-date')
+  });
+
+  // Fetch investor interest entries for display
+  const { data: investorInterestEntries = [] } = useQuery({
+    queryKey: ['investor-interest'],
+    queryFn: () => api.entities.InvestorInterest.list('-date')
   });
 
   // Fetch reconciliation entries
@@ -549,21 +635,39 @@ export default function BankReconciliation() {
       }
 
       // 4. Check learned patterns (for creating new transactions)
+      // Use enhanced vendor keyword extraction for better matching
       if (bestScore < 0.7) {
-        for (const pattern of patterns) {
-          const patternKeywords = extractKeywords(pattern.description_pattern);
-          const keywordMatch = entryKeywords.some(kw =>
-            patternKeywords.some(pk => kw.includes(pk) || pk.includes(kw))
-          );
+        const entryVendorKeywords = extractVendorKeywords(entry.description);
 
+        for (const pattern of patterns) {
+          const patternKeywords = extractVendorKeywords(pattern.description_pattern);
+          if (patternKeywords.length === 0) continue;
+
+          // Calculate fuzzy match score
+          let matchCount = 0;
+          for (const entryKw of entryVendorKeywords) {
+            for (const patternKw of patternKeywords) {
+              if (entryKw === patternKw) {
+                matchCount += 1;
+              } else if (entryKw.includes(patternKw) || patternKw.includes(entryKw)) {
+                matchCount += 0.7;
+              } else if (levenshteinSimilarity(entryKw, patternKw) >= 0.75) {
+                matchCount += 0.5;
+              }
+            }
+          }
+
+          const keywordScore = matchCount / Math.max(patternKeywords.length, 1);
           const amountInRange = (!pattern.amount_min || entryAmount >= pattern.amount_min) &&
                                (!pattern.amount_max || entryAmount <= pattern.amount_max);
 
           const typeMatch = !pattern.transaction_type ||
                            (isCredit ? pattern.transaction_type === 'CRDT' : pattern.transaction_type === 'DBIT');
 
-          if (keywordMatch && amountInRange && typeMatch) {
-            const score = pattern.confidence_score * 0.85 + 0.1;
+          if (keywordScore >= 0.5 && amountInRange && typeMatch) {
+            // Include usage count boost in confidence calculation
+            const usageBoost = Math.min((pattern.match_count || 1) / 20, 0.15);
+            const score = (pattern.confidence_score || 0.5) * 0.6 + keywordScore * 0.25 + usageBoost;
             if (score > bestScore) {
               bestScore = score;
               bestMatch = {
@@ -574,7 +678,7 @@ export default function BankReconciliation() {
                 expense_type_id: pattern.expense_type_id,
                 pattern_id: pattern.id,
                 confidence: score,
-                reason: `Pattern: "${pattern.description_pattern}" (used ${pattern.match_count}x)`,
+                reason: `Pattern: "${pattern.description_pattern}" (used ${pattern.match_count || 1}x)`,
                 defaultSplit: {
                   capital: pattern.default_capital_ratio,
                   interest: pattern.default_interest_ratio,
@@ -653,12 +757,7 @@ export default function BankReconciliation() {
 
             if (nameSimilarity > 0.4 && nameSimilarity > bestScore) {
               bestScore = nameSimilarity;
-              let matchType = 'investor_credit';
-              if (!isCredit) {
-                matchType = entry.description?.toLowerCase().includes('interest')
-                  ? 'interest_withdrawal'
-                  : 'investor_withdrawal';
-              }
+              const matchType = isCredit ? 'investor_credit' : 'investor_withdrawal';
               bestMatch = {
                 type: matchType,
                 matchMode: 'create',
@@ -679,6 +778,90 @@ export default function BankReconciliation() {
 
     return suggestions;
   }, [bankStatements, patterns, loans, investors, borrowers, loanTransactions, investorTransactions, expenses, expenseTypes, reconciledTxIds]);
+
+  // Compute expense type suggestions for unreconciled debits (for dropdown pre-selection)
+  const expenseTypeSuggestions = useMemo(() => {
+    const suggestions = new Map(); // Map<entryId, { expenseTypeId, expenseTypeName, confidence, reason }>
+
+    bankStatements.filter(s => !s.is_reconciled && s.amount < 0).forEach(entry => {
+      // Skip if already has a high-confidence suggestion from suggestedMatches
+      const existingSuggestion = suggestedMatches.get(entry.id);
+      if (existingSuggestion && existingSuggestion.confidence >= 0.7 && existingSuggestion.expense_type_id) {
+        return; // Let the main suggestion system handle this
+      }
+
+      const entryKeywords = extractVendorKeywords(entry.description);
+      if (entryKeywords.length === 0) return;
+
+      let bestMatch = null;
+      let bestScore = 0;
+
+      // Check patterns that have expense_type_id set
+      for (const pattern of patterns) {
+        if (!pattern.expense_type_id) continue;
+        if (pattern.transaction_type && pattern.transaction_type !== 'DBIT') continue;
+
+        const patternKeywords = extractVendorKeywords(pattern.description_pattern);
+        if (patternKeywords.length === 0) continue;
+
+        // Calculate match score using fuzzy matching
+        let matchCount = 0;
+        for (const entryKw of entryKeywords) {
+          for (const patternKw of patternKeywords) {
+            // Check exact match, partial match, or fuzzy match
+            if (entryKw === patternKw) {
+              matchCount += 1;
+            } else if (entryKw.includes(patternKw) || patternKw.includes(entryKw)) {
+              matchCount += 0.8;
+            } else if (levenshteinSimilarity(entryKw, patternKw) >= 0.75) {
+              matchCount += 0.6;
+            }
+          }
+        }
+
+        if (matchCount === 0) continue;
+
+        // Score based on: keyword match ratio, pattern confidence, usage count
+        const keywordScore = matchCount / Math.max(entryKeywords.length, patternKeywords.length);
+        const usageBoost = Math.min((pattern.match_count || 1) / 10, 0.2); // Up to 0.2 boost for frequently used
+        const score = (keywordScore * 0.6) + ((pattern.confidence_score || 0.5) * 0.2) + usageBoost;
+
+        if (score > bestScore && score >= 0.3) {
+          bestScore = score;
+          const expenseType = expenseTypes.find(t => t.id === pattern.expense_type_id);
+          if (expenseType) {
+            bestMatch = {
+              expenseTypeId: pattern.expense_type_id,
+              expenseTypeName: expenseType.name,
+              confidence: Math.min(score, 0.99), // Cap at 99%
+              reason: `Pattern: "${pattern.description_pattern}" (used ${pattern.match_count || 1}x)`,
+              patternId: pattern.id
+            };
+          }
+        }
+      }
+
+      if (bestMatch) {
+        suggestions.set(entry.id, bestMatch);
+      }
+    });
+
+    return suggestions;
+  }, [bankStatements, patterns, expenseTypes, suggestedMatches]);
+
+  // Auto-apply high-confidence expense type suggestions to dropdown
+  useEffect(() => {
+    expenseTypeSuggestions.forEach((suggestion, entryId) => {
+      // Only auto-apply if confidence is high (70%+) and not already set by user
+      if (suggestion.confidence >= 0.7 && !entryExpenseTypes.has(entryId)) {
+        // Verify entry still exists and is unreconciled debit
+        const entry = bankStatements.find(s => s.id === entryId);
+        if (entry && !entry.is_reconciled && entry.amount < 0) {
+          setEntryExpenseType(entryId, suggestion.expenseTypeId);
+        }
+      }
+    });
+  }, [expenseTypeSuggestions]); // Only run when suggestions change
 
   // Filter and search bank statements
   const filteredStatements = useMemo(() => {
@@ -716,10 +899,55 @@ export default function BankReconciliation() {
 
     if (searchTerm) {
       const term = searchTerm.toLowerCase();
-      filtered = filtered.filter(s =>
-        s.description?.toLowerCase().includes(term) ||
-        String(s.amount).includes(term)
-      );
+      filtered = filtered.filter(s => {
+        // Search in basic fields
+        if (s.description?.toLowerCase().includes(term)) return true;
+        if (String(s.amount).includes(term)) return true;
+        if (s.external_reference?.toLowerCase().includes(term)) return true;
+
+        // Search in date
+        if (s.statement_date) {
+          const dateStr = format(parseISO(s.statement_date), 'dd MMM yyyy').toLowerCase();
+          if (dateStr.includes(term)) return true;
+        }
+
+        // For reconciled entries, also search in linked entity names
+        if (s.is_reconciled) {
+          const reconDetails = reconciliationEntries.filter(re => re.bank_statement_id === s.id);
+          for (const re of reconDetails) {
+            // Search in linked loan/borrower
+            if (re.loan_transaction_id) {
+              const tx = loanTransactions.find(t => t.id === re.loan_transaction_id);
+              if (tx) {
+                const loan = loans.find(l => l.id === tx.loan_id);
+                if (loan) {
+                  const borrowerName = getBorrowerName(loan.borrower_id);
+                  if (borrowerName.toLowerCase().includes(term)) return true;
+                  if (loan.loan_number?.toLowerCase().includes(term)) return true;
+                }
+              }
+            }
+            // Search in linked investor
+            if (re.investor_transaction_id) {
+              const invTx = investorTransactions.find(t => t.id === re.investor_transaction_id);
+              if (invTx) {
+                const investor = investors.find(i => i.id === invTx.investor_id);
+                if (investor) {
+                  const investorName = investor.business_name || investor.name || '';
+                  if (investorName.toLowerCase().includes(term)) return true;
+                }
+              }
+            }
+            // Search in expense type
+            if (re.expense_id) {
+              const expense = expenses.find(e => e.id === re.expense_id);
+              if (expense?.type_name?.toLowerCase().includes(term)) return true;
+            }
+          }
+        }
+
+        return false;
+      });
     }
 
     // Sort by confidence (highest first) when filtering by suggested
@@ -732,7 +960,7 @@ export default function BankReconciliation() {
     }
 
     return filtered;
-  }, [bankStatements, filter, searchTerm, suggestedMatches, confidenceFilter]);
+  }, [bankStatements, filter, searchTerm, suggestedMatches, confidenceFilter, reconciliationEntries, loanTransactions, loans, borrowers, investorTransactions, investors, expenses]);
 
   // Filter entities based on search
   const filteredLoans = useMemo(() => {
@@ -931,12 +1159,26 @@ export default function BankReconciliation() {
           interest: amount * (suggestion.defaultSplit.interest || 0),
           fees: amount * (suggestion.defaultSplit.fees || 0)
         });
+        // Also apply to investor withdrawal split if this is an investor withdrawal
+        if (suggestion.type === 'investor_withdrawal' || suggestion.type === 'interest_withdrawal') {
+          setInvestorWithdrawalSplit({
+            capital: Math.round(amount * (suggestion.defaultSplit.capital || 1) * 100) / 100,
+            interest: Math.round(amount * (suggestion.defaultSplit.interest || 0) * 100) / 100
+          });
+        } else {
+          setInvestorWithdrawalSplit({ capital: amount, interest: 0 });
+        }
       } else {
         setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
+        setInvestorWithdrawalSplit({ capital: amount, interest: 0 });
       }
     } else {
       // Default behavior - use amount-based heuristics
       setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
+      setInvestorWithdrawalSplit({ capital: amount, interest: 0 });
+
+      // Check for expense type suggestion from our learning system
+      const expenseSuggestion = expenseTypeSuggestions.get(entry.id);
 
       // Apply amount-based heuristics for default type selection
       if (entry.amount > 0) {
@@ -948,7 +1190,12 @@ export default function BankReconciliation() {
         }
       } else {
         // Debits (money out)
-        if (amount < 2000) {
+        // If we have an expense type suggestion, default to expense type
+        if (expenseSuggestion) {
+          setReconciliationType('expense');
+          const expType = expenseTypes.find(t => t.id === expenseSuggestion.expenseTypeId);
+          if (expType) setSelectedExpenseType(expType);
+        } else if (amount < 2000) {
           setReconciliationType('expense');  // Small debit = likely expense
         } else {
           setReconciliationType('loan_disbursement');  // Large debit = investor payment or loan disbursement
@@ -956,11 +1203,22 @@ export default function BankReconciliation() {
       }
       setMatchMode('create');
     }
+
+    // Also check if there's an expense type suggestion even when we have a main suggestion
+    // but it didn't include an expense_type_id (e.g., generic "expense" suggestion)
+    if (suggestion && suggestion.type === 'expense' && !suggestion.expense_type_id) {
+      const expenseSuggestion = expenseTypeSuggestions.get(entry.id);
+      if (expenseSuggestion) {
+        const expType = expenseTypes.find(t => t.id === expenseSuggestion.expenseTypeId);
+        if (expType) setSelectedExpenseType(expType);
+      }
+    }
   };
 
   // Save or update pattern after reconciliation
   const saveReconciliationPattern = async (entry, type, loanId, investorId, expenseTypeId, splitRatios) => {
-    const keywords = extractKeywords(entry.description);
+    // Use enhanced vendor keyword extraction for better matching
+    const keywords = extractVendorKeywords(entry.description);
     if (keywords.length === 0) return;
 
     const patternText = keywords.slice(0, 5).join(' '); // Use top 5 keywords
@@ -1120,32 +1378,40 @@ export default function BankReconciliation() {
           });
 
         } else if (reconciliationType === 'investor_withdrawal' && selectedInvestor) {
-          const txData = {
-            investor_id: selectedInvestor.id,
-            type: 'capital_out',
-            amount: amount,
-            date: selectedEntry.statement_date,
-            description: selectedEntry.description,
-            reference: selectedEntry.external_reference
-          };
-          const created = await api.entities.InvestorTransaction.create(txData);
-          investorTransactionId = created.id;
+          // Handle split between capital and interest withdrawal
+          const capitalAmount = investorWithdrawalSplit.capital || 0;
+          const interestAmount = investorWithdrawalSplit.interest || 0;
 
-          await api.entities.Investor.update(selectedInvestor.id, {
-            current_capital_balance: (selectedInvestor.current_capital_balance || 0) - amount
-          });
+          // Create capital withdrawal if there's capital amount
+          if (capitalAmount > 0) {
+            const txData = {
+              investor_id: selectedInvestor.id,
+              type: 'capital_out',
+              amount: capitalAmount,
+              date: selectedEntry.statement_date,
+              description: selectedEntry.description,
+              reference: selectedEntry.external_reference
+            };
+            const created = await api.entities.InvestorTransaction.create(txData);
+            investorTransactionId = created.id;
 
-        } else if (reconciliationType === 'interest_withdrawal' && selectedInvestor) {
-          // Create a debit entry in the investor_interest ledger
-          const interestEntry = await api.entities.InvestorInterest.create({
-            investor_id: selectedInvestor.id,
-            type: 'debit',
-            amount: amount,
-            date: selectedEntry.statement_date,
-            description: selectedEntry.description,
-            reference: selectedEntry.external_reference
-          });
-          interestId = interestEntry.id;
+            await api.entities.Investor.update(selectedInvestor.id, {
+              current_capital_balance: (selectedInvestor.current_capital_balance || 0) - capitalAmount
+            });
+          }
+
+          // Create interest withdrawal if there's interest amount
+          if (interestAmount > 0) {
+            const interestEntry = await api.entities.InvestorInterest.create({
+              investor_id: selectedInvestor.id,
+              type: 'debit',
+              amount: interestAmount,
+              date: selectedEntry.statement_date,
+              description: selectedEntry.description,
+              reference: selectedEntry.external_reference
+            });
+            interestId = interestEntry.id;
+          }
 
         } else if (reconciliationType === 'expense') {
           const expenseData = {
@@ -1228,11 +1494,21 @@ export default function BankReconciliation() {
 
       // Save pattern for future auto-matching (if enabled and creating new)
       if (savePattern && matchMode === 'create') {
-        const splitRatios = reconciliationType === 'loan_repayment' ? {
-          capital: splitAmounts.capital / amount,
-          interest: splitAmounts.interest / amount,
-          fees: splitAmounts.fees / amount
-        } : null;
+        let splitRatios = null;
+        if (reconciliationType === 'loan_repayment') {
+          splitRatios = {
+            capital: splitAmounts.capital / amount,
+            interest: splitAmounts.interest / amount,
+            fees: splitAmounts.fees / amount
+          };
+        } else if (reconciliationType === 'investor_withdrawal') {
+          // Save investor withdrawal split as capital/interest ratios
+          splitRatios = {
+            capital: investorWithdrawalSplit.capital / amount,
+            interest: investorWithdrawalSplit.interest / amount,
+            fees: 0
+          };
+        }
 
         await saveReconciliationPattern(
           selectedEntry,
@@ -1267,67 +1543,115 @@ export default function BankReconciliation() {
   // Get reconciliation details for a bank statement entry
   const getReconciliationDetails = (entryId) => {
     const entries = reconciliationEntries.filter(re => re.bank_statement_id === entryId);
-    return entries.map(re => {
-      let linkedEntity = null;
-      let entityType = '';
-      let entityDetails = {};
+    const results = [];
 
+    entries.forEach(re => {
+      // Handle loan transactions
       if (re.loan_transaction_id) {
         const tx = loanTransactions.find(t => t.id === re.loan_transaction_id);
         if (tx) {
           const loan = loans.find(l => l.id === tx.loan_id);
           const borrowerName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
-          linkedEntity = tx;
-          entityType = tx.type === 'Repayment' ? 'Loan Repayment' : 'Loan Disbursement';
-          entityDetails = {
-            loanNumber: loan?.loan_number,
-            borrowerName,
-            date: tx.date,
+          results.push({
+            reconciliationEntry: re,
+            linkedEntity: tx,
+            entityType: tx.type === 'Repayment' ? 'Loan Repayment' : 'Loan Disbursement',
+            entityDetails: {
+              loanNumber: loan?.loan_number,
+              borrowerName,
+              date: tx.date,
+              amount: tx.amount,
+              principalApplied: tx.principal_applied,
+              interestApplied: tx.interest_applied,
+              feesApplied: tx.fees_applied,
+              notes: tx.notes
+            },
+            reconciliationType: re.reconciliation_type,
             amount: tx.amount,
-            principalApplied: tx.principal_applied,
-            interestApplied: tx.interest_applied,
-            feesApplied: tx.fees_applied,
-            notes: tx.notes
-          };
+            notes: re.notes,
+            createdAt: re.created_at
+          });
         }
-      } else if (re.investor_transaction_id) {
+      }
+
+      // Handle investor capital transactions
+      if (re.investor_transaction_id) {
         const tx = investorTransactions.find(t => t.id === re.investor_transaction_id);
         if (tx) {
           const investor = investors.find(i => i.id === tx.investor_id);
-          linkedEntity = tx;
-          entityType = tx.type === 'capital_in' ? 'Investor Credit' :
-                       tx.type === 'capital_out' ? 'Investor Withdrawal' : 'Investor Transaction';
-          entityDetails = {
-            investorName: investor?.business_name || investor?.name,
-            date: tx.date,
+          results.push({
+            reconciliationEntry: re,
+            linkedEntity: tx,
+            entityType: tx.type === 'capital_in' ? 'Investor Credit' :
+                         tx.type === 'capital_out' ? 'Investor Withdrawal' : 'Investor Transaction',
+            entityDetails: {
+              investorName: investor?.business_name || investor?.name,
+              date: tx.date,
+              amount: tx.amount,
+              description: tx.description
+            },
+            reconciliationType: re.reconciliation_type,
             amount: tx.amount,
-            description: tx.description
-          };
+            notes: re.notes,
+            createdAt: re.created_at
+          });
         }
-      } else if (re.expense_id) {
+      }
+
+      // Handle investor interest withdrawals (can be in addition to capital withdrawal)
+      if (re.interest_id) {
+        const interestEntry = investorInterestEntries.find(i => i.id === re.interest_id);
+        if (interestEntry) {
+          const investor = investors.find(i => i.id === interestEntry.investor_id);
+          results.push({
+            reconciliationEntry: re,
+            linkedEntity: interestEntry,
+            entityType: 'Interest Withdrawal',
+            entityDetails: {
+              investorName: investor?.business_name || investor?.name,
+              date: interestEntry.date,
+              amount: interestEntry.amount,
+              description: interestEntry.description
+            },
+            reconciliationType: re.reconciliation_type,
+            amount: interestEntry.amount,
+            notes: re.notes,
+            createdAt: re.created_at
+          });
+        }
+      }
+
+      // Handle expenses
+      if (re.expense_id) {
         const expense = expenses.find(e => e.id === re.expense_id);
         if (expense) {
           const linkedLoan = expense.loan_id ? loans.find(l => l.id === expense.loan_id) : null;
-          linkedEntity = expense;
-          entityType = 'Expense';
-          entityDetails = {
-            expenseTypeName: expense.type_name || 'Uncategorized',
-            date: expense.date,
+          results.push({
+            reconciliationEntry: re,
+            linkedEntity: expense,
+            entityType: 'Expense',
+            entityDetails: {
+              expenseTypeName: expense.type_name || 'Uncategorized',
+              date: expense.date,
+              amount: expense.amount,
+              description: expense.description,
+              linkedLoan: linkedLoan ? {
+                loanNumber: linkedLoan.loan_number,
+                borrowerName: getBorrowerName(linkedLoan.borrower_id)
+              } : null
+            },
+            reconciliationType: re.reconciliation_type,
             amount: expense.amount,
-            description: expense.description,
-            linkedLoan: linkedLoan ? {
-              loanNumber: linkedLoan.loan_number,
-              borrowerName: getBorrowerName(linkedLoan.borrower_id)
-            } : null
-          };
+            notes: re.notes,
+            createdAt: re.created_at
+          });
         }
-      } else if (re.reconciliation_type === 'offset') {
-        // For offset entries, find all other bank statements reconciled together
-        // They share the same offset group ID (extracted from notes: "[offset_xxx] reason")
+      }
+
+      // Handle offset entries
+      if (re.reconciliation_type === 'offset' && !re.loan_transaction_id && !re.investor_transaction_id && !re.expense_id && !re.interest_id) {
         const groupIdMatch = re.notes?.match(/^\[offset_[^\]]+\]/);
         const groupId = groupIdMatch ? groupIdMatch[0] : null;
-
-        // Extract the user-readable notes (without the group ID prefix)
         const displayNotes = re.notes?.replace(/^\[offset_[^\]]+\]\s*/, '') || '';
 
         const offsetPartners = groupId ? reconciliationEntries
@@ -1342,25 +1666,24 @@ export default function BankReconciliation() {
           })
           .filter(Boolean) : [];
 
-        entityType = 'Funds Returned';
-        entityDetails = {
+        results.push({
+          reconciliationEntry: re,
+          linkedEntity: null,
+          entityType: 'Funds Returned',
+          entityDetails: {
+            amount: re.amount,
+            notes: displayNotes,
+            offsetPartners
+          },
+          reconciliationType: re.reconciliation_type,
           amount: re.amount,
-          notes: displayNotes,
-          offsetPartners
-        };
+          notes: re.notes,
+          createdAt: re.created_at
+        });
       }
-
-      return {
-        reconciliationEntry: re,
-        linkedEntity,
-        entityType,
-        entityDetails,
-        reconciliationType: re.reconciliation_type,
-        amount: re.amount,
-        notes: re.notes,
-        createdAt: re.created_at
-      };
     });
+
+    return results;
   };
 
   // Helper to delete records that were created during reconciliation
@@ -1563,7 +1886,9 @@ export default function BankReconciliation() {
                 total_capital_contributed: (investor.total_capital_contributed || 0) + amount
               });
             }
-          } else if (suggestion.type === 'investor_withdrawal' && suggestion.investor_id) {
+          } else if ((suggestion.type === 'investor_withdrawal' || suggestion.type === 'interest_withdrawal') && suggestion.investor_id) {
+            // Handle both investor_withdrawal and legacy interest_withdrawal patterns
+            // For auto-reconciliation, default to capital withdrawal
             const investor = investors.find(i => i.id === suggestion.investor_id);
             if (investor) {
               const txData = {
@@ -1581,17 +1906,6 @@ export default function BankReconciliation() {
                 current_capital_balance: (investor.current_capital_balance || 0) - amount
               });
             }
-          } else if (suggestion.type === 'interest_withdrawal' && suggestion.investor_id) {
-            // Create a debit entry in the investor_interest ledger
-            const interestEntry = await api.entities.InvestorInterest.create({
-              investor_id: suggestion.investor_id,
-              type: 'debit',
-              amount: amount,
-              date: entry.statement_date,
-              description: entry.description,
-              reference: entry.external_reference
-            });
-            interestId = interestEntry.id;
           }
         }
 
@@ -1762,7 +2076,9 @@ export default function BankReconciliation() {
               total_capital_contributed: (investor.total_capital_contributed || 0) + amount
             });
           }
-        } else if (suggestion.type === 'investor_withdrawal' && suggestion.investor_id) {
+        } else if ((suggestion.type === 'investor_withdrawal' || suggestion.type === 'interest_withdrawal') && suggestion.investor_id) {
+          // Handle both investor_withdrawal and legacy interest_withdrawal patterns
+          // For quick match, default to capital withdrawal
           const investor = investors.find(i => i.id === suggestion.investor_id);
           if (investor) {
             const txData = {
@@ -1780,17 +2096,6 @@ export default function BankReconciliation() {
               current_capital_balance: (investor.current_capital_balance || 0) - amount
             });
           }
-        } else if (suggestion.type === 'interest_withdrawal' && suggestion.investor_id) {
-          // Create a debit entry in the investor_interest ledger
-          const interestEntry = await api.entities.InvestorInterest.create({
-            investor_id: suggestion.investor_id,
-            type: 'debit',
-            amount: amount,
-            date: entry.statement_date,
-            description: entry.description,
-            reference: entry.external_reference
-          });
-          interestId = interestEntry.id;
         } else if (suggestion.type === 'expense' && suggestion.expense_type_id) {
           const expType = expenseTypes.find(t => t.id === suggestion.expense_type_id);
           const expenseData = {
@@ -1882,22 +2187,68 @@ export default function BankReconciliation() {
 
     let succeeded = 0;
     let failed = 0;
+    let skipped = 0;
     const errors = [];
+
+    // Track which transactions/expenses have been used in this bulk operation
+    // to prevent duplicate matching to the same existing record
+    const usedTransactionIds = new Set();
+    const usedExpenseIds = new Set();
 
     for (const entryId of entriesToProcess) {
       const entry = bankStatements.find(s => s.id === entryId);
       const suggestion = suggestedMatches.get(entryId);
 
+      // Check if this suggestion references an already-used transaction
+      if (suggestion.matchMode === 'match') {
+        if (suggestion.existingTransaction) {
+          if (usedTransactionIds.has(suggestion.existingTransaction.id)) {
+            skipped++;
+            setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
+            continue; // Skip - transaction already used in this bulk operation
+          }
+        }
+        if (suggestion.existingExpense) {
+          if (usedExpenseIds.has(suggestion.existingExpense.id)) {
+            skipped++;
+            setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
+            continue; // Skip - expense already used in this bulk operation
+          }
+        }
+        // Check for grouped transactions
+        if (suggestion.existingTransactions) {
+          const anyUsed = suggestion.existingTransactions.some(tx => usedTransactionIds.has(tx.id));
+          if (anyUsed) {
+            skipped++;
+            setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
+            continue; // Skip - one of the grouped transactions already used
+          }
+        }
+      }
+
       try {
         await handleQuickMatch(entry, suggestion, true, true); // silent mode + skip invalidation for bulk
         succeeded++;
+
+        // Mark the transaction/expense as used
+        if (suggestion.matchMode === 'match') {
+          if (suggestion.existingTransaction) {
+            usedTransactionIds.add(suggestion.existingTransaction.id);
+          }
+          if (suggestion.existingExpense) {
+            usedExpenseIds.add(suggestion.existingExpense.id);
+          }
+          if (suggestion.existingTransactions) {
+            suggestion.existingTransactions.forEach(tx => usedTransactionIds.add(tx.id));
+          }
+        }
       } catch (error) {
         console.error('Bulk match error for entry:', entryId, error);
         errors.push(`${entry.description?.substring(0, 30) || entryId}: ${error.message}`);
         failed++;
       }
 
-      setBulkMatchProgress({ current: succeeded + failed, total: entriesToProcess.length });
+      setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
     }
 
     // Invalidate all queries once at the end (much faster than per-entry)
@@ -1912,11 +2263,18 @@ export default function BankReconciliation() {
     setSelectedEntries(new Set());
     setIsBulkMatching(false);
     setBulkMatchProgress({ current: 0, total: 0 });
-    setAutoMatchResults({ succeeded, failed });
+    setAutoMatchResults({ succeeded, failed, skipped });
 
-    // Show summary of errors if any
-    if (errors.length > 0) {
-      alert(`Bulk match completed with ${failed} error(s):\n\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n...and ${errors.length - 5} more` : ''}`);
+    // Show summary of errors/skipped if any
+    if (errors.length > 0 || skipped > 0) {
+      let message = `Bulk match completed: ${succeeded} succeeded`;
+      if (skipped > 0) {
+        message += `, ${skipped} skipped (duplicate transaction references)`;
+      }
+      if (failed > 0) {
+        message += `, ${failed} failed:\n\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n...and ${errors.length - 5} more` : ''}`;
+      }
+      alert(message);
     }
   };
 
@@ -2038,6 +2396,14 @@ export default function BankReconciliation() {
           reconciled_at: new Date().toISOString()
         });
 
+        // Save/update pattern for learning (enables future auto-suggestions)
+        try {
+          await saveReconciliationPattern(entry, 'expense', null, null, expenseTypeId, null);
+        } catch (patternError) {
+          console.warn('Could not save pattern:', patternError);
+          // Don't fail the whole operation if pattern save fails
+        }
+
         succeeded++;
       } catch (error) {
         console.error('Bulk expense create error:', entry.id, error);
@@ -2050,6 +2416,7 @@ export default function BankReconciliation() {
     // Invalidate queries once at end
     queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
     queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+    queryClient.invalidateQueries({ queryKey: ['reconciliation-patterns'] });
     queryClient.invalidateQueries({ queryKey: ['expenses'] });
 
     // Clear selections and expense type assignments for created entries
@@ -2446,14 +2813,22 @@ export default function BankReconciliation() {
               </SelectContent>
             </Select>
 
-            <div className="relative max-w-xs">
+            <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
               <Input
-                placeholder="Search..."
+                placeholder="Search description, amount, borrower..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 w-48"
+                className="pl-9 w-64"
               />
+              {searchTerm && (
+                <button
+                  onClick={() => setSearchTerm('')}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              )}
             </div>
 
             {totals.highConfidence > 0 && (
@@ -2669,8 +3044,6 @@ export default function BankReconciliation() {
                       <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
                       <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase">Description</th>
                       <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase w-40">Expense Type</th>
-                      <th className="px-3 py-2 text-center text-xs font-medium text-slate-500 uppercase w-28">Other Income</th>
                       <th className="px-3 py-2 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
                       <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
                     </tr>
@@ -2690,7 +3063,7 @@ export default function BankReconciliation() {
                       const canSelectForOtherIncome = !entry.is_reconciled && entry.amount > 0 && isMarkedAsOtherIncome;
                       // Show other income checkbox for unreconciled credits without high-confidence suggestions
                       const showOtherIncomeCheckbox = !entry.is_reconciled && entry.amount > 0 && (!suggestion || suggestion.confidence < 0.7);
-                      const canSelect = canSelectForMatch || canSelectForExpense || canSelectForOtherIncome || entry.is_reconciled;
+                      const canSelect = true; // Show checkbox for all rows - bulk action bar filters by type
                       return (
                         <tr key={entry.id} className={`hover:bg-slate-50 ${suggestion ? 'bg-purple-50/30' : ''} ${selectedEntries.has(entry.id) ? 'bg-purple-100/50' : ''}`}>
                           <td className="px-2 py-1.5">
@@ -2708,19 +3081,108 @@ export default function BankReconciliation() {
                               : '-'}
                           </td>
                           <td className="px-3 py-1.5">
-                            <button
-                              className="text-left w-full group"
-                              onClick={() => suggestion ? openReconcileModal(entry, suggestion) : openReconcileModal(entry)}
-                            >
-                              <p className="text-sm text-slate-700 max-w-md truncate group-hover:text-blue-600 group-hover:underline cursor-pointer" title={`${entry.description} (Click to ${suggestion ? 'review' : 'reconcile'})`}>
-                                {entry.description || '-'}
-                              </p>
-                            </button>
+                            <div className="flex items-center gap-2">
+                              <button
+                                className="text-left group min-w-0 flex-shrink"
+                                onClick={() => suggestion ? openReconcileModal(entry, suggestion) : openReconcileModal(entry)}
+                              >
+                                <p className="text-sm text-slate-700 truncate group-hover:text-blue-600 group-hover:underline cursor-pointer" title={`${entry.description} (Click to ${suggestion ? 'review' : 'reconcile'})`}>
+                                  {entry.description || '-'}
+                                </p>
+                              </button>
+                              {/* Inline expense type - same line as description */}
+                              {showExpenseTypeDropdown && (
+                                (() => {
+                                  const expenseSuggestion = expenseTypeSuggestions.get(entry.id);
+                                  const currentValue = entryExpenseTypes.get(entry.id) || '';
+                                  const selectedType = expenseTypes.find(t => t.id === currentValue);
+
+                                  return (
+                                    <Popover>
+                                      <PopoverTrigger asChild>
+                                        <button className="flex-shrink-0 flex items-center gap-1 text-xs hover:underline cursor-pointer">
+                                          <span className="text-slate-300">·</span>
+                                          {selectedType ? (
+                                            <>
+                                              <Tag className="w-3 h-3 text-amber-600" />
+                                              <span className="text-amber-700">{selectedType.name}</span>
+                                            </>
+                                          ) : expenseSuggestion ? (
+                                            <>
+                                              <Sparkles className="w-3 h-3 text-purple-500" />
+                                              <span className="text-purple-600">{expenseSuggestion.expenseTypeName}?</span>
+                                            </>
+                                          ) : (
+                                            <span className="text-slate-400">+ type</span>
+                                          )}
+                                        </button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-48 p-1" align="start">
+                                        <div className="max-h-48 overflow-y-auto">
+                                          {expenseSuggestion && (
+                                            <>
+                                              <button
+                                                onClick={() => setEntryExpenseType(entry.id, expenseSuggestion.expenseTypeId)}
+                                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-purple-50 flex items-center gap-1.5 bg-purple-50/50"
+                                              >
+                                                <Sparkles className="w-3 h-3 text-purple-600 flex-shrink-0" />
+                                                <span className="flex-1 text-purple-900">{expenseSuggestion.expenseTypeName}</span>
+                                                <span className="text-purple-500">{Math.round(expenseSuggestion.confidence * 100)}%</span>
+                                              </button>
+                                              <div className="border-b border-slate-100 my-1" />
+                                            </>
+                                          )}
+                                          {expenseTypes
+                                            .filter(type => !expenseSuggestion || type.id !== expenseSuggestion.expenseTypeId)
+                                            .map(type => (
+                                              <button
+                                                key={type.id}
+                                                onClick={() => setEntryExpenseType(entry.id, type.id)}
+                                                className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-slate-100 ${currentValue === type.id ? 'bg-slate-100 font-medium' : ''}`}
+                                              >
+                                                {type.name}
+                                              </button>
+                                            ))
+                                          }
+                                          {currentValue && (
+                                            <>
+                                              <div className="border-t border-slate-100 mt-1 pt-1" />
+                                              <button
+                                                onClick={() => setEntryExpenseType(entry.id, null)}
+                                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-red-50 text-red-600"
+                                              >
+                                                Clear
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      </PopoverContent>
+                                    </Popover>
+                                  );
+                                })()
+                              )}
+                              {/* Inline other income - same line as description */}
+                              {showOtherIncomeCheckbox && (
+                                <button
+                                  onClick={() => toggleEntryOtherIncome(entry.id, !entryOtherIncome.has(entry.id))}
+                                  className="flex-shrink-0 flex items-center gap-1 text-xs hover:underline cursor-pointer"
+                                >
+                                  <span className="text-slate-300">·</span>
+                                  {entryOtherIncome.has(entry.id) ? (
+                                    <>
+                                      <Coins className="w-3 h-3 text-emerald-600" />
+                                      <span className="text-emerald-700">Other Income</span>
+                                    </>
+                                  ) : (
+                                    <span className="text-slate-400">+ income</span>
+                                  )}
+                                </button>
+                              )}
+                            </div>
                             <div className="flex flex-wrap items-center gap-1">
                               <span className="text-xs text-slate-400">{entry.bank_source}</span>
                               {suggestion && !entry.is_reconciled && (
                                 <>
-                                  {/* Only show confidence percentage for actual matches, not for 'create' suggestions */}
                                   {(suggestion.matchMode === 'match' || suggestion.matchMode === 'match_group') && (
                                     <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200 py-0">
                                       <Sparkles className="w-3 h-3 mr-1" />
@@ -2739,53 +3201,17 @@ export default function BankReconciliation() {
                               {entry.amount > 0 ? '+' : ''}{formatCurrency(entry.amount)}
                             </span>
                           </td>
-                          <td className="px-3 py-1.5 w-40">
-                            {showExpenseTypeDropdown ? (
-                              <Select
-                                value={entryExpenseTypes.get(entry.id) || ''}
-                                onValueChange={(value) => setEntryExpenseType(entry.id, value || null)}
-                              >
-                                <SelectTrigger className="h-7 text-xs">
-                                  <SelectValue placeholder="Select..." />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {expenseTypes.map(type => (
-                                    <SelectItem key={type.id} value={type.id}>{type.name}</SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            ) : (
-                              <span className="text-xs text-slate-400">-</span>
-                            )}
-                          </td>
-                          <td className="px-3 py-1.5 text-center w-28">
-                            {showOtherIncomeCheckbox ? (
-                              <Checkbox
-                                checked={entryOtherIncome.has(entry.id)}
-                                onCheckedChange={(checked) => toggleEntryOtherIncome(entry.id, checked)}
-                                className="border-emerald-400 data-[state=checked]:bg-emerald-600"
-                              />
-                            ) : (
-                              <span className="text-xs text-slate-400">-</span>
-                            )}
-                          </td>
                           <td className="px-3 py-1.5 text-center">
                             {entry.is_reconciled ? (
                               <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 py-0 text-xs">
                                 <Check className="w-3 h-3 mr-1" />
                                 Reconciled
                               </Badge>
-                            ) : suggestion ? (
-                              suggestion.matchMode === 'match' || suggestion.matchMode === 'match_group' ? (
-                                <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 py-0 text-xs">
-                                  <Sparkles className="w-3 h-3 mr-1" />
-                                  Match Suggested
-                                </Badge>
-                              ) : (
-                                <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 py-0 text-xs">
-                                  Auto-create
-                                </Badge>
-                              )
+                            ) : suggestion && (suggestion.matchMode === 'match' || suggestion.matchMode === 'match_group') && suggestion.confidence >= 0.9 ? (
+                              <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 py-0 text-xs">
+                                <Sparkles className="w-3 h-3 mr-1" />
+                                {Math.round(suggestion.confidence * 100)}% Match
+                              </Badge>
                             ) : (
                               <Badge variant="outline" className="text-slate-500 border-slate-300 py-0 text-xs">
                                 Pending
@@ -2871,277 +3297,17 @@ export default function BankReconciliation() {
 
         {/* Reconciliation Modal */}
         <Dialog open={!!selectedEntry} onOpenChange={(open) => { if (!open) { setSelectedEntry(null); setReviewingSuggestion(null); setSelectedOffsetEntries([]); setOffsetNotes(''); } }}>
-          <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
-                {selectedEntry?.is_reconciled ? 'View Reconciled Entry' : reviewingSuggestion ? 'Review Suggested Match' : 'Reconcile Bank Entry'}
+                {selectedEntry?.is_reconciled ? 'View Reconciled Entry' : 'Reconcile Bank Entry'}
               </DialogTitle>
               <DialogDescription>
                 {selectedEntry?.is_reconciled
                   ? 'This bank entry has been reconciled to the following transaction(s)'
-                  : reviewingSuggestion
-                    ? 'Confirm or reject this suggested match'
-                    : 'Match this bank entry to a system transaction or create a new one'}
+                  : 'Match this bank entry to a system transaction or create a new one'}
               </DialogDescription>
             </DialogHeader>
-
-            {selectedEntry && reviewingSuggestion && (() => {
-              // Calculate match status for display
-              const tx = reviewingSuggestion.existingTransaction;
-              const exp = reviewingSuggestion.existingExpense;
-              const txGroup = reviewingSuggestion.existingTransactions; // For grouped matches
-              const isGrouped = reviewingSuggestion.matchMode === 'match_group' && txGroup;
-              const matchedItem = tx || exp;
-              const bankDate = selectedEntry.statement_date;
-              const matchDate = isGrouped ? txGroup[0]?.date : matchedItem?.date;
-              const bankAmount = Math.abs(selectedEntry.amount);
-              const matchAmount = isGrouped
-                ? txGroup.reduce((sum, t) => sum + Math.abs(t.amount || 0), 0)
-                : (matchedItem ? Math.abs(matchedItem.amount) : bankAmount);
-              const dateMatches = isGrouped
-                ? txGroup.every(t => datesWithinDays(bankDate, t.date, 1))
-                : (matchedItem ? (bankDate === matchDate || datesWithinDays(bankDate, matchDate, 0)) : false);
-              const amountMatches = amountsMatch(bankAmount, matchAmount, 1);
-
-              return (
-              /* SIMPLIFIED VIEW FOR REVIEWING A SUGGESTION - SIDE BY SIDE */
-              <div className="space-y-4">
-                {/* Match Status Header */}
-                <div className="flex items-center justify-between">
-                  <div className="flex gap-2">
-                    {(reviewingSuggestion.matchMode === 'match' || reviewingSuggestion.matchMode === 'match_group') && (
-                      <>
-                        <Badge className={dateMatches ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}>
-                          {dateMatches ? <Check className="w-3 h-3 mr-1" /> : null}
-                          Date {dateMatches ? 'matches' : 'differs'}
-                        </Badge>
-                        <Badge className={amountMatches ? 'bg-emerald-100 text-emerald-700 border-emerald-300' : 'bg-slate-100 text-slate-500 border-slate-200'}>
-                          {amountMatches ? <Check className="w-3 h-3 mr-1" /> : null}
-                          Amount {amountMatches ? 'matches' : 'differs'}
-                        </Badge>
-                        {dateMatches && amountMatches && (
-                          <Badge className="bg-emerald-500 text-white">
-                            <Check className="w-3 h-3 mr-1" />
-                            100% Match
-                          </Badge>
-                        )}
-                        {isGrouped && (
-                          <Badge className="bg-purple-100 text-purple-700 border-purple-300">
-                            {txGroup.length} grouped payments
-                          </Badge>
-                        )}
-                      </>
-                    )}
-                    {reviewingSuggestion.matchMode === 'create' && (
-                      <Badge className="bg-amber-100 text-amber-700 border-amber-300">
-                        Will create new entry
-                      </Badge>
-                    )}
-                  </div>
-                  <Badge className={reviewingSuggestion.matchMode === 'match' || reviewingSuggestion.matchMode === 'match_group' ? 'bg-blue-200 text-blue-800' : 'bg-amber-200 text-amber-800'}>
-                    {Math.round(reviewingSuggestion.confidence * 100)}% confidence
-                  </Badge>
-                </div>
-
-                {/* Side by side comparison */}
-                <div className="grid grid-cols-2 gap-4">
-                  {/* Left: Bank Statement */}
-                  <div className="bg-slate-100 rounded-lg p-4">
-                    <p className="text-xs text-slate-500 uppercase tracking-wide mb-3 font-medium">Bank Statement</p>
-
-                    <div className="space-y-3">
-                      <div>
-                        <p className="text-xs text-slate-400 uppercase">Date</p>
-                        <p className={`text-sm font-medium ${dateMatches ? 'text-emerald-600' : 'text-slate-700'}`}>
-                          {selectedEntry.statement_date && isValid(parseISO(selectedEntry.statement_date))
-                            ? format(parseISO(selectedEntry.statement_date), 'dd MMM yyyy')
-                            : '-'}
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs text-slate-400 uppercase">Amount</p>
-                        <p className={`text-lg font-bold ${amountMatches ? 'text-emerald-600' : 'text-slate-700'}`}>
-                          {formatCurrency(Math.abs(selectedEntry.amount))}
-                          <span className={`text-xs font-normal ml-2 ${selectedEntry.amount > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
-                            ({selectedEntry.amount > 0 ? 'Credit' : 'Debit'})
-                          </span>
-                        </p>
-                      </div>
-
-                      <div>
-                        <p className="text-xs text-slate-400 uppercase">Description</p>
-                        <p className="text-sm text-slate-700 break-words">{selectedEntry.description || '-'}</p>
-                      </div>
-                    </div>
-                  </div>
-
-                  {/* Right: Matched/Suggested Transaction */}
-                  <div className={`rounded-lg p-4 ${reviewingSuggestion.matchMode === 'match' || reviewingSuggestion.matchMode === 'match_group' ? 'bg-blue-50 border border-blue-200' : 'bg-amber-50 border border-amber-200'}`}>
-                    <p className={`text-xs uppercase tracking-wide mb-3 font-medium ${reviewingSuggestion.matchMode === 'match' || reviewingSuggestion.matchMode === 'match_group' ? 'text-blue-600' : 'text-amber-600'}`}>
-                      {reviewingSuggestion.matchMode === 'match_group'
-                        ? `${txGroup.length} System Transactions`
-                        : reviewingSuggestion.matchMode === 'match'
-                          ? 'System Transaction'
-                          : 'New Entry'}
-                    </p>
-
-                    {/* Grouped transactions view (loan repayments only) */}
-                    {isGrouped ? (
-                      <div className="space-y-3">
-                        <div>
-                          <p className="text-xs text-slate-400 uppercase">Total Amount</p>
-                          <p className={`text-lg font-bold ${amountMatches ? 'text-emerald-600' : 'text-slate-700'}`}>
-                            {formatCurrency(matchAmount)}
-                            {amountMatches && ' ✓'}
-                            <span className="text-xs font-normal ml-2 text-emerald-500">
-                              (Credit)
-                            </span>
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400 uppercase">Borrower</p>
-                          <p className="text-sm text-slate-700">
-                            {getBorrowerName(reviewingSuggestion.borrower_id)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-xs text-slate-400 uppercase mb-2">Transactions Breakdown</p>
-                          <div className="space-y-2 max-h-32 overflow-y-auto">
-                            {txGroup.map((t, idx) => {
-                              const loan = loans.find(l => l.id === t.loan_id);
-                              return (
-                                <div key={idx} className="flex justify-between text-sm bg-white/50 rounded px-2 py-1">
-                                  <span className="text-slate-600">
-                                    {loan?.loan_number || '?'} - {t.date && isValid(parseISO(t.date)) ? format(parseISO(t.date), 'dd/MM') : '?'}
-                                  </span>
-                                  <span className="font-medium text-slate-700">{formatCurrency(t.amount)}</span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="space-y-3">
-                        <div>
-                          <p className="text-xs text-slate-400 uppercase">Date</p>
-                          <p className={`text-sm font-medium ${dateMatches ? 'text-emerald-600' : 'text-slate-700'}`}>
-                            {matchedItem?.date && isValid(parseISO(matchedItem.date))
-                              ? format(parseISO(matchedItem.date), 'dd MMM yyyy')
-                              : selectedEntry.statement_date && isValid(parseISO(selectedEntry.statement_date))
-                                ? format(parseISO(selectedEntry.statement_date), 'dd MMM yyyy')
-                                : '-'}
-                            {dateMatches && ' ✓'}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-xs text-slate-400 uppercase">Amount</p>
-                          <p className={`text-lg font-bold ${amountMatches ? 'text-emerald-600' : 'text-slate-700'}`}>
-                            {formatCurrency(matchAmount)}
-                            {amountMatches && ' ✓'}
-                            {(() => {
-                              // Determine direction label based on transaction type - use Credit/Debit to match bank terminology
-                              const isDebit = ['loan_disbursement', 'investor_withdrawal', 'interest_withdrawal', 'expense'].includes(reviewingSuggestion.type) ||
-                                tx?.type === 'Disbursement' || exp;
-                              return (
-                                <span className={`text-xs font-normal ml-2 ${isDebit ? 'text-red-500' : 'text-emerald-500'}`}>
-                                  ({isDebit ? 'Debit' : 'Credit'})
-                                </span>
-                              );
-                            })()}
-                          </p>
-                        </div>
-
-                        <div>
-                          <p className="text-xs text-slate-400 uppercase">Type</p>
-                          <p className="text-sm font-medium text-slate-700">
-                            {tx?.type || (exp && (exp.type_name || 'Expense')) ||
-                              (reviewingSuggestion.type === 'loan_repayment' && 'Loan Repayment') ||
-                              (reviewingSuggestion.type === 'loan_disbursement' && 'Loan Disbursement') ||
-                              (reviewingSuggestion.type === 'investor_credit' && 'Investor Credit') ||
-                              (reviewingSuggestion.type === 'investor_withdrawal' && 'Investor Withdrawal') ||
-                              (reviewingSuggestion.type === 'interest_withdrawal' && 'Interest Withdrawal') ||
-                              (reviewingSuggestion.type === 'expense' && 'Expense')}
-                          </p>
-                        </div>
-
-                        {/* Entity info */}
-                        {reviewingSuggestion.loan_id && (
-                          <div>
-                            <p className="text-xs text-slate-400 uppercase">Loan</p>
-                            <p className="text-sm text-slate-700">
-                              {loans.find(l => l.id === reviewingSuggestion.loan_id)?.loan_number} - {getBorrowerName(loans.find(l => l.id === reviewingSuggestion.loan_id)?.borrower_id)}
-                            </p>
-                          </div>
-                        )}
-                        {reviewingSuggestion.investor_id && (
-                          <div>
-                            <p className="text-xs text-slate-400 uppercase">Investor</p>
-                            <p className="text-sm text-slate-700">
-                              {investors.find(i => i.id === reviewingSuggestion.investor_id)?.business_name || investors.find(i => i.id === reviewingSuggestion.investor_id)?.name}
-                            </p>
-                          </div>
-                        )}
-                        {/* Show linked loan for expenses */}
-                        {exp?.loan_id && (
-                          <div>
-                            <p className="text-xs text-slate-400 uppercase">Linked Loan</p>
-                            <p className="text-sm text-slate-700">
-                              {loans.find(l => l.id === exp.loan_id)?.loan_number} - {getBorrowerName(loans.find(l => l.id === exp.loan_id)?.borrower_id)}
-                            </p>
-                          </div>
-                        )}
-                        {(tx?.notes || exp?.description) && (
-                          <div>
-                            <p className="text-xs text-slate-400 uppercase">Notes</p>
-                            <p className="text-sm text-slate-500 break-words">{tx?.notes || exp?.description}</p>
-                          </div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Reason */}
-                <p className="text-xs text-slate-400 text-center">
-                  Suggested because: {reviewingSuggestion.reason}
-                </p>
-
-                {/* Action Buttons */}
-                <div className="flex gap-3 justify-end pt-4 border-t">
-                  <Button
-                    variant="outline"
-                    onClick={() => setReviewingSuggestion(null)}
-                  >
-                    Not Correct - Reconcile Manually
-                  </Button>
-                  <Button
-                    onClick={handleReconcile}
-                    disabled={isReconciling}
-                    className="bg-emerald-600 hover:bg-emerald-700"
-                  >
-                    {isReconciling ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Processing...
-                      </>
-                    ) : (
-                      <>
-                        <Check className="w-4 h-4 mr-2" />
-                        {reviewingSuggestion.matchMode === 'match_group'
-                          ? `Confirm & Link ${txGroup?.length || 0} Payments`
-                          : reviewingSuggestion.matchMode === 'match'
-                            ? 'Confirm & Link'
-                            : 'Confirm & Create'}
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </div>
-              );
-            })()}
 
             {/* VIEW RECONCILED ENTRY */}
             {selectedEntry && selectedEntry.is_reconciled && !reviewingSuggestion && (() => {
@@ -3341,90 +3507,136 @@ export default function BankReconciliation() {
               );
             })()}
 
-            {selectedEntry && !selectedEntry.is_reconciled && !reviewingSuggestion && (
-              /* FULL MANUAL RECONCILIATION FORM */
-              <div className="space-y-6">
-                {/* Entry Summary */}
-                <div className="bg-slate-50 rounded-lg p-4">
-                  <div className="flex justify-between items-start">
-                    <div>
-                      <p className="text-sm text-slate-500">
-                        {selectedEntry.statement_date && isValid(parseISO(selectedEntry.statement_date))
-                          ? format(parseISO(selectedEntry.statement_date), 'dd MMMM yyyy')
-                          : '-'}
-                      </p>
-                      <p className="text-slate-700 mt-1">{selectedEntry.description}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className={`text-2xl font-bold ${selectedEntry.amount > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {selectedEntry.amount > 0 ? '+' : ''}{formatCurrency(selectedEntry.amount)}
-                      </p>
-                      <p className="text-xs text-slate-400">{selectedEntry.bank_source}</p>
+            {selectedEntry && !selectedEntry.is_reconciled && (
+              /* UNIFIED RECONCILIATION VIEW - Side by side layout */
+              <div className="space-y-4">
+                {/* Suggestion badge if applicable */}
+                {reviewingSuggestion && (
+                  <div className="flex items-center justify-between">
+                    <Badge className={reviewingSuggestion.matchMode === 'match' || reviewingSuggestion.matchMode === 'match_group' ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-amber-100 text-amber-700 border-amber-300'}>
+                      <Sparkles className="w-3 h-3 mr-1" />
+                      {Math.round(reviewingSuggestion.confidence * 100)}% confidence suggestion
+                    </Badge>
+                    <span className="text-xs text-slate-500">{reviewingSuggestion.reason}</span>
+                  </div>
+                )}
+
+                {/* Two column layout */}
+                <div className="grid grid-cols-2 gap-4">
+                  {/* Left: Bank Statement */}
+                  <div className="bg-slate-100 rounded-lg p-4">
+                    <p className="text-xs text-slate-500 uppercase tracking-wide mb-3 font-medium">Bank Statement</p>
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase">Date</p>
+                        <p className="text-sm font-medium text-slate-700">
+                          {selectedEntry.statement_date && isValid(parseISO(selectedEntry.statement_date))
+                            ? format(parseISO(selectedEntry.statement_date), 'dd MMM yyyy')
+                            : '-'}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase">Amount</p>
+                        <p className={`text-lg font-bold ${selectedEntry.amount > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {formatCurrency(Math.abs(selectedEntry.amount))}
+                          <span className={`text-xs font-normal ml-2 ${selectedEntry.amount > 0 ? 'text-emerald-500' : 'text-red-500'}`}>
+                            ({selectedEntry.amount > 0 ? 'Credit' : 'Debit'})
+                          </span>
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase">Description</p>
+                        <p className="text-sm text-slate-700 break-words">{selectedEntry.description || '-'}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase">Source</p>
+                        <p className="text-sm text-slate-500">{selectedEntry.bank_source}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
 
-                {/* Transaction Type Selection */}
-                <div className="space-y-3">
-                  <Label className="text-base font-medium">Transaction Type</Label>
-                  <RadioGroup
-                    value={reconciliationType}
-                    onValueChange={(value) => {
-                      setReconciliationType(value);
-                      setSelectedLoan(null);
-                      setSelectedInvestor(null);
-                      setSelectedExpenseType(null);
-                      setSelectedExistingTx(null);
-                      setEntitySearch('');
-                      setSelectedOffsetEntries([]);
-                      setOffsetNotes('');
-                    }}
-                    className="grid grid-cols-2 gap-2"
-                  >
-                    {selectedEntry.amount > 0 ? (
-                      <>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="loan_repayment" id="loan_repayment" />
-                          <Label htmlFor="loan_repayment" className="cursor-pointer">Loan Repayment</Label>
+                  {/* Right: Transaction Details */}
+                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
+                    <p className="text-xs text-emerald-600 uppercase tracking-wide mb-3 font-medium">Create Transaction</p>
+
+                    {/* Transaction Type Dropdown */}
+                    <div className="space-y-3">
+                      <div>
+                        <Label className="text-xs text-slate-500 uppercase">Transaction Type</Label>
+                        <Select
+                          value={reconciliationType}
+                          onValueChange={(value) => {
+                            setReconciliationType(value);
+                            setSelectedLoan(null);
+                            setSelectedInvestor(null);
+                            setSelectedExpenseType(null);
+                            setSelectedExistingTx(null);
+                            setEntitySearch('');
+                            setSelectedOffsetEntries([]);
+                            setOffsetNotes('');
+                          }}
+                        >
+                          <SelectTrigger className="mt-1">
+                            <SelectValue placeholder="Select type..." />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {selectedEntry.amount > 0 ? (
+                              <>
+                                <SelectItem value="loan_repayment">Loan Repayment</SelectItem>
+                                <SelectItem value="investor_credit">Investor Credit</SelectItem>
+                                <SelectItem value="other_income">Other Income</SelectItem>
+                                <SelectItem value="offset">Funds Returned</SelectItem>
+                              </>
+                            ) : (
+                              <>
+                                <SelectItem value="expense">Expense</SelectItem>
+                                <SelectItem value="loan_disbursement">Loan Disbursement</SelectItem>
+                                <SelectItem value="investor_withdrawal">Investor Withdrawal</SelectItem>
+                                <SelectItem value="offset">Funds Returned</SelectItem>
+                              </>
+                            )}
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      {/* Selected Entity Display */}
+                      {selectedInvestor && (reconciliationType === 'investor_withdrawal' || reconciliationType === 'investor_credit') && (
+                        <div className="bg-white rounded-lg p-2 border border-emerald-300">
+                          <p className="text-xs text-slate-400 uppercase">Investor Account</p>
+                          <p className="text-sm font-semibold text-slate-900">{selectedInvestor.business_name || selectedInvestor.name}</p>
+                          {selectedInvestor.account_number && (
+                            <p className="text-xs text-slate-500">{selectedInvestor.account_number}</p>
+                          )}
                         </div>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="investor_credit" id="investor_credit" />
-                          <Label htmlFor="investor_credit" className="cursor-pointer">Investor Credit</Label>
+                      )}
+
+                      {selectedLoan && (reconciliationType === 'loan_repayment' || reconciliationType === 'loan_disbursement') && (
+                        <div className="bg-white rounded-lg p-2 border border-emerald-300">
+                          <p className="text-xs text-slate-400 uppercase">Loan</p>
+                          <p className="text-sm font-semibold text-slate-900">{selectedLoan.loan_number}</p>
+                          <p className="text-xs text-slate-500">{getBorrowerName(selectedLoan.borrower_id)}</p>
                         </div>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="other_income" id="other_income" />
-                          <Label htmlFor="other_income" className="cursor-pointer">Other Income</Label>
-                        </div>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="offset" id="offset" />
-                          <Label htmlFor="offset" className="cursor-pointer">Funds Returned</Label>
-                        </div>
-                      </>
-                    ) : (
-                      <>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="loan_disbursement" id="loan_disbursement" />
-                          <Label htmlFor="loan_disbursement" className="cursor-pointer">Loan Disbursement</Label>
-                        </div>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="investor_withdrawal" id="investor_withdrawal" />
-                          <Label htmlFor="investor_withdrawal" className="cursor-pointer">Investor Withdrawal</Label>
-                        </div>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="interest_withdrawal" id="interest_withdrawal" />
-                          <Label htmlFor="interest_withdrawal" className="cursor-pointer">Interest Withdrawal</Label>
-                        </div>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="expense" id="expense" />
-                          <Label htmlFor="expense" className="cursor-pointer">Expense</Label>
-                        </div>
-                        <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
-                          <RadioGroupItem value="offset" id="offset_debit" />
-                          <Label htmlFor="offset_debit" className="cursor-pointer">Funds Returned</Label>
-                        </div>
-                      </>
-                    )}
-                  </RadioGroup>
+                      )}
+
+                      {/* Amount (auto-filled) */}
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase">Amount</p>
+                        <p className="text-lg font-bold text-emerald-600">
+                          {formatCurrency(Math.abs(selectedEntry.amount))} ✓
+                        </p>
+                      </div>
+
+                      {/* Date (auto-filled) */}
+                      <div>
+                        <p className="text-xs text-slate-400 uppercase">Date</p>
+                        <p className="text-sm font-medium text-emerald-600">
+                          {selectedEntry.statement_date && isValid(parseISO(selectedEntry.statement_date))
+                            ? format(parseISO(selectedEntry.statement_date), 'dd MMM yyyy')
+                            : '-'} ✓
+                        </p>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 {/* Match or Create Toggle */}
@@ -3518,7 +3730,7 @@ export default function BankReconciliation() {
                       )}
 
                       {/* Investor Selection */}
-                      {(reconciliationType === 'investor_credit' || reconciliationType === 'investor_withdrawal' || reconciliationType === 'interest_withdrawal') && (
+                      {(reconciliationType === 'investor_credit' || reconciliationType === 'investor_withdrawal') && (
                         <div className="space-y-3">
                           <Label>Select Investor</Label>
                           <div className="relative">
@@ -3553,6 +3765,53 @@ export default function BankReconciliation() {
                             )}
                           </div>
 
+                          {/* Split Amounts for Investor Withdrawal */}
+                          {reconciliationType === 'investor_withdrawal' && selectedInvestor && (
+                            <div className="bg-slate-50 rounded-lg p-4 space-y-3">
+                              <Label className="text-base">Withdrawal Split</Label>
+                              <p className="text-xs text-slate-500">Allocate the withdrawal between capital and interest</p>
+                              <div className="grid grid-cols-2 gap-3">
+                                <div>
+                                  <Label className="text-xs">Capital</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    value={investorWithdrawalSplit.capital || ''}
+                                    onChange={(e) => {
+                                      const capitalVal = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                                      const bankAmount = Math.abs(selectedEntry.amount);
+                                      const interestVal = Math.round((bankAmount - capitalVal) * 100) / 100;
+                                      setInvestorWithdrawalSplit({
+                                        capital: capitalVal,
+                                        interest: Math.max(0, interestVal)
+                                      });
+                                    }}
+                                  />
+                                </div>
+                                <div>
+                                  <Label className="text-xs">Interest</Label>
+                                  <Input
+                                    type="number"
+                                    step="0.01"
+                                    value={investorWithdrawalSplit.interest || ''}
+                                    onChange={(e) => {
+                                      const interestVal = e.target.value === '' ? 0 : parseFloat(e.target.value);
+                                      setInvestorWithdrawalSplit(prev => ({ ...prev, interest: interestVal }));
+                                    }}
+                                  />
+                                </div>
+                              </div>
+                              <p className="text-sm text-slate-500">
+                                Total: {formatCurrency(investorWithdrawalSplit.capital + investorWithdrawalSplit.interest)} /
+                                Bank: {formatCurrency(Math.abs(selectedEntry.amount))}
+                                {Math.abs((investorWithdrawalSplit.capital + investorWithdrawalSplit.interest) - Math.abs(selectedEntry.amount)) > 0.01 && (
+                                  <span className="text-amber-600 ml-2">
+                                    (Difference: {formatCurrency(Math.abs(selectedEntry.amount) - (investorWithdrawalSplit.capital + investorWithdrawalSplit.interest))})
+                                  </span>
+                                )}
+                              </p>
+                            </div>
+                          )}
                         </div>
                       )}
 
@@ -3818,7 +4077,6 @@ export default function BankReconciliation() {
                       (reconciliationType === 'loan_repayment' && matchMode === 'create' && !selectedLoan) ||
                       (reconciliationType === 'loan_disbursement' && matchMode === 'create' && !selectedLoan) ||
                       (reconciliationType.startsWith('investor_') && matchMode === 'create' && !selectedInvestor) ||
-                      (reconciliationType === 'interest_withdrawal' && matchMode === 'create' && !selectedInvestor) ||
                       (matchMode === 'match' && !selectedExistingTx && reconciliationType !== 'offset') ||
                       (reconciliationType === 'offset' && (selectedOffsetEntries.length === 0 || !offsetNotes.trim() || Math.abs(selectedEntry.amount + selectedOffsetEntries.reduce((sum, e) => sum + e.amount, 0)) >= 0.01))
                     }

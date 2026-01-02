@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
@@ -8,7 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Calculator, Loader2, Calendar, Percent, Building2, Pencil, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Calculator, Loader2, Calendar, Percent, Building2, Pencil, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -243,6 +243,83 @@ export default function InvestorDetails() {
     }
   });
 
+  // Track which date groups are expanded (must be before early returns)
+  const [expandedDates, setExpandedDates] = useState(new Set());
+
+  // Filter to only capital transactions (exclude old interest types for display)
+  const capitalTransactions = useMemo(() =>
+    transactions.filter(t => t.type === 'capital_in' || t.type === 'capital_out'),
+    [transactions]
+  );
+
+  // Merge capital transactions and interest entries for unified display
+  const mergedItems = useMemo(() => [
+    ...capitalTransactions.map(t => ({
+      ...t,
+      itemType: 'capital',
+      sortDate: new Date(t.date).getTime()
+    })),
+    ...interestEntries.map(e => ({
+      ...e,
+      itemType: 'interest',
+      sortDate: new Date(e.date).getTime()
+    }))
+  ].sort((a, b) => b.sortDate - a.sortDate), [capitalTransactions, interestEntries]);
+
+  // Group transactions by date for better display
+  const groupedByDate = useMemo(() => {
+    const groups = {};
+    mergedItems.forEach(item => {
+      const dateKey = item.date;
+      if (!groups[dateKey]) {
+        groups[dateKey] = {
+          date: dateKey,
+          items: [],
+          totalDebit: 0,
+          totalCredit: 0
+        };
+      }
+      groups[dateKey].items.push(item);
+
+      const isDebit = item.itemType === 'interest' ? item.type === 'debit' : item.type === 'capital_out';
+      const isCredit = item.itemType === 'interest' ? item.type === 'credit' : item.type === 'capital_in';
+
+      if (isDebit) groups[dateKey].totalDebit += parseFloat(item.amount) || 0;
+      if (isCredit) groups[dateKey].totalCredit += parseFloat(item.amount) || 0;
+    });
+    return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
+  }, [mergedItems]);
+
+  // Calculate totals from transactions
+  const capitalIn = useMemo(() =>
+    capitalTransactions.filter(t => t.type === 'capital_in').reduce((sum, t) => sum + t.amount, 0),
+    [capitalTransactions]
+  );
+  const capitalOut = useMemo(() =>
+    capitalTransactions.filter(t => t.type === 'capital_out').reduce((sum, t) => sum + t.amount, 0),
+    [capitalTransactions]
+  );
+
+  // Calculate interest balance from new ledger
+  const interestCredits = useMemo(() =>
+    interestEntries.filter(e => e.type === 'credit').reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+    [interestEntries]
+  );
+  const interestDebits = useMemo(() =>
+    interestEntries.filter(e => e.type === 'debit').reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
+    [interestEntries]
+  );
+  const interestBalance = interestCredits - interestDebits;
+
+  // Calculate interest accrual (safe with optional chaining)
+  const annualRate = investor?.annual_interest_rate || product?.interest_rate_per_annum || 0;
+  const currentBalance = investor?.current_capital_balance || 0;
+  const minBalanceForInterest = product?.min_balance_for_interest || 0;
+
+  const accruedInterest = currentBalance >= minBalanceForInterest
+    ? calculateAccruedInterest(currentBalance, annualRate, investor?.last_accrual_date)
+    : { accruedInterest: 0, days: 0, dailyRate: 0 };
+
   // Post accrued interest (creates a credit entry in interest ledger)
   const postInterestMutation = useMutation({
     mutationFn: async () => {
@@ -297,39 +374,17 @@ export default function InvestorDetails() {
     );
   }
 
-  // Filter to only capital transactions (exclude old interest types for display)
-  const capitalTransactions = transactions.filter(t => t.type === 'capital_in' || t.type === 'capital_out');
-
-  const capitalIn = capitalTransactions.filter(t => t.type === 'capital_in').reduce((sum, t) => sum + t.amount, 0);
-  const capitalOut = capitalTransactions.filter(t => t.type === 'capital_out').reduce((sum, t) => sum + t.amount, 0);
-
-  // Calculate interest balance from new ledger
-  const interestCredits = interestEntries.filter(e => e.type === 'credit').reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
-  const interestDebits = interestEntries.filter(e => e.type === 'debit').reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
-  const interestBalance = interestCredits - interestDebits;
-
-  // Merge capital transactions and interest entries for unified display
-  const mergedItems = [
-    ...capitalTransactions.map(t => ({
-      ...t,
-      itemType: 'capital',
-      sortDate: new Date(t.date).getTime()
-    })),
-    ...interestEntries.map(e => ({
-      ...e,
-      itemType: 'interest',
-      sortDate: new Date(e.date).getTime()
-    }))
-  ].sort((a, b) => b.sortDate - a.sortDate);
-
-  // Calculate interest accrual
-  const annualRate = investor.annual_interest_rate || product?.interest_rate_per_annum || 0;
-  const currentBalance = investor.current_capital_balance || 0;
-  const minBalanceForInterest = product?.min_balance_for_interest || 0;
-
-  const accruedInterest = currentBalance >= minBalanceForInterest
-    ? calculateAccruedInterest(currentBalance, annualRate, investor.last_accrual_date)
-    : { accruedInterest: 0, days: 0, dailyRate: 0 };
+  const toggleDateExpanded = (date) => {
+    setExpandedDates(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(date)) {
+        newSet.delete(date);
+      } else {
+        newSet.add(date);
+      }
+      return newSet;
+    });
+  };
 
   const getTransactionIcon = (type) => {
     if (type === 'capital_in') return { icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-100' };
@@ -610,8 +665,11 @@ export default function InvestorDetails() {
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-slate-500">Interest Credits</p>
+                  <p className="text-sm text-slate-500">Interest Earned</p>
                   <p className="text-2xl font-bold text-amber-600">{formatCurrency(interestCredits)}</p>
+                  {interestCredits > 0 && (
+                    <p className="text-xs text-slate-400 mt-0.5">Total credited</p>
+                  )}
                 </div>
                 <div className="p-3 rounded-xl bg-amber-100">
                   <Percent className="w-5 h-5 text-amber-600" />
@@ -623,11 +681,16 @@ export default function InvestorDetails() {
             <CardContent className="p-5">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-sm text-slate-500">Interest Withdrawn</p>
-                  <p className="text-2xl font-bold text-blue-600">{formatCurrency(interestDebits)}</p>
+                  <p className="text-sm text-slate-500">Interest Paid Out</p>
+                  <p className="text-2xl font-bold text-purple-600">{formatCurrency(interestDebits)}</p>
+                  {interestDebits > 0 && interestBalance !== 0 && (
+                    <p className={`text-xs mt-0.5 ${interestBalance < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
+                      Balance: {formatCurrency(interestBalance)}
+                    </p>
+                  )}
                 </div>
-                <div className="p-3 rounded-xl bg-blue-100">
-                  <DollarSign className="w-5 h-5 text-blue-600" />
+                <div className="p-3 rounded-xl bg-purple-100">
+                  <DollarSign className="w-5 h-5 text-purple-600" />
                 </div>
               </div>
             </CardContent>
@@ -651,98 +714,108 @@ export default function InvestorDetails() {
             </div>
           </CardHeader>
           <CardContent>
-            {mergedItems.length === 0 ? (
+            {groupedByDate.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
                 <p>No transactions yet</p>
               </div>
             ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b text-left">
-                      <th className="pb-2 pr-4 text-xs font-medium text-slate-500 uppercase">Date</th>
-                      <th className="pb-2 pr-4 text-xs font-medium text-slate-500 uppercase">Type</th>
-                      <th className="pb-2 pr-4 text-xs font-medium text-slate-500 uppercase">Description</th>
-                      <th className="pb-2 pr-4 text-xs font-medium text-slate-500 uppercase text-right">Debit</th>
-                      <th className="pb-2 pr-4 text-xs font-medium text-slate-500 uppercase text-right">Credit</th>
-                      <th className="pb-2 text-xs font-medium text-slate-500 uppercase text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {mergedItems.map((item) => {
-                      const isInterest = item.itemType === 'interest';
-                      const isDebit = isInterest ? item.type === 'debit' : item.type === 'capital_out';
-                      const isCredit = isInterest ? item.type === 'credit' : item.type === 'capital_in';
+              <div className="space-y-2">
+                {/* Header row */}
+                <div className="grid grid-cols-12 gap-2 px-3 py-2 text-xs font-medium text-slate-500 uppercase border-b">
+                  <div className="col-span-3">Date</div>
+                  <div className="col-span-4">Details</div>
+                  <div className="col-span-2 text-right">Debit</div>
+                  <div className="col-span-2 text-right">Credit</div>
+                  <div className="col-span-1"></div>
+                </div>
 
-                      let Icon, color, bg, label;
-                      if (isInterest) {
-                        Icon = item.type === 'credit' ? Percent : DollarSign;
-                        color = item.type === 'credit' ? 'text-amber-600' : 'text-blue-600';
-                        bg = item.type === 'credit' ? 'bg-amber-100' : 'bg-blue-100';
-                        label = item.type === 'credit' ? 'Interest Credit' : 'Interest Debit';
-                      } else {
-                        const txStyle = getTransactionIcon(item.type);
-                        Icon = txStyle.icon;
-                        color = txStyle.color;
-                        bg = txStyle.bg;
-                        label = getTransactionLabel(item.type);
-                      }
+                {/* Grouped transactions */}
+                {groupedByDate.map((group) => {
+                  const isExpanded = expandedDates.has(group.date);
+                  const hasMultiple = group.items.length > 1;
+                  const hasCapital = group.items.some(i => i.itemType === 'capital');
+                  const hasInterest = group.items.some(i => i.itemType === 'interest');
 
-                      return (
-                        <tr key={`${item.itemType}-${item.id}`} className="hover:bg-slate-50">
-                          <td className="py-1.5 pr-4 whitespace-nowrap">
-                            <p className="text-sm font-medium">{format(new Date(item.date), 'dd MMM yyyy')}</p>
-                          </td>
-                          <td className="py-1.5 pr-4 whitespace-nowrap">
-                            <div className="flex items-center gap-2">
-                              <div className={`p-1 rounded ${bg}`}>
-                                <Icon className={`w-3 h-3 ${color}`} />
-                              </div>
-                              <span className={`text-sm ${isInterest ? 'italic' : ''}`}>{label}</span>
-                              {isInterest && (
-                                <Badge variant="outline" className="text-xs text-amber-600 border-amber-300">Interest</Badge>
+                  // Calculate breakdown amounts for collapsed display
+                  const capitalDebit = group.items.filter(i => i.itemType === 'capital' && i.type === 'capital_out').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+                  const interestDebit = group.items.filter(i => i.itemType === 'interest' && i.type === 'debit').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+
+                  return (
+                    <div key={group.date} className="border rounded-lg overflow-hidden">
+                      {/* Group header - clickable if multiple items */}
+                      <div
+                        className={`grid grid-cols-12 gap-2 px-3 py-2 items-center ${hasMultiple ? 'cursor-pointer hover:bg-slate-50' : 'bg-white'} ${isExpanded ? 'bg-slate-50 border-b' : ''}`}
+                        onClick={() => hasMultiple && toggleDateExpanded(group.date)}
+                      >
+                        <div className="col-span-3 flex items-center gap-2">
+                          {hasMultiple && (
+                            isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />
+                          )}
+                          <span className="font-medium text-sm">{format(new Date(group.date), 'dd MMM yyyy')}</span>
+                        </div>
+                        <div className="col-span-4 flex items-center gap-2">
+                          {hasMultiple ? (
+                            <div className="flex items-center gap-1.5">
+                              {hasCapital && (
+                                <Badge variant="outline" className="text-xs bg-slate-100">
+                                  Capital {capitalDebit > 0 && <span className="ml-1 text-red-600">{formatCurrency(capitalDebit)}</span>}
+                                </Badge>
                               )}
+                              {hasInterest && (
+                                <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                                  Interest {interestDebit > 0 && <span className="ml-1">{formatCurrency(interestDebit)}</span>}
+                                </Badge>
+                              )}
+                              <span className="text-xs text-slate-500">({group.items.length} items)</span>
                             </div>
-                          </td>
-                          <td className="py-1.5 pr-4">
-                            {(item.description || item.notes) ? (
-                              <div className="group relative">
-                                <p className="text-sm text-slate-700 max-w-lg truncate cursor-default">
-                                  {item.description || item.notes}
-                                </p>
-                                {(item.description || item.notes || '').length > 60 && (
-                                  <div className="hidden group-hover:block absolute z-10 left-0 top-full mt-1 p-3 bg-slate-900 text-white text-sm rounded-lg shadow-lg max-w-xl whitespace-pre-wrap">
-                                    {item.description || item.notes}
-                                  </div>
-                                )}
-                              </div>
-                            ) : (
-                              <p className="text-sm text-slate-400">-</p>
-                            )}
-                          </td>
-                          <td className="py-1.5 pr-4 text-right whitespace-nowrap">
-                            {isDebit ? (
-                              <p className="font-semibold text-red-600">{formatCurrency(item.amount)}</p>
-                            ) : (
-                              <p className="text-slate-300">-</p>
-                            )}
-                          </td>
-                          <td className="py-1.5 pr-4 text-right whitespace-nowrap">
-                            {isCredit ? (
-                              <p className="font-semibold text-emerald-600">{formatCurrency(item.amount)}</p>
-                            ) : (
-                              <p className="text-slate-300">-</p>
-                            )}
-                          </td>
-                          <td className="py-1.5 text-right">
-                            <div className="flex justify-end gap-1">
+                          ) : (
+                            // Single item - show inline
+                            (() => {
+                              const item = group.items[0];
+                              const isInterest = item.itemType === 'interest';
+                              return (
+                                <div className="flex items-center gap-2">
+                                  {isInterest ? (
+                                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                                      {item.type === 'credit' ? 'Interest Credit' : 'Interest Withdrawn'}
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className={`text-xs ${item.type === 'capital_in' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                      {item.type === 'capital_in' ? 'Capital In' : 'Capital Out'}
+                                    </Badge>
+                                  )}
+                                  {(item.description || item.notes) && (
+                                    <span className="text-sm text-slate-600 truncate max-w-[200px]">
+                                      {item.description || item.notes}
+                                    </span>
+                                  )}
+                                </div>
+                              );
+                            })()
+                          )}
+                        </div>
+                        <div className="col-span-2 text-right">
+                          {group.totalDebit > 0 && (
+                            <span className="font-semibold text-red-600">{formatCurrency(group.totalDebit)}</span>
+                          )}
+                        </div>
+                        <div className="col-span-2 text-right">
+                          {group.totalCredit > 0 && (
+                            <span className="font-semibold text-emerald-600">{formatCurrency(group.totalCredit)}</span>
+                          )}
+                        </div>
+                        <div className="col-span-1 flex justify-end">
+                          {!hasMultiple && (
+                            <div className="flex gap-1">
                               <Button
                                 variant="ghost"
                                 size="icon"
                                 className="h-6 w-6 text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                                onClick={() => {
-                                  if (isInterest) {
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const item = group.items[0];
+                                  if (item.itemType === 'interest') {
                                     openInterestDialog(item);
                                   } else {
                                     setEditingTransaction(item);
@@ -756,9 +829,11 @@ export default function InvestorDetails() {
                                 variant="ghost"
                                 size="icon"
                                 className="h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                onClick={() => {
-                                  if (window.confirm(`Delete this ${isInterest ? 'interest entry' : 'transaction'}?`)) {
-                                    if (isInterest) {
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  const item = group.items[0];
+                                  if (window.confirm(`Delete this ${item.itemType === 'interest' ? 'interest entry' : 'transaction'}?`)) {
+                                    if (item.itemType === 'interest') {
                                       deleteInterestMutation.mutate(item.id);
                                     } else {
                                       deleteTransactionMutation.mutate(item.id);
@@ -769,24 +844,106 @@ export default function InvestorDetails() {
                                 <Trash2 className="w-3.5 h-3.5" />
                               </Button>
                             </div>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                  <tfoot>
-                    <tr className="border-t-2 border-slate-200 bg-slate-50">
-                      <td colSpan="3" className="py-2 pr-4 text-sm font-semibold text-slate-700">Totals</td>
-                      <td className="py-2 pr-4 text-right font-bold text-red-600">
-                        {formatCurrency(capitalOut + interestDebits)}
-                      </td>
-                      <td className="py-2 pr-4 text-right font-bold text-emerald-600">
-                        {formatCurrency(capitalIn + interestCredits)}
-                      </td>
-                      <td></td>
-                    </tr>
-                  </tfoot>
-                </table>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Expanded detail rows */}
+                      {hasMultiple && isExpanded && (
+                        <div className="bg-slate-50/50">
+                          {group.items.map((item) => {
+                            const isInterest = item.itemType === 'interest';
+                            const isDebit = isInterest ? item.type === 'debit' : item.type === 'capital_out';
+                            const isCredit = isInterest ? item.type === 'credit' : item.type === 'capital_in';
+
+                            return (
+                              <div
+                                key={`${item.itemType}-${item.id}`}
+                                className={`grid grid-cols-12 gap-2 px-3 py-2 items-center border-b last:border-b-0 ${isInterest ? 'bg-amber-50/30' : ''}`}
+                              >
+                                <div className="col-span-3 pl-6">
+                                  {/* Indent for nested feel */}
+                                </div>
+                                <div className="col-span-4 flex items-center gap-2">
+                                  {isInterest ? (
+                                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
+                                      {item.type === 'credit' ? 'Interest Credit' : 'Interest Withdrawn'}
+                                    </Badge>
+                                  ) : (
+                                    <Badge variant="outline" className={`text-xs ${item.type === 'capital_in' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                                      {item.type === 'capital_in' ? 'Capital In' : 'Capital Out'}
+                                    </Badge>
+                                  )}
+                                  {(item.description || item.notes) && (
+                                    <span className="text-sm text-slate-600 truncate max-w-[180px]" title={item.description || item.notes}>
+                                      {item.description || item.notes}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="col-span-2 text-right">
+                                  {isDebit && (
+                                    <span className="text-sm text-red-600">{formatCurrency(item.amount)}</span>
+                                  )}
+                                </div>
+                                <div className="col-span-2 text-right">
+                                  {isCredit && (
+                                    <span className="text-sm text-emerald-600">{formatCurrency(item.amount)}</span>
+                                  )}
+                                </div>
+                                <div className="col-span-1 flex justify-end gap-1">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                                    onClick={() => {
+                                      if (isInterest) {
+                                        openInterestDialog(item);
+                                      } else {
+                                        setEditingTransaction(item);
+                                        setIsTransactionOpen(true);
+                                      }
+                                    }}
+                                  >
+                                    <Pencil className="w-3.5 h-3.5" />
+                                  </Button>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                    onClick={() => {
+                                      if (window.confirm(`Delete this ${isInterest ? 'interest entry' : 'transaction'}?`)) {
+                                        if (isInterest) {
+                                          deleteInterestMutation.mutate(item.id);
+                                        } else {
+                                          deleteTransactionMutation.mutate(item.id);
+                                        }
+                                      }
+                                    }}
+                                  >
+                                    <Trash2 className="w-3.5 h-3.5" />
+                                  </Button>
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+
+                {/* Totals row */}
+                <div className="grid grid-cols-12 gap-2 px-3 py-3 bg-slate-100 rounded-lg border-2 border-slate-200 mt-4">
+                  <div className="col-span-3 font-semibold text-slate-700">Totals</div>
+                  <div className="col-span-4"></div>
+                  <div className="col-span-2 text-right font-bold text-red-600">
+                    {formatCurrency(capitalOut + interestDebits)}
+                  </div>
+                  <div className="col-span-2 text-right font-bold text-emerald-600">
+                    {formatCurrency(capitalIn + interestCredits)}
+                  </div>
+                  <div className="col-span-1"></div>
+                </div>
               </div>
             )}
           </CardContent>

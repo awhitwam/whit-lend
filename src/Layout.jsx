@@ -34,7 +34,8 @@ import {
   Banknote,
   FileCheck,
   DollarSign,
-  Coins
+  Coins,
+  Info
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
@@ -59,7 +60,6 @@ const navigation = [
     children: [
       { name: 'Live', href: 'Loans?status=Live', icon: CircleDot },
       { name: 'Settled', href: 'Loans?status=Closed', icon: CheckCircle2 },
-      { name: 'Fully Paid', href: 'Loans?status=Fully Paid', icon: CheckCircle2 },
       { name: 'Restructured', href: 'Loans?status=Restructured', icon: RefreshCw },
       { name: 'Pending', href: 'Loans?status=Pending', icon: Clock },
       { name: 'Defaulted', href: 'Loans?status=Defaulted', icon: AlertTriangle },
@@ -106,6 +106,7 @@ const navigation = [
       },
       { name: 'Audit Log', href: 'AuditLog', icon: History },
       { name: 'Super Admin', href: 'SuperAdmin', icon: ShieldCheck },
+      { name: 'About', href: 'About', icon: Info },
     ]
   },
 ];
@@ -125,7 +126,7 @@ export default function Layout({ children, currentPageName }) {
   const location = useLocation();
 
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'BankReconciliation', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'BankReconciliation', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'About'];
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {
@@ -417,13 +418,8 @@ export default function Layout({ children, currentPageName }) {
           <div className="flex h-full flex-col">
             {/* Logo and Collapse Toggle */}
             <div className="flex h-16 items-center justify-between px-4 border-b border-slate-800">
-              <div className="flex items-center gap-3">
-                <div
-                  className="p-2 rounded-lg flex-shrink-0 transition-colors duration-300"
-                  style={{ backgroundColor: currentTheme.primary }}
-                >
-                  <Building2 className="w-5 h-5 text-white" />
-                </div>
+              <div className="flex items-center gap-2">
+                <img src="/logo.png" alt="WhitLend" className="h-10 flex-shrink-0" />
                 {!sidebarCollapsed && (
                   <span className="text-xl font-bold text-white tracking-tight">WhitLend</span>
                 )}
@@ -482,12 +478,7 @@ export default function Layout({ children, currentPageName }) {
                   <ArrowLeft className="w-5 h-5" />
                 </button>
               )}
-              <div
-                className="p-1.5 rounded-lg transition-colors duration-300"
-                style={{ backgroundColor: currentTheme.primary }}
-              >
-                <Building2 className="w-4 h-4 text-white" />
-              </div>
+              <img src="/logo.png" alt="WhitLend" className="h-8" />
               <span className="text-lg font-bold text-slate-900">WhitLend</span>
             </div>
             <Button
