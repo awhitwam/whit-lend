@@ -41,6 +41,11 @@ export default function Ledger() {
     queryFn: () => api.entities.InvestorTransaction.list('-date')
   });
 
+  const { data: investors = [], isLoading: investorsLoading } = useQuery({
+    queryKey: ['investors'],
+    queryFn: () => api.entities.Investor.list()
+  });
+
   const { data: reconciliationEntries = [], isLoading: reconcilingLoading } = useQuery({
     queryKey: ['reconciliation-entries'],
     queryFn: () => api.entities.ReconciliationEntry.list('-created_at')
@@ -51,7 +56,13 @@ export default function Ledger() {
     queryFn: () => api.entities.BankStatement.list('-statement_date')
   });
 
-  const isLoading = transactionsLoading || loansLoading || expensesLoading || investorTxLoading || reconcilingLoading || bankStatementsLoading;
+  const isLoading = transactionsLoading || loansLoading || expensesLoading || investorTxLoading || investorsLoading || reconcilingLoading || bankStatementsLoading;
+
+  // Create investor lookup map
+  const investorMap = {};
+  investors.forEach(inv => {
+    investorMap[inv.id] = inv.name;
+  });
 
   // Create lookup maps for reconciliation
   // Map from transaction ID to bank statement info
@@ -180,7 +191,7 @@ export default function Ledger() {
           id: `inv-in-${t.id}`,
           date: t.date,
           type: 'investor_capital_in',
-          description: `Capital from Investor - ${t.investor_name}`,
+          description: `Capital from Investor - ${investorMap[t.investor_id] || 'Unknown'}`,
           borrower: null,
           loanId: null,
           reference: t.reference,
@@ -200,7 +211,7 @@ export default function Ledger() {
           id: `inv-out-${t.id}`,
           date: t.date,
           type: 'investor_capital_out',
-          description: `Capital Withdrawal - ${t.investor_name}`,
+          description: `Capital Withdrawal - ${investorMap[t.investor_id] || 'Unknown'}`,
           borrower: null,
           loanId: null,
           reference: t.reference,
@@ -220,7 +231,7 @@ export default function Ledger() {
           id: `inv-int-${t.id}`,
           date: t.date,
           type: 'investor_interest',
-          description: `Interest Payment - ${t.investor_name}`,
+          description: `Interest Payment - ${investorMap[t.investor_id] || 'Unknown'}`,
           borrower: null,
           loanId: null,
           reference: t.reference,

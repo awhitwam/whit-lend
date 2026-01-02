@@ -1330,7 +1330,7 @@ export default function BankReconciliation() {
           })
           .filter(Boolean) : [];
 
-        entityType = 'Offset';
+        entityType = 'Funds Returned';
         entityDetails = {
           amount: re.amount,
           notes: displayNotes,
@@ -3238,10 +3238,10 @@ export default function BankReconciliation() {
                               </>
                             )}
 
-                            {/* Offset specific */}
-                            {detail.entityType === 'Offset' && detail.entityDetails.offsetPartners && (
+                            {/* Funds Returned specific */}
+                            {detail.entityType === 'Funds Returned' && detail.entityDetails.offsetPartners && (
                               <div className="col-span-2">
-                                <p className="text-xs text-slate-400 uppercase mb-2">Offset With</p>
+                                <p className="text-xs text-slate-400 uppercase mb-2">Matched With</p>
                                 <div className="space-y-2">
                                   {detail.entityDetails.offsetPartners.map((partner, pIdx) => (
                                     <div key={pIdx} className="bg-white rounded p-2 border border-emerald-100">
@@ -3385,7 +3385,7 @@ export default function BankReconciliation() {
                         </div>
                         <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
                           <RadioGroupItem value="offset" id="offset" />
-                          <Label htmlFor="offset" className="cursor-pointer">Offset Entry</Label>
+                          <Label htmlFor="offset" className="cursor-pointer">Funds Returned</Label>
                         </div>
                       </>
                     ) : (
@@ -3408,7 +3408,7 @@ export default function BankReconciliation() {
                         </div>
                         <div className="flex items-center space-x-2 border rounded-lg p-3 hover:bg-slate-50 cursor-pointer">
                           <RadioGroupItem value="offset" id="offset_debit" />
-                          <Label htmlFor="offset_debit" className="cursor-pointer">Offset Entry</Label>
+                          <Label htmlFor="offset_debit" className="cursor-pointer">Funds Returned</Label>
                         </div>
                       </>
                     )}
@@ -3659,13 +3659,13 @@ export default function BankReconciliation() {
                   </div>
                 )}
 
-                {/* Offset Entry Form */}
+                {/* Funds Returned Form */}
                 {reconciliationType === 'offset' && (
                   <div className="space-y-4">
                     {/* Explanation */}
                     <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                       <p className="text-sm text-amber-700">
-                        Select bank entries that offset this one (e.g., funds received in error and then returned).
+                        Select the matching bank entries for funds that were returned (e.g., funds received in error and then sent back).
                         The selected entries must balance to zero.
                       </p>
                     </div>
@@ -3686,9 +3686,9 @@ export default function BankReconciliation() {
                       </div>
                     </div>
 
-                    {/* Select offsetting entries */}
+                    {/* Select matching entries */}
                     <div className="space-y-2">
-                      <Label>Select offsetting entries:</Label>
+                      <Label>Select matching entries:</Label>
                       <div className="max-h-48 overflow-y-auto border rounded-lg divide-y">
                         {bankStatements
                           .filter(e =>
@@ -3708,27 +3708,23 @@ export default function BankReconciliation() {
                           })
                           .map(entry => {
                             const isSelected = selectedOffsetEntries.some(e => e.id === entry.id);
+                            const toggleEntry = () => {
+                              if (isSelected) {
+                                setSelectedOffsetEntries(prev => prev.filter(e => e.id !== entry.id));
+                              } else {
+                                setSelectedOffsetEntries(prev => [...prev, entry]);
+                              }
+                            };
                             return (
                               <div
                                 key={entry.id}
                                 className={`flex items-center gap-3 p-2 cursor-pointer hover:bg-slate-50 ${isSelected ? 'bg-blue-50' : ''}`}
-                                onClick={() => {
-                                  if (isSelected) {
-                                    setSelectedOffsetEntries(prev => prev.filter(e => e.id !== entry.id));
-                                  } else {
-                                    setSelectedOffsetEntries(prev => [...prev, entry]);
-                                  }
-                                }}
+                                onClick={toggleEntry}
                               >
                                 <Checkbox
                                   checked={isSelected}
-                                  onCheckedChange={(checked) => {
-                                    if (checked) {
-                                      setSelectedOffsetEntries(prev => [...prev, entry]);
-                                    } else {
-                                      setSelectedOffsetEntries(prev => prev.filter(e => e.id !== entry.id));
-                                    }
-                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  onCheckedChange={toggleEntry}
                                 />
                                 <span className="text-xs text-slate-500 w-20">
                                   {format(parseISO(entry.statement_date), 'dd/MM/yyyy')}
@@ -3824,7 +3820,7 @@ export default function BankReconciliation() {
                     ) : reconciliationType === 'offset' ? (
                       <>
                         <Check className="w-4 h-4 mr-2" />
-                        Reconcile as Offset
+                        Mark as Funds Returned
                       </>
                     ) : (
                       <>
