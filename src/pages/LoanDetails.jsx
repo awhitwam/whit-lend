@@ -60,7 +60,7 @@ import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanModal from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
-import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
@@ -226,31 +226,9 @@ export default function LoanDetails() {
         interest_paid: totalInterestPaid
       });
 
-      // Create Disbursement transaction if loan is now released and doesn't have one
-      const updatedLoan = await api.entities.Loan.get(loanId);
-      if (updatedLoan.start_date && updatedLoan.status !== 'Pending') {
-        // Check if Disbursement transaction already exists
-        const existingDisbursement = transactions.find(
-          t => t.type === 'Disbursement' && !t.is_deleted
-        );
-        if (!existingDisbursement) {
-          const disbursementAmount = updatedLoan.net_disbursed ||
-            (updatedLoan.principal_amount - (updatedLoan.arrangement_fee || 0));
-          if (disbursementAmount > 0) {
-            await api.entities.Transaction.create({
-              loan_id: loanId,
-              borrower_id: updatedLoan.borrower_id,
-              date: updatedLoan.start_date,
-              type: 'Disbursement',
-              amount: disbursementAmount,
-              principal_applied: disbursementAmount,
-              interest_applied: 0,
-              fees_applied: 0,
-              notes: 'Initial loan disbursement'
-            });
-          }
-        }
-      }
+      // Note: Disbursement creation is handled by regenerateLoanSchedule (line 198)
+      // which uses fresh transaction data. Removed duplicate check here to prevent
+      // stale React Query data from causing duplicate disbursement transactions.
     },
     onSuccess: async () => {
       setProcessingMessage('Refreshing data...');
@@ -686,9 +664,10 @@ export default function LoanDetails() {
   const totalOutstanding = principalRemaining + interestRemaining;
   const progressPercent = (actualPrincipalPaid / totalPrincipal) * 100;
 
-  // Calculate live interest using actual paid from transactions
-  const accruedInterestToday = calculateAccruedInterest(loan);
-  const liveInterestOutstanding = accruedInterestToday - actualInterestPaid;
+  // Calculate live interest using day-by-day method with actual principal tracking
+  // This matches the Settlement Modal calculation for consistency
+  const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, transactions);
+  const liveInterestOutstanding = liveInterestCalc.interestRemaining;
   const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
 
     return (
@@ -962,9 +941,8 @@ export default function LoanDetails() {
                       <p className={`text-xl font-bold ${interestRemaining < 0 ? 'text-emerald-900' : 'text-amber-900'}`}>{formatCurrency(Math.abs(interestRemaining))}</p>
                     </div>
                     {isLoanActive && (() => {
-                      const arrangementFeePaidInAdvance = loan.net_disbursed && loan.net_disbursed < loan.principal_amount;
-                      const outstandingArrangementFee = arrangementFeePaidInAdvance ? 0 : (loan.arrangement_fee || 0);
-                      const outstandingFees = outstandingArrangementFee + (loan.exit_fee || 0);
+                      // Only include exit fee in settlement - arrangement fee was already deducted from disbursement
+                      const outstandingFees = loan.exit_fee || 0;
                       const settlementTotal = principalRemaining + Math.max(0, liveInterestOutstanding) + outstandingFees;
                       return (
                         <div className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 min-w-[120px]">
@@ -1142,30 +1120,36 @@ export default function LoanDetails() {
               </CardHeader>
               <CardContent>
                 {(() => {
-                  // Build disbursement entries: initial disbursement + all capital transactions
-                  const capitalTransactions = transactions
-                    .filter(t => !t.is_deleted && (t.principal_applied > 0 || t.type === 'Disbursement'))
-                    .map(t => ({
-                      id: t.id,
-                      date: new Date(t.date),
-                      type: t.type === 'Disbursement' ? 'credit' : 'debit',
-                      description: t.type === 'Disbursement' ? 'Additional Drawdown' : 'Capital Repayment',
-                      amount: t.type === 'Disbursement' ? t.amount : t.principal_applied,
-                      notes: t.notes || ''
-                    }));
+                  // Get all disbursement transactions sorted by date
+                  const disbursementTransactions = transactions
+                    .filter(t => !t.is_deleted && t.type === 'Disbursement')
+                    .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-                  // Add initial disbursement
-                  const allEntries = [
-                    {
-                      id: 'initial',
-                      date: new Date(loan.start_date),
-                      type: 'credit',
-                      description: 'Initial Disbursement',
-                      amount: loan.principal_amount,
-                      notes: 'Loan originated'
-                    },
-                    ...capitalTransactions
-                  ];
+                  // Get capital repayment transactions
+                  const repaymentTransactions = transactions
+                    .filter(t => !t.is_deleted && t.type === 'Repayment' && t.principal_applied > 0);
+
+                  // Build entries from ACTUAL transactions only (no virtual rows)
+                  // First disbursement is "Initial Disbursement", rest are "Additional Drawdown"
+                  const disbursementEntries = disbursementTransactions.map((t, index) => ({
+                    id: t.id,
+                    date: new Date(t.date),
+                    type: 'credit',
+                    description: index === 0 ? 'Initial Disbursement' : 'Additional Drawdown',
+                    amount: t.amount,
+                    notes: t.notes || (index === 0 ? 'Loan originated' : '')
+                  }));
+
+                  const repaymentEntries = repaymentTransactions.map(t => ({
+                    id: t.id,
+                    date: new Date(t.date),
+                    type: 'debit',
+                    description: 'Capital Repayment',
+                    amount: t.principal_applied,
+                    notes: t.notes || ''
+                  }));
+
+                  const allEntries = [...disbursementEntries, ...repaymentEntries];
 
                   // Sort based on selection
                   const sortedEntries = [...allEntries].sort((a, b) => {

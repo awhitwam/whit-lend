@@ -1055,6 +1055,84 @@ export function calculateLiveInterestOutstanding(loan, actualInterestPaid = null
 }
 
 /**
+ * Calculate accrued interest using day-by-day method with actual principal tracking
+ * This matches the Settlement Modal calculation and accounts for principal reductions from payments
+ * @param {Object} loan - Loan object
+ * @param {Array} transactions - Array of transaction objects
+ * @param {Date} asOfDate - Date to calculate as of (defaults to today)
+ * @returns {Object} { interestAccrued, interestPaid, interestRemaining, principalRemaining }
+ */
+export function calculateAccruedInterestWithTransactions(loan, transactions = [], asOfDate = new Date()) {
+  if (!loan || loan.status === 'Pending') {
+    return {
+      interestAccrued: 0,
+      interestPaid: 0,
+      interestRemaining: 0,
+      principalRemaining: loan?.principal_amount || 0
+    };
+  }
+
+  const startDate = new Date(loan.start_date);
+  const today = new Date(asOfDate);
+  today.setHours(0, 0, 0, 0);
+  startDate.setHours(0, 0, 0, 0);
+
+  const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)));
+  const principal = loan.principal_amount;
+  const annualRate = loan.interest_rate / 100;
+  const dailyRate = annualRate / 365;
+
+  // Get repayment transactions sorted by date
+  const repayments = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // Calculate totals from actual transactions
+  const totalPrincipalPaid = repayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+  const totalInterestPaid = repayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+  const principalRemaining = principal - totalPrincipalPaid;
+
+  // Create a map of principal payments by date
+  const principalPaymentsByDate = {};
+  repayments.forEach(tx => {
+    if (tx.principal_applied > 0) {
+      const txDate = new Date(tx.date);
+      txDate.setHours(0, 0, 0, 0);
+      const dateKey = txDate.toISOString().split('T')[0];
+      principalPaymentsByDate[dateKey] = (principalPaymentsByDate[dateKey] || 0) + tx.principal_applied;
+    }
+  });
+
+  // Calculate interest day by day, adjusting principal when payments occur
+  let totalInterestAccrued = 0;
+  let runningPrincipal = principal;
+
+  for (let day = 0; day < daysElapsed; day++) {
+    const currentDate = new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000);
+    const dateKey = currentDate.toISOString().split('T')[0];
+
+    // Check if principal was reduced on this day
+    if (principalPaymentsByDate[dateKey]) {
+      runningPrincipal -= principalPaymentsByDate[dateKey];
+      runningPrincipal = Math.max(0, runningPrincipal);
+    }
+
+    // Calculate interest for this day based on current principal
+    const dayInterest = runningPrincipal * dailyRate;
+    totalInterestAccrued += dayInterest;
+  }
+
+  const interestRemaining = Math.max(0, totalInterestAccrued - totalInterestPaid);
+
+  return {
+    interestAccrued: Math.round(totalInterestAccrued * 100) / 100,
+    interestPaid: Math.round(totalInterestPaid * 100) / 100,
+    interestRemaining: Math.round(interestRemaining * 100) / 100,
+    principalRemaining: Math.round(principalRemaining * 100) / 100
+  };
+}
+
+/**
  * Format currency
  */
 export function formatCurrency(amount, currency = 'GBP') {

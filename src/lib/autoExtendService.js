@@ -23,9 +23,12 @@ async function processLoanAutoExtend(loan, endDate = new Date()) {
 
   try {
     // Regenerate the schedule with the new end date
+    // skipDisbursement: true because auto-extend only extends existing loans
+    // that should already have their initial disbursement
     await regenerateLoanSchedule(loanId, {
       endDate: formattedEndDate,
-      duration: loan.duration
+      duration: loan.duration,
+      skipDisbursement: true
     });
 
     // Fetch and reapply all non-deleted repayment transactions

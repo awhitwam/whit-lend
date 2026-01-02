@@ -1096,34 +1096,26 @@ export default function ImportLoandisc() {
             }
 
             // Build loan data
-            // Parse gross principal and arrangement fee from CSV
-            const grossPrincipal = parseAmount(row['Principal Amount']);
-            const arrangementFee = parseAmount(row['Deductable Fees']) || parseAmount(row['Arragement Fee']) || 0;
-
-            // principal_amount should be what the borrower owes (net amount after fees deducted upfront)
-            // If there's an arrangement fee that was deducted, the borrower only received and owes the net amount
-            const netPrincipal = grossPrincipal - arrangementFee;
-
             const loanData = {
               loan_number: loanNumber,
               borrower_id: borrowerId,
               borrower_name: row['Business Name']?.trim() || row['Full Name']?.trim(),
               product_id: product?.id,
               product_name: product?.name,
-              principal_amount: netPrincipal > 0 ? netPrincipal : grossPrincipal, // Use net if fee was deducted, otherwise gross
+              principal_amount: parseAmount(row['Principal Amount']),
               start_date: startDate,
               duration: duration,
               status: mapLoanStatus(row['Loan Status Name']),
               description: loanTitle,
-              arrangement_fee: arrangementFee,
+              arrangement_fee: parseAmount(row['Deductable Fees']) || parseAmount(row['Arragement Fee']),
               exit_fee: parseAmount(row['Facility Exit Fee']),
               override_interest_rate: rateInfo.rate > 0,
               overridden_rate: rateInfo.rate,
               restructured_from_loan_number: restructuredFromNumber || null
             };
 
-            // net_disbursed = amount actually sent to borrower (same as principal_amount when fee is deducted)
-            loanData.net_disbursed = loanData.principal_amount;
+            // Calculate net_disbursed (amount sent to borrower = principal - fees held back)
+            loanData.net_disbursed = loanData.principal_amount - (loanData.arrangement_fee || 0);
 
             // Filter to only valid database fields
             filteredLoanData = filterFields(loanData, VALID_LOAN_FIELDS);
@@ -1135,10 +1127,7 @@ export default function ImportLoandisc() {
               addLog(`  Raw Loan #: "${rawLoanNumber}"`);
               addLog(`  Borrower #: "${borrowerNumber}"`);
               addLog(`  Business Name: "${row['Business Name']?.trim() || ''}"`);
-              addLog(`  Principal Amount (CSV): "${row['Principal Amount']}" → gross: ${grossPrincipal}`);
-              addLog(`  Deductable Fees (CSV): "${row['Deductable Fees'] || row['Arragement Fee']}" → fee: ${arrangementFee}`);
-              addLog(`  Calculated: gross ${grossPrincipal} - fee ${arrangementFee} = net ${netPrincipal}`);
-              addLog(`  Final principal_amount: ${loanData.principal_amount}`);
+              addLog(`  Principal Amount: "${row['Principal Amount']}"`);
               addLog(`  Interest Rate: "${row['Interest Rate']}" → parsed as ${rateInfo.rate}% (converted: ${rateInfo.wasConverted})`);
               addLog(`  Released Date: "${row['Released Date']}" → "${startDate}"`);
               addLog(`  Maturity Date: "${row['Maturity Date']}" → "${maturityDate}"`);

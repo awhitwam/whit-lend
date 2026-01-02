@@ -125,7 +125,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     return row.installment_number;
   };
 
-  // Calculate totals
+  // Calculate totals - use GROSS principal (what borrower owes) for schedule display
   const totalPrincipalDisbursed = loan ? loan.principal_amount : 0;
 
   // For Fixed Charge loans, sum fees_applied; for regular loans, sum interest_applied
@@ -360,7 +360,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           return 'Schedule';
         };
         const getPrincipalAmount = () => {
-          if (row.rowType === 'disbursement') return loan.principal_amount;
+          if (row.rowType === 'disbursement') return row.amount || row.transactions[0]?.amount || 0;
           if (row.rowType === 'further_advance') return row.amount || row.transactions[0]?.amount || 0;
           return row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0) || '';
         };
@@ -941,15 +941,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               {/* Totals Row for Smart/Detailed Views */}
               {!isLoading && effectiveSchedule.length > 0 && (() => {
                 const allRepayments = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
-                const allDisbursements = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
                 const totalPrincipalPaid = allRepayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
                 const totalInterestPaid = allRepayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
                 const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
-                const totalDisbursements = allDisbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
-                const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-                // Use loan.principal_amount as the base - disbursement transactions should equal this
-                // (further advances beyond initial principal are handled separately if needed)
+                // Use GROSS principal (what borrower owes) for schedule totals
                 const totalExpectedPrincipal = loan.principal_amount;
+                const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
                 const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
                 const interestOutstanding = totalExpectedInterest - totalInterestPaid;
                 const totalOutstanding = principalOutstanding + interestOutstanding;
@@ -1039,9 +1036,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               {/* Summary totals row - fixed below header */}
               {!isLoading && (() => {
                 // Calculate summary totals for nested view
-                const totalDisbursed = loan.principal_amount +
-                  transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
-                    .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+                // Use GROSS principal (what borrower owes) for schedule display
+                const totalDisbursed = loan.principal_amount;
                 const totalPrincipalReceived = transactions
                   .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                   .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
@@ -1100,13 +1096,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   // First disbursement transaction is the initial "Loan Disbursement"
                   // Subsequent disbursement transactions are "Further Advances"
                   disbursementTransactions.forEach((tx, index) => {
+                    // For initial disbursement, show GROSS amount with net amount note
+                    const isInitial = index === 0;
+                    const netNote = isInitial && loan.arrangement_fee && loan.net_disbursed
+                      ? ` (${formatCurrency(loan.net_disbursed)} net)`
+                      : '';
                     rows.push({
-                      type: index === 0 ? 'disbursement' : 'further_advance',
+                      type: isInitial ? 'disbursement' : 'further_advance',
                       date: new Date(tx.date),
-                      description: index === 0 ? 'Loan Disbursement' : 'Further Advance',
-                      principal: tx.amount,
+                      description: isInitial ? `Loan Disbursement${netNote}` : 'Further Advance',
+                      principal: isInitial ? loan.principal_amount : tx.amount,
                       transaction: tx,
-                      sortOrder: index === 0 ? 0 : 1
+                      sortOrder: isInitial ? 0 : 1
                     });
                   });
 
@@ -1291,15 +1292,20 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   // First disbursement transaction is the initial "Loan Disbursement"
                   // Subsequent disbursement transactions are "Further Advances"
                   disbursementTransactions.forEach((tx, index) => {
+                    // For initial disbursement, show GROSS amount with net amount note
+                    const isInitial = index === 0;
+                    const netNote = isInitial && loan.arrangement_fee && loan.net_disbursed
+                      ? ` (${formatCurrency(loan.net_disbursed)} net)`
+                      : '';
                     rows.push({
-                      type: index === 0 ? 'disbursement' : 'further_advance',
+                      type: isInitial ? 'disbursement' : 'further_advance',
                       date: new Date(tx.date),
-                      description: index === 0 ? 'Loan Disbursement' : 'Further Advance',
-                      principal: tx.amount,
+                      description: isInitial ? `Loan Disbursement${netNote}` : 'Further Advance',
+                      principal: isInitial ? loan.principal_amount : tx.amount,
                       interest: 0,
                       balance: 0, // Will be calculated after sorting
                       transaction: tx,
-                      sortOrder: index === 0 ? 0 : 1
+                      sortOrder: isInitial ? 0 : 1
                     });
                   });
 
@@ -1348,6 +1354,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     const installmentLabel = loan?.interest_type === 'Rolled-Up'
                       ? (scheduleRow.installment_number === 1 ? 'Roll-up Interest' : `Interest ${scheduleRow.installment_number - 1}`)
                       : `Instalment ${scheduleRow.installment_number}`;
+
+                    // Calculate period start date (previous period's due date or loan start date)
+                    const periodStartDate = idx > 0
+                      ? new Date(sortedSchedule[idx - 1].due_date)
+                      : new Date(loan.start_date);
+
                     rows.push({
                       type: 'schedule_header',
                       scheduleRow,
@@ -1363,7 +1375,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       expectedInterest,
                       isPastDue,
                       sortOrder: 2, // Schedule headers after disbursements/advances on same date
-                      periodTransactions // Store for adding child rows after sorting
+                      periodTransactions, // Store for adding child rows after sorting
+                      periodStartDate // Store for interest split calculation
                     });
                   });
 
@@ -1639,6 +1652,71 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                   </span>
                                 );
                               }
+
+                              // Check for capital payments within this period to show split interest
+                              const capitalPayments = (row.periodTransactions || [])
+                                .filter(tx => tx.principal_applied > 0)
+                                .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+                              if (capitalPayments.length > 0 && row.periodStartDate) {
+                                // Calculate interest segments split by capital payments
+                                const periodStart = new Date(row.periodStartDate);
+                                const periodEnd = row.date;
+                                let runningPrincipal = principalStart;
+                                const segments = [];
+
+                                let segmentStart = periodStart;
+
+                                capitalPayments.forEach((payment, paymentIdx) => {
+                                  const paymentDate = new Date(payment.date);
+                                  const daysInSegment = differenceInDays(paymentDate, segmentStart);
+
+                                  if (daysInSegment > 0) {
+                                    const segmentDailyInterest = runningPrincipal * dailyRate;
+                                    const segmentInterest = segmentDailyInterest * daysInSegment;
+                                    segments.push({
+                                      label: paymentIdx === 0 ? 'before repayment' : `segment ${paymentIdx}`,
+                                      days: daysInSegment,
+                                      dailyAmount: segmentDailyInterest,
+                                      total: segmentInterest,
+                                      principal: runningPrincipal
+                                    });
+                                  }
+
+                                  // Reduce principal after payment
+                                  runningPrincipal = Math.max(0, runningPrincipal - payment.principal_applied);
+                                  segmentStart = paymentDate;
+                                });
+
+                                // Final segment from last payment to period end
+                                const finalDays = differenceInDays(periodEnd, segmentStart);
+                                if (finalDays > 0 && runningPrincipal > 0) {
+                                  const finalDailyInterest = runningPrincipal * dailyRate;
+                                  const finalInterest = finalDailyInterest * finalDays;
+                                  segments.push({
+                                    label: 'after repayment',
+                                    days: finalDays,
+                                    dailyAmount: finalDailyInterest,
+                                    total: finalInterest,
+                                    principal: runningPrincipal
+                                  });
+                                }
+
+                                // Only show split if we have multiple segments
+                                if (segments.length > 1) {
+                                  return (
+                                    <span>
+                                      Interest due at {effectiveRate}% pa, {segments.map((seg, segIdx) => (
+                                        <span key={segIdx}>
+                                          {segIdx > 0 && ' + '}
+                                          <span className="text-slate-500">{seg.days}d × {formatCurrency(seg.dailyAmount)}/day</span>
+                                        </span>
+                                      ))}
+                                    </span>
+                                  );
+                                }
+                              }
+
                               return (
                                 <span>
                                   Interest due at {effectiveRate}% pa, <span className="text-slate-500">{days}d × {formatCurrency(dailyInterestAmount)}/day</span>
@@ -1769,17 +1847,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               {/* Totals Row for Nested View */}
               {!isLoading && effectiveSchedule.length > 0 && (() => {
                 const allRepayments = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
-                const allDisbursements = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
                 const totalPrincipalPaid = allRepayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
                 const totalInterestPaid = allRepayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
                 const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
-                // Further advances are disbursements beyond the first one (which is the initial principal)
-                const sortedDisbursements = [...allDisbursements].sort((a, b) => new Date(a.date) - new Date(b.date));
-                const furtherAdvances = sortedDisbursements.slice(1);
-                const totalFurtherAdvances = furtherAdvances.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+                // Use GROSS principal (what borrower owes) for schedule totals
+                const totalExpectedPrincipal = loan.principal_amount;
                 const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-                // Total expected principal = original principal + any further advances
-                const totalExpectedPrincipal = loan.principal_amount + totalFurtherAdvances;
                 const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
                 const interestOutstanding = totalExpectedInterest - totalInterestPaid;
                 const totalOutstanding = principalOutstanding + interestOutstanding;
@@ -2149,17 +2222,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             {/* Totals Row for Journal View */}
             {!isLoading && effectiveSchedule.length > 0 && (() => {
               const allRepayments = transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment');
-              const allDisbursements = transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement');
               const totalPrincipalPaid = allRepayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
               const totalInterestPaid = allRepayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
               const totalFeesPaid = allRepayments.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
-              // Further advances are disbursements beyond the first one (which is the initial principal)
-              const sortedDisbursements = [...allDisbursements].sort((a, b) => new Date(a.date) - new Date(b.date));
-              const furtherAdvances = sortedDisbursements.slice(1);
-              const totalFurtherAdvances = furtherAdvances.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+              // Use GROSS principal (what borrower owes) for schedule totals
+              const totalExpectedPrincipal = loan.principal_amount;
               const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
-              // Total expected principal = original principal + any further advances
-              const totalExpectedPrincipal = loan.principal_amount + totalFurtherAdvances;
               const principalOutstanding = totalExpectedPrincipal - totalPrincipalPaid;
               const interestOutstanding = totalExpectedInterest - totalInterestPaid;
               const totalOutstanding = principalOutstanding + interestOutstanding;

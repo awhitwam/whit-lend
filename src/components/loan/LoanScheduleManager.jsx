@@ -505,19 +505,22 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
 }
 
 /**
- * Calculate principal outstanding at a specific date
- * Considers all transactions up to (but not including) that date
+ * Calculate principal outstanding at a specific date for schedule/interest purposes.
+ * Uses GROSS principal (loan.principal_amount) minus repayments.
+ *
+ * NOTE: We do NOT add disbursement transactions here because:
+ * - initialPrincipal IS the GROSS loan amount (what borrower owes)
+ * - Disbursement transactions represent NET cash given (after arrangement fee)
+ * - Adding them would double-count: GROSS + NET = wrong
+ *
+ * For cash flow/ledger purposes, use disbursement transactions directly.
  */
 function calculatePrincipalAtDate(initialPrincipal, transactions, date) {
-  const disbursements = transactions
-    .filter(t => t.type === 'Disbursement' && new Date(t.date) < date)
-    .reduce((sum, t) => sum + t.amount, 0);
-  
   const repayments = transactions
     .filter(t => t.type === 'Repayment' && new Date(t.date) < date)
     .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
-  
-  return Math.max(0, initialPrincipal + disbursements - repayments);
+
+  return Math.max(0, initialPrincipal - repayments);
 }
 
 /**
