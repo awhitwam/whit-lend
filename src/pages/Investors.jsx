@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
@@ -13,6 +13,7 @@ import { Plus, Users, TrendingUp, ChevronRight } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import InvestorForm from '@/components/investor/InvestorForm';
 import EmptyState from '@/components/ui/EmptyState';
+import { calculateAccruedInterest } from '@/lib/interestCalculation';
 
 export default function Investors() {
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -23,6 +24,47 @@ export default function Investors() {
     queryKey: ['investors'],
     queryFn: () => api.entities.Investor.list()
   });
+
+  // Fetch all interest entries to calculate due/accruing amounts
+  const { data: allInterestEntries = [] } = useQuery({
+    queryKey: ['allInvestorInterest'],
+    queryFn: () => api.entities.InvestorInterest.list()
+  });
+
+  // Calculate interest due and accruing for each investor
+  const investorInterestData = useMemo(() => {
+    const data = {};
+
+    investors.forEach(investor => {
+      const entries = allInterestEntries.filter(e => e.investor_id === investor.id);
+      const annualRate = investor.annual_interest_rate || 0;
+      const currentBalance = investor.current_capital_balance || 0;
+
+      // Calculate interest due (credits not yet withdrawn since last_accrual_date)
+      const cutoffDate = investor.last_accrual_date;
+      let interestDue = 0;
+      if (cutoffDate) {
+        const recentCredits = entries
+          .filter(e => e.type === 'credit' && e.date >= cutoffDate)
+          .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+        const recentDebits = entries
+          .filter(e => e.type === 'debit' && e.date >= cutoffDate)
+          .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+        interestDue = Math.max(0, recentCredits - recentDebits);
+      }
+
+      // Calculate interest accruing (only for investors with annual rate)
+      let accruing = 0;
+      if (annualRate > 0 && currentBalance > 0) {
+        const accrued = calculateAccruedInterest(currentBalance, annualRate, investor.last_accrual_date);
+        accruing = accrued.accruedInterest;
+      }
+
+      data[investor.id] = { interestDue, accruing };
+    });
+
+    return data;
+  }, [investors, allInterestEntries]);
 
   const createMutation = useMutation({
     mutationFn: (data) => api.entities.Investor.create(data),
@@ -144,50 +186,58 @@ export default function Investors() {
                 <TableHeader>
                   <TableRow className="bg-slate-50">
                     <TableHead>Name</TableHead>
-                    <TableHead>Contact</TableHead>
                     <TableHead>Interest Type</TableHead>
                     <TableHead className="text-right">Current Capital</TableHead>
+                    <TableHead className="text-right">Interest Due</TableHead>
+                    <TableHead className="text-right">Accruing</TableHead>
                     <TableHead>Status</TableHead>
                     <TableHead className="w-12"></TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {investors.map((investor) => (
-                    <TableRow key={investor.id} className="hover:bg-slate-50">
-                      <TableCell className="font-medium">{investor.name}</TableCell>
-                      <TableCell>
-                        <div className="text-sm">
-                          {investor.email && <p className="text-slate-600">{investor.email}</p>}
-                          {investor.phone && <p className="text-slate-500">{investor.phone}</p>}
-                        </div>
-                      </TableCell>
-                      <TableCell>
-                        {investor.interest_calculation_type === 'annual_rate' ? (
-                          <span className="text-sm">{investor.annual_interest_rate}% p.a.</span>
-                        ) : (
-                          <span className="text-sm">{formatCurrency(investor.manual_interest_amount)} fixed</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right font-mono font-semibold">
-                        {formatCurrency(investor.current_capital_balance || 0)}
-                      </TableCell>
-                      <TableCell>
-                        <Badge className={investor.status === 'Active' 
-                          ? 'bg-emerald-100 text-emerald-700' 
-                          : 'bg-slate-100 text-slate-700'
-                        }>
-                          {investor.status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        <Link to={createPageUrl(`InvestorDetails?id=${investor.id}`)}>
-                          <Button variant="ghost" size="icon" className="h-8 w-8">
-                            <ChevronRight className="w-4 h-4" />
-                          </Button>
-                        </Link>
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {investors.map((investor) => {
+                    const interestData = investorInterestData[investor.id] || { interestDue: 0, accruing: 0 };
+                    return (
+                      <TableRow key={investor.id} className="hover:bg-slate-50">
+                        <TableCell className="font-medium">{investor.name}</TableCell>
+                        <TableCell>
+                          {investor.interest_calculation_type === 'annual_rate' && investor.annual_interest_rate > 0 ? (
+                            <span className="text-sm">{investor.annual_interest_rate}% p.a.</span>
+                          ) : (
+                            <span className="text-sm text-slate-500 italic">Manual</span>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-right font-mono font-semibold">
+                          {formatCurrency(investor.current_capital_balance || 0)}
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          <span className={interestData.interestDue > 0 ? 'text-amber-600 font-semibold' : 'text-slate-400'}>
+                            {formatCurrency(interestData.interestDue)}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right font-mono">
+                          <span className={interestData.accruing > 0 ? 'text-blue-600' : 'text-slate-400'}>
+                            {formatCurrency(interestData.accruing)}
+                          </span>
+                        </TableCell>
+                        <TableCell>
+                          <Badge className={investor.status === 'Active'
+                            ? 'bg-emerald-100 text-emerald-700'
+                            : 'bg-slate-100 text-slate-700'
+                          }>
+                            {investor.status}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          <Link to={createPageUrl(`InvestorDetails?id=${investor.id}`)}>
+                            <Button variant="ghost" size="icon" className="h-8 w-8">
+                              <ChevronRight className="w-4 h-4" />
+                            </Button>
+                          </Link>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </CardContent>

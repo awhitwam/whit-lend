@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
@@ -30,20 +30,6 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
     queryFn: () => api.entities.InvestorProduct.list()
   });
 
-  // Auto-populate interest rate when product is selected
-  useEffect(() => {
-    if (formData.investor_product_id && !investor) {
-      const selectedProduct = products.find(p => p.id === formData.investor_product_id);
-      if (selectedProduct && selectedProduct.interest_rate_per_annum) {
-        setFormData(prev => ({
-          ...prev,
-          annual_interest_rate: selectedProduct.interest_rate_per_annum.toString(),
-          interest_calculation_type: 'annual_rate'
-        }));
-      }
-    }
-  }, [formData.investor_product_id, products, investor]);
-
   const handleSubmit = (e) => {
     e.preventDefault();
     const data = { ...formData };
@@ -53,13 +39,24 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
       data.investor_product_id = null;
     }
 
-    // Handle interest calculation
-    if (data.interest_calculation_type === 'annual_rate') {
-      data.annual_interest_rate = parseFloat(data.annual_interest_rate) || 0;
+    // If product selected, get rate from product and set calculation type
+    if (data.investor_product_id) {
+      const selectedProduct = products.find(p => p.id === data.investor_product_id);
+      if (selectedProduct) {
+        data.interest_calculation_type = 'annual_rate';
+        data.annual_interest_rate = selectedProduct.interest_rate_per_annum || 0;
+      }
       delete data.manual_interest_amount;
     } else {
-      data.manual_interest_amount = parseFloat(data.manual_interest_amount) || 0;
-      delete data.annual_interest_rate;
+      // Handle manual interest calculation
+      if (data.interest_calculation_type === 'annual_rate') {
+        data.annual_interest_rate = parseFloat(data.annual_interest_rate) || 0;
+        delete data.manual_interest_amount;
+      } else {
+        // Manual mode - no automatic interest
+        data.annual_interest_rate = 0;
+        data.manual_interest_amount = 0;
+      }
     }
 
     // Clean up empty strings
@@ -157,16 +154,26 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
 
       {/* Product Selection */}
       <div className="space-y-2">
-        <Label htmlFor="investor_product_id">Investor Product</Label>
+        <Label htmlFor="investor_product_id">Investor Product *</Label>
         <Select
           value={formData.investor_product_id || 'none'}
-          onValueChange={(value) => setFormData({...formData, investor_product_id: value === 'none' ? '' : value})}
+          onValueChange={(value) => {
+            const productId = value === 'none' ? '' : value;
+            const selectedProduct = products.find(p => p.id === productId);
+            setFormData({
+              ...formData,
+              investor_product_id: productId,
+              // When product selected, use its rate; when no product, keep manual settings
+              interest_calculation_type: productId ? 'annual_rate' : formData.interest_calculation_type,
+              annual_interest_rate: selectedProduct ? selectedProduct.interest_rate_per_annum?.toString() || '' : formData.annual_interest_rate
+            });
+          }}
         >
           <SelectTrigger>
             <SelectValue placeholder="Select a product..." />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="none">No product</SelectItem>
+            <SelectItem value="none">No product (manual interest)</SelectItem>
             {products.filter(p => p.status === 'Active').map(product => (
               <SelectItem key={product.id} value={product.id}>
                 {product.name} ({product.interest_rate_per_annum}% p.a.)
@@ -174,55 +181,58 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
             ))}
           </SelectContent>
         </Select>
-        <p className="text-xs text-slate-500">
-          Selecting a product will auto-populate the interest rate
-        </p>
       </div>
 
-      {/* Interest Settings */}
-      <div className="space-y-2">
-        <Label htmlFor="interest_calculation_type">Interest Calculation Type *</Label>
-        <Select
-          value={formData.interest_calculation_type}
-          onValueChange={(value) => setFormData({...formData, interest_calculation_type: value})}
-        >
-          <SelectTrigger>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="annual_rate">Annual Rate (% p.a.)</SelectItem>
-            <SelectItem value="manual_amount">Fixed Monthly Amount</SelectItem>
-          </SelectContent>
-        </Select>
-      </div>
+      {/* Show product details as read-only when product selected */}
+      {formData.investor_product_id && (() => {
+        const selectedProduct = products.find(p => p.id === formData.investor_product_id);
+        return selectedProduct ? (
+          <div className="p-3 bg-slate-50 rounded-lg border">
+            <p className="text-sm font-medium text-slate-700">{selectedProduct.name}</p>
+            <p className="text-sm text-slate-500">{selectedProduct.interest_rate_per_annum}% p.a. - Interest calculated daily, posted monthly</p>
+          </div>
+        ) : null;
+      })()}
 
-      {formData.interest_calculation_type === 'annual_rate' ? (
-        <div className="space-y-2">
-          <Label htmlFor="annual_interest_rate">Annual Interest Rate (% p.a.) *</Label>
-          <Input
-            id="annual_interest_rate"
-            type="number"
-            step="0.01"
-            min="0"
-            value={formData.annual_interest_rate}
-            onChange={(e) => setFormData({...formData, annual_interest_rate: e.target.value})}
-            required
-          />
-          <p className="text-xs text-slate-500">Interest will be calculated daily and posted monthly</p>
-        </div>
-      ) : (
-        <div className="space-y-2">
-          <Label htmlFor="manual_interest_amount">Fixed Monthly Interest Amount *</Label>
-          <Input
-            id="manual_interest_amount"
-            type="number"
-            step="0.01"
-            min="0"
-            value={formData.manual_interest_amount}
-            onChange={(e) => setFormData({...formData, manual_interest_amount: e.target.value})}
-            required
-          />
-        </div>
+      {/* Interest Settings - only show when no product selected */}
+      {!formData.investor_product_id && (
+        <>
+          <div className="space-y-2">
+            <Label htmlFor="interest_calculation_type">Interest Calculation Type *</Label>
+            <Select
+              value={formData.interest_calculation_type}
+              onValueChange={(value) => setFormData({...formData, interest_calculation_type: value})}
+            >
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="annual_rate">Annual Rate (% p.a.)</SelectItem>
+                <SelectItem value="manual_amount">Manual (no automatic calculation)</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          {formData.interest_calculation_type === 'annual_rate' ? (
+            <div className="space-y-2">
+              <Label htmlFor="annual_interest_rate">Annual Interest Rate (% p.a.) *</Label>
+              <Input
+                id="annual_interest_rate"
+                type="number"
+                step="0.01"
+                min="0"
+                value={formData.annual_interest_rate}
+                onChange={(e) => setFormData({...formData, annual_interest_rate: e.target.value})}
+                required
+              />
+              <p className="text-xs text-slate-500">Interest will be calculated daily and posted monthly</p>
+            </div>
+          ) : (
+            <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+              <p className="text-sm text-amber-700">Interest entries will be added manually. No automatic calculation.</p>
+            </div>
+          )}
+        </>
       )}
 
       <div className="space-y-2">

@@ -8,8 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { Alert, AlertDescription } from "@/components/ui/alert";
-import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Calculator, Loader2, Calendar, Percent, Building2, Pencil, RefreshCw, ChevronDown, ChevronRight } from 'lucide-react';
+import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Loader2, Percent, Building2, Pencil, RefreshCw } from 'lucide-react';
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -17,7 +16,7 @@ import InvestorForm from '@/components/investor/InvestorForm';
 import InvestorTransactionForm from '@/components/investor/InvestorTransactionForm';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
-import { calculateAccruedInterest, getPeriodStart } from '@/lib/interestCalculation';
+import { calculateAccruedInterest } from '@/lib/interestCalculation';
 
 export default function InvestorDetails() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -25,7 +24,6 @@ export default function InvestorDetails() {
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isTransactionOpen, setIsTransactionOpen] = useState(false);
   const [isInterestDialogOpen, setIsInterestDialogOpen] = useState(false);
-  const [isPostingInterest, setIsPostingInterest] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [editingInterest, setEditingInterest] = useState(null);
   const [interestFormData, setInterestFormData] = useState({
@@ -294,8 +292,6 @@ export default function InvestorDetails() {
     }
   });
 
-  // Track which date groups are expanded (must be before early returns)
-  const [expandedDates, setExpandedDates] = useState(new Set());
 
   // Filter to only capital transactions (exclude old interest types for display)
   const capitalTransactions = useMemo(() =>
@@ -304,42 +300,60 @@ export default function InvestorDetails() {
   );
 
   // Merge capital transactions and interest entries for unified display
+  // Sort by date descending, and for same date interest entries, debits appear before credits
+  // (so credit appears as earlier transaction when reading top-to-bottom)
   const mergedItems = useMemo(() => [
     ...capitalTransactions.map(t => ({
       ...t,
       itemType: 'capital',
-      sortDate: new Date(t.date).getTime()
+      sortDate: new Date(t.date).getTime(),
+      sortOrder: 0 // Capital transactions have neutral order
     })),
     ...interestEntries.map(e => ({
       ...e,
       itemType: 'interest',
-      sortDate: new Date(e.date).getTime()
+      sortDate: new Date(e.date).getTime(),
+      sortOrder: e.type === 'credit' ? 1 : -1 // Debits before credits (so credit is "earlier" when newest first)
     }))
-  ].sort((a, b) => b.sortDate - a.sortDate), [capitalTransactions, interestEntries]);
+  ].sort((a, b) => {
+    // First sort by date descending (newest first)
+    if (b.sortDate !== a.sortDate) return b.sortDate - a.sortDate;
+    // For same date, sort by sortOrder (debits first, so credit appears below/earlier)
+    return a.sortOrder - b.sortOrder;
+  }), [capitalTransactions, interestEntries]);
 
-  // Group transactions by date for better display
-  const groupedByDate = useMemo(() => {
-    const groups = {};
-    mergedItems.forEach(item => {
-      const dateKey = item.date;
-      if (!groups[dateKey]) {
-        groups[dateKey] = {
-          date: dateKey,
-          items: [],
-          totalDebit: 0,
-          totalCredit: 0
-        };
+  // Calculate which interest entries should be struck out (matched credit/debit pairs in same month)
+  const struckOutIds = useMemo(() => {
+    const struckOut = new Set();
+
+    // Group interest entries by month
+    const interestByMonth = {};
+    interestEntries.forEach(entry => {
+      const monthKey = entry.date.substring(0, 7); // YYYY-MM
+      if (!interestByMonth[monthKey]) {
+        interestByMonth[monthKey] = { credits: [], debits: [] };
       }
-      groups[dateKey].items.push(item);
-
-      const isDebit = item.itemType === 'interest' ? item.type === 'debit' : item.type === 'capital_out';
-      const isCredit = item.itemType === 'interest' ? item.type === 'credit' : item.type === 'capital_in';
-
-      if (isDebit) groups[dateKey].totalDebit += parseFloat(item.amount) || 0;
-      if (isCredit) groups[dateKey].totalCredit += parseFloat(item.amount) || 0;
+      if (entry.type === 'credit') {
+        interestByMonth[monthKey].credits.push(entry);
+      } else {
+        interestByMonth[monthKey].debits.push(entry);
+      }
     });
-    return Object.values(groups).sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [mergedItems]);
+
+    // For each month, check if total credits match total debits
+    Object.values(interestByMonth).forEach(month => {
+      const totalCredits = month.credits.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+      const totalDebits = month.debits.reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+
+      // If credits and debits match (within 1p tolerance), strike them all out
+      if (month.credits.length > 0 && month.debits.length > 0 && Math.abs(totalCredits - totalDebits) < 0.01) {
+        month.credits.forEach(e => struckOut.add(e.id));
+        month.debits.forEach(e => struckOut.add(e.id));
+      }
+    });
+
+    return struckOut;
+  }, [interestEntries]);
 
   // Calculate totals from transactions
   const capitalIn = useMemo(() =>
@@ -351,7 +365,35 @@ export default function InvestorDetails() {
     [capitalTransactions]
   );
 
-  // Calculate interest balance from new ledger
+  // Calculate interest accrual (safe with optional chaining)
+  const annualRate = investor?.annual_interest_rate || product?.interest_rate_per_annum || 0;
+  const currentBalance = investor?.current_capital_balance || 0;
+
+  // Calculate interest accruing since last posting
+  const accruedSinceLastPosting = useMemo(() => {
+    if (!investor || !annualRate || currentBalance <= 0) {
+      return { accruedInterest: 0, days: 0, dailyRate: 0 };
+    }
+    return calculateAccruedInterest(currentBalance, annualRate, investor.last_accrual_date);
+  }, [investor, annualRate, currentBalance]);
+
+  // Calculate interest due (credits not yet withdrawn)
+  // Only count entries dated on or after last_accrual_date (current period)
+  // Historical entries before last_accrual_date are considered settled
+  const interestDue = useMemo(() => {
+    const cutoffDate = investor?.last_accrual_date;
+    if (!cutoffDate) return 0;
+
+    const recentCredits = interestEntries
+      .filter(e => e.type === 'credit' && e.date >= cutoffDate)
+      .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+    const recentDebits = interestEntries
+      .filter(e => e.type === 'debit' && e.date >= cutoffDate)
+      .reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0);
+    return Math.max(0, recentCredits - recentDebits);
+  }, [interestEntries, investor?.last_accrual_date]);
+
+  // Calculate totals from interest ledger (for totals row display only)
   const interestCredits = useMemo(() =>
     interestEntries.filter(e => e.type === 'credit').reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
     [interestEntries]
@@ -360,54 +402,7 @@ export default function InvestorDetails() {
     interestEntries.filter(e => e.type === 'debit').reduce((sum, e) => sum + (parseFloat(e.amount) || 0), 0),
     [interestEntries]
   );
-  const interestBalance = interestCredits - interestDebits;
 
-  // Calculate interest accrual (safe with optional chaining)
-  const annualRate = investor?.annual_interest_rate || product?.interest_rate_per_annum || 0;
-  const currentBalance = investor?.current_capital_balance || 0;
-  const minBalanceForInterest = product?.min_balance_for_interest || 0;
-
-  const accruedInterest = currentBalance >= minBalanceForInterest
-    ? calculateAccruedInterest(currentBalance, annualRate, investor?.last_accrual_date)
-    : { accruedInterest: 0, days: 0, dailyRate: 0 };
-
-  // Post accrued interest (creates a credit entry in interest ledger)
-  const postInterestMutation = useMutation({
-    mutationFn: async () => {
-      const frequency = product?.interest_posting_frequency || 'monthly';
-      const periodStart = investor.last_accrual_date || getPeriodStart(frequency);
-      const periodEnd = new Date();
-      const description = `Interest for period ${format(new Date(periodStart), 'MMM dd')} - ${format(periodEnd, 'MMM dd, yyyy')} (${accruedInterest.days} days at ${annualRate}% p.a.)`;
-
-      // Create interest credit in the new ledger
-      await api.entities.InvestorInterest.create({
-        investor_id: investorId,
-        type: 'credit',
-        amount: accruedInterest.accruedInterest,
-        date: new Date().toISOString().split('T')[0],
-        description
-      });
-
-      // Update investor with new accrual date
-      await api.entities.Investor.update(investorId, {
-        accrued_interest: 0,
-        last_accrual_date: new Date().toISOString().split('T')[0]
-      });
-
-      // Log the interest posting
-      logInvestorTransactionEvent(AuditAction.INVESTOR_INTEREST_POST,
-        { id: null, investor_id: investorId, type: 'interest_credit', amount: accruedInterest.accruedInterest, date: new Date().toISOString().split('T')[0] },
-        { name: investor?.name },
-        { days: accruedInterest.days, annual_rate: annualRate, daily_rate: accruedInterest.dailyRate, description }
-      );
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
-      queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
-      queryClient.invalidateQueries({ queryKey: ['investors'] });
-      setIsPostingInterest(false);
-    }
-  });
 
   if (investorLoading) {
     return (
@@ -433,17 +428,6 @@ export default function InvestorDetails() {
     );
   }
 
-  const toggleDateExpanded = (date) => {
-    setExpandedDates(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(date)) {
-        newSet.delete(date);
-      } else {
-        newSet.add(date);
-      }
-      return newSet;
-    });
-  };
 
   const getTransactionIcon = (type) => {
     if (type === 'capital_in') return { icon: TrendingUp, color: 'text-emerald-600', bg: 'bg-emerald-100' };
@@ -551,9 +535,9 @@ export default function InvestorDetails() {
               <div>
                 <p className="text-xs text-slate-500 mb-1">Interest Rate</p>
                 <p className="font-semibold">
-                  {investor.interest_calculation_type === 'manual_amount'
-                    ? `${formatCurrency(investor.manual_interest_amount)} Fixed`
-                    : `${annualRate}% p.a.`
+                  {investor.interest_calculation_type === 'annual_rate' && annualRate > 0
+                    ? `${annualRate}% p.a.`
+                    : <span className="text-slate-500 italic">Manual</span>
                   }
                 </p>
               </div>
@@ -564,94 +548,33 @@ export default function InvestorDetails() {
                 </p>
               </div>
               <div>
-                <p className="text-xs text-slate-500 mb-1">Interest Balance</p>
-                <p className={`text-xl font-bold ${interestBalance >= 0 ? 'text-amber-600' : 'text-red-600'}`}>
-                  {formatCurrency(interestBalance)}
+                <p className="text-xs text-slate-500 mb-1">Interest Due</p>
+                <p className={`text-xl font-bold ${interestDue > 0 ? 'text-amber-600' : 'text-slate-600'}`}>
+                  {formatCurrency(interestDue)}
                 </p>
+                <p className="text-xs text-slate-400">Posted, not yet withdrawn</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500 mb-1">Interest Accruing</p>
+                <p className="text-xl font-bold text-blue-600">
+                  {formatCurrency(accruedSinceLastPosting.accruedInterest)}
+                </p>
+                {accruedSinceLastPosting.days > 0 && (
+                  <p className="text-xs text-slate-400">
+                    {accruedSinceLastPosting.days} days @ {formatCurrency(accruedSinceLastPosting.dailyRate)}/day
+                  </p>
+                )}
               </div>
               <div>
                 <p className="text-xs text-slate-500 mb-1">Total Contributed</p>
                 <p className="text-xl font-bold">
-                  {formatCurrency(investor.total_capital_contributed || 0)}
+                  {formatCurrency(capitalIn)}
                 </p>
               </div>
             </div>
           </CardContent>
         </Card>
 
-        {/* Interest Accrual Card */}
-        {annualRate > 0 && investor.interest_calculation_type !== 'manual_amount' && (
-          <Card className="border-amber-200 bg-amber-50/50">
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="flex items-center gap-2">
-                  <Calculator className="w-5 h-5 text-amber-600" />
-                  Interest Accrual
-                </CardTitle>
-                <Button
-                  size="sm"
-                  onClick={() => setIsPostingInterest(true)}
-                  disabled={accruedInterest.accruedInterest <= 0}
-                  className="bg-amber-600 hover:bg-amber-700"
-                >
-                  {postInterestMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <DollarSign className="w-4 h-4 mr-2" />
-                  )}
-                  Post Interest Credit
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                <div className="bg-white p-4 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Percent className="w-4 h-4 text-slate-500" />
-                    <p className="text-xs text-slate-500">Daily Rate</p>
-                  </div>
-                  <p className="text-lg font-semibold">{formatCurrency(accruedInterest.dailyRate)}</p>
-                </div>
-                <div className="bg-white p-4 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <Calendar className="w-4 h-4 text-slate-500" />
-                    <p className="text-xs text-slate-500">Days Accrued</p>
-                  </div>
-                  <p className="text-lg font-semibold">{accruedInterest.days} days</p>
-                </div>
-                <div className="bg-white p-4 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <TrendingUp className="w-4 h-4 text-slate-500" />
-                    <p className="text-xs text-slate-500">Last Posted</p>
-                  </div>
-                  <p className="text-lg font-semibold">
-                    {investor.last_accrual_date
-                      ? format(new Date(investor.last_accrual_date), 'MMM dd, yyyy')
-                      : 'Never'
-                    }
-                  </p>
-                </div>
-                <div className="bg-amber-100 p-4 rounded-lg">
-                  <div className="flex items-center gap-2 mb-2">
-                    <DollarSign className="w-4 h-4 text-amber-600" />
-                    <p className="text-xs text-amber-700">Accrued Amount</p>
-                  </div>
-                  <p className="text-xl font-bold text-amber-700">
-                    {formatCurrency(accruedInterest.accruedInterest)}
-                  </p>
-                </div>
-              </div>
-
-              {currentBalance < minBalanceForInterest && minBalanceForInterest > 0 && (
-                <Alert className="mt-4 border-amber-200 bg-amber-100">
-                  <AlertDescription className="text-amber-800">
-                    Balance below minimum of {formatCurrency(minBalanceForInterest)} required for interest accrual.
-                  </AlertDescription>
-                </Alert>
-              )}
-            </CardContent>
-          </Card>
-        )}
 
         {/* Additional Details */}
         {(investor.business_name || investor.first_name || investor.investor_number) && (
@@ -693,68 +616,6 @@ export default function InvestorDetails() {
           </Card>
         )}
 
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Capital In</p>
-                  <p className="text-2xl font-bold text-emerald-600">{formatCurrency(capitalIn)}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-emerald-100">
-                  <TrendingUp className="w-5 h-5 text-emerald-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Capital Out</p>
-                  <p className="text-2xl font-bold text-red-600">{formatCurrency(capitalOut)}</p>
-                </div>
-                <div className="p-3 rounded-xl bg-red-100">
-                  <TrendingDown className="w-5 h-5 text-red-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Interest Earned</p>
-                  <p className="text-2xl font-bold text-amber-600">{formatCurrency(interestCredits)}</p>
-                  {interestCredits > 0 && (
-                    <p className="text-xs text-slate-400 mt-0.5">Total credited</p>
-                  )}
-                </div>
-                <div className="p-3 rounded-xl bg-amber-100">
-                  <Percent className="w-5 h-5 text-amber-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-          <Card>
-            <CardContent className="p-5">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm text-slate-500">Interest Paid Out</p>
-                  <p className="text-2xl font-bold text-purple-600">{formatCurrency(interestDebits)}</p>
-                  {interestDebits > 0 && interestBalance !== 0 && (
-                    <p className={`text-xs mt-0.5 ${interestBalance < 0 ? 'text-red-500' : 'text-emerald-600'}`}>
-                      Balance: {formatCurrency(interestBalance)}
-                    </p>
-                  )}
-                </div>
-                <div className="p-3 rounded-xl bg-purple-100">
-                  <DollarSign className="w-5 h-5 text-purple-600" />
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
 
         <Card>
           <CardHeader>
@@ -773,13 +634,13 @@ export default function InvestorDetails() {
             </div>
           </CardHeader>
           <CardContent>
-            {groupedByDate.length === 0 ? (
+            {mergedItems.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
                 <p>No transactions yet</p>
               </div>
             ) : (
-              <div className="space-y-2">
+              <div className="space-y-1">
                 {/* Header row */}
                 <div className="grid grid-cols-12 gap-2 px-3 py-2 text-xs font-medium text-slate-500 uppercase border-b">
                   <div className="col-span-2">Date</div>
@@ -789,204 +650,85 @@ export default function InvestorDetails() {
                   <div className="col-span-1"></div>
                 </div>
 
-                {/* Grouped transactions */}
-                {groupedByDate.map((group) => {
-                  const isExpanded = expandedDates.has(group.date);
-                  const hasMultiple = group.items.length > 1;
-                  const hasCapital = group.items.some(i => i.itemType === 'capital');
-                  const hasInterest = group.items.some(i => i.itemType === 'interest');
-
-                  // Calculate breakdown amounts for collapsed display
-                  const capitalDebit = group.items.filter(i => i.itemType === 'capital' && i.type === 'capital_out').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
-                  const interestDebit = group.items.filter(i => i.itemType === 'interest' && i.type === 'debit').reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+                {/* Flat transaction list */}
+                {mergedItems.map((item) => {
+                  const isInterest = item.itemType === 'interest';
+                  const isDebit = isInterest ? item.type === 'debit' : item.type === 'capital_out';
+                  const isCredit = isInterest ? item.type === 'credit' : item.type === 'capital_in';
+                  const isStruckOut = isInterest && struckOutIds.has(item.id);
 
                   return (
-                    <div key={group.date} className="border rounded-lg overflow-hidden">
-                      {/* Group header - clickable if multiple items */}
-                      <div
-                        className={`grid grid-cols-12 gap-2 px-3 py-2 items-center ${hasMultiple ? 'cursor-pointer hover:bg-slate-50' : 'bg-white'} ${isExpanded ? 'bg-slate-50 border-b' : ''}`}
-                        onClick={() => hasMultiple && toggleDateExpanded(group.date)}
-                      >
-                        <div className="col-span-2 flex items-center gap-2">
-                          {hasMultiple && (
-                            isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />
-                          )}
-                          <span className="font-medium text-sm">{format(new Date(group.date), 'dd MMM yyyy')}</span>
-                        </div>
-                        <div className="col-span-5 flex items-center gap-2">
-                          {hasMultiple ? (
-                            <div className="flex items-center gap-1.5">
-                              {hasCapital && (
-                                <Badge variant="outline" className="text-xs bg-slate-100">
-                                  Capital {capitalDebit > 0 && <span className="ml-1 text-red-600">{formatCurrency(capitalDebit)}</span>}
-                                </Badge>
-                              )}
-                              {hasInterest && (
-                                <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
-                                  Interest {interestDebit > 0 && <span className="ml-1">{formatCurrency(interestDebit)}</span>}
-                                </Badge>
-                              )}
-                              <span className="text-xs text-slate-500">({group.items.length} items)</span>
-                            </div>
-                          ) : (
-                            // Single item - show inline
-                            (() => {
-                              const item = group.items[0];
-                              const isInterest = item.itemType === 'interest';
-                              return (
-                                <div className="flex items-center gap-2">
-                                  {isInterest ? (
-                                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
-                                      {item.type === 'credit' ? 'Interest Credit' : 'Interest Withdrawn'}
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className={`text-xs ${item.type === 'capital_in' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                                      {item.type === 'capital_in' ? 'Capital In' : 'Capital Out'}
-                                    </Badge>
-                                  )}
-                                  {(item.description || item.notes) && (
-                                    <span className="text-sm text-slate-600" title={item.description || item.notes}>
-                                      {item.description || item.notes}
-                                    </span>
-                                  )}
-                                </div>
-                              );
-                            })()
-                          )}
-                        </div>
-                        <div className="col-span-2 text-right">
-                          {group.totalDebit > 0 && (
-                            <span className="font-semibold text-red-600">{formatCurrency(group.totalDebit)}</span>
-                          )}
-                        </div>
-                        <div className="col-span-2 text-right">
-                          {group.totalCredit > 0 && (
-                            <span className="font-semibold text-emerald-600">{formatCurrency(group.totalCredit)}</span>
-                          )}
-                        </div>
-                        <div className="col-span-1 flex justify-end">
-                          {!hasMultiple && (
-                            <div className="flex gap-1">
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const item = group.items[0];
-                                  if (item.itemType === 'interest') {
-                                    openInterestDialog(item);
-                                  } else {
-                                    setEditingTransaction(item);
-                                    setIsTransactionOpen(true);
-                                  }
-                                }}
-                              >
-                                <Pencil className="w-3.5 h-3.5" />
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  const item = group.items[0];
-                                  if (window.confirm(`Delete this ${item.itemType === 'interest' ? 'interest entry' : 'transaction'}?`)) {
-                                    if (item.itemType === 'interest') {
-                                      deleteInterestMutation.mutate(item.id);
-                                    } else {
-                                      deleteTransactionMutation.mutate(item.id);
-                                    }
-                                  }
-                                }}
-                              >
-                                <Trash2 className="w-3.5 h-3.5" />
-                              </Button>
-                            </div>
-                          )}
-                        </div>
+                    <div
+                      key={`${item.itemType}-${item.id}`}
+                      className={`grid grid-cols-12 gap-2 px-3 py-2 items-center border-b hover:bg-slate-50 ${isInterest ? 'bg-amber-50/30' : ''}`}
+                    >
+                      <div className="col-span-2">
+                        <span className="text-sm">{format(new Date(item.date), 'dd MMM yyyy')}</span>
                       </div>
-
-                      {/* Expanded detail rows */}
-                      {hasMultiple && isExpanded && (
-                        <div className="bg-slate-50/50">
-                          {group.items.map((item) => {
-                            const isInterest = item.itemType === 'interest';
-                            const isDebit = isInterest ? item.type === 'debit' : item.type === 'capital_out';
-                            const isCredit = isInterest ? item.type === 'credit' : item.type === 'capital_in';
-
-                            return (
-                              <div
-                                key={`${item.itemType}-${item.id}`}
-                                className={`grid grid-cols-12 gap-2 px-3 py-2 items-center border-b last:border-b-0 ${isInterest ? 'bg-amber-50/30' : ''}`}
-                              >
-                                <div className="col-span-2 pl-6">
-                                  {/* Indent for nested feel */}
-                                </div>
-                                <div className="col-span-5 flex items-center gap-2">
-                                  {isInterest ? (
-                                    <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
-                                      {item.type === 'credit' ? 'Interest Credit' : 'Interest Withdrawn'}
-                                    </Badge>
-                                  ) : (
-                                    <Badge variant="outline" className={`text-xs ${item.type === 'capital_in' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
-                                      {item.type === 'capital_in' ? 'Capital In' : 'Capital Out'}
-                                    </Badge>
-                                  )}
-                                  {(item.description || item.notes) && (
-                                    <span className="text-sm text-slate-600" title={item.description || item.notes}>
-                                      {item.description || item.notes}
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="col-span-2 text-right">
-                                  {isDebit && (
-                                    <span className="text-sm text-red-600">{formatCurrency(item.amount)}</span>
-                                  )}
-                                </div>
-                                <div className="col-span-2 text-right">
-                                  {isCredit && (
-                                    <span className="text-sm text-emerald-600">{formatCurrency(item.amount)}</span>
-                                  )}
-                                </div>
-                                <div className="col-span-1 flex justify-end gap-1">
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 text-slate-500 hover:text-slate-700 hover:bg-slate-100"
-                                    onClick={() => {
-                                      if (isInterest) {
-                                        openInterestDialog(item);
-                                      } else {
-                                        setEditingTransaction(item);
-                                        setIsTransactionOpen(true);
-                                      }
-                                    }}
-                                  >
-                                    <Pencil className="w-3.5 h-3.5" />
-                                  </Button>
-                                  <Button
-                                    variant="ghost"
-                                    size="icon"
-                                    className="h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
-                                    onClick={() => {
-                                      if (window.confirm(`Delete this ${isInterest ? 'interest entry' : 'transaction'}?`)) {
-                                        if (isInterest) {
-                                          deleteInterestMutation.mutate(item.id);
-                                        } else {
-                                          deleteTransactionMutation.mutate(item.id);
-                                        }
-                                      }
-                                    }}
-                                  >
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </Button>
-                                </div>
-                              </div>
-                            );
-                          })}
-                        </div>
-                      )}
+                      <div className="col-span-5 flex items-center gap-2">
+                        {isInterest ? (
+                          <Badge variant="outline" className={`text-xs bg-amber-50 text-amber-700 border-amber-200 ${isStruckOut ? 'opacity-60' : ''}`}>
+                            {item.type === 'credit' ? 'Interest Credit' : 'Interest Withdrawn'}
+                            {isStruckOut && <span className="ml-1 text-emerald-600">✓</span>}
+                          </Badge>
+                        ) : (
+                          <Badge variant="outline" className={`text-xs ${item.type === 'capital_in' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-red-50 text-red-700 border-red-200'}`}>
+                            {item.type === 'capital_in' ? 'Capital In' : 'Capital Out'}
+                          </Badge>
+                        )}
+                        {(item.description || item.notes) && (
+                          <span className={`text-sm text-slate-600 ${isStruckOut ? 'opacity-60' : ''}`} title={item.description || item.notes}>
+                            {item.description || item.notes}
+                          </span>
+                        )}
+                      </div>
+                      <div className="col-span-2 text-right">
+                        {isDebit && (
+                          <span className={`text-sm text-red-600 ${isStruckOut ? 'line-through opacity-60' : ''}`}>
+                            {formatCurrency(item.amount)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="col-span-2 text-right">
+                        {isCredit && (
+                          <span className={`text-sm text-emerald-600 ${isStruckOut ? 'line-through opacity-60' : ''}`}>
+                            {formatCurrency(item.amount)}
+                          </span>
+                        )}
+                      </div>
+                      <div className="col-span-1 flex justify-end gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-slate-500 hover:text-slate-700 hover:bg-slate-100"
+                          onClick={() => {
+                            if (isInterest) {
+                              openInterestDialog(item);
+                            } else {
+                              setEditingTransaction(item);
+                              setIsTransactionOpen(true);
+                            }
+                          }}
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className="h-6 w-6 text-red-500 hover:text-red-700 hover:bg-red-50"
+                          onClick={() => {
+                            if (window.confirm(`Delete this ${isInterest ? 'interest entry' : 'transaction'}?`)) {
+                              if (isInterest) {
+                                deleteInterestMutation.mutate(item.id);
+                              } else {
+                                deleteTransactionMutation.mutate(item.id);
+                              }
+                            }
+                          }}
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </Button>
+                      </div>
                     </div>
                   );
                 })}
@@ -1124,45 +866,6 @@ export default function InvestorDetails() {
           </DialogContent>
         </Dialog>
 
-        {/* Confirm Interest Posting Dialog */}
-        <Dialog open={isPostingInterest} onOpenChange={setIsPostingInterest}>
-          <DialogContent className="sm:max-w-md">
-            <DialogHeader>
-              <DialogTitle>Post Interest Credit</DialogTitle>
-            </DialogHeader>
-            <div className="space-y-4">
-              <p className="text-slate-600">
-                This will create an interest credit entry for the accrued interest.
-              </p>
-              <div className="bg-amber-50 p-4 rounded-lg">
-                <p className="text-sm text-slate-500">Amount to post:</p>
-                <p className="text-2xl font-bold text-amber-700">
-                  {formatCurrency(accruedInterest.accruedInterest)}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  For {accruedInterest.days} days at {formatCurrency(accruedInterest.dailyRate)}/day
-                </p>
-              </div>
-              <div className="flex justify-end gap-3">
-                <Button variant="outline" onClick={() => setIsPostingInterest(false)}>
-                  Cancel
-                </Button>
-                <Button
-                  onClick={() => postInterestMutation.mutate()}
-                  disabled={postInterestMutation.isPending}
-                  className="bg-amber-600 hover:bg-amber-700"
-                >
-                  {postInterestMutation.isPending ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <DollarSign className="w-4 h-4 mr-2" />
-                  )}
-                  Confirm Post
-                </Button>
-              </div>
-            </div>
-          </DialogContent>
-        </Dialog>
       </div>
     </div>
   );

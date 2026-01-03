@@ -239,14 +239,22 @@ async function processInvestorInterest(supabase: any): Promise<TaskResult> {
   const today = new Date()
   today.setHours(0, 0, 0, 0)
 
-  // Calculate previous month dates
+  // Calculate previous month dates (the period we're calculating interest FOR)
   const prevMonthEnd = new Date(today.getFullYear(), today.getMonth(), 0) // Last day of prev month
   prevMonthEnd.setHours(0, 0, 0, 0)
   const prevMonthStart = new Date(today.getFullYear(), today.getMonth() - 1, 1) // 1st of prev month
   prevMonthStart.setHours(0, 0, 0, 0)
 
+  // Current month dates (when we POST the interest credit)
+  const currentMonthStart = new Date(today.getFullYear(), today.getMonth(), 1) // 1st of current month
+  currentMonthStart.setHours(0, 0, 0, 0)
+  const currentMonthEnd = new Date(today.getFullYear(), today.getMonth() + 1, 0) // Last day of current month
+  currentMonthEnd.setHours(0, 0, 0, 0)
+
   const prevMonthEndStr = prevMonthEnd.toISOString().split('T')[0]
   const prevMonthStartStr = prevMonthStart.toISOString().split('T')[0]
+  const currentMonthStartStr = currentMonthStart.toISOString().split('T')[0]
+  const currentMonthEndStr = currentMonthEnd.toISOString().split('T')[0]
   const monthName = prevMonthStart.toLocaleString('en-GB', { month: 'long', year: 'numeric' })
 
   console.log(`[InvestorInterest] ========================================`)
@@ -295,14 +303,16 @@ async function processInvestorInterest(supabase: any): Promise<TaskResult> {
       result.processed++
 
       try {
-        // Check if interest already posted for previous month (idempotent check)
+        // Check if interest already posted for this month (idempotent check)
+        // Look for any credit dated within the CURRENT month (when job runs and posts)
+        // e.g., job runs Jan 1st to post Dec interest - check for credits dated Jan 1-31
         const { data: existingCredit, error: checkError } = await supabase
           .from('investor_interest')
-          .select('id')
+          .select('id, date')
           .eq('investor_id', investor.id)
           .eq('type', 'credit')
-          .gte('date', prevMonthStartStr)
-          .lte('date', prevMonthEndStr)
+          .gte('date', currentMonthStartStr)
+          .lte('date', currentMonthEndStr)
           .limit(1)
 
         if (checkError) {
@@ -310,13 +320,14 @@ async function processInvestorInterest(supabase: any): Promise<TaskResult> {
         }
 
         if (existingCredit && existingCredit.length > 0) {
-          console.log(`[InvestorInterest] Investor ${investor.name}: Already posted for ${monthName}, skipping`)
+          console.log(`[InvestorInterest] Investor ${investor.name}: Already posted for ${monthName}, skipping (found credit dated ${existingCredit[0].date})`)
           result.skipped++
           result.details.push({
             investor: investor.name,
             product: product.name,
             status: 'skipped',
-            reason: `Already posted for ${monthName}`
+            reason: `Already posted for ${monthName}`,
+            existingCreditDate: existingCredit[0].date
           })
           continue
         }
@@ -345,13 +356,14 @@ async function processInvestorInterest(supabase: any): Promise<TaskResult> {
         console.log(`[InvestorInterest] Investor ${investor.name}: Posting £${totalInterest.toFixed(2)} interest`)
         console.log(`[InvestorInterest]   ${description}`)
 
-        // Create interest credit entry dated as last day of the month
+        // Create interest credit entry dated as first of the current month (when job runs)
+        // e.g., job runs Jan 1st to post Dec interest - credit is dated Jan 1st
         const { error: txError } = await supabase
           .from('investor_interest')
           .insert({
             organization_id: investor.organization_id,
             investor_id: investor.id,
-            date: prevMonthEndStr,
+            date: currentMonthStartStr,
             type: 'credit',
             amount: totalInterest,
             description: description
@@ -365,7 +377,7 @@ async function processInvestorInterest(supabase: any): Promise<TaskResult> {
         const { error: updateError } = await supabase
           .from('Investor')
           .update({
-            last_accrual_date: prevMonthEndStr,
+            last_accrual_date: currentMonthStartStr,
             total_interest_paid: (investor.total_interest_paid || 0) + totalInterest
           })
           .eq('id', investor.id)
