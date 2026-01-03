@@ -230,11 +230,18 @@ function generatePeriodBasedSchedule(schedule, loan, product, duration, transact
         amount: t.principal_applied
       });
     } else if (t.type === 'Disbursement') {
-      events.push({
-        date: new Date(t.date),
-        type: 'disbursement',
-        amount: t.amount
-      });
+      // Only include disbursements AFTER the loan start (further advances)
+      // Initial disbursement is already accounted for in loan.principal_amount
+      // Including it would double-count the principal for interest calculation
+      const txDate = new Date(t.date);
+      txDate.setHours(0, 0, 0, 0);
+      if (txDate > startDate) {
+        events.push({
+          date: txDate,
+          type: 'disbursement',
+          amount: t.amount
+        });
+      }
     }
   });
 

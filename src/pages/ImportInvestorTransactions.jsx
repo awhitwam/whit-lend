@@ -105,15 +105,14 @@ function parseDate(dateStr) {
 
 // Map CSV transaction type to database type
 // Returns { type, isInterest, isInterestDebit }
-// Interest accruals (credits) are SKIPPED - the nightly job handles accruals automatically
-// Only interest payments/withdrawals (debits) are imported
+// Both interest credits and debits are imported with duplicate checking
 function mapTransactionType(csvType, isCredit = true) {
   const type = csvType?.toLowerCase()?.trim();
   if (type === 'deposit') return { type: 'capital_in', isInterest: false, isInterestDebit: false };
   if (type === 'withdrawal') return { type: 'capital_out', isInterest: false, isInterestDebit: false };
   // Interest handling:
-  // - Interest accruals (credits) are SKIPPED - system calculates these automatically via nightly job
-  // - Interest payments/withdrawals (debits) are imported to track actual payments made to investors
+  // - Both credits and debits are imported with duplicate checking
+  // - Duplicate checking prevents conflicts with nightly job auto-posted credits
   if (type === 'interest_accrual' ||
       type === 'interest_payment' ||
       type === 'interest' ||
@@ -270,20 +269,15 @@ export default function ImportInvestorTransactions() {
             continue;
           }
 
-          // Handle interest entries - only import DEBITS (actual payments to investors)
-          // Interest accruals (credits) are SKIPPED - the nightly job handles accruals automatically
+          // Handle interest entries - both credits (accruals) and debits (withdrawals)
           if (txData.isInterest) {
-            // Skip interest accruals (credits) - system calculates these automatically
-            if (!txData.isInterestDebit) {
-              skipped++;
-              continue;
-            }
+            const interestType = txData.isInterestDebit ? 'debit' : 'credit';
 
-            // Check for duplicate interest debit entry by date and amount
+            // Check for duplicate interest entry by investor, date, type, and amount
             const existingEntry = existingInterest.find(e =>
               e.investor_id === txData.investor_id &&
               e.date === txData.date &&
-              e.type === 'debit' &&
+              e.type === interestType &&
               Math.abs(e.amount - txData.amount) < 0.01
             );
 
@@ -292,11 +286,11 @@ export default function ImportInvestorTransactions() {
               continue;
             }
 
-            // Create interest debit entry (actual payment to investor)
+            // Create interest entry
             await api.entities.InvestorInterest.create({
               investor_id: txData.investor_id,
               date: txData.date,
-              type: 'debit', // Always debit for imported interest payments
+              type: interestType,
               amount: txData.amount,
               description: txData.description,
               reference: txData.transaction_id

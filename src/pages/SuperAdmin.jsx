@@ -37,7 +37,12 @@ import {
   Check,
   X,
   Crown,
-  RefreshCw
+  RefreshCw,
+  Clock,
+  Play,
+  CheckCircle,
+  XCircle,
+  AlertCircle
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 
@@ -55,6 +60,10 @@ export default function SuperAdmin() {
   const [isAddToOrgOpen, setIsAddToOrgOpen] = useState(false);
   const [selectedOrgForAdd, setSelectedOrgForAdd] = useState('');
   const [selectedRoleForAdd, setSelectedRoleForAdd] = useState('Viewer');
+
+  // Nightly jobs state
+  const [runningJob, setRunningJob] = useState(null);
+  const [jobResult, setJobResult] = useState(null);
 
   // Fetch all users across all organizations
   const { data: allUsers = [], isLoading: loadingUsers } = useQuery({
@@ -122,6 +131,54 @@ export default function SuperAdmin() {
       return enrichedMemberships;
     },
     enabled: isSuperAdmin && allOrganizations.length > 0 && allUsers.length > 0
+  });
+
+  // Fetch recent nightly job runs
+  const { data: recentJobRuns = [] } = useQuery({
+    queryKey: ['nightly-job-runs'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('nightly_job_runs')
+        .select('*')
+        .order('run_date', { ascending: false })
+        .limit(10);
+      if (error) throw error;
+      return data || [];
+    },
+    enabled: isSuperAdmin
+  });
+
+  // Run nightly job mutation
+  const runNightlyJobMutation = useMutation({
+    mutationFn: async (tasks) => {
+      setRunningJob(tasks.join(', '));
+      setJobResult(null);
+
+      console.log('[NightlyJob] Calling function via supabase.functions.invoke');
+      console.log('[NightlyJob] Tasks:', tasks);
+
+      // Use supabase.functions.invoke() which handles auth automatically
+      const { data, error } = await supabase.functions.invoke('nightly-jobs', {
+        body: { tasks }
+      });
+
+      if (error) {
+        console.error('[NightlyJob] Error:', error);
+        throw new Error(error.message || 'Failed to invoke function');
+      }
+
+      console.log('[NightlyJob] Success:', data);
+      return data;
+    },
+    onSuccess: (data) => {
+      setJobResult(data);
+      setRunningJob(null);
+      queryClient.invalidateQueries({ queryKey: ['nightly-job-runs'] });
+    },
+    onError: (error) => {
+      setJobResult({ error: error.message });
+      setRunningJob(null);
+    }
   });
 
   // Get user's org memberships
@@ -303,14 +360,18 @@ export default function SuperAdmin() {
 
         {/* Tabs */}
         <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
-          <TabsList className="grid w-full max-w-md grid-cols-2">
+          <TabsList className="grid w-full max-w-lg grid-cols-3">
             <TabsTrigger value="users" className="flex items-center gap-2">
               <Users className="h-4 w-4" />
-              All Users ({allUsers.length})
+              Users ({allUsers.length})
             </TabsTrigger>
             <TabsTrigger value="organizations" className="flex items-center gap-2">
               <Building2 className="h-4 w-4" />
-              Organizations ({allOrganizations.length})
+              Orgs ({allOrganizations.length})
+            </TabsTrigger>
+            <TabsTrigger value="jobs" className="flex items-center gap-2">
+              <Clock className="h-4 w-4" />
+              Nightly Jobs
             </TabsTrigger>
           </TabsList>
 
@@ -467,6 +528,170 @@ export default function SuperAdmin() {
                         })}
                       </tbody>
                     </table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+
+          {/* Nightly Jobs Tab */}
+          <TabsContent value="jobs" className="mt-6">
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <Clock className="w-5 h-5 text-slate-600" />
+                  Nightly Jobs
+                </CardTitle>
+                <CardDescription>
+                  Run scheduled maintenance tasks manually or view recent automated runs.
+                  These tasks run across all organizations.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <Button
+                    variant="outline"
+                    onClick={() => runNightlyJobMutation.mutate(['investor_interest'])}
+                    disabled={!!runningJob}
+                    className="justify-start"
+                  >
+                    {runningJob?.includes('investor_interest') ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4 mr-2" />
+                    )}
+                    Post Investor Interest
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    onClick={() => runNightlyJobMutation.mutate(['loan_schedules'])}
+                    disabled={!!runningJob}
+                    className="justify-start"
+                  >
+                    {runningJob?.includes('loan_schedules') ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4 mr-2" />
+                    )}
+                    Update Loan Schedules
+                  </Button>
+
+                  <Button
+                    variant="outline"
+                    onClick={() => runNightlyJobMutation.mutate(['recalculate_balances'])}
+                    disabled={!!runningJob}
+                    className="justify-start"
+                  >
+                    {runningJob?.includes('recalculate_balances') ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Play className="w-4 h-4 mr-2" />
+                    )}
+                    Recalculate Balances
+                  </Button>
+                </div>
+
+                <Button
+                  onClick={() => runNightlyJobMutation.mutate(['investor_interest', 'loan_schedules'])}
+                  disabled={!!runningJob}
+                  className="w-full"
+                >
+                  {runningJob ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Running: {runningJob}
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-4 h-4 mr-2" />
+                      Run All Nightly Jobs
+                    </>
+                  )}
+                </Button>
+
+                {/* Job Result */}
+                {jobResult && (
+                  <Alert className={jobResult.error ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}>
+                    {jobResult.error ? (
+                      <XCircle className="w-4 h-4 text-red-600" />
+                    ) : (
+                      <CheckCircle className="w-4 h-4 text-emerald-600" />
+                    )}
+                    <AlertDescription className={jobResult.error ? 'text-red-800' : 'text-emerald-800'}>
+                      {jobResult.error ? (
+                        <span>Error: {jobResult.error}</span>
+                      ) : (
+                        <div className="space-y-1">
+                          <p className="font-medium">Job completed successfully</p>
+                          <p className="text-sm">
+                            Processed: {jobResult.summary?.total_processed || 0} |
+                            Succeeded: {jobResult.summary?.total_succeeded || 0} |
+                            Failed: {jobResult.summary?.total_failed || 0} |
+                            Skipped: {jobResult.summary?.total_skipped || 0}
+                          </p>
+                          {jobResult.duration_ms && (
+                            <p className="text-xs text-slate-500">
+                              Duration: {jobResult.duration_ms}ms
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </AlertDescription>
+                  </Alert>
+                )}
+
+                {/* Recent Job Runs */}
+                {recentJobRuns.length > 0 && (
+                  <div className="mt-4">
+                    <h4 className="text-sm font-medium text-slate-700 mb-2">Recent Job Runs</h4>
+                    <div className="border rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50 border-b">
+                          <tr>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600">Date</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600">Task</th>
+                            <th className="px-3 py-2 text-left font-medium text-slate-600">Status</th>
+                            <th className="px-3 py-2 text-right font-medium text-slate-600">Results</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {recentJobRuns.map((run) => (
+                            <tr key={run.id} className="hover:bg-slate-50">
+                              <td className="px-3 py-2 text-slate-700">
+                                {format(new Date(run.run_date), 'dd MMM HH:mm')}
+                              </td>
+                              <td className="px-3 py-2 text-slate-700">
+                                {run.task_name === 'investor_interest' && 'Investor Interest'}
+                                {run.task_name === 'loan_schedules' && 'Loan Schedules'}
+                                {run.task_name === 'recalculate_balances' && 'Balance Recalc'}
+                              </td>
+                              <td className="px-3 py-2">
+                                {run.status === 'success' && (
+                                  <span className="inline-flex items-center gap-1 text-emerald-700">
+                                    <CheckCircle className="w-3.5 h-3.5" /> Success
+                                  </span>
+                                )}
+                                {run.status === 'partial' && (
+                                  <span className="inline-flex items-center gap-1 text-amber-700">
+                                    <AlertCircle className="w-3.5 h-3.5" /> Partial
+                                  </span>
+                                )}
+                                {run.status === 'failed' && (
+                                  <span className="inline-flex items-center gap-1 text-red-700">
+                                    <XCircle className="w-3.5 h-3.5" /> Failed
+                                  </span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right text-slate-600">
+                                {run.succeeded}/{run.processed}
+                                {run.skipped > 0 && ` (${run.skipped} skipped)`}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
                   </div>
                 )}
               </CardContent>

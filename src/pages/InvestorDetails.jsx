@@ -782,8 +782,8 @@ export default function InvestorDetails() {
               <div className="space-y-2">
                 {/* Header row */}
                 <div className="grid grid-cols-12 gap-2 px-3 py-2 text-xs font-medium text-slate-500 uppercase border-b">
-                  <div className="col-span-3">Date</div>
-                  <div className="col-span-4">Details</div>
+                  <div className="col-span-2">Date</div>
+                  <div className="col-span-5">Details</div>
                   <div className="col-span-2 text-right">Debit</div>
                   <div className="col-span-2 text-right">Credit</div>
                   <div className="col-span-1"></div>
@@ -807,13 +807,13 @@ export default function InvestorDetails() {
                         className={`grid grid-cols-12 gap-2 px-3 py-2 items-center ${hasMultiple ? 'cursor-pointer hover:bg-slate-50' : 'bg-white'} ${isExpanded ? 'bg-slate-50 border-b' : ''}`}
                         onClick={() => hasMultiple && toggleDateExpanded(group.date)}
                       >
-                        <div className="col-span-3 flex items-center gap-2">
+                        <div className="col-span-2 flex items-center gap-2">
                           {hasMultiple && (
                             isExpanded ? <ChevronDown className="w-4 h-4 text-slate-400" /> : <ChevronRight className="w-4 h-4 text-slate-400" />
                           )}
                           <span className="font-medium text-sm">{format(new Date(group.date), 'dd MMM yyyy')}</span>
                         </div>
-                        <div className="col-span-4 flex items-center gap-2">
+                        <div className="col-span-5 flex items-center gap-2">
                           {hasMultiple ? (
                             <div className="flex items-center gap-1.5">
                               {hasCapital && (
@@ -845,7 +845,7 @@ export default function InvestorDetails() {
                                     </Badge>
                                   )}
                                   {(item.description || item.notes) && (
-                                    <span className="text-sm text-slate-600 truncate max-w-[200px]">
+                                    <span className="text-sm text-slate-600" title={item.description || item.notes}>
                                       {item.description || item.notes}
                                     </span>
                                   )}
@@ -920,10 +920,10 @@ export default function InvestorDetails() {
                                 key={`${item.itemType}-${item.id}`}
                                 className={`grid grid-cols-12 gap-2 px-3 py-2 items-center border-b last:border-b-0 ${isInterest ? 'bg-amber-50/30' : ''}`}
                               >
-                                <div className="col-span-3 pl-6">
+                                <div className="col-span-2 pl-6">
                                   {/* Indent for nested feel */}
                                 </div>
-                                <div className="col-span-4 flex items-center gap-2">
+                                <div className="col-span-5 flex items-center gap-2">
                                   {isInterest ? (
                                     <Badge variant="outline" className="text-xs bg-amber-50 text-amber-700 border-amber-200">
                                       {item.type === 'credit' ? 'Interest Credit' : 'Interest Withdrawn'}
@@ -934,7 +934,7 @@ export default function InvestorDetails() {
                                     </Badge>
                                   )}
                                   {(item.description || item.notes) && (
-                                    <span className="text-sm text-slate-600 truncate max-w-[180px]" title={item.description || item.notes}>
+                                    <span className="text-sm text-slate-600" title={item.description || item.notes}>
                                       {item.description || item.notes}
                                     </span>
                                   )}
@@ -993,8 +993,8 @@ export default function InvestorDetails() {
 
                 {/* Totals row */}
                 <div className="grid grid-cols-12 gap-2 px-3 py-3 bg-slate-100 rounded-lg border-2 border-slate-200 mt-4">
-                  <div className="col-span-3 font-semibold text-slate-700">Totals</div>
-                  <div className="col-span-4"></div>
+                  <div className="col-span-2 font-semibold text-slate-700">Totals</div>
+                  <div className="col-span-5"></div>
                   <div className="col-span-2 text-right font-bold text-red-600">
                     {formatCurrency(capitalOut + interestDebits)}
                   </div>

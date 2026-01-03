@@ -1,0 +1,3 @@
+# Disable gateway JWT verification - we handle auth in the function
+# This allows us to verify the user AND check super admin status
+verify_jwt = false

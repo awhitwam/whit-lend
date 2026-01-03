@@ -3,13 +3,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { ShieldCheck, Building2, Plus, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, Clock, Play, CheckCircle, XCircle, AlertCircle, FileSpreadsheet } from 'lucide-react';
+import { ShieldCheck, Building2, Plus, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
 import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
 import { useOrganization } from '@/lib/OrganizationContext';
-import { useQueryClient, useQuery, useMutation } from '@tanstack/react-query';
+import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
-import { supabase } from '@/lib/supabaseClient';
-import { format } from 'date-fns';
+import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 
 export default function OrgAdmin() {
   const { canAdmin, currentOrganization } = useOrganization();
@@ -22,9 +21,9 @@ export default function OrgAdmin() {
   const [logs, setLogs] = useState([]);
   const [clearProgress, setClearProgress] = useState({ current: 0, total: 0, step: '' });
 
-  // Nightly jobs state
-  const [runningJob, setRunningJob] = useState(null);
-  const [jobResult, setJobResult] = useState(null);
+  // Schedule regeneration state
+  const [regeneratingSchedules, setRegeneratingSchedules] = useState(false);
+  const [scheduleRegenerationResult, setScheduleRegenerationResult] = useState(null);
 
   // Reset clear data state when organization changes
   useEffect(() => {
@@ -32,59 +31,66 @@ export default function OrgAdmin() {
     setClearResult(null);
     setLogs([]);
     setClearProgress({ current: 0, total: 0, step: '' });
+    setScheduleRegenerationResult(null);
   }, [currentOrganization?.id]);
 
-  // Fetch recent job runs
-  const { data: recentJobRuns = [] } = useQuery({
-    queryKey: ['nightly-job-runs'],
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from('nightly_job_runs')
-        .select('*')
-        .order('run_date', { ascending: false })
-        .limit(10);
-      if (error) throw error;
-      return data || [];
-    }
-  });
+  // Regenerate all loan schedules for current org
+  const regenerateSchedulesMutation = useMutation({
+    mutationFn: async () => {
+      setRegeneratingSchedules(true);
+      setScheduleRegenerationResult(null);
 
-  // Run nightly job mutation
-  const runNightlyJobMutation = useMutation({
-    mutationFn: async (tasks) => {
-      setRunningJob(tasks.join(', '));
-      setJobResult(null);
+      console.log('[RegenerateSchedules] Fetching loans for current organization...');
 
-      const { data: { session } } = await supabase.auth.getSession();
-
-      const response = await fetch(
-        `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/nightly-jobs`,
-        {
-          method: 'POST',
-          headers: {
-            'Authorization': `Bearer ${session?.access_token || import.meta.env.VITE_SUPABASE_ANON_KEY}`,
-            'Content-Type': 'application/json'
-          },
-          body: JSON.stringify({ tasks })
-        }
+      // Fetch all loans for current org using org-scoped API
+      // Include Live loans and Closed/Settled loans (to fix historical schedules)
+      const allLoans = await api.entities.Loan.list();
+      const loansToProcess = allLoans.filter(l =>
+        l.status === 'Live' || l.status === 'Active' || l.status === 'Closed'
       );
 
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to run nightly jobs');
+      console.log(`[RegenerateSchedules] Found ${loansToProcess.length} loans to regenerate (live + settled)`);
+
+      const results = {
+        total: loansToProcess.length,
+        succeeded: 0,
+        failed: 0,
+        errors: []
+      };
+
+      for (const loan of loansToProcess) {
+        try {
+          console.log(`[RegenerateSchedules] Regenerating loan ${loan.loan_number} (status: ${loan.status})...`);
+
+          // For closed/settled loans, pass the settlement date so the schedule
+          // is generated only up to the actual settlement date
+          const options = {};
+          if (loan.status === 'Closed' && loan.settlement_date) {
+            options.endDate = loan.settlement_date;
+            console.log(`[RegenerateSchedules]   → Using settlement date: ${loan.settlement_date}`);
+          }
+
+          await regenerateLoanSchedule(loan.id, options);
+          results.succeeded++;
+        } catch (error) {
+          console.error(`[RegenerateSchedules] Failed for loan ${loan.loan_number}:`, error);
+          results.failed++;
+          results.errors.push({ loan: loan.loan_number, error: error.message });
+        }
       }
 
-      return response.json();
+      console.log('[RegenerateSchedules] Complete:', results);
+      return results;
     },
     onSuccess: (data) => {
-      setJobResult(data);
-      setRunningJob(null);
-      queryClient.invalidateQueries({ queryKey: ['nightly-job-runs'] });
-      queryClient.invalidateQueries({ queryKey: ['investors'] });
-      queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+      setScheduleRegenerationResult(data);
+      setRegeneratingSchedules(false);
+      queryClient.invalidateQueries(['repayment-schedule']);
+      queryClient.invalidateQueries(['loans']);
     },
     onError: (error) => {
-      setJobResult({ error: error.message });
-      setRunningJob(null);
+      setScheduleRegenerationResult({ error: error.message });
+      setRegeneratingSchedules(false);
     }
   });
 
@@ -884,158 +890,72 @@ export default function OrgAdmin() {
             </CardContent>
           </Card>
 
-          {/* Nightly Jobs */}
-          <Card className="border-slate-200 md:col-span-2">
+          {/* Schedule Regeneration */}
+          <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
-                <Clock className="w-5 h-5 text-slate-600" />
-                Nightly Jobs
+                <RefreshCw className="w-5 h-5 text-emerald-600" />
+                Loan Schedules
               </CardTitle>
               <CardDescription>
-                Run scheduled maintenance tasks manually or view recent automated runs
+                Regenerate repayment schedules for all loans
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                <Button
-                  variant="outline"
-                  onClick={() => runNightlyJobMutation.mutate(['investor_interest'])}
-                  disabled={!!runningJob}
-                  className="justify-start"
-                >
-                  {runningJob?.includes('investor_interest') ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4 mr-2" />
-                  )}
-                  Post Investor Interest
-                </Button>
-
-                <Button
-                  variant="outline"
-                  onClick={() => runNightlyJobMutation.mutate(['loan_schedules'])}
-                  disabled={!!runningJob}
-                  className="justify-start"
-                >
-                  {runningJob?.includes('loan_schedules') ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4 mr-2" />
-                  )}
-                  Update Loan Schedules
-                </Button>
-
-                <Button
-                  variant="outline"
-                  onClick={() => runNightlyJobMutation.mutate(['recalculate_balances'])}
-                  disabled={!!runningJob}
-                  className="justify-start"
-                >
-                  {runningJob?.includes('recalculate_balances') ? (
-                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                  ) : (
-                    <Play className="w-4 h-4 mr-2" />
-                  )}
-                  Recalculate Balances
-                </Button>
-              </div>
-
+              <p className="text-sm text-slate-600">
+                Regenerate repayment schedules for all active loans in this organization.
+                Use this after fixing calculation bugs or updating interest rates.
+              </p>
               <Button
-                onClick={() => runNightlyJobMutation.mutate(['investor_interest', 'loan_schedules'])}
-                disabled={!!runningJob}
+                variant="outline"
+                onClick={() => regenerateSchedulesMutation.mutate()}
+                disabled={regeneratingSchedules || clearing}
                 className="w-full"
               >
-                {runningJob ? (
+                {regeneratingSchedules ? (
                   <>
                     <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                    Running: {runningJob}
+                    Regenerating Schedules...
                   </>
                 ) : (
                   <>
-                    <Play className="w-4 h-4 mr-2" />
-                    Run All Nightly Jobs
+                    <RefreshCw className="w-4 h-4 mr-2" />
+                    Regenerate All Loan Schedules
                   </>
                 )}
               </Button>
 
-              {/* Job Result */}
-              {jobResult && (
-                <Alert className={jobResult.error ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}>
-                  {jobResult.error ? (
+              {/* Schedule Regeneration Result */}
+              {scheduleRegenerationResult && (
+                <Alert className={scheduleRegenerationResult.error ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}>
+                  {scheduleRegenerationResult.error ? (
                     <XCircle className="w-4 h-4 text-red-600" />
                   ) : (
                     <CheckCircle className="w-4 h-4 text-emerald-600" />
                   )}
-                  <AlertDescription className={jobResult.error ? 'text-red-800' : 'text-emerald-800'}>
-                    {jobResult.error ? (
-                      <span>Error: {jobResult.error}</span>
+                  <AlertDescription className={scheduleRegenerationResult.error ? 'text-red-800' : 'text-emerald-800'}>
+                    {scheduleRegenerationResult.error ? (
+                      <span>Error: {scheduleRegenerationResult.error}</span>
                     ) : (
                       <div className="space-y-1">
-                        <p className="font-medium">Job completed successfully</p>
+                        <p className="font-medium">Schedule regeneration complete</p>
                         <p className="text-sm">
-                          Processed: {jobResult.summary?.total_processed || 0} |
-                          Succeeded: {jobResult.summary?.total_succeeded || 0} |
-                          Failed: {jobResult.summary?.total_failed || 0} |
-                          Skipped: {jobResult.summary?.total_skipped || 0}
+                          Total: {scheduleRegenerationResult.total} |
+                          Succeeded: {scheduleRegenerationResult.succeeded} |
+                          Failed: {scheduleRegenerationResult.failed}
                         </p>
+                        {scheduleRegenerationResult.errors?.length > 0 && (
+                          <div className="text-xs mt-2">
+                            <p className="font-medium text-red-600">Failed loans:</p>
+                            {scheduleRegenerationResult.errors.map((e, i) => (
+                              <p key={i}>• {e.loan}: {e.error}</p>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
                   </AlertDescription>
                 </Alert>
-              )}
-
-              {/* Recent Job Runs */}
-              {recentJobRuns.length > 0 && (
-                <div className="mt-4">
-                  <h4 className="text-sm font-medium text-slate-700 mb-2">Recent Job Runs</h4>
-                  <div className="border rounded-lg overflow-hidden">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50 border-b">
-                        <tr>
-                          <th className="px-3 py-2 text-left font-medium text-slate-600">Date</th>
-                          <th className="px-3 py-2 text-left font-medium text-slate-600">Task</th>
-                          <th className="px-3 py-2 text-left font-medium text-slate-600">Status</th>
-                          <th className="px-3 py-2 text-right font-medium text-slate-600">Results</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y">
-                        {recentJobRuns.map((run) => (
-                          <tr key={run.id} className="hover:bg-slate-50">
-                            <td className="px-3 py-2 text-slate-700">
-                              {format(new Date(run.run_date), 'dd MMM HH:mm')}
-                            </td>
-                            <td className="px-3 py-2 text-slate-700">
-                              {run.task_name === 'investor_interest' && 'Investor Interest'}
-                              {run.task_name === 'loan_schedules' && 'Loan Schedules'}
-                              {run.task_name === 'recalculate_balances' && 'Balance Recalc'}
-                            </td>
-                            <td className="px-3 py-2">
-                              {run.status === 'success' && (
-                                <span className="inline-flex items-center gap-1 text-emerald-700">
-                                  <CheckCircle className="w-3.5 h-3.5" /> Success
-                                </span>
-                              )}
-                              {run.status === 'partial' && (
-                                <span className="inline-flex items-center gap-1 text-amber-700">
-                                  <AlertCircle className="w-3.5 h-3.5" /> Partial
-                                </span>
-                              )}
-                              {run.status === 'failed' && (
-                                <span className="inline-flex items-center gap-1 text-red-700">
-                                  <XCircle className="w-3.5 h-3.5" /> Failed
-                                </span>
-                              )}
-                            </td>
-                            <td className="px-3 py-2 text-right text-slate-600">
-                              {run.succeeded}/{run.processed}
-                              {run.skipped > 0 && ` (${run.skipped} skipped)`}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
               )}
             </CardContent>
           </Card>

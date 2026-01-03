@@ -228,6 +228,7 @@ if (loan.has_penalty_rate && today >= loan.penalty_rate_from) {
 2. **Loan edit** - Parameters changed (rate, duration, principal)
 3. **Regenerate Schedule** button - Manual trigger
 4. **Auto-extend** - Extends schedule to current date
+5. **Org Admin bulk regeneration** - Regenerate all loans for organization
 
 ### 5.2 Schedule Regeneration Process
 
@@ -252,7 +253,34 @@ When enabled:
 - Creates extension periods up to current date
 - Useful for open-ended or rolling loans
 
-### 5.4 Schedule Row Structure
+### 5.4 Interest Alignment Options
+
+**Period-Based (Default)**
+- Schedule periods start from loan start date
+- Due dates based on period intervals from start
+- Example: Loan starts Jan 15, periods are 15th of each month
+
+**Align to 1st of Month** (`interest_alignment = 'monthly_first'`)
+- All interest periods aligned to calendar months (1st of each month)
+- Only available for Monthly period loans
+- Not available for Rolled-Up interest type
+
+**Monthly First Schedule Structure:**
+
+1. **Stub Period** (if loan doesn't start on 1st):
+   - Runs from loan start date to end of that month
+   - Interest-only, pro-rated daily calculation
+   - Example: Loan starts June 15 → stub is June 15-30 (16 days)
+
+2. **Full Monthly Periods**:
+   - All run 1st to 1st of each calendar month
+   - Due dates are always on the 1st
+   - Makes cash flow predictable for portfolio management
+
+3. **Final Period**:
+   - Principal balloon (for Interest-Only) due on 1st of month after duration ends
+
+### 5.5 Schedule Row Structure
 
 ```javascript
 {
@@ -322,16 +350,36 @@ When enabled:
 = Sum(Schedule.interest_amount) - Sum(Schedule.interest_paid)
 ```
 
+### Interest Outstanding (Scheduled)
+```
+= loan.total_interest - loan.interest_paid
+```
+This is the schedule-based calculation shown in the "Interest O/S" header box.
+
 ### Interest Outstanding (Live/Accrued)
 ```
-= calculateAccruedInterest(loan, today) - loan.interest_paid
+= calculateAccruedInterestWithTransactions(loan, transactions, today).interestRemaining
 ```
-This accounts for daily accrual and is used for settlement quotes.
+This accounts for:
+- Day-by-day interest accrual
+- Principal reductions from actual payments (reduces daily interest after payment date)
+- Used for settlement quotes and the Settlement header box
 
-### Total Amount Due
+The function returns:
+```javascript
+{
+  interestAccrued,      // Total interest accrued to date
+  interestPaid,         // Total interest paid from transactions
+  interestRemaining,    // interestAccrued - interestPaid
+  principalRemaining    // principal - totalPrincipalPaid
+}
 ```
-= Principal Outstanding + Interest Outstanding + Exit Fee
+
+### Settlement Amount
 ```
+= Principal Outstanding + Live Interest Outstanding + Exit Fee
+```
+**Note**: Arrangement fee is NOT included in settlement - it was already deducted from the initial disbursement.
 
 ---
 
@@ -358,7 +406,55 @@ This accounts for daily accrual and is used for settlement quotes.
 
 ---
 
-## 10. IMPORTANT BEHAVIORS
+## 10. SCHEDULE DISPLAY (RepaymentScheduleTable)
+
+### 10.1 View Modes
+
+The schedule table supports three view modes:
+- **Nested**: Groups transactions under schedule periods, expandable
+- **Smart**: Fuzzy payment matching by nearest due date
+- **Journal**: Chronological transaction list
+
+### 10.2 Nested View Interest Display
+
+In the Nested view, each schedule period shows an interest description:
+
+**Standard Display** (no capital payment in period):
+```
+Interest due at 10% pa, 31d × £11.78/day
+```
+
+**Split Display** (when capital payment occurs mid-period):
+```
+Interest due at 10% pa, 27d × £11.78/day + 4d × £1.25/day
+```
+
+This split display is calculated by:
+1. Detecting capital payments (`principal_applied > 0`) within the period
+2. Calculating days before and after each payment
+3. Computing daily interest at each principal level
+4. Displaying segments joined with " + "
+
+**Example Calculation**:
+- Period: 17/08/25 to 17/09/25 (31 days)
+- Principal starts at £43,000 → daily rate = £43,000 × 10% / 365 = £11.78/day
+- Payment on 13/09/25 reduces principal by £38,425.01 → new principal = £4,574.99
+- New daily rate = £4,574.99 × 10% / 365 = £1.25/day
+- Display: `27d × £11.78/day + 4d × £1.25/day`
+
+### 10.3 Period Status Colors
+
+| Status | Color | Condition |
+|--------|-------|-----------|
+| Paid | Green | Interest paid >= expected |
+| Overpaid | Blue | Interest paid > expected |
+| Partial | Amber | Some interest paid |
+| Overdue | Red | Past due, no payment |
+| Upcoming | Grey | Future period |
+
+---
+
+## 11. IMPORTANT BEHAVIORS
 
 1. **Event-Driven Schedules**: Schedules regenerate from actual transactions, not stored values. This preserves actual payment history while updating future projections.
 
@@ -366,9 +462,69 @@ This accounts for daily accrual and is used for settlement quotes.
 
 3. **Waterfall Order**: Always pays oldest installments first, interest before principal.
 
-4. **Arrangement Fee Handling**: Deducted from principal at disbursement, so `net_disbursed = principal_amount - arrangement_fee`.
+4. **Arrangement Fee Handling**: Deducted from principal at disbursement, so `net_disbursed = principal_amount - arrangement_fee`. NOT included in settlement amount.
 
 5. **Penalty Rate Split**: When penalty rate applies, interest is calculated at normal rate before penalty date and penalty rate after.
+
+6. **Interest Calculation with Principal Reductions**: The `calculateAccruedInterestWithTransactions()` function calculates interest day-by-day, reducing the principal balance on dates when capital payments occurred.
+
+---
+
+## 12. KEY SOURCE FILES
+
+| File | Purpose |
+|------|---------|
+| `src/components/loan/LoanCalculator.jsx` | Schedule generation, interest calculation functions, payment waterfall logic |
+| `src/components/loan/LoanScheduleManager.jsx` | Schedule regeneration, auto-extend logic, `regenerateLoanSchedule()` export |
+| `src/components/loan/RepaymentScheduleTable.jsx` | Schedule display (Nested/Smart/Journal views) |
+| `src/components/loan/SettleLoanModal.jsx` | Settlement calculator modal |
+| `src/pages/LoanDetails.jsx` | Loan details page, header calculations |
+| `src/pages/NewLoan.jsx` | Loan creation form |
+| `src/pages/OrgAdmin.jsx` | Organization admin - bulk schedule regeneration |
+| `src/lib/autoExtendService.js` | Background auto-extension service |
+
+### Key Functions in LoanCalculator.jsx
+
+| Function | Purpose |
+|----------|---------|
+| `generateRepaymentSchedule()` | Creates schedule based on loan parameters |
+| `calculateLoanSummary()` | Calculates totals from schedule |
+| `applyPaymentWaterfall()` | Applies payment using waterfall logic |
+| `applyManualPayment()` | Applies payment with manual split |
+| `calculateAccruedInterest()` | Simple accrued interest calculation |
+| `calculateAccruedInterestWithTransactions()` | Day-by-day interest with principal tracking |
+| `getEffectiveRate()` | Returns rate considering penalty rate |
+
+---
+
+---
+
+## 13. BULK SCHEDULE REGENERATION
+
+### 13.1 Org Admin Regeneration
+
+Located in **Organization Admin** page (`/org-admin`):
+
+**Regenerate All Loan Schedules** button:
+- Processes all Live and Closed loans in current organization
+- For Live loans: Regenerates schedule to current date
+- For Closed loans: Regenerates schedule up to settlement date
+- Shows progress and error reporting
+
+```javascript
+// For closed loans, passes settlement date
+if (loan.status === 'Closed' && loan.settlement_date) {
+  options.endDate = loan.settlement_date;
+}
+await regenerateLoanSchedule(loan.id, options);
+```
+
+### 13.2 Use Cases
+
+- After fixing calculation bugs (e.g., interest double-counting)
+- After updating interest rates on loan products
+- To apply corrected business logic retroactively
+- To rebuild schedules after data migration
 
 ---
 
