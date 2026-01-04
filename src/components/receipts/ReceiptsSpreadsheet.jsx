@@ -75,7 +75,10 @@ export default function ReceiptsSpreadsheet({
         entryMode: 'bank_entry',
         bankStatementId: entry.id,
         date: entry.statement_date,
-        amount: parseFloat(entry.amount) || 0
+        amount: parseFloat(entry.amount) || 0,
+        // Capture bank statement details for transaction reference
+        bankDescription: entry.description || '',
+        bankReference: entry.external_reference || entry.reference || ''
       });
     }
     setBankPickerOpen(false);

@@ -23,7 +23,9 @@
       "Bash(echo:*)",
       "Bash(npx supabase:*)",
       "Bash(npx supabase sql:*)",
-      "Bash(git grep:*)"
+      "Bash(git grep:*)",
+      "Bash(ren:*)",
+      "Bash(ren \"supabase\\\\migrations\\\\043_borrower_keywords.sql\" \"047_borrower_keywords.sql\")"
     ]
   }
 }

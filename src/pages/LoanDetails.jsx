@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   ArrowLeft,
   DollarSign,
@@ -98,6 +99,9 @@ export default function LoanDetails() {
   const [deleteTransactionDialogOpen, setDeleteTransactionDialogOpen] = useState(false);
   const [deleteTransactionTarget, setDeleteTransactionTarget] = useState(null);
   const [deleteTransactionReason, setDeleteTransactionReason] = useState('');
+  const [selectedDisbursements, setSelectedDisbursements] = useState(new Set());
+  const [deleteDisbursementsDialogOpen, setDeleteDisbursementsDialogOpen] = useState(false);
+  const [isDeletingDisbursements, setIsDeletingDisbursements] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -1026,7 +1030,7 @@ export default function LoanDetails() {
             {!isFixedCharge && (
               <TabsTrigger value="disbursements">
                 Disbursements
-                <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Disbursement').length + 1}</Badge>
+                <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Disbursement').length}</Badge>
               </TabsTrigger>
             )}
             <TabsTrigger value="security">
@@ -1179,58 +1183,54 @@ export default function LoanDetails() {
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
-                  <CardTitle>Capital Movements</CardTitle>
-                  <Select
-                    value={disbursementSort}
-                    onValueChange={setDisbursementSort}
-                  >
-                    <SelectTrigger className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="date-desc">Date (Newest)</SelectItem>
-                      <SelectItem value="date-asc">Date (Oldest)</SelectItem>
-                      <SelectItem value="amount-desc">Amount (High-Low)</SelectItem>
-                      <SelectItem value="amount-asc">Amount (Low-High)</SelectItem>
-                    </SelectContent>
-                  </Select>
+                  <CardTitle>Disbursements</CardTitle>
+                  <div className="flex items-center gap-2">
+                    {selectedDisbursements.size > 0 && (
+                      <Button
+                        variant="destructive"
+                        size="sm"
+                        onClick={() => setDeleteDisbursementsDialogOpen(true)}
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Delete ({selectedDisbursements.size})
+                      </Button>
+                    )}
+                    <Select
+                      value={disbursementSort}
+                      onValueChange={setDisbursementSort}
+                    >
+                      <SelectTrigger className="w-40">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="date-desc">Date (Newest)</SelectItem>
+                        <SelectItem value="date-asc">Date (Oldest)</SelectItem>
+                        <SelectItem value="amount-desc">Amount (High-Low)</SelectItem>
+                        <SelectItem value="amount-asc">Amount (Low-High)</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
                 </div>
               </CardHeader>
               <CardContent>
                 {(() => {
-                  // Get all disbursement transactions sorted by date
+                  // Get all disbursement transactions sorted by date (ONLY disbursements, no repayments)
                   const disbursementTransactions = transactions
                     .filter(t => !t.is_deleted && t.type === 'Disbursement')
                     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-                  // Get capital repayment transactions
-                  const repaymentTransactions = transactions
-                    .filter(t => !t.is_deleted && t.type === 'Repayment' && t.principal_applied > 0);
-
-                  // Build entries from ACTUAL transactions only (no virtual rows)
+                  // Build entries from disbursement transactions only
                   // First disbursement is "Initial Disbursement", rest are "Additional Drawdown"
                   const disbursementEntries = disbursementTransactions.map((t, index) => ({
                     id: t.id,
                     date: new Date(t.date),
-                    type: 'credit',
                     description: index === 0 ? 'Initial Disbursement' : 'Additional Drawdown',
                     amount: t.amount,
                     notes: t.notes || (index === 0 ? 'Loan originated' : '')
                   }));
 
-                  const repaymentEntries = repaymentTransactions.map(t => ({
-                    id: t.id,
-                    date: new Date(t.date),
-                    type: 'debit',
-                    description: 'Capital Repayment',
-                    amount: t.principal_applied,
-                    notes: t.notes || ''
-                  }));
-
-                  const allEntries = [...disbursementEntries, ...repaymentEntries];
-
                   // Sort based on selection
-                  const sortedEntries = [...allEntries].sort((a, b) => {
+                  const sortedEntries = [...disbursementEntries].sort((a, b) => {
                     switch (disbursementSort) {
                       case 'date-asc': return a.date - b.date;
                       case 'date-desc': return b.date - a.date;
@@ -1240,76 +1240,96 @@ export default function LoanDetails() {
                     }
                   });
 
-                  // Calculate running balance (always in date order for balance)
-                  const dateOrderedEntries = [...allEntries].sort((a, b) => a.date - b.date);
+                  // Calculate running balance (in date order)
+                  const dateOrderedEntries = [...disbursementEntries].sort((a, b) => a.date - b.date);
                   let runningBalance = 0;
                   const balanceMap = {};
                   dateOrderedEntries.forEach(entry => {
-                    if (entry.type === 'credit') {
-                      runningBalance += entry.amount;
-                    } else {
-                      runningBalance -= entry.amount;
-                    }
+                    runningBalance += entry.amount;
                     balanceMap[entry.id] = runningBalance;
                   });
 
-                  const totalCredits = allEntries.filter(e => e.type === 'credit').reduce((sum, e) => sum + e.amount, 0);
-                  const totalDebits = allEntries.filter(e => e.type === 'debit').reduce((sum, e) => sum + e.amount, 0);
-                  const netBalance = totalCredits - totalDebits;
+                  const totalDisbursed = disbursementEntries.reduce((sum, e) => sum + e.amount, 0);
+
+                  // Toggle select all
+                  const allSelected = disbursementEntries.length > 0 && disbursementEntries.every(e => selectedDisbursements.has(e.id));
+                  const someSelected = disbursementEntries.some(e => selectedDisbursements.has(e.id));
+
+                  const handleSelectAll = () => {
+                    if (allSelected) {
+                      setSelectedDisbursements(new Set());
+                    } else {
+                      setSelectedDisbursements(new Set(disbursementEntries.map(e => e.id)));
+                    }
+                  };
+
+                  const handleSelectOne = (id) => {
+                    const newSelected = new Set(selectedDisbursements);
+                    if (newSelected.has(id)) {
+                      newSelected.delete(id);
+                    } else {
+                      newSelected.add(id);
+                    }
+                    setSelectedDisbursements(newSelected);
+                  };
 
                   return (
                     <>
-                      <div className="grid grid-cols-3 gap-3 mb-4 p-3 bg-slate-50 rounded-lg">
+                      <div className="grid grid-cols-2 gap-3 mb-4 p-3 bg-slate-50 rounded-lg">
                         <div>
-                          <p className="text-[10px] text-slate-500 mb-0.5">Total Credits (Disbursed)</p>
-                          <p className="text-sm font-bold text-emerald-600">{formatCurrency(totalCredits)}</p>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Total Disbursed</p>
+                          <p className="text-sm font-bold text-emerald-600">{formatCurrency(totalDisbursed)}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] text-slate-500 mb-0.5">Total Debits (Repaid)</p>
-                          <p className="text-sm font-bold text-red-600">{formatCurrency(totalDebits)}</p>
-                        </div>
-                        <div>
-                          <p className="text-[10px] text-slate-500 mb-0.5">Principal Outstanding</p>
-                          <p className="text-sm font-bold text-slate-900">{formatCurrency(netBalance)}</p>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Number of Disbursements</p>
+                          <p className="text-sm font-bold text-slate-900">{disbursementEntries.length}</p>
                         </div>
                       </div>
 
                       {sortedEntries.length === 0 ? (
                         <div className="text-center py-12 text-slate-500">
-                          <FileText className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-                          <p>No capital movements yet</p>
+                          <Banknote className="w-12 h-12 mx-auto mb-3 text-slate-300" />
+                          <p>No disbursements yet</p>
                         </div>
                       ) : (
                         <div className="overflow-x-auto">
                           <table className="w-full">
                             <thead className="bg-slate-50 border-b border-slate-200">
                               <tr>
+                                <th className="w-8 py-1 px-2">
+                                  <Checkbox
+                                    checked={allSelected}
+                                    onCheckedChange={handleSelectAll}
+                                    className={someSelected && !allSelected ? 'data-[state=checked]:bg-slate-400' : ''}
+                                  />
+                                </th>
                                 <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Date</th>
-                                <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Type</th>
                                 <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Description</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-emerald-700">Credit</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-red-700">Debit</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Balance</th>
+                                <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Notes</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-emerald-700">Amount</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Running Total</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
                               {sortedEntries.map((entry) => (
-                                <tr key={entry.id} className="hover:bg-slate-50">
-                                  <td className="py-1 px-2 text-xs">{format(entry.date, 'dd/MM/yy')}</td>
+                                <tr key={entry.id} className={`hover:bg-slate-50 ${selectedDisbursements.has(entry.id) ? 'bg-blue-50' : ''}`}>
                                   <td className="py-1 px-2">
-                                    <Badge variant={entry.type === 'credit' ? 'default' : 'destructive'} className="text-[10px] px-1.5 py-0">
-                                      {entry.type === 'credit' ? 'Credit' : 'Debit'}
+                                    <Checkbox
+                                      checked={selectedDisbursements.has(entry.id)}
+                                      onCheckedChange={() => handleSelectOne(entry.id)}
+                                    />
+                                  </td>
+                                  <td className="py-1 px-2 text-xs">{format(entry.date, 'dd/MM/yy')}</td>
+                                  <td className="py-1 px-2 text-xs">
+                                    <Badge variant="default" className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                                      {entry.description}
                                     </Badge>
                                   </td>
-                                  <td className="py-1 px-2 text-xs">
-                                    {entry.description}
-                                    {entry.notes && <span className="text-slate-400 ml-1 text-[10px]">({entry.notes})</span>}
+                                  <td className="py-1 px-2 text-xs text-slate-500">
+                                    {entry.notes || '-'}
                                   </td>
                                   <td className="py-1 px-2 text-xs text-emerald-600 text-right font-medium">
-                                    {entry.type === 'credit' ? formatCurrency(entry.amount) : '-'}
-                                  </td>
-                                  <td className="py-1 px-2 text-xs text-red-600 text-right font-medium">
-                                    {entry.type === 'debit' ? formatCurrency(entry.amount) : '-'}
+                                    {formatCurrency(entry.amount)}
                                   </td>
                                   <td className="py-1 px-2 text-xs text-slate-700 text-right font-semibold">
                                     {formatCurrency(balanceMap[entry.id])}
@@ -1735,6 +1755,87 @@ export default function LoanDetails() {
                   <>
                     <Trash2 className="w-4 h-4 mr-2" />
                     Delete Transaction
+                  </>
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete Disbursements Dialog */}
+        <AlertDialog open={deleteDisbursementsDialogOpen} onOpenChange={(open) => {
+          setDeleteDisbursementsDialogOpen(open);
+          if (!open) {
+            setIsDeletingDisbursements(false);
+          }
+        }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                <Trash2 className="w-5 h-5" />
+                Delete {selectedDisbursements.size} Disbursement{selectedDisbursements.size !== 1 ? 's' : ''}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete the selected disbursement transactions. This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            <div className="py-2">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
+                  <div className="text-sm">
+                    <p className="font-medium text-amber-800">Warning</p>
+                    <p className="text-amber-700 mt-1">
+                      Deleting disbursements will affect the loan's total principal amount and may impact related calculations.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeletingDisbursements}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  setIsDeletingDisbursements(true);
+                  toast.loading(`Deleting ${selectedDisbursements.size} disbursement(s)...`, { id: 'delete-disbursements' });
+
+                  try {
+                    // Delete each selected disbursement
+                    for (const txId of selectedDisbursements) {
+                      await api.entities.Transaction.delete(txId);
+                    }
+
+                    // Refresh data
+                    await Promise.all([
+                      queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+                      queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
+                      queryClient.invalidateQueries({ queryKey: ['loans'] })
+                    ]);
+
+                    toast.success(`Deleted ${selectedDisbursements.size} disbursement(s)`, { id: 'delete-disbursements' });
+                    setSelectedDisbursements(new Set());
+                    setDeleteDisbursementsDialogOpen(false);
+                  } catch (error) {
+                    console.error('Failed to delete disbursements:', error);
+                    toast.error('Failed to delete disbursements', { id: 'delete-disbursements' });
+                  } finally {
+                    setIsDeletingDisbursements(false);
+                  }
+                }}
+                disabled={isDeletingDisbursements}
+                className="bg-red-600 hover:bg-red-700 disabled:opacity-50"
+              >
+                {isDeletingDisbursements ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete {selectedDisbursements.size} Disbursement{selectedDisbursements.size !== 1 ? 's' : ''}
                   </>
                 )}
               </AlertDialogAction>

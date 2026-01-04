@@ -2098,25 +2098,49 @@ export default function BankReconciliation() {
   const handleReconcile = async () => {
     if (!selectedEntry) return;
 
-    // Handle grouped match from review suggestion (e.g., multiple loan repayments summing to bank amount)
-    if (reviewingSuggestion?.matchMode === 'match_group' && reviewingSuggestion.existingTransactions) {
+    // Handle grouped match from review suggestion (e.g., multiple loan repayments or investor withdrawals)
+    if (reviewingSuggestion?.matchMode === 'match_group' && (reviewingSuggestion.existingTransactions || reviewingSuggestion.existingInterestEntries)) {
       setIsReconciling(true);
       try {
-        const txGroup = reviewingSuggestion.existingTransactions;
         const amount = Math.abs(selectedEntry.amount);
+        const isInvestorType = reviewingSuggestion.type === 'investor_withdrawal' ||
+                               reviewingSuggestion.type === 'investor_credit' ||
+                               reviewingSuggestion.type === 'interest_withdrawal';
+        const isLoanType = reviewingSuggestion.type === 'loan_repayment' || reviewingSuggestion.type === 'loan_disbursement';
 
-        // Create a reconciliation entry for each transaction in the group
-        for (const tx of txGroup) {
-          await api.entities.ReconciliationEntry.create({
-            bank_statement_id: selectedEntry.id,
-            loan_transaction_id: tx.id,
-            investor_transaction_id: null,
-            expense_id: null,
-            amount: parseFloat(tx.amount) || 0,
-            reconciliation_type: 'loan_repayment',
-            notes: `Grouped match: ${txGroup.length} repayments totaling ${formatCurrency(amount)}`,
-            was_created: false
-          });
+        // Handle investor/capital transactions if present
+        if (reviewingSuggestion.existingTransactions) {
+          const txGroup = reviewingSuggestion.existingTransactions.filter(tx => !tx.is_deleted);
+
+          for (const tx of txGroup) {
+            await api.entities.ReconciliationEntry.create({
+              bank_statement_id: selectedEntry.id,
+              loan_transaction_id: isLoanType ? tx.id : null,
+              investor_transaction_id: isInvestorType ? tx.id : null,
+              expense_id: null,
+              amount: parseFloat(tx.amount) || 0,
+              reconciliation_type: reviewingSuggestion.type,
+              notes: `Grouped match: ${formatCurrency(amount)}`,
+              was_created: false
+            });
+          }
+        }
+
+        // Handle interest ledger entries if present
+        if (reviewingSuggestion.existingInterestEntries) {
+          for (const interest of reviewingSuggestion.existingInterestEntries) {
+            await api.entities.ReconciliationEntry.create({
+              bank_statement_id: selectedEntry.id,
+              loan_transaction_id: null,
+              investor_transaction_id: null,
+              expense_id: null,
+              interest_id: interest.id,
+              amount: parseFloat(interest.amount) || 0,
+              reconciliation_type: 'interest_withdrawal',
+              notes: `Grouped interest match: ${formatCurrency(amount)}`,
+              was_created: false
+            });
+          }
         }
 
         // Mark bank statement as reconciled
@@ -2126,12 +2150,14 @@ export default function BankReconciliation() {
         });
 
         // Log the grouped match reconciliation
+        const txCount = (reviewingSuggestion.existingTransactions?.length || 0) +
+                        (reviewingSuggestion.existingInterestEntries?.length || 0);
         logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
           bank_statement_id: selectedEntry.id,
           description: selectedEntry.description,
           amount: amount,
-          transaction_count: txGroup.length,
-          match_type: 'grouped_repayments'
+          transaction_count: txCount,
+          match_type: isInvestorType ? 'grouped_investor' : 'grouped_repayments'
         });
 
         // Refresh data
@@ -2229,6 +2255,12 @@ export default function BankReconciliation() {
       let interestId = null;
 
       if (matchMode === 'match' && selectedExistingTx) {
+        // Check if transaction has been deleted
+        if (selectedExistingTx.is_deleted) {
+          alert('Error: This transaction has been deleted and cannot be matched');
+          setIsReconciling(false);
+          return;
+        }
         if (reconciliationType === 'loan_repayment' || reconciliationType === 'loan_disbursement') {
           transactionId = selectedExistingTx.id;
         } else if (reconciliationType.startsWith('investor_')) {
@@ -2863,6 +2895,11 @@ export default function BankReconciliation() {
         // If matching to existing transaction, just link it
         if (suggestion.matchMode === 'match') {
           if (suggestion.existingTransaction) {
+            // Skip if transaction has been deleted
+            if (suggestion.existingTransaction.is_deleted) {
+              failed++;
+              continue;
+            }
             if (suggestion.type === 'loan_repayment' || suggestion.type === 'loan_disbursement') {
               transactionId = suggestion.existingTransaction.id;
             } else if (suggestion.type.startsWith('investor_')) {
@@ -2873,7 +2910,12 @@ export default function BankReconciliation() {
           }
         } else if (suggestion.matchMode === 'match_group' && suggestion.existingTransactions) {
           // Handle grouped matches (multiple transactions summing to bank amount)
-          const txGroup = suggestion.existingTransactions;
+          // Filter out any deleted transactions
+          const txGroup = suggestion.existingTransactions.filter(tx => !tx.is_deleted);
+          if (txGroup.length === 0) {
+            failed++;
+            continue; // Skip - all transactions in group were deleted
+          }
 
           // Create a reconciliation entry for each transaction in the group
           for (const tx of txGroup) {
@@ -3047,6 +3089,10 @@ export default function BankReconciliation() {
         // Link to existing single transaction
         if (suggestion.existingTransaction) {
           const tx = suggestion.existingTransaction;
+          // Skip if transaction has been deleted
+          if (tx.is_deleted) {
+            return { success: false, error: 'Transaction has been deleted' };
+          }
           if (suggestion.type === 'loan_repayment' || suggestion.type === 'loan_disbursement') {
             transactionId = tx.id;
           } else if (suggestion.type.startsWith('investor_')) {
@@ -3063,7 +3109,8 @@ export default function BankReconciliation() {
 
         if (suggestion.existingTransactions) {
           // Grouped loan repayments or investor transactions
-          const txGroup = suggestion.existingTransactions;
+          // Filter out any deleted transactions
+          const txGroup = suggestion.existingTransactions.filter(tx => !tx.is_deleted);
           const isLoanTx = suggestion.type === 'loan_repayment' || suggestion.type === 'loan_disbursement';
 
           for (const tx of txGroup) {
@@ -4355,94 +4402,6 @@ export default function BankReconciliation() {
                                   {entry.description || '-'}
                                 </p>
                               </button>
-                              {/* Inline expense type - same line as description */}
-                              {showExpenseTypeDropdown && (
-                                (() => {
-                                  const expenseSuggestion = expenseTypeSuggestions.get(entry.id);
-                                  const currentValue = entryExpenseTypes.get(entry.id) || '';
-                                  const selectedType = expenseTypes.find(t => t.id === currentValue);
-
-                                  return (
-                                    <Popover>
-                                      <PopoverTrigger asChild>
-                                        <button className="flex-shrink-0 flex items-center gap-1 text-xs hover:underline cursor-pointer">
-                                          <span className="text-slate-300">·</span>
-                                          {selectedType ? (
-                                            <>
-                                              <Tag className="w-3 h-3 text-amber-600" />
-                                              <span className="text-amber-700">{selectedType.name}</span>
-                                            </>
-                                          ) : expenseSuggestion ? (
-                                            <>
-                                              <Sparkles className="w-3 h-3 text-purple-500" />
-                                              <span className="text-purple-600">{expenseSuggestion.expenseTypeName}?</span>
-                                            </>
-                                          ) : (
-                                            <span className="text-slate-400">+ type</span>
-                                          )}
-                                        </button>
-                                      </PopoverTrigger>
-                                      <PopoverContent className="w-48 p-1" align="start">
-                                        <div className="max-h-48 overflow-y-auto">
-                                          {expenseSuggestion && (
-                                            <>
-                                              <button
-                                                onClick={() => setEntryExpenseType(entry.id, expenseSuggestion.expenseTypeId)}
-                                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-purple-50 flex items-center gap-1.5 bg-purple-50/50"
-                                              >
-                                                <Sparkles className="w-3 h-3 text-purple-600 flex-shrink-0" />
-                                                <span className="flex-1 text-purple-900">{expenseSuggestion.expenseTypeName}</span>
-                                                <span className="text-purple-500">{Math.round(expenseSuggestion.confidence * 100)}%</span>
-                                              </button>
-                                              <div className="border-b border-slate-100 my-1" />
-                                            </>
-                                          )}
-                                          {expenseTypes
-                                            .filter(type => !expenseSuggestion || type.id !== expenseSuggestion.expenseTypeId)
-                                            .map(type => (
-                                              <button
-                                                key={type.id}
-                                                onClick={() => setEntryExpenseType(entry.id, type.id)}
-                                                className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-slate-100 ${currentValue === type.id ? 'bg-slate-100 font-medium' : ''}`}
-                                              >
-                                                {type.name}
-                                              </button>
-                                            ))
-                                          }
-                                          {currentValue && (
-                                            <>
-                                              <div className="border-t border-slate-100 mt-1 pt-1" />
-                                              <button
-                                                onClick={() => setEntryExpenseType(entry.id, null)}
-                                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-red-50 text-red-600"
-                                              >
-                                                Clear
-                                              </button>
-                                            </>
-                                          )}
-                                        </div>
-                                      </PopoverContent>
-                                    </Popover>
-                                  );
-                                })()
-                              )}
-                              {/* Inline other income - same line as description */}
-                              {showOtherIncomeCheckbox && (
-                                <button
-                                  onClick={() => toggleEntryOtherIncome(entry.id, !entryOtherIncome.has(entry.id))}
-                                  className="flex-shrink-0 flex items-center gap-1 text-xs hover:underline cursor-pointer"
-                                >
-                                  <span className="text-slate-300">·</span>
-                                  {entryOtherIncome.has(entry.id) ? (
-                                    <>
-                                      <Coins className="w-3 h-3 text-emerald-600" />
-                                      <span className="text-emerald-700">Other Income</span>
-                                    </>
-                                  ) : (
-                                    <span className="text-slate-400">+ income</span>
-                                  )}
-                                </button>
-                              )}
                             </div>
                             <div className="flex items-center gap-1 min-w-0 overflow-hidden">
                               <span className="text-xs text-slate-400 shrink-0">{entry.bank_source}</span>
@@ -4578,6 +4537,97 @@ export default function BankReconciliation() {
                                     </div>
                                   );
                                 }
+                              }
+
+                              // For unreconciled debits without high-confidence suggestion, show expense type selector
+                              if (showExpenseTypeDropdown) {
+                                const expenseSuggestion = expenseTypeSuggestions.get(entry.id);
+                                const currentValue = entryExpenseTypes.get(entry.id) || '';
+                                const selectedType = expenseTypes.find(t => t.id === currentValue);
+
+                                return (
+                                  <div className="flex items-center gap-1">
+                                    <span className="text-xs text-amber-600 font-medium">+ Expense</span>
+                                    <Popover>
+                                      <PopoverTrigger asChild>
+                                        <button className="flex items-center gap-1 text-xs hover:underline cursor-pointer">
+                                          {selectedType ? (
+                                            <>
+                                              <Tag className="w-3 h-3 text-amber-600" />
+                                              <span className="text-amber-700">{selectedType.name}</span>
+                                            </>
+                                          ) : expenseSuggestion ? (
+                                            <>
+                                              <Sparkles className="w-3 h-3 text-purple-500" />
+                                              <span className="text-purple-600">{expenseSuggestion.expenseTypeName}?</span>
+                                            </>
+                                          ) : (
+                                            <span className="text-slate-400">+ type</span>
+                                          )}
+                                        </button>
+                                      </PopoverTrigger>
+                                      <PopoverContent className="w-48 p-1" align="start">
+                                        <div className="max-h-48 overflow-y-auto">
+                                          {expenseSuggestion && (
+                                            <>
+                                              <button
+                                                onClick={() => setEntryExpenseType(entry.id, expenseSuggestion.expenseTypeId)}
+                                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-purple-50 flex items-center gap-1.5 bg-purple-50/50"
+                                              >
+                                                <Sparkles className="w-3 h-3 text-purple-600 flex-shrink-0" />
+                                                <span className="flex-1 text-purple-900">{expenseSuggestion.expenseTypeName}</span>
+                                                <span className="text-purple-500">{Math.round(expenseSuggestion.confidence * 100)}%</span>
+                                              </button>
+                                              <div className="border-b border-slate-100 my-1" />
+                                            </>
+                                          )}
+                                          {expenseTypes
+                                            .filter(type => !expenseSuggestion || type.id !== expenseSuggestion.expenseTypeId)
+                                            .map(type => (
+                                              <button
+                                                key={type.id}
+                                                onClick={() => setEntryExpenseType(entry.id, type.id)}
+                                                className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-slate-100 ${currentValue === type.id ? 'bg-slate-100 font-medium' : ''}`}
+                                              >
+                                                {type.name}
+                                              </button>
+                                            ))
+                                          }
+                                          {currentValue && (
+                                            <>
+                                              <div className="border-t border-slate-100 mt-1 pt-1" />
+                                              <button
+                                                onClick={() => setEntryExpenseType(entry.id, null)}
+                                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-red-50 text-red-600"
+                                              >
+                                                Clear
+                                              </button>
+                                            </>
+                                          )}
+                                        </div>
+                                      </PopoverContent>
+                                    </Popover>
+                                  </div>
+                                );
+                              }
+
+                              // For unreconciled credits without high-confidence suggestion, show other income toggle
+                              if (showOtherIncomeCheckbox) {
+                                return (
+                                  <button
+                                    onClick={() => toggleEntryOtherIncome(entry.id, !entryOtherIncome.has(entry.id))}
+                                    className="flex items-center gap-1 text-xs hover:underline cursor-pointer"
+                                  >
+                                    {entryOtherIncome.has(entry.id) ? (
+                                      <>
+                                        <Coins className="w-3 h-3 text-emerald-600" />
+                                        <span className="text-emerald-700">Other Income</span>
+                                      </>
+                                    ) : (
+                                      <span className="text-slate-400">+ income</span>
+                                    )}
+                                  </button>
+                                );
                               }
 
                               return <span className="text-xs text-slate-400">-</span>;

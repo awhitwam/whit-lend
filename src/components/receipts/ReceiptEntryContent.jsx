@@ -327,6 +327,17 @@ export default function ReceiptEntryContent({
             const loan = loans.find(l => l.id === loanId);
             if (!loan) continue;
 
+            // Build reference from bank statement details if available (amount + description)
+            let txReference = row.reference;
+            if (row.bankStatementId) {
+              const bankEntry = bankEntries.find(e => e.id === row.bankStatementId);
+              if (bankEntry) {
+                const amount = Math.abs(parseFloat(bankEntry.amount) || 0).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
+                const desc = bankEntry.description || '';
+                txReference = `${amount} ${desc}`.trim() || row.reference;
+              }
+            }
+
             // Create the transaction
             const newTransaction = await api.entities.Transaction.create({
               loan_id: loanId,
@@ -337,7 +348,7 @@ export default function ReceiptEntryContent({
               principal_applied: principal,
               interest_applied: interest,
               fees_applied: fees,
-              reference: row.reference || null,
+              reference: txReference || null,
               notes: alloc.description || null
             });
 

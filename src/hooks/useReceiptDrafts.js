@@ -98,6 +98,13 @@ export function useReceiptDrafts() {
         const allocations = draft.allocations || {};
         const transactionIds = [];
 
+        // Get bank statement details if linked
+        let bankEntry = null;
+        if (draft.bank_statement_id) {
+          const [entry] = await api.entities.BankStatement.filter({ id: draft.bank_statement_id });
+          bankEntry = entry;
+        }
+
         // Create transaction for each loan allocation
         for (const [loanId, allocation] of Object.entries(allocations)) {
           const principal = parseFloat(allocation.principal) || 0;
@@ -111,6 +118,14 @@ export function useReceiptDrafts() {
           const [loan] = await api.entities.Loan.filter({ id: loanId });
           if (!loan) continue;
 
+          // Build reference from bank statement details if available (amount + description)
+          let txReference = draft.reference;
+          if (bankEntry) {
+            const amount = Math.abs(parseFloat(bankEntry.amount) || 0).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
+            const desc = bankEntry.description || '';
+            txReference = `${amount} ${desc}`.trim() || draft.reference;
+          }
+
           // Create the transaction
           const transaction = await api.entities.Transaction.create({
             loan_id: loanId,
@@ -121,7 +136,8 @@ export function useReceiptDrafts() {
             principal_applied: principal,
             interest_applied: interest,
             fees_applied: fees,
-            reference: draft.reference || null
+            reference: txReference || null,
+            notes: allocation.description || null
           });
 
           // Audit log: transaction creation
@@ -136,6 +152,7 @@ export function useReceiptDrafts() {
               interest_applied: interest,
               fees_applied: fees,
               date: draft.receipt_date,
+              notes: allocation.description,
               borrower_id: loan.borrower_id
             }
           );
