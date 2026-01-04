@@ -28,6 +28,7 @@ import {
   AlertCircle as AlertCircleIcon,
   Edit,
   MoreVertical,
+  MoreHorizontal,
   Repeat,
   Download,
   ChevronLeft,
@@ -37,7 +38,8 @@ import {
   Shield,
   Zap,
   Coins,
-  Link2
+  Link2,
+  Receipt
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -65,6 +67,7 @@ import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
 import ImportRestructureModal from '@/components/loan/ImportRestructureModal';
+import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 
@@ -91,6 +94,10 @@ export default function LoanDetails() {
   const [disbursementSort, setDisbursementSort] = useState('date-desc');
   const [activeTab, setActiveTab] = useState('overview');
   const [isImportRestructureOpen, setIsImportRestructureOpen] = useState(false);
+  const [isReceiptDialogOpen, setIsReceiptDialogOpen] = useState(false);
+  const [deleteTransactionDialogOpen, setDeleteTransactionDialogOpen] = useState(false);
+  const [deleteTransactionTarget, setDeleteTransactionTarget] = useState(null);
+  const [deleteTransactionReason, setDeleteTransactionReason] = useState('');
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -276,6 +283,34 @@ export default function LoanDetails() {
       toast.loading('Deleting transaction...', { id: 'delete-transaction' });
       const transaction = transactions.find(t => t.id === transactionId);
 
+      // Handle reconciliation cleanup - unreconcile any linked bank statements
+      try {
+        const reconEntries = await api.entities.ReconciliationEntry.filter({
+          loan_transaction_id: transactionId
+        });
+
+        for (const entry of reconEntries) {
+          const bankStatementId = entry.bank_statement_id;
+
+          // Mark bank statement as unreconciled
+          await api.entities.BankStatement.update(bankStatementId, {
+            is_reconciled: false,
+            reconciled_at: null
+          });
+
+          // Delete ALL reconciliation entries for this bank statement
+          const allEntriesForBank = await api.entities.ReconciliationEntry.filter({
+            bank_statement_id: bankStatementId
+          });
+          for (const e of allEntriesForBank) {
+            await api.entities.ReconciliationEntry.delete(e.id);
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to clean up reconciliation entries:', err);
+        // Continue with delete even if reconciliation cleanup fails
+      }
+
       // Mark transaction as deleted (audit trail)
       await api.entities.Transaction.update(transactionId, {
         is_deleted: true,
@@ -286,11 +321,11 @@ export default function LoanDetails() {
 
       // Log transaction deletion to audit trail
       await logTransactionEvent(AuditAction.TRANSACTION_DELETE, transaction, loan, {
-        reason,
-        deleted_by: user?.email || 'unknown',
+        transaction_date: transaction.date,
         amount: transaction.amount,
         principal_applied: transaction.principal_applied,
-        interest_applied: transaction.interest_applied
+        interest_applied: transaction.interest_applied,
+        reason
       });
       
       // Reverse the transaction effects
@@ -348,7 +383,14 @@ export default function LoanDetails() {
       toast.loading('Updating loan status...', { id: 'update-status' });
       return api.entities.Loan.update(loanId, { status });
     },
-    onSuccess: async () => {
+    onSuccess: async (_, newStatus) => {
+      // Audit log: status change
+      await logLoanEvent(
+        AuditAction.LOAN_UPDATE,
+        { id: loanId, loan_number: loan.loan_number },
+        { status: newStatus },
+        { status: loan.status }
+      );
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
         queryClient.invalidateQueries({ queryKey: ['loans'] })
@@ -366,6 +408,13 @@ export default function LoanDetails() {
       return api.entities.Loan.update(loanId, { auto_extend: !loan.auto_extend });
     },
     onSuccess: async () => {
+      // Audit log: auto-extend toggle
+      await logLoanEvent(
+        AuditAction.LOAN_UPDATE,
+        { id: loanId, loan_number: loan.loan_number },
+        { auto_extend: !loan.auto_extend },
+        { auto_extend: loan.auto_extend }
+      );
       await queryClient.refetchQueries({ queryKey: ['loan', loanId] });
       toast.success(`Auto-extend ${loan.auto_extend ? 'disabled' : 'enabled'}`, { id: 'auto-extend' });
     },
@@ -428,6 +477,12 @@ export default function LoanDetails() {
       });
     },
     onSuccess: async () => {
+      // Audit log: schedule regeneration
+      await logLoanEvent(
+        AuditAction.LOAN_UPDATE,
+        { id: loanId, loan_number: loan.loan_number },
+        { action: 'schedule_regeneration' }
+      );
       setProcessingMessage('Refreshing data...');
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
@@ -725,21 +780,21 @@ export default function LoanDetails() {
                 )}
                 {loan.status === 'Live' && (
                   <>
-                    <Button 
-                      size="sm" 
+                    <Button
+                      size="sm"
                       variant="secondary"
                       onClick={() => setIsSettleOpen(true)}
                       className="h-7 text-xs"
                     >
                       Settle
                     </Button>
-                    <Button 
-                      size="sm" 
+                    <Button
+                      size="sm"
+                      onClick={() => setIsReceiptDialogOpen(true)}
                       className="bg-emerald-600 hover:bg-emerald-700 h-7 text-xs"
-                      onClick={() => setIsPaymentOpen(true)}
                     >
-                      <DollarSign className="w-3 h-3 mr-1" />
-                      Payment
+                      <Receipt className="w-3 h-3 mr-1" />
+                      Receipt
                     </Button>
                   </>
                 )}
@@ -959,13 +1014,13 @@ export default function LoanDetails() {
         </Card>
 
         {/* Tabs for different views */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex flex-col flex-1 overflow-hidden">
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
           <TabsList className="flex-shrink-0">
             <TabsTrigger value="overview">
               {isFixedCharge ? 'Schedule' : 'Overview'}
             </TabsTrigger>
             <TabsTrigger value="repayments">
-              {isFixedCharge ? 'Payments' : isIrregularIncome ? 'Income Received' : 'Repayments'}
+              {isFixedCharge ? 'Payments' : isIrregularIncome ? 'Income Received' : 'Receipts'}
               <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}</Badge>
             </TabsTrigger>
             {!isFixedCharge && (
@@ -993,11 +1048,11 @@ export default function LoanDetails() {
             <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} />
           </TabsContent>
 
-          <TabsContent value="repayments" className="flex-1 overflow-auto mt-4">
+          <TabsContent value="repayments" className="flex-1 min-h-0 overflow-y-auto mt-4">
             <Card>
-              <CardHeader>
+              <CardHeader className="py-3">
                 <div className="flex items-center justify-between">
-                  <CardTitle>Repayment History</CardTitle>
+                  <CardTitle className="text-base">Receipt History</CardTitle>
                   <Select 
                     defaultValue="date-desc"
                     onValueChange={(value) => {
@@ -1020,7 +1075,7 @@ export default function LoanDetails() {
                   </Select>
                 </div>
               </CardHeader>
-              <CardContent>
+              <CardContent className="pt-0">
                 {(() => {
                   const repayments = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
                   const totalAmount = repayments.reduce((sum, t) => sum + t.amount, 0);
@@ -1030,23 +1085,23 @@ export default function LoanDetails() {
 
                   return (
                     <>
-                      <div className={`grid ${totalFees > 0 ? 'grid-cols-4' : 'grid-cols-3'} gap-4 mb-6 p-4 bg-slate-50 rounded-lg`}>
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Total Repaid</p>
-                          <p className="text-xl font-bold text-slate-900">{formatCurrency(totalAmount)}</p>
+                      <div className={`flex flex-wrap items-center gap-4 mb-3 px-3 py-1.5 bg-slate-50 rounded text-sm`}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-500">Total:</span>
+                          <span className="font-bold text-slate-900">{formatCurrency(totalAmount)}</span>
                         </div>
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Principal Repaid</p>
-                          <p className="text-xl font-bold text-emerald-600">{formatCurrency(totalPrincipal)}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-500">Principal:</span>
+                          <span className="font-bold text-emerald-600">{formatCurrency(totalPrincipal)}</span>
                         </div>
-                        <div>
-                          <p className="text-xs text-slate-500 mb-1">Interest Repaid</p>
-                          <p className="text-xl font-bold text-amber-600">{formatCurrency(totalInterest)}</p>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-slate-500">Interest:</span>
+                          <span className="font-bold text-amber-600">{formatCurrency(totalInterest)}</span>
                         </div>
                         {totalFees > 0 && (
-                          <div>
-                            <p className="text-xs text-slate-500 mb-1">Fees Repaid</p>
-                            <p className="text-xl font-bold text-purple-600">{formatCurrency(totalFees)}</p>
+                          <div className="flex items-center gap-1.5">
+                            <span className="text-slate-500">Fees:</span>
+                            <span className="font-bold text-purple-600">{formatCurrency(totalFees)}</span>
                           </div>
                         )}
                       </div>
@@ -1061,29 +1116,52 @@ export default function LoanDetails() {
                           <table className="w-full">
                             <thead className="bg-slate-50 border-b border-slate-200">
                               <tr>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Date</th>
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Reference</th>
-                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Amount</th>
-                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Principal</th>
-                                <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Interest</th>
+                                <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Reference</th>
+                                <th className="text-right py-2 px-3 text-xs font-semibold text-slate-700">Amount</th>
+                                <th className="text-right py-2 px-3 text-xs font-semibold text-slate-700">Principal</th>
+                                <th className="text-right py-2 px-3 text-xs font-semibold text-slate-700">Interest</th>
                                 {totalFees > 0 && (
-                                  <th className="text-right py-3 px-4 text-sm font-semibold text-slate-700">Fees</th>
+                                  <th className="text-right py-2 px-3 text-xs font-semibold text-slate-700">Fees</th>
                                 )}
-                                <th className="text-left py-3 px-4 text-sm font-semibold text-slate-700">Notes</th>
+                                <th className="text-left py-2 px-3 text-xs font-semibold text-slate-700">Notes</th>
+                                <th className="w-10"></th>
                               </tr>
                             </thead>
-                            <tbody className="divide-y divide-slate-200">
+                            <tbody className="divide-y divide-slate-100">
                               {repayments.map((tx) => (
                                 <tr key={tx.id} className="hover:bg-slate-50">
-                                  <td className="py-3 px-4 text-sm font-medium">{format(new Date(tx.date), 'dd/MM/yy')}</td>
-                                  <td className="py-3 px-4 text-sm text-slate-600">{tx.reference || '—'}</td>
-                                  <td className="py-3 px-4 text-sm font-semibold text-emerald-600 text-right">{formatCurrency(tx.amount)}</td>
-                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(tx.principal_applied || 0)}</td>
-                                  <td className="py-3 px-4 text-sm text-slate-600 text-right">{formatCurrency(tx.interest_applied || 0)}</td>
+                                  <td className="py-2 px-3 text-sm font-medium">{format(new Date(tx.date), 'dd/MM/yy')}</td>
+                                  <td className="py-2 px-3 text-sm text-slate-600">{tx.reference || '—'}</td>
+                                  <td className="py-2 px-3 text-sm font-semibold text-emerald-600 text-right">{formatCurrency(tx.amount)}</td>
+                                  <td className="py-2 px-3 text-sm text-slate-600 text-right">{formatCurrency(tx.principal_applied || 0)}</td>
+                                  <td className="py-2 px-3 text-sm text-slate-600 text-right">{formatCurrency(tx.interest_applied || 0)}</td>
                                   {totalFees > 0 && (
-                                    <td className="py-3 px-4 text-sm text-purple-600 text-right">{formatCurrency(tx.fees_applied || 0)}</td>
+                                    <td className="py-2 px-3 text-sm text-purple-600 text-right">{formatCurrency(tx.fees_applied || 0)}</td>
                                   )}
-                                  <td className="py-3 px-4 text-sm text-slate-500">{tx.notes || '—'}</td>
+                                  <td className="py-2 px-3 text-sm text-slate-500 max-w-[200px] truncate" title={tx.notes || ''}>{tx.notes || '—'}</td>
+                                  <td className="py-1 px-2">
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-7 w-7">
+                                          <MoreHorizontal className="w-4 h-4" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        <DropdownMenuItem
+                                          className="text-red-600"
+                                          onClick={() => {
+                                            setDeleteTransactionTarget(tx);
+                                            setDeleteTransactionReason('');
+                                            setDeleteTransactionDialogOpen(true);
+                                          }}
+                                        >
+                                          <Trash2 className="w-4 h-4 mr-2" />
+                                          Delete
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>
@@ -1382,6 +1460,23 @@ export default function LoanDetails() {
           }}
         />
 
+        {/* Receipt Entry Panel */}
+        <ReceiptEntryPanel
+          open={isReceiptDialogOpen}
+          onOpenChange={setIsReceiptDialogOpen}
+          mode="loan"
+          borrowerId={loan.borrower_id}
+          borrower={borrower}
+          loanId={loanId}
+          loan={loan}
+          onFileComplete={() => {
+            queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
+            queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
+            queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
+            setIsReceiptDialogOpen(false);
+          }}
+        />
+
         {/* Regenerate Schedule Dialog */}
         <AlertDialog open={isRegenerateDialogOpen} onOpenChange={setIsRegenerateDialogOpen}>
           <AlertDialogContent>
@@ -1546,6 +1641,102 @@ export default function LoanDetails() {
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete Loan
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete Transaction Dialog */}
+        <AlertDialog open={deleteTransactionDialogOpen} onOpenChange={(open) => {
+          setDeleteTransactionDialogOpen(open);
+          if (!open) {
+            setDeleteTransactionTarget(null);
+            setDeleteTransactionReason('');
+          }
+        }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                <Trash2 className="w-5 h-5" />
+                Delete Transaction
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This will delete the transaction and reverse its effects on the loan. Any linked bank reconciliation entries will also be removed.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            {deleteTransactionTarget && (
+              <div className="space-y-4 py-2">
+                <div className="bg-slate-50 rounded-lg p-3 text-sm">
+                  <div className="grid grid-cols-2 gap-2 text-xs">
+                    <div>
+                      <span className="text-slate-500">Date:</span>
+                      <span className="ml-1 font-medium">{format(new Date(deleteTransactionTarget.date), 'dd/MM/yyyy')}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Amount:</span>
+                      <span className="ml-1 font-mono font-semibold text-emerald-600">{formatCurrency(deleteTransactionTarget.amount)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Principal:</span>
+                      <span className="ml-1 font-mono">{formatCurrency(deleteTransactionTarget.principal_applied || 0)}</span>
+                    </div>
+                    <div>
+                      <span className="text-slate-500">Interest:</span>
+                      <span className="ml-1 font-mono">{formatCurrency(deleteTransactionTarget.interest_applied || 0)}</span>
+                    </div>
+                    {deleteTransactionTarget.reference && (
+                      <div className="col-span-2">
+                        <span className="text-slate-500">Reference:</span>
+                        <span className="ml-1">{deleteTransactionTarget.reference}</span>
+                      </div>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="tx-delete-reason" className="text-sm font-medium">
+                    Reason for Deletion <span className="text-red-500">*</span>
+                  </Label>
+                  <textarea
+                    id="tx-delete-reason"
+                    className="w-full min-h-[60px] px-3 py-2 text-sm border border-slate-300 rounded-md focus:outline-none focus:ring-2 focus:ring-red-500"
+                    placeholder="Enter reason for deleting this transaction..."
+                    value={deleteTransactionReason}
+                    onChange={(e) => setDeleteTransactionReason(e.target.value)}
+                  />
+                </div>
+              </div>
+            )}
+
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => {
+                  if (deleteTransactionTarget) {
+                    deleteTransactionMutation.mutate({
+                      transactionId: deleteTransactionTarget.id,
+                      reason: deleteTransactionReason
+                    });
+                    setDeleteTransactionDialogOpen(false);
+                    setDeleteTransactionTarget(null);
+                    setDeleteTransactionReason('');
+                  }
+                }}
+                disabled={!deleteTransactionReason.trim() || deleteTransactionMutation.isPending}
+                className="bg-red-600 hover:bg-red-700 disabled:opacity-50"
+              >
+                {deleteTransactionMutation.isPending ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete Transaction
+                  </>
+                )}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>

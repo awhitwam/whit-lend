@@ -1792,6 +1792,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                 <TooltipTrigger asChild>
                                   <span className="cursor-help">
                                     {row.description}
+                                    {row.transactions.length === 1 && row.transactions[0].notes && (
+                                      <span className="text-slate-500">: {row.transactions[0].notes}</span>
+                                    )}
                                   </span>
                                 </TooltipTrigger>
                                 <TooltipContent className="max-w-md">
@@ -1802,6 +1805,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                     <p>Interest Applied: {formatCurrency(row.interest)}</p>
                                     {row.transactions.length === 1 && row.transactions[0].reference && (
                                       <p>Reference: {row.transactions[0].reference}</p>
+                                    )}
+                                    {row.transactions.length === 1 && row.transactions[0].notes && (
+                                      <p>Notes: {row.transactions[0].notes}</p>
                                     )}
                                     {row.transactions.length > 1 && (
                                       <p className="text-slate-400">{row.transactions.length} transactions combined</p>

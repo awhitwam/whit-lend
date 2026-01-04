@@ -81,10 +81,13 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
       // Check if any borrower in group matches
       const matchingBorrowers = group.borrowers.filter(b => {
         const displayName = (b.business || `${b.first_name} ${b.last_name}`).toLowerCase();
+        const keywords = b.keywords || [];
+        const keywordMatch = keywords.some(k => k.toLowerCase().includes(search));
         return displayName.includes(search) ||
                b.phone?.includes(search) ||
                b.unique_number?.includes(search) ||
-               b.email?.toLowerCase().includes(search);
+               b.email?.toLowerCase().includes(search) ||
+               keywordMatch;
       });
 
       if (contactMatches || matchingBorrowers.length > 0) {

@@ -1,0 +1,343 @@
+Below is how the best loan-focused reconciliation systems work when bank transactions are the master, tailored to expenses, loan flows, and investor movements.
+
+1. First Principle (Loan Systems): Money Has Intent
+
+In a loan platform, every pound has a purpose.
+Reconciliation isn’t just “match or create” — it’s classifying financial intent.
+
+Each bank transaction must resolve to exactly one intent:
+
+Intent Category	Examples
+Operating expense	Legal fees, valuation, insurance
+Loan disbursement	Capital released to borrower
+Loan repayment	Principal + interest
+Interest-only payment	Interest accrual settlement
+Investor funding	Capital in
+Investor withdrawal	Capital out
+Investor interest	Yield payment
+Platform fee	Origination / servicing fees
+
+This intent drives ledger postings, balances, and compliance.
+
+2. Domain-Aware Matching (Not Generic Matching)
+2.1 Transaction Classification Comes Before Matching
+
+Best systems classify first, then match.
+
+Using:
+
+Credit vs debit
+
+Counterparty account
+
+Reference patterns (“LOAN 124”, “INT”, “DISB”)
+
+Amount structure (round vs fractional)
+
+Known payment calendars (monthly interest dates)
+
+Known investor accounts
+
+Result:
+
+“This looks like a loan repayment (92% confidence)”
+
+Only then does the system try to match to records.
+
+3. Matching Logic by Transaction Type
+3.1 Loan Disbursements (Capital Out)
+
+Bank → Loan System
+
+Typical pattern:
+
+Debit from platform account
+
+One-off
+
+Large, round amount
+
+Known borrower account
+
+Matching logic:
+
+Match to loan ID (explicit or inferred)
+
+Match on:
+
+Amount
+
+Borrower bank account
+
+Disbursement window
+
+UI outcome:
+
+Auto-link if loan exists
+
+Otherwise:
+“Create loan disbursement for Loan #124?”
+
+3.2 Loan Repayments (Principal + Interest)
+
+Repayments are the hardest and most critical.
+
+Best systems:
+
+Split one bank credit into:
+
+Principal
+
+Interest
+
+Fees (if applicable)
+
+Matching logic:
+
+Amount ≈ expected payment
+
+Date near schedule
+
+Borrower account match
+
+Allow tolerance for:
+
+Partial payments
+
+Overpayments
+
+Late payments
+
+UI best practice:
+
+Bank: £1,250.00 received
+→ Suggest:
+   Principal: £1,000
+   Interest:  £250
+
+
+User can adjust before confirming.
+
+3.3 Interest-Only Payments
+
+Recognised by:
+
+Small fractional amounts
+
+Regular cadence
+
+Reference keywords
+
+Matches accrued interest balance
+
+Best UX:
+
+Auto-allocate against accrued interest
+
+Flag if interest exceeds or falls short
+
+3.4 Expenses (Operating or Loan-Specific)
+
+Expenses can be:
+
+Platform-level
+
+Loan-level (valuation, legal)
+
+Matching logic:
+
+Merchant fingerprint
+
+Typical amount bands
+
+Known vendors
+
+VAT patterns
+
+UI:
+
+Suggest category + loan association
+
+One-click confirm
+
+Option to mark as capitalised vs expensed
+
+3.5 Investor Transactions
+
+These require identity certainty.
+
+Investor Funding (Credits In)
+
+Known investor account
+
+Reference token or investor ID
+
+Amount typically round
+
+System:
+
+Matches investor
+
+Creates or links funding record
+
+Flags unmatched funds immediately
+
+Investor Withdrawals / Interest Payments (Debits Out)
+
+Known destination account
+
+Known pay schedule
+
+UI:
+
+“Match to Investor #88 interest payment?”
+
+Prevents duplicate payouts
+
+4. Confidence Scoring Tailored to Loans
+
+Best systems weight domain signals higher than text similarity.
+
+Example scoring weights:
+
+Account identity: 40%
+
+Amount vs expected: 30%
+
+Date vs schedule: 20%
+
+Text similarity: 10%
+
+This avoids false matches that are catastrophic in lending.
+
+5. Reconciliation States (Loan-Specific)
+
+Each bank transaction moves through:
+
+State	Meaning
+Unclassified	Intent not yet known
+Classified	Expense / repayment / investor
+Matched	Linked to domain object
+Split	Allocated across ledgers
+Reconciled	Locked
+Exception	Requires investigation
+
+Exceptions are first-class citizens.
+
+6. UI: Designed for Financial Risk Reduction
+6.1 “Money Inbox” with Intent Badges
+
+Rows look like:
+
+£1,250  | Borrower Ltd | Likely: Repayment (92%)
+
+
+Badge colours:
+
+Green: auto-safe
+
+Amber: review
+
+Red: exception (unidentified funds)
+
+6.2 Split Editor Is Central (Not Hidden)
+
+For repayments:
+
+Inline splitter
+
+Live validation:
+
+Principal ≤ outstanding
+
+Interest ≤ accrued
+
+Balance impact preview
+
+This is where most errors are prevented.
+
+6.3 Loan-Centric Drilldown
+
+From any transaction:
+
+Jump to:
+
+Loan ledger
+
+Investor ledger
+
+Accrual history
+
+No searching.
+
+7. Guardrails (Non-Negotiable in Loan Systems)
+
+Best platforms enforce:
+
+No reconciliation if:
+
+Loan is closed
+
+Amount exceeds outstanding (without explicit overpayment handling)
+
+Warnings for:
+
+Early repayments
+
+Missed interest
+
+Unexpected investor flows
+
+The UI should slow the user down when risk exists.
+
+8. Audit & Compliance
+
+Every reconciliation stores:
+
+Classification confidence
+
+Matching rationale
+
+User overrides
+
+Ledger impact (before/after)
+
+Immutable bank reference
+
+This is essential for:
+
+FCA audits
+
+Investor reporting
+
+Dispute resolution
+
+9. What Best-in-Class Looks Like (Loan Context)
+
+Matching
+
+Intent-first classification
+
+Schedule-aware matching
+
+Split allocations
+
+Identity-based investor matching
+
+UI
+
+Inbox-driven
+
+Inline splitting
+
+Risk-aware confirmations
+
+Zero navigation loss
+
+Trust
+
+Bank as master
+
+Full audit trail
+
+Human override with guardrails

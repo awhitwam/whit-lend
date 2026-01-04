@@ -31,12 +31,14 @@ import {
   ArrowUpDown,
   ChevronRight,
   Eye,
-  EyeOff
+  EyeOff,
+  Receipt
 } from 'lucide-react';
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import BorrowerForm from '@/components/borrower/BorrowerForm';
 import BorrowerPaymentModal from '@/components/borrower/BorrowerPaymentModal';
+import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import { formatCurrency, applyManualPayment } from '@/components/loan/LoanCalculator';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -46,6 +48,7 @@ export default function BorrowerDetails() {
   const borrowerId = urlParams.get('id');
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
+  const [isReceiptDialogOpen, setIsReceiptDialogOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [showOnlyLive, setShowOnlyLive] = useState(true);
@@ -752,11 +755,11 @@ export default function BorrowerDetails() {
                 {loans.filter(l => l.status === 'Live' || l.status === 'Active').length > 0 && (
                   <Button
                     size="sm"
-                    onClick={() => setIsPaymentOpen(true)}
+                    onClick={() => setIsReceiptDialogOpen(true)}
                     className="bg-emerald-600 hover:bg-emerald-700"
                   >
-                    <DollarSign className="w-4 h-4 mr-2" />
-                    Record Payment
+                    <Receipt className="w-4 h-4 mr-2" />
+                    Receipt
                   </Button>
                 )}
                 <Button
@@ -1106,6 +1109,21 @@ export default function BorrowerDetails() {
           loans={loans}
           onSubmit={(data) => borrowerPaymentMutation.mutate(data)}
           isLoading={borrowerPaymentMutation.isPending || isProcessingPayment}
+        />
+
+        {/* Receipt Entry Panel */}
+        <ReceiptEntryPanel
+          open={isReceiptDialogOpen}
+          onOpenChange={setIsReceiptDialogOpen}
+          mode="borrower"
+          borrowerId={borrowerId}
+          borrower={borrower}
+          onFileComplete={() => {
+            queryClient.invalidateQueries({ queryKey: ['borrower-loans', borrowerId] });
+            queryClient.invalidateQueries({ queryKey: ['borrower-transactions', borrowerId] });
+            queryClient.invalidateQueries({ queryKey: ['loans'] });
+            setIsReceiptDialogOpen(false);
+          }}
         />
       </div>
     </div>

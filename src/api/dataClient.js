@@ -39,7 +39,10 @@ const tableMap = {
   // Other income
   OtherIncome: 'other_income',
   // Investor interest ledger
-  InvestorInterest: 'investor_interest'
+  InvestorInterest: 'investor_interest',
+  // Receipts module
+  ReceiptDraft: 'receipt_drafts',
+  BorrowerLoanPreference: 'borrower_loan_preferences'
 };
 
 // Tables that should have organization_id filter applied
@@ -69,7 +72,10 @@ const orgScopedTables = [
   // Other income
   'other_income',
   // Investor interest ledger
-  'investor_interest'
+  'investor_interest',
+  // Receipts module
+  'receipt_drafts',
+  'borrower_loan_preferences'
 ];
 
 // Map column names that differ between code and database

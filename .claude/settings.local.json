@@ -22,7 +22,8 @@
       "Bash(timeout 90 npx vite build:*)",
       "Bash(echo:*)",
       "Bash(npx supabase:*)",
-      "Bash(npx supabase sql:*)"
+      "Bash(npx supabase sql:*)",
+      "Bash(git grep:*)"
     ]
   }
 }

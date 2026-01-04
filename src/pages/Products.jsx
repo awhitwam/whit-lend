@@ -10,6 +10,7 @@ import { Plus, Package, MoreHorizontal, Edit, Trash2, TrendingUp, Clock, Copy, Z
 import ProductForm from '@/components/product/ProductForm';
 import EmptyState from '@/components/ui/EmptyState';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
+import { logProductEvent, AuditAction } from '@/lib/auditLog';
 
 export default function Products() {
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -22,16 +23,37 @@ export default function Products() {
   });
 
   const createMutation = useMutation({
-    mutationFn: (data) => api.entities.LoanProduct.create(data),
-    onSuccess: () => {
+    mutationFn: async (data) => {
+      const { _duplicatedFrom, ...productData } = data;
+      const newProduct = await api.entities.LoanProduct.create(productData);
+      return { newProduct, duplicatedFrom: _duplicatedFrom };
+    },
+    onSuccess: async ({ newProduct, duplicatedFrom }) => {
+      // Audit log: product creation or duplication
+      if (duplicatedFrom) {
+        await logProductEvent(AuditAction.PRODUCT_DUPLICATE, newProduct, {
+          name: newProduct.name,
+          duplicated_from_id: duplicatedFrom.id,
+          duplicated_from_name: duplicatedFrom.name
+        });
+      } else {
+        await logProductEvent(AuditAction.PRODUCT_CREATE, newProduct, {
+          name: newProduct.name,
+          interest_rate: newProduct.interest_rate,
+          term_months: newProduct.term_months,
+          repayment_type: newProduct.repayment_type
+        });
+      }
       queryClient.invalidateQueries({ queryKey: ['products'] });
       setIsFormOpen(false);
     }
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => api.entities.LoanProduct.update(id, data),
-    onSuccess: () => {
+    mutationFn: ({ id, data, previousData }) => api.entities.LoanProduct.update(id, data).then(result => ({ result, previousData })),
+    onSuccess: async ({ result: updatedProduct, previousData }) => {
+      // Audit log: product update
+      await logProductEvent(AuditAction.PRODUCT_UPDATE, updatedProduct, updatedProduct, previousData);
       queryClient.invalidateQueries({ queryKey: ['products'] });
       setIsFormOpen(false);
       setEditingProduct(null);
@@ -39,16 +61,28 @@ export default function Products() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: (id) => api.entities.LoanProduct.delete(id),
-    onSuccess: () => {
+    mutationFn: async (product) => {
+      await api.entities.LoanProduct.delete(product.id);
+      return product;
+    },
+    onSuccess: async (deletedProduct) => {
+      // Audit log: product deletion
+      await logProductEvent(AuditAction.PRODUCT_DELETE, deletedProduct, {
+        name: deletedProduct.name
+      });
       queryClient.invalidateQueries({ queryKey: ['products'] });
     }
   });
 
   const handleSubmit = (data) => {
-    if (editingProduct) {
-      updateMutation.mutate({ id: editingProduct.id, data });
+    if (editingProduct?.id) {
+      // Existing product being edited
+      updateMutation.mutate({ id: editingProduct.id, data, previousData: editingProduct });
+    } else if (editingProduct?._duplicatedFrom) {
+      // Duplicating a product
+      createMutation.mutate({ ...data, _duplicatedFrom: editingProduct._duplicatedFrom });
     } else {
+      // New product
       createMutation.mutate(data);
     }
   };
@@ -62,6 +96,7 @@ export default function Products() {
     const duplicatedProduct = {
       ...product,
       name: `${product.name} (Copy)`,
+      _duplicatedFrom: { id: product.id, name: product.name } // Track source for audit
     };
     delete duplicatedProduct.id;
     delete duplicatedProduct.created_date;
@@ -164,7 +199,7 @@ export default function Products() {
                           Duplicate
                         </DropdownMenuItem>
                         <DropdownMenuItem
-                          onClick={() => deleteMutation.mutate(product.id)}
+                          onClick={() => deleteMutation.mutate(product)}
                           className="text-red-600"
                         >
                           <Trash2 className="w-4 h-4 mr-2" />

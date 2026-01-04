@@ -14,11 +14,14 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
   const filteredBorrowers = borrowers.filter(b => {
     const displayName = (b.business || `${b.first_name} ${b.last_name}`).toLowerCase();
     const search = searchTerm.toLowerCase();
+    const keywords = b.keywords || [];
+    const keywordMatch = keywords.some(k => k.toLowerCase().includes(search));
     return displayName.includes(search) ||
            b.phone?.includes(search) ||
            b.unique_number?.includes(search) ||
            b.email?.toLowerCase().includes(search) ||
-           b.contact_email?.toLowerCase().includes(search);
+           b.contact_email?.toLowerCase().includes(search) ||
+           keywordMatch;
   });
 
   return (

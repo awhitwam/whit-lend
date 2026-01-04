@@ -4,7 +4,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2 } from 'lucide-react';
+import { Badge } from "@/components/ui/badge";
+import { Loader2, X, Plus } from 'lucide-react';
 
 export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }) {
   const [formData, setFormData] = useState({
@@ -21,8 +22,10 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
     zipcode: borrower?.zipcode || '',
     country: borrower?.country || '',
     id_number: borrower?.id_number || '',
-    status: borrower?.status || 'Active'
+    status: borrower?.status || 'Active',
+    keywords: borrower?.keywords || []
   });
+  const [newKeyword, setNewKeyword] = useState('');
 
   const handleSubmit = (e) => {
     e.preventDefault();
@@ -31,6 +34,31 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
 
   const handleChange = (field, value) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const addKeyword = () => {
+    const keyword = newKeyword.trim().toLowerCase();
+    if (keyword && !formData.keywords.includes(keyword)) {
+      setFormData(prev => ({
+        ...prev,
+        keywords: [...prev.keywords, keyword]
+      }));
+      setNewKeyword('');
+    }
+  };
+
+  const removeKeyword = (keywordToRemove) => {
+    setFormData(prev => ({
+      ...prev,
+      keywords: prev.keywords.filter(k => k !== keywordToRemove)
+    }));
+  };
+
+  const handleKeywordKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      addKeyword();
+    }
   };
 
   return (
@@ -189,6 +217,52 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
             </SelectContent>
           </Select>
         </div>
+      </div>
+
+      <div className="space-y-2">
+        <Label htmlFor="keywords">Keywords</Label>
+        <div className="flex gap-2">
+          <Input
+            id="keywords"
+            value={newKeyword}
+            onChange={(e) => setNewKeyword(e.target.value)}
+            onKeyDown={handleKeywordKeyDown}
+            placeholder="Add a keyword and press Enter"
+            className="flex-1"
+          />
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={addKeyword}
+            disabled={!newKeyword.trim()}
+          >
+            <Plus className="w-4 h-4" />
+          </Button>
+        </div>
+        <p className="text-xs text-slate-500">
+          Keywords help find this borrower in searches (e.g., nickname, company alias)
+        </p>
+        {formData.keywords.length > 0 && (
+          <div className="flex flex-wrap gap-2 mt-2">
+            {formData.keywords.map((keyword) => (
+              <Badge
+                key={keyword}
+                variant="secondary"
+                className="flex items-center gap-1 px-2 py-1"
+              >
+                {keyword}
+                <button
+                  type="button"
+                  onClick={() => removeKeyword(keyword)}
+                  className="ml-1 hover:text-red-600 focus:outline-none"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </Badge>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end gap-3 pt-4 border-t">

@@ -17,7 +17,8 @@ import { Checkbox } from "@/components/ui/checkbox";
 import {
   Upload, CheckCircle2, AlertCircle, Loader2, Search, FileCheck,
   ArrowUpRight, ArrowDownLeft, Check, Link2, Unlink,
-  Sparkles, Wand2, Zap, CheckSquare, Receipt, Coins, Tag, Plus, X
+  Sparkles, Wand2, Zap, CheckSquare, Receipt, Coins, Tag, Plus, X, Undo2,
+  ChevronUp, ChevronDown
 } from 'lucide-react';
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -83,6 +84,159 @@ function amountsMatch(amount1, amount2, tolerancePercent = 1) {
   return diff <= tolerance;
 }
 
+/**
+ * Check if a matchMode indicates matching to an existing transaction (vs creating new)
+ */
+function isMatchType(matchMode) {
+  return matchMode === 'match' || matchMode === 'match_group' || matchMode === 'grouped_disbursement';
+}
+
+/**
+ * Find subset of entries that sum to target amount (within 1% tolerance)
+ * mustIncludeId: the entry that must be in the subset
+ */
+function findSubsetSum(entries, targetAmount, mustIncludeId) {
+  const mustInclude = entries.find(e => e.id === mustIncludeId);
+  if (!mustInclude) return null;
+
+  const others = entries.filter(e => e.id !== mustIncludeId);
+  const mustIncludeAmount = Math.abs(mustInclude.amount);
+
+  // If just the must-include entry matches, not a grouped match
+  if (amountsMatch(mustIncludeAmount, targetAmount, 1)) return null;
+
+  // Try combinations of increasing size (prefer smaller groups)
+  for (let size = 1; size <= Math.min(others.length, 5); size++) {
+    const combo = findComboOfSize(others, size, targetAmount - mustIncludeAmount);
+    if (combo) {
+      return [mustInclude, ...combo];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Find combination of exactly `size` entries that sum to target
+ */
+function findComboOfSize(entries, size, target) {
+  if (size === 1) {
+    const match = entries.find(e => amountsMatch(Math.abs(e.amount), target, 1));
+    return match ? [match] : null;
+  }
+
+  // Recursive: try each entry as first element
+  for (let i = 0; i < entries.length - size + 1; i++) {
+    const first = entries[i];
+    const remaining = entries.slice(i + 1);
+    const subCombo = findComboOfSize(remaining, size - 1, target - Math.abs(first.amount));
+    if (subCombo) {
+      return [first, ...subCombo];
+    }
+  }
+
+  return null;
+}
+
+/**
+ * Check if two bank descriptions appear to be parts of the same transaction
+ * (e.g., "TOBIE HOLBROOK LOAN PART1" and "TOBIE HOLBROOK LOAN PART2")
+ */
+function descriptionsAreRelated(desc1, desc2) {
+  if (!desc1 || !desc2) return false;
+
+  const norm1 = desc1.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim();
+  const norm2 = desc2.toLowerCase().replace(/[^a-z0-9\s]/g, ' ').trim();
+
+  // Extract words (3+ chars)
+  const words1 = norm1.split(/\s+/).filter(w => w.length >= 3);
+  const words2 = norm2.split(/\s+/).filter(w => w.length >= 3);
+
+  if (words1.length === 0 || words2.length === 0) return false;
+
+  // Count matching words
+  const matches = words1.filter(w => words2.includes(w));
+
+  // Require at least 50% word overlap
+  const overlapRatio = matches.length / Math.min(words1.length, words2.length);
+  return overlapRatio >= 0.5;
+}
+
+/**
+ * Check if ALL entries in a group have related descriptions
+ */
+function groupHasRelatedDescriptions(entries) {
+  if (entries.length < 2) return true;
+
+  const firstDesc = entries[0].description;
+  return entries.slice(1).every(e => descriptionsAreRelated(firstDesc, e.description));
+}
+
+/**
+ * Check if bank description contains a name (borrower/investor)
+ * Returns a score 0-1 indicating match strength
+ */
+function descriptionContainsName(description, name, businessName) {
+  if (!description) return 0;
+
+  // Normalize name for comparison (remove Ltd, Limited, etc)
+  const normalizeName = (n) => {
+    if (!n) return '';
+    return n.toLowerCase()
+      .replace(/\b(ltd|limited|plc|inc|llc|llp|co|company)\b/gi, '')
+      .replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+  };
+
+  const nameNorm = normalizeName(name);
+  const bizNorm = normalizeName(businessName);
+  const descNorm = normalizeName(description);
+
+  // Check business name first (more specific)
+  if (bizNorm && bizNorm.length >= 3 && descNorm.includes(bizNorm)) {
+    return 1.0; // Strong match
+  }
+
+  // Check individual name
+  if (nameNorm && nameNorm.length >= 3 && descNorm.includes(nameNorm)) {
+    return 0.9;
+  }
+
+  // Check significant words from business name
+  if (bizNorm) {
+    const words = bizNorm.split(' ').filter(w => w.length >= 4);
+    for (const word of words) {
+      if (descNorm.includes(word)) {
+        return 0.7; // Partial match
+      }
+    }
+  }
+
+  return 0;
+}
+
+// Calculate date proximity score (0-1)
+function dateProximityScore(date1, date2) {
+  if (!date1 || !date2) return 0;
+  try {
+    const d1 = typeof date1 === 'string' ? parseISO(date1) : date1;
+    const d2 = typeof date2 === 'string' ? parseISO(date2) : date2;
+    if (!isValid(d1) || !isValid(d2)) return 0;
+
+    const daysDiff = Math.abs(differenceInDays(d1, d2));
+    if (daysDiff === 0) return 1;
+    if (daysDiff <= 1) return 0.95;
+    if (daysDiff <= 3) return 0.85;
+    if (daysDiff <= 7) return 0.70;
+    if (daysDiff <= 14) return 0.50;
+    if (daysDiff <= 30) return 0.30;
+    return 0.1;
+  } catch {
+    return 0;
+  }
+}
+
 // Calculate match score based on date and amount proximity
 function calculateMatchScore(bankEntry, transaction, dateField = 'date') {
   const entryAmount = Math.abs(parseFloat(bankEntry.amount) || 0);
@@ -135,6 +289,46 @@ function calculateMatchScore(bankEntry, transaction, dateField = 'date') {
   }
 
   return score;
+}
+
+// Generate human-readable explanation of match confidence
+function getMatchExplanation(bankEntry, transaction, dateField = 'date') {
+  const entryAmount = Math.abs(parseFloat(bankEntry.amount) || 0);
+  const txAmount = Math.abs(parseFloat(transaction.amount) || 0);
+
+  const exactAmount = amountsMatch(entryAmount, txAmount, 0.1);
+  const closeAmount = amountsMatch(entryAmount, txAmount, 5);
+
+  const bankDate = bankEntry.statement_date ? parseISO(bankEntry.statement_date) : null;
+  const txDate = transaction[dateField] ? parseISO(transaction[dateField]) : null;
+  let daysDiff = null;
+
+  if (bankDate && txDate && isValid(bankDate) && isValid(txDate)) {
+    daysDiff = Math.abs(differenceInDays(bankDate, txDate));
+  }
+
+  const amountExplanation = exactAmount
+    ? { text: 'Exact match', icon: 'check', color: 'emerald' }
+    : closeAmount
+    ? { text: `Within 5% (${formatCurrency(Math.abs(entryAmount - txAmount))} difference)`, icon: 'approx', color: 'amber' }
+    : { text: `${formatCurrency(Math.abs(entryAmount - txAmount))} difference`, icon: 'x', color: 'red' };
+
+  let dateExplanation;
+  if (daysDiff === null) {
+    dateExplanation = { text: 'Date unknown', icon: 'x', color: 'slate' };
+  } else if (daysDiff === 0) {
+    dateExplanation = { text: 'Same day', icon: 'check', color: 'emerald' };
+  } else if (daysDiff <= 3) {
+    dateExplanation = { text: `${daysDiff} day${daysDiff > 1 ? 's' : ''} apart`, icon: 'check', color: 'emerald' };
+  } else if (daysDiff <= 7) {
+    dateExplanation = { text: `${daysDiff} days apart`, icon: 'approx', color: 'amber' };
+  } else if (daysDiff <= 14) {
+    dateExplanation = { text: `${daysDiff} days apart (moderate gap)`, icon: 'warning', color: 'amber' };
+  } else {
+    dateExplanation = { text: `${daysDiff} days apart (large gap)`, icon: 'x', color: 'red' };
+  }
+
+  return { amount: amountExplanation, date: dateExplanation, daysDiff };
 }
 
 // Enhanced keyword extraction for vendor names - cleans messy bank descriptions
@@ -226,9 +420,12 @@ export default function BankReconciliation() {
   const [isImporting, setIsImporting] = useState(false);
 
   // Filter state
+  const [activeTab, setActiveTab] = useState('match'); // 'match' (Match to Existing) or 'create' (Create New)
   const [filter, setFilter] = useState('unreconciled'); // all, unreconciled, reconciled, suggested
   const [searchTerm, setSearchTerm] = useState('');
   const [confidenceFilter, setConfidenceFilter] = useState('all'); // all, 100, 90, 70, 50, none
+  const [sortBy, setSortBy] = useState('date'); // date, amount, linksTo
+  const [sortDirection, setSortDirection] = useState('desc'); // asc, desc
 
   // Auto-reconcile state
   const [isAutoMatching, setIsAutoMatching] = useState(false);
@@ -246,6 +443,9 @@ export default function BankReconciliation() {
   const [entitySearch, setEntitySearch] = useState('');
   const [splitAmounts, setSplitAmounts] = useState({ capital: 0, interest: 0, fees: 0 });
   const [investorWithdrawalSplit, setInvestorWithdrawalSplit] = useState({ capital: 0, interest: 0 });
+  // Multi-loan repayment allocation state
+  const [multiLoanAllocations, setMultiLoanAllocations] = useState([]); // [{ loan, principal: 0, interest: 0, fees: 0 }, ...]
+  const [multiLoanBorrowerId, setMultiLoanBorrowerId] = useState(null); // Lock to one borrower when adding loans
   const [expenseDescription, setExpenseDescription] = useState('');
   const [isReconciling, setIsReconciling] = useState(false);
   const [savePattern, setSavePattern] = useState(true);
@@ -286,6 +486,42 @@ export default function BankReconciliation() {
 
   // Bulk other income creation state
   const [entryOtherIncome, setEntryOtherIncome] = useState(new Set()); // Set of entryIds marked as Other Income
+
+  // Dismissed suggestions - entries where user wants to ignore the auto-match and create new instead
+  // Persisted to localStorage so dismissals survive page refreshes
+  const [dismissedSuggestions, setDismissedSuggestions] = useState(() => {
+    try {
+      const stored = localStorage.getItem('bankRecon_dismissedSuggestions');
+      return stored ? new Set(JSON.parse(stored)) : new Set();
+    } catch {
+      return new Set();
+    }
+  });
+
+  // Persist dismissed suggestions to localStorage
+  useEffect(() => {
+    try {
+      localStorage.setItem('bankRecon_dismissedSuggestions', JSON.stringify([...dismissedSuggestions]));
+    } catch {
+      // Ignore storage errors
+    }
+  }, [dismissedSuggestions]);
+
+  const dismissSuggestion = (entryId) => {
+    setDismissedSuggestions(prev => {
+      const next = new Set(prev);
+      next.add(entryId);
+      return next;
+    });
+  };
+
+  const restoreSuggestion = (entryId) => {
+    setDismissedSuggestions(prev => {
+      const next = new Set(prev);
+      next.delete(entryId);
+      return next;
+    });
+  };
   const [isBulkCreatingOtherIncome, setIsBulkCreatingOtherIncome] = useState(false);
   const [bulkOtherIncomeProgress, setBulkOtherIncomeProgress] = useState({ current: 0, total: 0 });
 
@@ -308,6 +544,48 @@ export default function BankReconciliation() {
       });
     }
   };
+
+  // Multi-loan allocation helper functions
+  const addLoanToAllocation = (loan) => {
+    // Check if loan is already in the allocation
+    if (multiLoanAllocations.some(a => a.loan.id === loan.id)) {
+      return;
+    }
+    // Can only add loans from same borrower
+    if (multiLoanBorrowerId && loan.borrower_id !== multiLoanBorrowerId) {
+      return;
+    }
+    if (!multiLoanBorrowerId) {
+      setMultiLoanBorrowerId(loan.borrower_id);
+    }
+    setMultiLoanAllocations(prev => [
+      ...prev,
+      { loan, principal: 0, interest: 0, fees: 0 }
+    ]);
+  };
+
+  const removeLoanFromAllocation = (index) => {
+    setMultiLoanAllocations(prev => {
+      const next = prev.filter((_, i) => i !== index);
+      if (next.length === 0) {
+        setMultiLoanBorrowerId(null);
+      }
+      return next;
+    });
+  };
+
+  const updateLoanAllocation = (index, field, value) => {
+    setMultiLoanAllocations(prev => prev.map((a, i) =>
+      i === index ? { ...a, [field]: parseFloat(value) || 0 } : a
+    ));
+  };
+
+  // Calculate total allocated across all loans
+  const totalMultiLoanAllocated = useMemo(() => {
+    return multiLoanAllocations.reduce((sum, a) =>
+      sum + (a.principal || 0) + (a.interest || 0) + (a.fees || 0), 0
+    );
+  }, [multiLoanAllocations]);
 
   // State for viewing/un-reconciling entries
   const [isUnreconciling, setIsUnreconciling] = useState(false);
@@ -378,6 +656,12 @@ export default function BankReconciliation() {
     queryFn: () => api.entities.InvestorInterest.list('-date')
   });
 
+  // Fetch repayment schedules for expected payment info
+  const { data: repaymentSchedules = [] } = useQuery({
+    queryKey: ['repayment-schedules'],
+    queryFn: () => api.entities.RepaymentSchedule.list('due_date')
+  });
+
   // Fetch reconciliation entries
   const { data: reconciliationEntries = [] } = useQuery({
     queryKey: ['reconciliation-entries'],
@@ -390,12 +674,29 @@ export default function BankReconciliation() {
     return borrower?.business_name || borrower?.full_name || 'Unknown';
   };
 
+  // Get the last repayment for a loan
+  const getLastPayment = (loanId) => {
+    const repayments = loanTransactions
+      .filter(tx => tx.loan_id === loanId && tx.type === 'Repayment' && !tx.is_deleted)
+      .sort((a, b) => new Date(b.date) - new Date(a.date));
+    return repayments[0] || null;
+  };
+
+  // Get the most recent unpaid schedule entry (could be overdue)
+  const getNextDuePayment = (loanId) => {
+    const unpaid = repaymentSchedules
+      .filter(s => s.loan_id === loanId && !s.is_paid)
+      .sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+    return unpaid[0] || null;
+  };
+
   // Build set of already-reconciled transaction IDs for quick lookup
   const reconciledTxIds = useMemo(() => {
     const ids = new Set();
     reconciliationEntries.forEach(re => {
       if (re.loan_transaction_id) ids.add(re.loan_transaction_id);
       if (re.investor_transaction_id) ids.add(re.investor_transaction_id);
+      if (re.interest_id) ids.add(re.interest_id);
       if (re.expense_id) ids.add(re.expense_id);
     });
     return ids;
@@ -419,10 +720,20 @@ export default function BankReconciliation() {
   }, [searchParams, bankStatements, statementsLoading, setSearchParams]);
 
   // Auto-match suggestions using date/amount matching (primary) and patterns (secondary)
+  // Uses transaction claiming to prevent multiple bank entries from matching to the same ledger transaction
   const suggestedMatches = useMemo(() => {
     const suggestions = new Map();
 
-    bankStatements.filter(s => !s.is_reconciled).forEach(entry => {
+    // Track which transactions have been claimed by earlier entries
+    const claimedTxIds = new Set();
+    const claimedExpenseIds = new Set();
+    const claimedInterestIds = new Set();
+
+    // Sort entries by date (oldest first) for deterministic matching order
+    const sortedEntries = [...bankStatements.filter(s => !s.is_reconciled)]
+      .sort((a, b) => new Date(a.statement_date) - new Date(b.statement_date));
+
+    sortedEntries.forEach(entry => {
       const entryKeywords = extractKeywords(entry.description);
       const entryAmount = normalizeAmount(entry.amount);
       const isCredit = entry.amount > 0;
@@ -430,16 +741,34 @@ export default function BankReconciliation() {
       let bestScore = 0;
 
       // 1. PRIORITY: Match against existing UNRECONCILED loan transactions by date/amount
+      // Now includes name matching bonus to disambiguate same-date/amount transactions
       if (isCredit) {
         // Credits could be repayments
         for (const tx of loanTransactions) {
           if (tx.is_deleted || reconciledTxIds.has(tx.id)) continue;
+          if (claimedTxIds.has(tx.id)) continue; // Skip transactions claimed by earlier entries
           if (tx.type !== 'Repayment') continue;
 
-          const score = calculateMatchScore(entry, tx, 'date');
+          let score = calculateMatchScore(entry, tx, 'date');
+
+          // BOOST: If bank description contains borrower name, increase score
+          const loan = loans.find(l => l.id === tx.loan_id);
+          if (loan && score > 0) {
+            const borrower = borrowers.find(b => b.id === loan.borrower_id);
+            const nameMatch = descriptionContainsName(
+              entry.description,
+              borrower?.name || loan.borrower_name,
+              borrower?.business_name
+            );
+
+            if (nameMatch > 0) {
+              // Boost score by up to 15% for name match
+              score = Math.min(0.99, score + (nameMatch * 0.15));
+            }
+          }
+
           if (score > bestScore) {
             bestScore = score;
-            const loan = loans.find(l => l.id === tx.loan_id);
             const borrowerName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
             bestMatch = {
               type: 'loan_repayment',
@@ -455,12 +784,29 @@ export default function BankReconciliation() {
         // Debits could be disbursements
         for (const tx of loanTransactions) {
           if (tx.is_deleted || reconciledTxIds.has(tx.id)) continue;
+          if (claimedTxIds.has(tx.id)) continue; // Skip transactions claimed by earlier entries
           if (tx.type !== 'Disbursement') continue;
 
-          const score = calculateMatchScore(entry, tx, 'date');
+          let score = calculateMatchScore(entry, tx, 'date');
+
+          // BOOST: If bank description contains borrower name, increase score
+          const loan = loans.find(l => l.id === tx.loan_id);
+          if (loan && score > 0) {
+            const borrower = borrowers.find(b => b.id === loan.borrower_id);
+            const nameMatch = descriptionContainsName(
+              entry.description,
+              borrower?.name || loan.borrower_name,
+              borrower?.business_name
+            );
+
+            if (nameMatch > 0) {
+              // Boost score by up to 15% for name match
+              score = Math.min(0.99, score + (nameMatch * 0.15));
+            }
+          }
+
           if (score > bestScore) {
             bestScore = score;
-            const loan = loans.find(l => l.id === tx.loan_id);
             const borrowerName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
             bestMatch = {
               type: 'loan_disbursement',
@@ -470,6 +816,76 @@ export default function BankReconciliation() {
               confidence: score,
               reason: `Disbursement match: ${borrowerName} - ${formatCurrency(tx.amount)} on ${tx.date ? format(parseISO(tx.date), 'dd/MM') : '?'}`
             };
+          }
+        }
+      }
+
+      // 1c. GROUPED DISBURSEMENT MATCH: Multiple bank debits → single disbursement transaction
+      // This handles cases where a loan disbursement is paid out in multiple tranches
+      if (!isCredit && bestScore < 0.9) {
+        // Find all unreconciled debits within 3 days of this entry (including this entry)
+        const nearbyDebits = sortedEntries.filter(other => {
+          if (other.amount >= 0) return false; // Must be debit
+          if (other.id !== entry.id && claimedTxIds.has(other.id)) return false;
+          return datesWithinDays(entry.statement_date, other.statement_date, 3);
+        });
+
+        // For each Disbursement transaction, check if any subset of debits sums to it
+        for (const tx of loanTransactions) {
+          if (tx.type !== 'Disbursement') continue;
+          if (tx.is_deleted || reconciledTxIds.has(tx.id) || claimedTxIds.has(tx.id)) continue;
+
+          const disbursementAmount = Math.abs(tx.amount);
+
+          // Skip if this single entry already matches (handled above)
+          if (amountsMatch(entryAmount, disbursementAmount, 1)) continue;
+
+          // Skip if this entry is larger than the disbursement
+          if (entryAmount > disbursementAmount * 1.01) continue;
+
+          // Find subset of debits that sum to disbursement (must include current entry)
+          const matchingSubset = findSubsetSum(
+            nearbyDebits,
+            disbursementAmount,
+            entry.id // Must include this entry
+          );
+
+          if (matchingSubset && matchingSubset.length >= 2) {
+            const loan = loans.find(l => l.id === tx.loan_id);
+
+            // Validate that grouped entries are actually related
+            // (similar descriptions OR borrower name appears in descriptions)
+            const entriesAreRelated = groupHasRelatedDescriptions(matchingSubset);
+            const borrowerName = loan?.borrower_name || '';
+            const hasBorrowerName = borrowerName && matchingSubset.some(e =>
+              descriptionContainsName(e.description, borrowerName, null) > 0.5
+            );
+
+            // Skip if entries don't appear to be related to each other or to this loan
+            if (!entriesAreRelated && !hasBorrowerName) {
+              continue; // Try next disbursement
+            }
+
+            const allSameDay = matchingSubset.every(e =>
+              datesWithinDays(e.statement_date, entry.statement_date, 0)
+            );
+
+            const score = allSameDay ? 0.92 : 0.85;
+
+            if (score > bestScore) {
+              bestScore = score;
+              const borrowerDisplayName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
+              bestMatch = {
+                type: 'loan_disbursement',
+                matchMode: 'grouped_disbursement',
+                existingTransaction: tx,
+                groupedEntries: matchingSubset,
+                loan,
+                confidence: score,
+                reason: `Split disbursement: ${matchingSubset.length} payments → ${loan?.loan_number || 'Unknown'} (${borrowerDisplayName})`
+              };
+              break; // Stop at first match
+            }
           }
         }
       }
@@ -495,6 +911,7 @@ export default function BankReconciliation() {
 
         for (const tx of loanTransactions) {
           if (tx.is_deleted || reconciledTxIds.has(tx.id)) continue;
+          if (claimedTxIds.has(tx.id)) continue; // Skip transactions claimed by earlier entries
           if (tx.type !== 'Repayment') continue;
 
           // Check if date is within 3 days of bank entry
@@ -590,16 +1007,32 @@ export default function BankReconciliation() {
       // Interest withdrawals are tracked separately in investor_interest table
       for (const tx of investorTransactions) {
         if (reconciledTxIds.has(tx.id)) continue;
+        if (claimedTxIds.has(tx.id)) continue; // Skip transactions claimed by earlier entries
 
         // Check direction matches - only capital transactions
         const txIsCredit = tx.type === 'capital_in';
         const txIsDebit = tx.type === 'capital_out';
 
         if ((isCredit && txIsCredit) || (!isCredit && txIsDebit)) {
-          const score = calculateMatchScore(entry, tx, 'date');
+          let score = calculateMatchScore(entry, tx, 'date');
+
+          // BOOST: If bank description contains investor name, increase score
+          const investor = investors.find(i => i.id === tx.investor_id);
+          if (investor && score > 0) {
+            const nameMatch = descriptionContainsName(
+              entry.description,
+              investor.name,
+              investor.business_name
+            );
+
+            if (nameMatch > 0) {
+              // Boost score by up to 15% for name match
+              score = Math.min(0.99, score + (nameMatch * 0.15));
+            }
+          }
+
           if (score > bestScore) {
             bestScore = score;
-            const investor = investors.find(i => i.id === tx.investor_id);
             const investorName = investor?.business_name || investor?.name || 'Unknown';
             const matchType = tx.type === 'capital_in' ? 'investor_credit' : 'investor_withdrawal';
 
@@ -615,10 +1048,213 @@ export default function BankReconciliation() {
         }
       }
 
+      // 2b. Match against existing UNRECONCILED investor interest entries (debits = withdrawals only)
+      if (!isCredit) {
+        for (const interest of investorInterestEntries) {
+          if (reconciledTxIds.has(interest.id)) continue;
+          if (claimedInterestIds.has(interest.id)) continue; // Skip interest claimed by earlier entries
+          if (interest.type !== 'debit') continue; // Only match interest withdrawals for bank debits
+
+          let score = calculateMatchScore(entry, interest, 'date');
+
+          // BOOST: If bank description contains investor name, increase score
+          const investor = investors.find(i => i.id === interest.investor_id);
+          if (investor && score > 0) {
+            const nameMatch = descriptionContainsName(
+              entry.description,
+              investor.name,
+              investor.business_name
+            );
+
+            if (nameMatch > 0) {
+              // Boost score by up to 15% for name match
+              score = Math.min(0.99, score + (nameMatch * 0.15));
+            }
+          }
+
+          if (score > bestScore) {
+            bestScore = score;
+            const investorName = investor?.business_name || investor?.name || 'Unknown';
+
+            bestMatch = {
+              type: 'interest_withdrawal',
+              matchMode: 'match',
+              existingInterest: interest,
+              investor_id: interest.investor_id,
+              confidence: score,
+              reason: `Interest withdrawal: ${investorName} - ${formatCurrency(interest.amount)} on ${interest.date ? format(parseISO(interest.date), 'dd/MM') : '?'}`
+            };
+          }
+        }
+      }
+
+      // 2c. Check for grouped investor transactions (multiple transactions from same investor summing to bank amount)
+      // This handles cases where investor makes multiple payments on the same day
+      if (bestScore < 0.9) {
+        // Group investor capital transactions by investor_id that are within 3 days of entry
+        const investorTxByInvestor = new Map();
+
+        for (const tx of investorTransactions) {
+          if (reconciledTxIds.has(tx.id)) continue;
+          if (claimedTxIds.has(tx.id)) continue; // Skip transactions claimed by earlier entries
+
+          // Check direction matches
+          const txIsCredit = tx.type === 'capital_in';
+          const txIsDebit = tx.type === 'capital_out';
+          if (!((isCredit && txIsCredit) || (!isCredit && txIsDebit))) continue;
+
+          // Check date proximity (within 3 days)
+          const dateScore = dateProximityScore(entry.statement_date, tx.date);
+          if (dateScore < 0.85) continue; // Within 3 days
+
+          const investorId = tx.investor_id;
+          if (!investorTxByInvestor.has(investorId)) {
+            investorTxByInvestor.set(investorId, []);
+          }
+          investorTxByInvestor.get(investorId).push(tx);
+        }
+
+        // Check if any investor's grouped transactions sum to the entry amount
+        for (const [investorId, txGroup] of investorTxByInvestor) {
+          if (txGroup.length < 2) continue; // Need at least 2 to be a group
+
+          const groupTotal = txGroup.reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0);
+
+          if (amountsMatch(entryAmount, groupTotal, 1)) {
+            const investor = investors.find(i => i.id === investorId);
+            const investorName = investor?.business_name || investor?.name || 'Unknown';
+            const groupScore = 0.90; // High confidence for exact amount match
+
+            if (groupScore > bestScore) {
+              bestScore = groupScore;
+              bestMatch = {
+                type: isCredit ? 'investor_credit' : 'investor_withdrawal',
+                matchMode: 'match_group',
+                existingTransactions: txGroup,
+                investor_id: investorId,
+                confidence: groupScore,
+                reason: `Grouped: ${investorName} - ${txGroup.length} transactions totalling ${formatCurrency(groupTotal)}`
+              };
+            }
+          }
+        }
+
+        // Also check grouped investor interest entries (debits = withdrawals only)
+        if (!isCredit) {
+          const interestByInvestor = new Map();
+
+          for (const interest of investorInterestEntries) {
+            if (reconciledTxIds.has(interest.id)) continue;
+            if (interest.type !== 'debit') continue; // Only match interest withdrawals for bank debits
+
+            // Check date proximity (within 3 days)
+            const dateScore = dateProximityScore(entry.statement_date, interest.date);
+            if (dateScore < 0.85) continue;
+
+            const investorId = interest.investor_id;
+            if (!interestByInvestor.has(investorId)) {
+              interestByInvestor.set(investorId, []);
+            }
+            interestByInvestor.get(investorId).push(interest);
+          }
+
+          // Check if any investor's grouped interest entries sum to the entry amount
+          for (const [investorId, interestGroup] of interestByInvestor) {
+            if (interestGroup.length < 2) continue;
+
+            const groupTotal = interestGroup.reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+
+            if (amountsMatch(entryAmount, groupTotal, 1)) {
+              const investor = investors.find(i => i.id === investorId);
+              const investorName = investor?.business_name || investor?.name || 'Unknown';
+              const groupScore = 0.90;
+
+              if (groupScore > bestScore) {
+                bestScore = groupScore;
+                bestMatch = {
+                  type: 'interest_withdrawal',
+                  matchMode: 'match_group',
+                  existingInterestEntries: interestGroup,
+                  investor_id: investorId,
+                  confidence: groupScore,
+                  reason: `Grouped interest: ${investorName} - ${interestGroup.length} entries totalling ${formatCurrency(groupTotal)}`
+                };
+              }
+            }
+          }
+        }
+      }
+
+      // 2d. Cross-table grouped matching: combine capital transactions AND interest entries for same investor
+      // This handles cases like £516 = Capital Out £462.96 + Interest £53.04
+      if (!isCredit && bestScore < 0.9) {
+        const combinedByInvestor = new Map();
+
+        // Add capital_out transactions
+        for (const tx of investorTransactions) {
+          if (reconciledTxIds.has(tx.id)) continue;
+          if (tx.type !== 'capital_out') continue;
+
+          const dateScore = dateProximityScore(entry.statement_date, tx.date);
+          if (dateScore < 0.85) continue; // Within 3 days
+
+          const investorId = tx.investor_id;
+          if (!combinedByInvestor.has(investorId)) {
+            combinedByInvestor.set(investorId, { capitalTxs: [], interestEntries: [] });
+          }
+          combinedByInvestor.get(investorId).capitalTxs.push(tx);
+        }
+
+        // Add interest entries to same investor groups (only debit = withdrawals)
+        for (const interest of investorInterestEntries) {
+          if (reconciledTxIds.has(interest.id)) continue;
+          if (interest.type !== 'debit') continue; // Only match interest withdrawals for bank debits
+
+          const dateScore = dateProximityScore(entry.statement_date, interest.date);
+          if (dateScore < 0.85) continue; // Within 3 days
+
+          const investorId = interest.investor_id;
+          if (!combinedByInvestor.has(investorId)) {
+            combinedByInvestor.set(investorId, { capitalTxs: [], interestEntries: [] });
+          }
+          combinedByInvestor.get(investorId).interestEntries.push(interest);
+        }
+
+        // Check if any investor's COMBINED transactions sum to entry amount
+        for (const [investorId, { capitalTxs, interestEntries }] of combinedByInvestor) {
+          // Must have at least one from EACH table (single-table matches handled in 2c)
+          if (capitalTxs.length === 0 || interestEntries.length === 0) continue;
+
+          const capitalTotal = capitalTxs.reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0);
+          const interestTotal = interestEntries.reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+          const combinedTotal = capitalTotal + interestTotal;
+
+          if (amountsMatch(entryAmount, combinedTotal, 1)) {
+            const investor = investors.find(i => i.id === investorId);
+            const investorName = investor?.business_name || investor?.name || 'Unknown';
+            const groupScore = 0.92; // High confidence for cross-table exact match
+
+            if (groupScore > bestScore) {
+              bestScore = groupScore;
+              bestMatch = {
+                type: 'investor_withdrawal',
+                matchMode: 'match_group',
+                existingTransactions: capitalTxs,
+                existingInterestEntries: interestEntries,
+                investor_id: investorId,
+                confidence: groupScore,
+                reason: `Combined: ${investorName} - ${capitalTxs.length} capital + ${interestEntries.length} interest = ${formatCurrency(combinedTotal)}`
+              };
+            }
+          }
+        }
+      }
+
       // 3. Match against existing UNRECONCILED expenses by date/amount (debits only)
       if (!isCredit) {
         for (const exp of expenses) {
           if (reconciledTxIds.has(exp.id)) continue;
+          if (claimedExpenseIds.has(exp.id)) continue; // Skip expenses claimed by earlier entries
 
           const score = calculateMatchScore(entry, exp, 'date');
           if (score > bestScore) {
@@ -774,11 +1410,78 @@ export default function BankReconciliation() {
       // Only suggest if confidence is above threshold (lowered to 0.35 for more matches)
       if (bestMatch && bestScore >= 0.35) {
         suggestions.set(entry.id, bestMatch);
+
+        // Claim matched transactions to prevent other entries from matching them
+        if (bestMatch.existingTransaction) {
+          claimedTxIds.add(bestMatch.existingTransaction.id);
+        }
+        if (bestMatch.existingExpense) {
+          claimedExpenseIds.add(bestMatch.existingExpense.id);
+        }
+        if (bestMatch.existingInterest) {
+          claimedInterestIds.add(bestMatch.existingInterest.id);
+        }
+        // Handle grouped transactions
+        if (bestMatch.existingTransactions) {
+          bestMatch.existingTransactions.forEach(tx => claimedTxIds.add(tx.id));
+        }
       }
     });
 
     return suggestions;
-  }, [bankStatements, patterns, loans, investors, borrowers, loanTransactions, investorTransactions, expenses, expenseTypes, reconciledTxIds]);
+  }, [bankStatements, patterns, loans, investors, borrowers, loanTransactions, investorTransactions, investorInterestEntries, expenses, expenseTypes, reconciledTxIds]);
+
+  // Detect conflicts: bank entries that suggest matching the same target transaction/expense
+  const matchConflicts = useMemo(() => {
+    const targetToEntries = new Map(); // targetId -> Set of entry IDs
+
+    bankStatements.filter(s => !s.is_reconciled).forEach(entry => {
+      const suggestion = suggestedMatches.get(entry.id);
+      if (!suggestion || suggestion.matchMode === 'create') return;
+
+      // Collect all target IDs this entry wants to match
+      const targetIds = [];
+      if (suggestion.existingTransaction) {
+        targetIds.push(`tx:${suggestion.existingTransaction.id}`);
+      }
+      if (suggestion.existingExpense) {
+        targetIds.push(`exp:${suggestion.existingExpense.id}`);
+      }
+      if (suggestion.existingTransactions) {
+        suggestion.existingTransactions.forEach(tx => targetIds.push(`tx:${tx.id}`));
+      }
+
+      // Map each target to this entry
+      targetIds.forEach(targetId => {
+        if (!targetToEntries.has(targetId)) {
+          targetToEntries.set(targetId, new Set());
+        }
+        targetToEntries.get(targetId).add(entry.id);
+      });
+    });
+
+    // Build entry -> conflicting entries map
+    const entryConflicts = new Map(); // entryId -> Set of conflicting entry IDs
+
+    for (const [_targetId, entryIds] of targetToEntries) {
+      if (entryIds.size > 1) {
+        // These entries conflict with each other
+        const idsArray = [...entryIds];
+        idsArray.forEach(id => {
+          if (!entryConflicts.has(id)) {
+            entryConflicts.set(id, new Set());
+          }
+          idsArray.forEach(otherId => {
+            if (otherId !== id) {
+              entryConflicts.get(id).add(otherId);
+            }
+          });
+        });
+      }
+    }
+
+    return entryConflicts;
+  }, [bankStatements, suggestedMatches]);
 
   // Compute expense type suggestions for unreconciled debits (for dropdown pre-selection)
   const expenseTypeSuggestions = useMemo(() => {
@@ -868,25 +1571,46 @@ export default function BankReconciliation() {
   const filteredStatements = useMemo(() => {
     let filtered = bankStatements;
 
-    if (filter === 'unreconciled') {
-      filtered = filtered.filter(s => !s.is_reconciled);
-    } else if (filter === 'reconciled') {
-      filtered = filtered.filter(s => s.is_reconciled);
-    } else if (filter === 'suggested') {
-      filtered = filtered.filter(s => !s.is_reconciled && suggestedMatches.has(s.id));
+    // First, filter by active tab (Match vs Create)
+    if (activeTab === 'match') {
+      // Match tab: show entries with EXISTING transactions to match (matchMode='match', 'match_group', or 'grouped_disbursement')
+      if (filter === 'reconciled') {
+        filtered = filtered.filter(s => s.is_reconciled);
+      } else {
+        filtered = filtered.filter(s => {
+          if (s.is_reconciled) return false;
+          if (dismissedSuggestions.has(s.id)) return false;
+          const suggestion = suggestedMatches.get(s.id);
+          // Must have a match-type suggestion (links to existing transaction)
+          return suggestion && isMatchType(suggestion.matchMode);
+        });
+      }
+    } else {
+      // Create New tab: entries that need new transactions created
+      if (filter === 'reconciled') {
+        filtered = [];
+      } else {
+        filtered = filtered.filter(s => {
+          if (s.is_reconciled) return false;
+          if (dismissedSuggestions.has(s.id)) return true; // Dismissed entries show here
+          const suggestion = suggestedMatches.get(s.id);
+          // No suggestion OR create-type suggestion
+          return !suggestion || suggestion.matchMode === 'create';
+        });
+      }
     }
 
-    // Apply confidence filter
-    if (confidenceFilter !== 'all') {
+    // Apply confidence filter (only on Match tab - Create tab shows all entries that need new transactions)
+    if (activeTab === 'match' && confidenceFilter !== 'all') {
       filtered = filtered.filter(s => {
         const suggestion = suggestedMatches.get(s.id);
         if (confidenceFilter === 'none') {
           // No suggestion OR suggestion is not a match (create mode without good match)
-          return !suggestion || (suggestion.matchMode !== 'match' && suggestion.matchMode !== 'match_group');
+          return !suggestion || !isMatchType(suggestion.matchMode);
         }
         // For confidence filters, only consider actual match suggestions (not create mode)
         if (!suggestion) return false;
-        if (suggestion.matchMode !== 'match' && suggestion.matchMode !== 'match_group') return false;
+        if (!isMatchType(suggestion.matchMode)) return false;
         const confidence = Math.round(suggestion.confidence * 100);
         // Ranges aligned with calculateMatchScore outputs:
         // 95 = exact match same day, 85 = exact within 3 days, 75 = exact within 7 days
@@ -954,17 +1678,99 @@ export default function BankReconciliation() {
       });
     }
 
-    // Sort by confidence (highest first) when filtering by suggested
-    if (filter === 'suggested' || confidenceFilter !== 'all') {
-      filtered = [...filtered].sort((a, b) => {
-        const confA = suggestedMatches.get(a.id)?.confidence || 0;
-        const confB = suggestedMatches.get(b.id)?.confidence || 0;
-        return confB - confA;
-      });
-    }
+    // Helper to get "links to" sort key for an entry
+    const getLinksToKey = (entry) => {
+      if (entry.is_reconciled) {
+        const recons = reconciliationEntries.filter(r => r.bank_statement_id === entry.id);
+        if (recons.length === 0) return 'z'; // No links - sort last
+
+        // Get the first link type
+        const recon = recons[0];
+        if (recon.loan_transaction_id) {
+          const tx = loanTransactions.find(t => t.id === recon.loan_transaction_id);
+          const loan = tx ? loans.find(l => l.id === tx.loan_id) : null;
+          return `a_loan_${loan?.borrower_name || ''}`;
+        }
+        if (recon.investor_transaction_id) {
+          const tx = investorTransactions.find(t => t.id === recon.investor_transaction_id);
+          const investor = tx ? investors.find(i => i.id === tx.investor_id) : null;
+          return `b_investor_${investor?.business_name || investor?.name || ''}`;
+        }
+        if (recon.interest_id) {
+          const interest = investorInterestEntries.find(i => i.id === recon.interest_id);
+          const investor = interest ? investors.find(i => i.id === interest.investor_id) : null;
+          return `c_interest_${investor?.business_name || investor?.name || ''}`;
+        }
+        if (recon.expense_id) {
+          const exp = expenses.find(e => e.id === recon.expense_id);
+          const expType = exp ? expenseTypes.find(t => t.id === exp.type_id) : null;
+          return `d_expense_${expType?.name || ''}`;
+        }
+        return 'z';
+      }
+
+      // For unreconciled entries, use suggestion
+      const suggestion = suggestedMatches.get(entry.id);
+      if (!suggestion) return 'z';
+
+      if (isMatchType(suggestion.matchMode)) {
+        // Existing transaction match
+        if (suggestion.existingLoan?.borrower_name) {
+          return `a_loan_${suggestion.existingLoan.borrower_name}`;
+        }
+        if (suggestion.loan?.borrower_name) {
+          // For grouped_disbursement matches
+          return `a_loan_${suggestion.loan.borrower_name}`;
+        }
+        if (suggestion.existingInvestor?.business_name || suggestion.existingInvestor?.name) {
+          return `b_investor_${suggestion.existingInvestor.business_name || suggestion.existingInvestor.name}`;
+        }
+        if (suggestion.existingInterest) {
+          const investor = investors.find(i => i.id === suggestion.existingInterest.investor_id);
+          return `c_interest_${investor?.business_name || investor?.name || ''}`;
+        }
+        if (suggestion.existingExpense) {
+          const expType = expenseTypes.find(t => t.id === suggestion.existingExpense.type_id);
+          return `d_expense_${expType?.name || ''}`;
+        }
+        if (suggestion.investor_id) {
+          const investor = investors.find(i => i.id === suggestion.investor_id);
+          return `b_investor_${investor?.business_name || investor?.name || ''}`;
+        }
+        return `e_${suggestion.type || ''}`;
+      } else {
+        // Create new - prefix with 'y' to sort after matches
+        return `y_create_${suggestion.type || ''}`;
+      }
+    };
+
+    // Sort based on sortBy state
+    filtered = [...filtered].sort((a, b) => {
+      let result = 0;
+
+      if (sortBy === 'linksTo') {
+        const keyA = getLinksToKey(a).toLowerCase();
+        const keyB = getLinksToKey(b).toLowerCase();
+        result = keyA.localeCompare(keyB);
+      } else if (sortBy === 'amount') {
+        result = Math.abs(b.amount) - Math.abs(a.amount);
+      } else {
+        // Default: sort by confidence on match tab, by date on create tab
+        if (activeTab === 'match') {
+          const confA = suggestedMatches.get(a.id)?.confidence || 0;
+          const confB = suggestedMatches.get(b.id)?.confidence || 0;
+          result = confB - confA;
+        } else {
+          result = new Date(b.statement_date).getTime() - new Date(a.statement_date).getTime();
+        }
+      }
+
+      // Apply sort direction
+      return sortDirection === 'asc' ? result : -result;
+    });
 
     return filtered;
-  }, [bankStatements, filter, searchTerm, suggestedMatches, confidenceFilter, reconciliationEntries, loanTransactions, loans, borrowers, investorTransactions, investors, expenses]);
+  }, [bankStatements, activeTab, filter, searchTerm, suggestedMatches, confidenceFilter, dismissedSuggestions, reconciliationEntries, loanTransactions, loans, borrowers, investorTransactions, investors, expenses, sortBy, sortDirection, investorInterestEntries, expenseTypes]);
 
   // Filter entities based on search
   const filteredLoans = useMemo(() => {
@@ -993,6 +1799,11 @@ export default function BankReconciliation() {
   // Find potential matching transactions
   const potentialMatches = useMemo(() => {
     if (!selectedEntry) return [];
+
+    // For match_group suggestions, use the pre-identified transactions
+    if (reviewingSuggestion?.matchMode === 'match_group' && reviewingSuggestion.existingTransactions) {
+      return reviewingSuggestion.existingTransactions;
+    }
 
     const entryDate = parseISO(selectedEntry.statement_date);
     const entryAmount = Math.abs(selectedEntry.amount);
@@ -1029,7 +1840,7 @@ export default function BankReconciliation() {
     }
 
     return [];
-  }, [selectedEntry, reconciliationType, loanTransactions, investorTransactions, reconciliationEntries]);
+  }, [selectedEntry, reconciliationType, loanTransactions, investorTransactions, reconciliationEntries, reviewingSuggestion]);
 
   // Handle file import
   const handleFileChange = async (e) => {
@@ -1123,6 +1934,9 @@ export default function BankReconciliation() {
     setEntitySearch('');
     setExpenseDescription(entry.description || '');
     setSavePattern(true);
+    // Reset multi-loan allocation state
+    setMultiLoanAllocations([]);
+    setMultiLoanBorrowerId(null);
 
     const amount = Math.abs(entry.amount);
 
@@ -1131,20 +1945,24 @@ export default function BankReconciliation() {
       setReconciliationType(suggestion.type);
 
       // Set match mode based on suggestion
-      if (suggestion.matchMode === 'match' && (suggestion.existingTransaction || suggestion.existingExpense)) {
+      if (suggestion.matchMode === 'match' && (suggestion.existingTransaction || suggestion.existingExpense || suggestion.existingInterest)) {
         setMatchMode('match');
         // Pre-select the existing transaction
         if (suggestion.existingTransaction) {
           setSelectedExistingTx(suggestion.existingTransaction);
         } else if (suggestion.existingExpense) {
           setSelectedExistingTx(suggestion.existingExpense);
+        } else if (suggestion.existingInterest) {
+          setSelectedExistingTx(suggestion.existingInterest);
         }
-      } else if (suggestion.matchMode === 'match_group' && suggestion.existingTransactions) {
+      } else if (suggestion.matchMode === 'match_group' && (suggestion.existingTransactions || suggestion.existingInterestEntries)) {
         // Grouped match - should default to "Match Existing" tab
         setMatchMode('match');
         // Pre-select the first transaction from the group for display
-        if (suggestion.existingTransactions.length > 0) {
+        if (suggestion.existingTransactions?.length > 0) {
           setSelectedExistingTx(suggestion.existingTransactions[0]);
+        } else if (suggestion.existingInterestEntries?.length > 0) {
+          setSelectedExistingTx(suggestion.existingInterestEntries[0]);
         }
       } else {
         setMatchMode('create');
@@ -1321,6 +2139,73 @@ export default function BankReconciliation() {
         queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
         queryClient.invalidateQueries({ queryKey: ['transactions'] });
 
+        // Clean up dismissed state for reconciled entry
+        setDismissedSuggestions(prev => {
+          const next = new Set(prev);
+          next.delete(selectedEntry.id);
+          return next;
+        });
+
+        setSelectedEntry(null);
+        setReviewingSuggestion(null);
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+      } finally {
+        setIsReconciling(false);
+      }
+      return;
+    }
+
+    // Handle grouped disbursement match (multiple bank debits → single disbursement transaction)
+    if (reviewingSuggestion?.matchMode === 'grouped_disbursement' && reviewingSuggestion.existingTransaction) {
+      setIsReconciling(true);
+      try {
+        const tx = reviewingSuggestion.existingTransaction;
+        const groupedEntries = reviewingSuggestion.groupedEntries;
+
+        // Create reconciliation entry for each bank debit, linking to same disbursement
+        for (const bankEntry of groupedEntries) {
+          await api.entities.ReconciliationEntry.create({
+            bank_statement_id: bankEntry.id,
+            loan_transaction_id: tx.id,
+            investor_transaction_id: null,
+            expense_id: null,
+            amount: Math.abs(bankEntry.amount),
+            reconciliation_type: 'loan_disbursement',
+            notes: `Grouped disbursement: ${groupedEntries.length} payments`,
+            was_created: false
+          });
+
+          // Mark each bank statement as reconciled
+          await api.entities.BankStatement.update(bankEntry.id, {
+            is_reconciled: true,
+            reconciled_at: new Date().toISOString()
+          });
+        }
+
+        // Log the grouped disbursement reconciliation
+        logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
+          bank_statement_id: selectedEntry.id,
+          description: selectedEntry.description,
+          amount: Math.abs(tx.amount),
+          bank_entry_count: groupedEntries.length,
+          match_type: 'grouped_disbursement'
+        });
+
+        // Refresh data
+        queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+        queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+        queryClient.invalidateQueries({ queryKey: ['transactions'] });
+
+        // Clean up dismissed state for all reconciled entries
+        setDismissedSuggestions(prev => {
+          const next = new Set(prev);
+          for (const bankEntry of groupedEntries) {
+            next.delete(bankEntry.id);
+          }
+          return next;
+        });
+
         setSelectedEntry(null);
         setReviewingSuggestion(null);
       } catch (error) {
@@ -1350,21 +2235,105 @@ export default function BankReconciliation() {
           investorTransactionId = selectedExistingTx.id;
         }
       } else {
-        if (reconciliationType === 'loan_repayment' && selectedLoan) {
-          const txData = {
-            loan_id: selectedLoan.id,
-            borrower_id: selectedLoan.borrower_id,
-            amount: amount,
-            date: selectedEntry.statement_date,
-            type: 'Repayment',
-            principal_applied: splitAmounts.capital,
-            interest_applied: splitAmounts.interest,
-            fees_applied: splitAmounts.fees,
-            reference: selectedEntry.external_reference,
-            notes: `Bank reconciliation: ${selectedEntry.description}`
-          };
-          const created = await api.entities.Transaction.create(txData);
-          transactionId = created.id;
+        if (reconciliationType === 'loan_repayment' && multiLoanAllocations.length > 0) {
+          // Multi-loan repayment: create a transaction for each loan
+          const createdTransactionIds = [];
+          for (const allocation of multiLoanAllocations) {
+            const allocationAmount = (allocation.principal || 0) + (allocation.interest || 0) + (allocation.fees || 0);
+            if (allocationAmount <= 0) continue; // Skip loans with no allocation
+
+            const txData = {
+              loan_id: allocation.loan.id,
+              borrower_id: allocation.loan.borrower_id,
+              amount: allocationAmount,
+              date: selectedEntry.statement_date,
+              type: 'Repayment',
+              principal_applied: allocation.principal || 0,
+              interest_applied: allocation.interest || 0,
+              fees_applied: allocation.fees || 0,
+              reference: selectedEntry.external_reference,
+              notes: multiLoanAllocations.length > 1
+                ? `Bank reconciliation (split ${multiLoanAllocations.length} loans): ${selectedEntry.description}`
+                : `Bank reconciliation: ${selectedEntry.description}`
+            };
+            const created = await api.entities.Transaction.create(txData);
+            createdTransactionIds.push({ id: created.id, amount: allocationAmount, loan: allocation.loan });
+          }
+
+          // For multi-loan, we'll create reconciliation entries for each and skip the single entry below
+          if (createdTransactionIds.length > 0) {
+            for (const { id, amount: txAmount, loan } of createdTransactionIds) {
+              await api.entities.ReconciliationEntry.create({
+                bank_statement_id: selectedEntry.id,
+                loan_transaction_id: id,
+                investor_transaction_id: null,
+                expense_id: null,
+                amount: txAmount,
+                reconciliation_type: 'loan_repayment',
+                notes: `Split repayment: Loan ${loan.loan_number}`,
+                was_created: true
+              });
+            }
+
+            // Mark bank statement as reconciled
+            await api.entities.BankStatement.update(selectedEntry.id, {
+              is_reconciled: true,
+              reconciled_at: new Date().toISOString()
+            });
+
+            // Log the multi-loan reconciliation
+            logReconciliationEvent(AuditAction.RECONCILIATION_CREATE, {
+              bank_statement_id: selectedEntry.id,
+              description: selectedEntry.description,
+              amount: amount,
+              type: 'multi_loan_repayment',
+              loan_count: createdTransactionIds.length,
+              loan_numbers: createdTransactionIds.map(t => t.loan.loan_number).join(', ')
+            });
+
+            // If pattern saving is enabled, save the split ratios
+            if (savePattern && selectedEntry.description) {
+              const totalAmount = multiLoanAllocations.reduce((sum, a) =>
+                sum + (a.principal || 0) + (a.interest || 0) + (a.fees || 0), 0
+              );
+
+              await saveReconciliationPattern({
+                description_pattern: selectedEntry.description.toLowerCase().slice(0, 50),
+                match_type: 'loan_repayment',
+                loan_id: null, // Multi-loan patterns don't have a single loan
+                investor_id: null,
+                expense_type_id: null,
+                split_ratios: {
+                  multiLoan: true,
+                  borrower_id: multiLoanBorrowerId,
+                  allocations: multiLoanAllocations.map(a => ({
+                    loan_number: a.loan.loan_number,
+                    principal_ratio: totalAmount > 0 ? (a.principal || 0) / totalAmount : 0,
+                    interest_ratio: totalAmount > 0 ? (a.interest || 0) / totalAmount : 0,
+                    fees_ratio: totalAmount > 0 ? (a.fees || 0) / totalAmount : 0
+                  }))
+                }
+              });
+            }
+
+            // Refresh data
+            queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+            queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+            queryClient.invalidateQueries({ queryKey: ['transactions'] });
+            queryClient.invalidateQueries({ queryKey: ['loans'] });
+
+            // Clean up dismissed state for reconciled entry
+            setDismissedSuggestions(prev => {
+              const next = new Set(prev);
+              next.delete(selectedEntry.id);
+              return next;
+            });
+
+            setSelectedEntry(null);
+            setReviewingSuggestion(null);
+            setIsReconciling(false);
+            return; // Exit early - we handled everything for multi-loan
+          }
 
         } else if (reconciliationType === 'loan_disbursement' && selectedLoan) {
           const txData = {
@@ -1422,6 +2391,24 @@ export default function BankReconciliation() {
 
           // Create interest withdrawal if there's interest amount
           if (interestAmount > 0) {
+            // Check if investor has manual interest calculation (via their product)
+            const investorProduct = investorProducts.find(p => p.id === selectedInvestor.product_id);
+            const isManualInterest = investorProduct?.interest_calculation_type === 'manual';
+
+            // For manual interest investors, create a credit entry first (accrual)
+            // This represents the interest that was owed before the payment
+            if (isManualInterest) {
+              await api.entities.InvestorInterest.create({
+                investor_id: selectedInvestor.id,
+                type: 'credit',
+                amount: interestAmount,
+                date: selectedEntry.statement_date,
+                description: `Interest accrued (auto-created for withdrawal): ${selectedEntry.description}`,
+                reference: selectedEntry.external_reference
+              });
+            }
+
+            // Create the debit (withdrawal/payment) entry
             const interestEntry = await api.entities.InvestorInterest.create({
               investor_id: selectedInvestor.id,
               type: 'debit',
@@ -1568,6 +2555,13 @@ export default function BankReconciliation() {
       queryClient.invalidateQueries({ queryKey: ['investors'] });
       queryClient.invalidateQueries({ queryKey: ['expenses'] });
       queryClient.invalidateQueries({ queryKey: ['loans'] });
+
+      // Clean up dismissed state for reconciled entry
+      setDismissedSuggestions(prev => {
+        const next = new Set(prev);
+        next.delete(selectedEntry.id);
+        return next;
+      });
 
       setSelectedEntry(null);
 
@@ -1877,6 +2871,32 @@ export default function BankReconciliation() {
           } else if (suggestion.existingExpense) {
             expenseId = suggestion.existingExpense.id;
           }
+        } else if (suggestion.matchMode === 'match_group' && suggestion.existingTransactions) {
+          // Handle grouped matches (multiple transactions summing to bank amount)
+          const txGroup = suggestion.existingTransactions;
+
+          // Create a reconciliation entry for each transaction in the group
+          for (const tx of txGroup) {
+            await api.entities.ReconciliationEntry.create({
+              bank_statement_id: entry.id,
+              loan_transaction_id: tx.id,
+              investor_transaction_id: null,
+              expense_id: null,
+              amount: parseFloat(tx.amount) || 0,
+              reconciliation_type: 'loan_repayment',
+              notes: `Auto-reconciled grouped match: ${txGroup.length} repayments with ${Math.round(suggestion.confidence * 100)}% confidence`,
+              was_created: false
+            });
+          }
+
+          // Mark bank statement as reconciled
+          await api.entities.BankStatement.update(entry.id, {
+            is_reconciled: true,
+            reconciled_at: new Date().toISOString()
+          });
+
+          succeeded++;
+          continue; // Skip the normal reconciliation entry creation below
         } else {
           // Create new transaction
           if (suggestion.type === 'loan_repayment' && suggestion.loan_id) {
@@ -2023,7 +3043,7 @@ export default function BankReconciliation() {
       let expenseId = null;
       let interestId = null;
 
-      if (suggestion.matchMode === 'match' && (suggestion.existingTransaction || suggestion.existingExpense)) {
+      if (suggestion.matchMode === 'match' && (suggestion.existingTransaction || suggestion.existingExpense || suggestion.existingInterest)) {
         // Link to existing single transaction
         if (suggestion.existingTransaction) {
           const tx = suggestion.existingTransaction;
@@ -2034,23 +3054,51 @@ export default function BankReconciliation() {
           }
         } else if (suggestion.existingExpense) {
           expenseId = suggestion.existingExpense.id;
+        } else if (suggestion.existingInterest) {
+          interestId = suggestion.existingInterest.id;
         }
-      } else if (suggestion.matchMode === 'match_group' && suggestion.existingTransactions) {
-        // Link to multiple existing transactions (grouped loan repayments)
-        const txGroup = suggestion.existingTransactions;
+      } else if (suggestion.matchMode === 'match_group' && (suggestion.existingTransactions || suggestion.existingInterestEntries)) {
+        // Link to multiple existing transactions (grouped payments)
+        // NOTE: For cross-table matches, BOTH existingTransactions AND existingInterestEntries may be present
 
-        // Create a reconciliation entry for each transaction in the group
-        for (const tx of txGroup) {
-          await api.entities.ReconciliationEntry.create({
-            bank_statement_id: entry.id,
-            loan_transaction_id: tx.id,
-            investor_transaction_id: null,
-            expense_id: null,
-            amount: parseFloat(tx.amount) || 0,
-            reconciliation_type: 'loan_repayment',
-            notes: `Grouped match: ${txGroup.length} repayments totaling ${formatCurrency(amount)} with ${Math.round(suggestion.confidence * 100)}% confidence`,
-            was_created: false
-          });
+        if (suggestion.existingTransactions) {
+          // Grouped loan repayments or investor transactions
+          const txGroup = suggestion.existingTransactions;
+          const isLoanTx = suggestion.type === 'loan_repayment' || suggestion.type === 'loan_disbursement';
+
+          for (const tx of txGroup) {
+            await api.entities.ReconciliationEntry.create({
+              bank_statement_id: entry.id,
+              loan_transaction_id: isLoanTx ? tx.id : null,
+              investor_transaction_id: !isLoanTx ? tx.id : null,
+              expense_id: null,
+              interest_id: null,
+              amount: parseFloat(tx.amount) || 0,
+              reconciliation_type: suggestion.type,
+              notes: `Grouped match: ${txGroup.length} transactions totaling ${formatCurrency(amount)} with ${Math.round(suggestion.confidence * 100)}% confidence`,
+              was_created: false
+            });
+          }
+        }
+
+        // Also process interest entries if present (can be in ADDITION to capital transactions for cross-table match)
+        if (suggestion.existingInterestEntries) {
+          // Grouped investor interest entries
+          const interestGroup = suggestion.existingInterestEntries;
+
+          for (const interest of interestGroup) {
+            await api.entities.ReconciliationEntry.create({
+              bank_statement_id: entry.id,
+              loan_transaction_id: null,
+              investor_transaction_id: null,
+              expense_id: null,
+              interest_id: interest.id,
+              amount: parseFloat(interest.amount) || 0,
+              reconciliation_type: 'interest_withdrawal',
+              notes: `Grouped interest match: ${interestGroup.length} entries totaling ${formatCurrency(amount)} with ${Math.round(suggestion.confidence * 100)}% confidence`,
+              was_created: false
+            });
+          }
         }
 
         // Mark bank statement as reconciled
@@ -2064,6 +3112,15 @@ export default function BankReconciliation() {
           queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
           queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
           queryClient.invalidateQueries({ queryKey: ['transactions'] });
+          queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+          queryClient.invalidateQueries({ queryKey: ['investor-interest'] });
+
+          // Clean up dismissed state for reconciled entry
+          setDismissedSuggestions(prev => {
+            const next = new Set(prev);
+            next.delete(entry.id);
+            return next;
+          });
         }
 
         return; // Early return since we handled everything
@@ -2198,6 +3255,13 @@ export default function BankReconciliation() {
           queryClient.invalidateQueries({ queryKey: ['investor-interest'] });
           queryClient.invalidateQueries({ queryKey: ['investors'] });
           queryClient.invalidateQueries({ queryKey: ['expenses'] });
+
+          // Clean up dismissed state for reconciled entry
+          setDismissedSuggestions(prev => {
+            const next = new Set(prev);
+            next.delete(entry.id);
+            return next;
+          });
         }
       } else {
         // No transaction was created or linked - show error
@@ -2236,6 +3300,7 @@ export default function BankReconciliation() {
     let failed = 0;
     let skipped = 0;
     const errors = [];
+    const skippedDetails = []; // Track details of skipped entries for debugging
 
     // Track which transactions/expenses have been used in this bulk operation
     // to prevent duplicate matching to the same existing record
@@ -2250,6 +3315,12 @@ export default function BankReconciliation() {
       if (suggestion.matchMode === 'match') {
         if (suggestion.existingTransaction) {
           if (usedTransactionIds.has(suggestion.existingTransaction.id)) {
+            const txInfo = suggestion.existingTransaction;
+            skippedDetails.push({
+              bankEntry: `${entry.statement_date} | ${formatCurrency(entry.amount)} | ${entry.description?.substring(0, 40)}`,
+              reason: 'Transaction already matched in this batch',
+              duplicateTx: `${txInfo.date} | ${formatCurrency(txInfo.amount)} | ${txInfo.description?.substring(0, 40) || suggestion.type}`
+            });
             skipped++;
             setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
             continue; // Skip - transaction already used in this bulk operation
@@ -2257,6 +3328,12 @@ export default function BankReconciliation() {
         }
         if (suggestion.existingExpense) {
           if (usedExpenseIds.has(suggestion.existingExpense.id)) {
+            const expInfo = suggestion.existingExpense;
+            skippedDetails.push({
+              bankEntry: `${entry.statement_date} | ${formatCurrency(entry.amount)} | ${entry.description?.substring(0, 40)}`,
+              reason: 'Expense already matched in this batch',
+              duplicateTx: `${expInfo.date} | ${formatCurrency(expInfo.amount)} | ${expInfo.description?.substring(0, 40) || 'Expense'}`
+            });
             skipped++;
             setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
             continue; // Skip - expense already used in this bulk operation
@@ -2266,6 +3343,12 @@ export default function BankReconciliation() {
         if (suggestion.existingTransactions) {
           const anyUsed = suggestion.existingTransactions.some(tx => usedTransactionIds.has(tx.id));
           if (anyUsed) {
+            const usedTx = suggestion.existingTransactions.find(tx => usedTransactionIds.has(tx.id));
+            skippedDetails.push({
+              bankEntry: `${entry.statement_date} | ${formatCurrency(entry.amount)} | ${entry.description?.substring(0, 40)}`,
+              reason: 'Grouped transaction already matched in this batch',
+              duplicateTx: usedTx ? `${usedTx.date} | ${formatCurrency(usedTx.amount)} | ${usedTx.description?.substring(0, 40) || 'Grouped tx'}` : 'Unknown'
+            });
             skipped++;
             setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
             continue; // Skip - one of the grouped transactions already used
@@ -2298,6 +3381,15 @@ export default function BankReconciliation() {
       setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
     }
 
+    // Clean up dismissed state for all reconciled entries
+    setDismissedSuggestions(prev => {
+      const next = new Set(prev);
+      for (const entryId of entriesToProcess) {
+        next.delete(entryId);
+      }
+      return next;
+    });
+
     // Invalidate all queries once at the end (much faster than per-entry)
     queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
     queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
@@ -2317,11 +3409,25 @@ export default function BankReconciliation() {
       let message = `Bulk match completed: ${succeeded} succeeded`;
       if (skipped > 0) {
         message += `, ${skipped} skipped (duplicate transaction references)`;
+        // Add detailed skip info
+        message += '\n\n--- SKIPPED ENTRIES ---';
+        skippedDetails.slice(0, 10).forEach((detail, i) => {
+          message += `\n\n${i + 1}. Bank Entry: ${detail.bankEntry}`;
+          message += `\n   Reason: ${detail.reason}`;
+          message += `\n   Already matched to: ${detail.duplicateTx}`;
+        });
+        if (skippedDetails.length > 10) {
+          message += `\n\n...and ${skippedDetails.length - 10} more`;
+        }
       }
       if (failed > 0) {
-        message += `, ${failed} failed:\n\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n...and ${errors.length - 5} more` : ''}`;
+        message += `\n\n--- FAILED ENTRIES ---\n${failed} failed:\n${errors.slice(0, 5).join('\n')}${errors.length > 5 ? `\n...and ${errors.length - 5} more` : ''}`;
       }
       alert(message);
+      // Also log to console for easier inspection
+      if (skippedDetails.length > 0) {
+        console.log('Bulk match skipped entries:', skippedDetails);
+      }
     }
   };
 
@@ -2476,6 +3582,14 @@ export default function BankReconciliation() {
       }
       return next;
     });
+    // Clean up dismissed state for reconciled entries
+    setDismissedSuggestions(prev => {
+      const next = new Set(prev);
+      for (const entry of entriesToCreate) {
+        next.delete(entry.id);
+      }
+      return next;
+    });
     setIsBulkCreatingExpenses(false);
     setAutoMatchResults({ succeeded, failed });
   };
@@ -2549,6 +3663,14 @@ export default function BankReconciliation() {
       }
       return next;
     });
+    // Clean up dismissed state for reconciled entries
+    setDismissedSuggestions(prev => {
+      const next = new Set(prev);
+      for (const entry of entriesToCreate) {
+        next.delete(entry.id);
+      }
+      return next;
+    });
     setIsBulkCreatingOtherIncome(false);
     setAutoMatchResults({ succeeded, failed });
   };
@@ -2591,7 +3713,7 @@ export default function BankReconciliation() {
     }
   };
 
-  // Toggle entry selection
+  // Toggle entry selection (auto-deselects conflicting entries)
   const toggleEntrySelection = (entryId) => {
     setSelectedEntries(prev => {
       const next = new Set(prev);
@@ -2599,12 +3721,18 @@ export default function BankReconciliation() {
         next.delete(entryId);
       } else {
         next.add(entryId);
+        // Auto-deselect any conflicting entries (those wanting the same transaction)
+        const conflicts = matchConflicts.get(entryId);
+        if (conflicts) {
+          conflicts.forEach(conflictId => next.delete(conflictId));
+        }
       }
       return next;
     });
   };
 
   // Select all visible entries based on current filter view
+  // Skips conflicting entries - picks highest confidence first
   const selectAllVisible = () => {
     if (filter === 'reconciled') {
       // Select all reconciled entries (for un-reconcile)
@@ -2612,14 +3740,44 @@ export default function BankReconciliation() {
       setSelectedEntries(new Set(eligibleIds));
     } else {
       // Select all unreconciled entries with high-confidence suggestions (90%+)
-      const eligibleIds = filteredStatements
+      // But skip entries that would conflict (want the same target transaction)
+      const eligible = filteredStatements
         .filter(s => {
           if (s.is_reconciled) return false;
           const suggestion = suggestedMatches.get(s.id);
           return suggestion && suggestion.confidence >= 0.9;
-        })
-        .map(s => s.id);
-      setSelectedEntries(new Set(eligibleIds));
+        });
+
+      // Sort by confidence (highest first) so we keep the best matches
+      eligible.sort((a, b) => {
+        const aConf = suggestedMatches.get(a.id)?.confidence || 0;
+        const bConf = suggestedMatches.get(b.id)?.confidence || 0;
+        return bConf - aConf;
+      });
+
+      const selected = new Set();
+      const usedTargets = new Set(); // Track which targets are already claimed
+
+      for (const entry of eligible) {
+        const suggestion = suggestedMatches.get(entry.id);
+        const targetIds = [];
+
+        // Collect all target IDs this entry wants to match
+        if (suggestion?.existingTransaction) targetIds.push(`tx:${suggestion.existingTransaction.id}`);
+        if (suggestion?.existingExpense) targetIds.push(`exp:${suggestion.existingExpense.id}`);
+        if (suggestion?.existingTransactions) {
+          suggestion.existingTransactions.forEach(tx => targetIds.push(`tx:${tx.id}`));
+        }
+
+        // Check if any targets are already claimed by a previously selected entry
+        const hasConflict = targetIds.some(id => usedTargets.has(id));
+        if (!hasConflict) {
+          selected.add(entry.id);
+          targetIds.forEach(id => usedTargets.add(id));
+        }
+      }
+
+      setSelectedEntries(selected);
     }
   };
 
@@ -2631,23 +3789,53 @@ export default function BankReconciliation() {
   // Calculate totals
   const totals = useMemo(() => {
     const unreconciled = bankStatements.filter(s => !s.is_reconciled);
-    const withSuggestions = unreconciled.filter(s => suggestedMatches.has(s.id));
-    const highConfidence = unreconciled.filter(s => {
+    const reconciled = bankStatements.filter(s => s.is_reconciled);
+
+    // Match tab: entries with match-type suggestions (links to existing transactions)
+    const matchableEntries = unreconciled.filter(s => {
+      if (dismissedSuggestions.has(s.id)) return false;
       const suggestion = suggestedMatches.get(s.id);
-      return suggestion && suggestion.confidence >= 0.7;
+      return suggestion && isMatchType(suggestion.matchMode);
     });
+
+    // Create New tab: entries that need new transactions created
+    const createEntries = unreconciled.filter(s => {
+      if (dismissedSuggestions.has(s.id)) return true; // Dismissed entries go here
+      const suggestion = suggestedMatches.get(s.id);
+      // No suggestion OR create-type suggestion
+      return !suggestion || suggestion.matchMode === 'create';
+    });
+
+    // High confidence matches (for auto-reconcile button)
+    const highConfidence = matchableEntries.filter(s => {
+      const suggestion = suggestedMatches.get(s.id);
+      return suggestion && suggestion.confidence >= 0.9;
+    });
+
     const unreconciledCredits = unreconciled.filter(s => s.amount > 0).reduce((sum, s) => sum + s.amount, 0);
     const unreconciledDebits = unreconciled.filter(s => s.amount < 0).reduce((sum, s) => sum + Math.abs(s.amount), 0);
+
+    // Credits/debits for each tab
+    const matchCredits = matchableEntries.filter(s => s.amount > 0).reduce((sum, s) => sum + s.amount, 0);
+    const matchDebits = matchableEntries.filter(s => s.amount < 0).reduce((sum, s) => sum + Math.abs(s.amount), 0);
+    const createCredits = createEntries.filter(s => s.amount > 0).reduce((sum, s) => sum + s.amount, 0);
+    const createDebits = createEntries.filter(s => s.amount < 0).reduce((sum, s) => sum + Math.abs(s.amount), 0);
+
     return {
       total: bankStatements.length,
       unreconciled: unreconciled.length,
-      reconciled: bankStatements.length - unreconciled.length,
-      withSuggestions: withSuggestions.length,
+      reconciled: reconciled.length,
+      matchable: matchableEntries.length,
+      createNew: createEntries.length,
       highConfidence: highConfidence.length,
       unreconciledCredits,
-      unreconciledDebits
+      unreconciledDebits,
+      matchCredits,
+      matchDebits,
+      createCredits,
+      createDebits
     };
-  }, [bankStatements, suggestedMatches]);
+  }, [bankStatements, suggestedMatches, dismissedSuggestions]);
 
   const bankSources = getBankSources();
 
@@ -2774,91 +3962,108 @@ export default function BankReconciliation() {
           </CardContent>
         </Card>
 
-        {/* Filters and Actions */}
-        <div className="flex flex-wrap gap-4 items-center justify-between">
-          <div className="flex flex-wrap gap-2">
+        {/* Main Tabs: Match to Existing vs Create New */}
+        <div className="flex flex-col gap-4">
+          {/* Tab Buttons */}
+          <div className="flex gap-2 border-b border-slate-200 pb-2">
             <Button
-              variant={filter === 'all' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setFilter('all')}
+              variant={activeTab === 'match' ? 'default' : 'ghost'}
+              size="lg"
+              onClick={() => { setActiveTab('match'); setFilter('unreconciled'); }}
+              className={activeTab === 'match' ? 'bg-purple-600 hover:bg-purple-700' : 'text-slate-600'}
             >
-              All ({totals.total})
+              <Link2 className="w-4 h-4 mr-2" />
+              Match to Existing ({totals.matchable})
             </Button>
             <Button
-              variant={filter === 'unreconciled' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setFilter('unreconciled')}
-              className={filter === 'unreconciled' ? 'bg-amber-600 hover:bg-amber-700' : ''}
+              variant={activeTab === 'create' ? 'default' : 'ghost'}
+              size="lg"
+              onClick={() => { setActiveTab('create'); setFilter('unreconciled'); }}
+              className={activeTab === 'create' ? 'bg-amber-600 hover:bg-amber-700' : 'text-slate-600'}
             >
-              Unreconciled ({totals.unreconciled})
+              <Plus className="w-4 h-4 mr-2" />
+              Create New ({totals.createNew})
             </Button>
-            {totals.withSuggestions > 0 && (
-              <Button
-                variant={filter === 'suggested' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setFilter('suggested')}
-                className={filter === 'suggested' ? 'bg-purple-600 hover:bg-purple-700' : 'border-purple-300 text-purple-700'}
-              >
-                <Sparkles className="w-3 h-3 mr-1" />
-                Suggested ({totals.withSuggestions})
-              </Button>
-            )}
+            <div className="flex-1" />
             <Button
               variant={filter === 'reconciled' ? 'default' : 'outline'}
-              size="sm"
-              onClick={() => setFilter('reconciled')}
+              size="lg"
+              onClick={() => { setActiveTab('match'); setFilter('reconciled'); }}
               className={filter === 'reconciled' ? 'bg-emerald-600 hover:bg-emerald-700' : ''}
             >
+              <CheckCircle2 className="w-4 h-4 mr-2" />
               Reconciled ({totals.reconciled})
             </Button>
           </div>
 
+          {/* Tab Description and Summary */}
+          <div className="flex flex-wrap gap-4 items-center justify-between">
+            <div>
+              {activeTab === 'match' && filter !== 'reconciled' && (
+                <div className="text-sm text-slate-600">
+                  <span className="font-medium text-purple-700">Bank entries matched to existing system transactions.</span>
+                  <span className="ml-2 text-slate-500">
+                    {formatCurrency(totals.matchCredits)} in / {formatCurrency(totals.matchDebits)} out
+                  </span>
+                </div>
+              )}
+              {activeTab === 'create' && (
+                <div className="text-sm text-slate-600">
+                  <span className="font-medium text-amber-700">Bank entries requiring new transactions to be created.</span>
+                  <span className="ml-2 text-slate-500">
+                    {formatCurrency(totals.createCredits)} in / {formatCurrency(totals.createDebits)} out
+                  </span>
+                </div>
+              )}
+              {filter === 'reconciled' && (
+                <div className="text-sm text-slate-600">
+                  <span className="font-medium text-emerald-700">Previously reconciled entries.</span>
+                </div>
+              )}
+            </div>
+
           <div className="flex gap-3 items-center">
-            {/* Confidence Filter */}
-            <Select value={confidenceFilter} onValueChange={setConfidenceFilter}>
-              <SelectTrigger className="w-44">
-                <SelectValue placeholder="Match %" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">All confidence</SelectItem>
-                <SelectItem value="100">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                    90%+ (Best)
-                  </span>
-                </SelectItem>
-                <SelectItem value="90">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                    80-89% (Good)
-                  </span>
-                </SelectItem>
-                <SelectItem value="70">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                    65-79% (Fair)
-                  </span>
-                </SelectItem>
-                <SelectItem value="50">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                    50-64% (Check)
-                  </span>
-                </SelectItem>
-                <SelectItem value="low">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-slate-400"></span>
-                    Below 50%
-                  </span>
-                </SelectItem>
-                <SelectItem value="none">
-                  <span className="flex items-center gap-2">
-                    <span className="w-2 h-2 rounded-full bg-red-400"></span>
-                    No suggestion
-                  </span>
-                </SelectItem>
-              </SelectContent>
-            </Select>
+            {/* Confidence Filter - only on Match tab */}
+            {activeTab === 'match' && filter !== 'reconciled' && (
+              <Select value={confidenceFilter} onValueChange={setConfidenceFilter}>
+                <SelectTrigger className="w-44">
+                  <SelectValue placeholder="Match %" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="all">All confidence</SelectItem>
+                  <SelectItem value="100">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                      90%+ (Best)
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="90">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                      80-89% (Good)
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="70">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                      65-79% (Fair)
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="50">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                      50-64% (Check)
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="low">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                      Below 50%
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+            )}
 
             <div className="relative">
               <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
@@ -2878,7 +4083,8 @@ export default function BankReconciliation() {
               )}
             </div>
 
-            {totals.highConfidence > 0 && (
+            {/* Auto-Reconcile - only on Match tab */}
+            {activeTab === 'match' && filter !== 'reconciled' && totals.highConfidence > 0 && (
               <Button
                 onClick={handleAutoReconcile}
                 disabled={isAutoMatching}
@@ -2899,13 +4105,7 @@ export default function BankReconciliation() {
             )}
           </div>
         </div>
-
-        {totals.unreconciled > 0 && (
-          <div className="text-sm text-slate-600">
-            Unreconciled: <span className="text-emerald-600 font-medium">{formatCurrency(totals.unreconciledCredits)}</span> in /
-            <span className="text-red-600 font-medium ml-1">{formatCurrency(totals.unreconciledDebits)}</span> out
-          </div>
-        )}
+        </div>
 
         {/* Bulk Actions Bar */}
         {selectedEntries.size > 0 && (() => {
@@ -3058,7 +4258,7 @@ export default function BankReconciliation() {
               </div>
             ) : (
               <div className="overflow-x-auto">
-                <table className="w-full">
+                <table className="w-full table-fixed">
                   <thead>
                     <tr className="border-b bg-slate-50">
                       <th className="px-2 py-2 w-8">
@@ -3088,11 +4288,29 @@ export default function BankReconciliation() {
                           className="border-slate-300"
                         />
                       </th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
-                      <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase">Description</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase">Amount</th>
-                      <th className="px-3 py-2 text-center text-xs font-medium text-slate-500 uppercase">Status</th>
-                      <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase">Actions</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase w-24">Date</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase w-[30%]">Description</th>
+                      <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase min-w-[280px]">
+                        <button
+                          onClick={() => {
+                            if (sortBy === 'linksTo') {
+                              setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+                            } else {
+                              setSortBy('linksTo');
+                              setSortDirection('asc');
+                            }
+                          }}
+                          className="flex items-center gap-1 hover:text-slate-700"
+                        >
+                          Links To
+                          {sortBy === 'linksTo' && (
+                            sortDirection === 'asc' ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />
+                          )}
+                        </button>
+                      </th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase w-28">Amount</th>
+                      <th className="px-3 py-2 text-center text-xs font-medium text-slate-500 uppercase w-24">Status</th>
+                      <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase w-28">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -3127,10 +4345,10 @@ export default function BankReconciliation() {
                               ? format(parseISO(entry.statement_date), 'dd MMM yyyy')
                               : '-'}
                           </td>
-                          <td className="px-3 py-1.5">
-                            <div className="flex items-center gap-2">
+                          <td className="px-3 py-1.5 overflow-hidden w-[30%]">
+                            <div className="flex items-center gap-2 min-w-0">
                               <button
-                                className="text-left group min-w-0 flex-shrink"
+                                className="text-left group min-w-0 flex-1 overflow-hidden"
                                 onClick={() => suggestion ? openReconcileModal(entry, suggestion) : openReconcileModal(entry)}
                               >
                                 <p className="text-sm text-slate-700 truncate group-hover:text-blue-600 group-hover:underline cursor-pointer" title={`${entry.description} (Click to ${suggestion ? 'review' : 'reconcile'})`}>
@@ -3226,22 +4444,144 @@ export default function BankReconciliation() {
                                 </button>
                               )}
                             </div>
-                            <div className="flex flex-wrap items-center gap-1">
-                              <span className="text-xs text-slate-400">{entry.bank_source}</span>
-                              {suggestion && !entry.is_reconciled && (
-                                <>
-                                  {(suggestion.matchMode === 'match' || suggestion.matchMode === 'match_group') && (
-                                    <Badge variant="outline" className="text-xs bg-blue-50 text-blue-700 border-blue-200 py-0">
-                                      <Sparkles className="w-3 h-3 mr-1" />
-                                      {Math.round(suggestion.confidence * 100)}%
-                                    </Badge>
-                                  )}
-                                  <span className="text-xs text-slate-600 max-w-[250px] truncate" title={suggestion.reason}>
-                                    {suggestion.reason}
-                                  </span>
-                                </>
-                              )}
+                            <div className="flex items-center gap-1 min-w-0 overflow-hidden">
+                              <span className="text-xs text-slate-400 shrink-0">{entry.bank_source}</span>
                             </div>
+                          </td>
+                          {/* Links To column */}
+                          <td className="px-3 py-1.5 min-w-[280px]">
+                            {(() => {
+                              // For reconciled entries, show what it was reconciled to
+                              if (entry.is_reconciled) {
+                                // Get reconciliation entries for this bank statement
+                                const recons = reconciliationEntries.filter(r => r.bank_statement_id === entry.id);
+                                if (recons.length === 0) {
+                                  return <span className="text-xs text-slate-400">-</span>;
+                                }
+
+                                // Build a summary of what it's linked to
+                                const links = [];
+                                for (const recon of recons) {
+                                  if (recon.loan_transaction_id) {
+                                    const tx = loanTransactions.find(t => t.id === recon.loan_transaction_id);
+                                    const loan = tx ? loans.find(l => l.id === tx.loan_id) : null;
+                                    links.push({
+                                      type: 'loan',
+                                      label: loan ? `${tx?.type || 'Loan'}: ${loan.borrower_name}` : (tx?.type || 'Loan Transaction'),
+                                      amount: recon.amount
+                                    });
+                                  }
+                                  if (recon.investor_transaction_id) {
+                                    const tx = investorTransactions.find(t => t.id === recon.investor_transaction_id);
+                                    const investor = tx ? investors.find(i => i.id === tx.investor_id) : null;
+                                    links.push({
+                                      type: 'investor',
+                                      label: investor ? `${tx?.type?.replace('_', ' ') || 'Investor'}: ${investor.business_name || investor.name}` : (tx?.type?.replace('_', ' ') || 'Investor Transaction'),
+                                      amount: recon.amount
+                                    });
+                                  }
+                                  if (recon.interest_id) {
+                                    const interest = investorInterestEntries.find(i => i.id === recon.interest_id);
+                                    const investor = interest ? investors.find(i => i.id === interest.investor_id) : null;
+                                    links.push({
+                                      type: 'interest',
+                                      label: investor ? `Interest: ${investor.business_name || investor.name}` : 'Interest',
+                                      amount: recon.amount
+                                    });
+                                  }
+                                  if (recon.expense_id) {
+                                    const exp = expenses.find(e => e.id === recon.expense_id);
+                                    const expType = exp ? expenseTypes.find(t => t.id === exp.type_id) : null;
+                                    links.push({
+                                      type: 'expense',
+                                      label: expType ? `Expense: ${expType.name}` : 'Expense',
+                                      amount: recon.amount
+                                    });
+                                  }
+                                }
+
+                                if (links.length === 0) {
+                                  return <span className="text-xs text-slate-400">-</span>;
+                                }
+
+                                return (
+                                  <div className="space-y-0.5">
+                                    {links.map((link, idx) => (
+                                      <div key={idx} className="text-xs text-emerald-600 truncate" title={link.label}>
+                                        {link.label}
+                                      </div>
+                                    ))}
+                                  </div>
+                                );
+                              }
+
+                              // For unreconciled entries with suggestions
+                              if (suggestion && !entry.is_reconciled) {
+                                if (isMatchType(suggestion.matchMode)) {
+                                  // Link to existing transaction
+                                  let linkText = suggestion.existingTransaction?.type || suggestion.type?.replace('_', ' ') || '';
+                                  if (suggestion.existingLoan?.borrower_name) {
+                                    linkText += `: ${suggestion.existingLoan.borrower_name}`;
+                                  } else if (suggestion.loan?.borrower_name) {
+                                    // For grouped_disbursement matches
+                                    linkText += `: ${suggestion.loan.borrower_name}`;
+                                  } else if (suggestion.existingInvestor?.name || suggestion.existingInvestor?.business_name) {
+                                    linkText += `: ${suggestion.existingInvestor.business_name || suggestion.existingInvestor.name}`;
+                                  } else if (suggestion.existingExpense) {
+                                    const expType = expenseTypes.find(t => t.id === suggestion.existingExpense.type_id);
+                                    linkText = `Expense: ${expType?.name || 'Expense'}`;
+                                  } else if (suggestion.existingInterest) {
+                                    const investor = investors.find(i => i.id === suggestion.existingInterest.investor_id);
+                                    linkText = `Interest: ${investor?.business_name || investor?.name || 'Unknown'}`;
+                                  } else if (suggestion.investor_id) {
+                                    const investor = investors.find(i => i.id === suggestion.investor_id);
+                                    linkText += investor ? `: ${investor.business_name || investor.name}` : '';
+                                  }
+
+                                  // For grouped matches, show count
+                                  if (suggestion.matchMode === 'match_group') {
+                                    const txCount = (suggestion.existingTransactions?.length || 0) + (suggestion.existingInterestEntries?.length || 0);
+                                    linkText = `${txCount} items: ${linkText}`;
+                                  } else if (suggestion.matchMode === 'grouped_disbursement') {
+                                    linkText = `${suggestion.groupedEntries?.length || 0} debits → ${suggestion.loan?.loan_number || 'Unknown'}`;
+                                  }
+
+                                  return (
+                                    <div className="space-y-0.5">
+                                      <div className="text-xs text-blue-600 font-medium truncate" title={linkText}>
+                                        → {linkText}
+                                      </div>
+                                      <div className="text-xs text-slate-400 truncate" title={suggestion.reason}>
+                                        {suggestion.reason}
+                                      </div>
+                                    </div>
+                                  );
+                                } else {
+                                  // Will create new transaction
+                                  let createText = suggestion.type === 'expense' ? 'Expense' : (suggestion.type?.replace('_', ' ') || 'Transaction');
+                                  if (suggestion.loan_id) {
+                                    const loan = loans.find(l => l.id === suggestion.loan_id);
+                                    createText += loan ? `: ${loan.borrower_name}` : '';
+                                  } else if (suggestion.investor_id) {
+                                    const investor = investors.find(i => i.id === suggestion.investor_id);
+                                    createText += investor ? `: ${investor.business_name || investor.name}` : '';
+                                  }
+
+                                  return (
+                                    <div className="space-y-0.5">
+                                      <div className="text-xs text-amber-600 font-medium truncate" title={createText}>
+                                        + {createText}
+                                      </div>
+                                      <div className="text-xs text-slate-400 truncate" title={suggestion.reason}>
+                                        {suggestion.reason}
+                                      </div>
+                                    </div>
+                                  );
+                                }
+                              }
+
+                              return <span className="text-xs text-slate-400">-</span>;
+                            })()}
                           </td>
                           <td className="px-3 py-1.5 text-right">
                             <span className={`text-sm font-medium ${entry.amount > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -3249,26 +4589,64 @@ export default function BankReconciliation() {
                             </span>
                           </td>
                           <td className="px-3 py-1.5 text-center">
-                            {entry.is_reconciled ? (
-                              <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 py-0 text-xs">
-                                <Check className="w-3 h-3 mr-1" />
-                                Reconciled
-                              </Badge>
-                            ) : suggestion && (suggestion.matchMode === 'match' || suggestion.matchMode === 'match_group') && suggestion.confidence >= 0.9 ? (
-                              <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 py-0 text-xs">
-                                <Sparkles className="w-3 h-3 mr-1" />
-                                {Math.round(suggestion.confidence * 100)}% Match
-                              </Badge>
-                            ) : (
-                              <Badge variant="outline" className="text-slate-500 border-slate-300 py-0 text-xs">
-                                Pending
-                              </Badge>
-                            )}
+                            <div className="flex flex-col items-center gap-0.5">
+                              {entry.is_reconciled ? (
+                                <Badge className="bg-emerald-100 text-emerald-700 border-emerald-200 py-0 text-xs">
+                                  <Check className="w-3 h-3 mr-1" />
+                                  Reconciled
+                                </Badge>
+                              ) : activeTab === 'match' && suggestion ? (
+                                <Badge variant="outline" className="text-blue-600 border-blue-300 bg-blue-50 py-0 text-xs">
+                                  <Sparkles className="w-3 h-3 mr-1" />
+                                  {Math.round(suggestion.confidence * 100)}%
+                                </Badge>
+                              ) : activeTab === 'create' && suggestion ? (
+                                <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 py-0 text-xs">
+                                  Suggested
+                                </Badge>
+                              ) : (
+                                <Badge variant="outline" className="text-slate-500 border-slate-300 py-0 text-xs">
+                                  <AlertCircle className="w-3 h-3 mr-1" />
+                                  Review
+                                </Badge>
+                              )}
+                              {/* Show conflict warning if multiple bank entries want the same transaction */}
+                              {matchConflicts.has(entry.id) && (
+                                <Badge variant="outline" className="text-amber-600 border-amber-300 bg-amber-50 py-0 text-xs" title="Multiple bank entries are trying to match to the same transaction">
+                                  <AlertCircle className="w-3 h-3 mr-1" />
+                                  {matchConflicts.get(entry.id).size} conflict{matchConflicts.get(entry.id).size > 1 ? 's' : ''}
+                                </Badge>
+                              )}
+                            </div>
                           </td>
                           <td className="px-3 py-1.5 text-right">
                             <div className="flex justify-end gap-0.5">
                               {!entry.is_reconciled ? (
                                 <>
+                                  {/* Match tab: Show dismiss button to move to Create tab */}
+                                  {activeTab === 'match' && suggestion && !dismissedSuggestions.has(entry.id) && (
+                                    <Button
+                                      size="icon"
+                                      variant="outline"
+                                      onClick={() => dismissSuggestion(entry.id)}
+                                      className="h-7 w-7 border-slate-300 text-slate-500 hover:bg-slate-50"
+                                      title="Dismiss match - move to Create tab"
+                                    >
+                                      <X className="w-3.5 h-3.5" />
+                                    </Button>
+                                  )}
+                                  {/* Create tab: Show restore button for dismissed entries */}
+                                  {activeTab === 'create' && dismissedSuggestions.has(entry.id) && (
+                                    <Button
+                                      size="icon"
+                                      variant="outline"
+                                      onClick={() => restoreSuggestion(entry.id)}
+                                      className="h-7 w-7 border-purple-300 text-purple-600 hover:bg-purple-50"
+                                      title="Restore match suggestion"
+                                    >
+                                      <Undo2 className="w-3.5 h-3.5" />
+                                    </Button>
+                                  )}
                                   {suggestion && (
                                     <>
                                       {suggestion.confidence >= 0.9 && (
@@ -3276,7 +4654,9 @@ export default function BankReconciliation() {
                                           size="icon"
                                           onClick={() => handleQuickMatch(entry, suggestion)}
                                           className="bg-purple-600 hover:bg-purple-700 h-7 w-7"
-                                          title={`Quick match: ${suggestion.reason}`}
+                                          title={activeTab === 'match'
+                                            ? `Quick link to existing transaction`
+                                            : `Quick create new transaction`}
                                         >
                                           <Zap className="w-3.5 h-3.5" />
                                         </Button>
@@ -3285,8 +4665,10 @@ export default function BankReconciliation() {
                                         size="icon"
                                         variant="outline"
                                         onClick={() => openReconcileModal(entry, suggestion)}
-                                        className={`h-7 w-7 ${suggestion.matchMode === 'match' ? 'border-blue-300 text-blue-700 hover:bg-blue-50' : 'border-purple-300 text-purple-700 hover:bg-purple-50'}`}
-                                        title="Review and reconcile"
+                                        className={`h-7 w-7 ${activeTab === 'match' ? 'border-blue-300 text-blue-700 hover:bg-blue-50' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}
+                                        title={activeTab === 'match'
+                                          ? "Review & link to existing transaction"
+                                          : "Review & create new transaction"}
                                       >
                                         <Search className="w-3.5 h-3.5" />
                                       </Button>
@@ -3557,16 +4939,104 @@ export default function BankReconciliation() {
             {selectedEntry && !selectedEntry.is_reconciled && (
               /* UNIFIED RECONCILIATION VIEW - Side by side layout */
               <div className="space-y-4">
-                {/* Suggestion badge if applicable */}
-                {reviewingSuggestion && (
-                  <div className="flex items-center justify-between">
-                    <Badge className={reviewingSuggestion.matchMode === 'match' || reviewingSuggestion.matchMode === 'match_group' ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-amber-100 text-amber-700 border-amber-300'}>
-                      <Sparkles className="w-3 h-3 mr-1" />
-                      {Math.round(reviewingSuggestion.confidence * 100)}% confidence suggestion
-                    </Badge>
-                    <span className="text-xs text-slate-500">{reviewingSuggestion.reason}</span>
-                  </div>
-                )}
+                {/* Suggestion badge with match explanation */}
+                {reviewingSuggestion && (() => {
+                  // Get match explanation - use selectedExistingTx if user has changed selection, otherwise use suggestion's transaction
+                  // For match_group with combined transactions, calculate the combined total
+                  let explanation = null;
+
+                  if (reviewingSuggestion.matchMode === 'match_group' &&
+                      (reviewingSuggestion.existingTransactions || reviewingSuggestion.existingInterestEntries)) {
+                    // Calculate combined total for grouped matches
+                    const capitalTxs = reviewingSuggestion.existingTransactions || [];
+                    const interestEntries = reviewingSuggestion.existingInterestEntries || [];
+                    const capitalTotal = capitalTxs.reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0);
+                    const interestTotal = interestEntries.reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+                    const combinedTotal = capitalTotal + interestTotal;
+
+                    // Get date from first transaction for comparison
+                    const firstTx = capitalTxs[0] || interestEntries[0];
+                    const txDate = firstTx?.date;
+
+                    // Create a synthetic transaction object with combined amount for getMatchExplanation
+                    const syntheticTx = { amount: combinedTotal, date: txDate };
+                    explanation = selectedEntry ? getMatchExplanation(selectedEntry, syntheticTx, 'date') : null;
+                  } else {
+                    const txToCompare = selectedExistingTx ||
+                      reviewingSuggestion.existingTransaction ||
+                      (reviewingSuggestion.existingTransactions?.[0]);
+                    explanation = txToCompare && selectedEntry
+                      ? getMatchExplanation(selectedEntry, txToCompare, 'date')
+                      : null;
+                  }
+
+                  // Determine if this is a name-based suggestion (for create mode)
+                  const isNameBasedSuggestion = reviewingSuggestion.matchMode === 'create' &&
+                    (reviewingSuggestion.reason?.includes('name:') || reviewingSuggestion.reason?.includes('Investor name') || reviewingSuggestion.reason?.includes('Borrower'));
+
+                  return (
+                    <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 space-y-2">
+                      <div className="flex items-center justify-between">
+                        <Badge className={isMatchType(reviewingSuggestion.matchMode) ? 'bg-blue-100 text-blue-700 border-blue-300' : 'bg-amber-100 text-amber-700 border-amber-300'}>
+                          <Sparkles className="w-3 h-3 mr-1" />
+                          {Math.round(reviewingSuggestion.confidence * 100)}% confidence
+                        </Badge>
+                        <span className="text-xs text-slate-500">{reviewingSuggestion.reason}</span>
+                      </div>
+                      {/* For grouped disbursement matches, show all entries in the group */}
+                      {reviewingSuggestion.matchMode === 'grouped_disbursement' && reviewingSuggestion.groupedEntries && (
+                        <div className="text-xs text-blue-600 border-t border-slate-200 pt-2">
+                          <div className="font-medium mb-1">Bank entries in this group:</div>
+                          {reviewingSuggestion.groupedEntries.map((e, idx) => (
+                            <div key={e.id} className="flex justify-between text-slate-600">
+                              <span>{format(parseISO(e.statement_date), 'dd/MM/yyyy')}: {e.description?.substring(0, 30)}...</span>
+                              <span className="font-medium">{formatCurrency(Math.abs(e.amount))}</span>
+                            </div>
+                          ))}
+                          <div className="flex justify-between font-medium text-blue-700 border-t border-slate-300 pt-1 mt-1">
+                            <span>Total:</span>
+                            <span>{formatCurrency(reviewingSuggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0))}</span>
+                          </div>
+                        </div>
+                      )}
+                      {/* Match explanation breakdown - for existing transaction matches */}
+                      {explanation && isMatchType(reviewingSuggestion.matchMode) && (
+                        <div className="flex items-center gap-4 text-xs pt-1 border-t border-slate-200">
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500">Amount:</span>
+                            <span className={`font-medium ${
+                              explanation.amount.color === 'emerald' ? 'text-emerald-600' :
+                              explanation.amount.color === 'amber' ? 'text-amber-600' : 'text-red-600'
+                            }`}>
+                              {explanation.amount.icon === 'check' && <Check className="w-3 h-3 inline mr-0.5" />}
+                              {explanation.amount.text}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <span className="text-slate-500">Date:</span>
+                            <span className={`font-medium ${
+                              explanation.date.color === 'emerald' ? 'text-emerald-600' :
+                              explanation.date.color === 'amber' ? 'text-amber-600' :
+                              explanation.date.color === 'red' ? 'text-red-600' : 'text-slate-500'
+                            }`}>
+                              {explanation.date.icon === 'check' && <Check className="w-3 h-3 inline mr-0.5" />}
+                              {explanation.date.icon === 'approx' && <span className="inline mr-0.5">~</span>}
+                              {explanation.date.icon === 'warning' && <AlertCircle className="w-3 h-3 inline mr-0.5" />}
+                              {explanation.date.icon === 'x' && <X className="w-3 h-3 inline mr-0.5" />}
+                              {explanation.date.text}
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      {/* Explanation for name-based create suggestions */}
+                      {isNameBasedSuggestion && (
+                        <div className="text-xs pt-1 border-t border-slate-200 text-slate-600">
+                          <span className="text-amber-600 font-medium">Name match</span> - Found entity name in bank description. Will create a new transaction.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
 
                 {/* Two column layout */}
                 <div className="grid grid-cols-2 gap-4">
@@ -3603,10 +5073,96 @@ export default function BankReconciliation() {
                   </div>
 
                   {/* Right: Transaction Details */}
-                  <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-                    <p className="text-xs text-emerald-600 uppercase tracking-wide mb-3 font-medium">Create Transaction</p>
+                  <div className={`${matchMode === 'match' ? 'bg-blue-50 border-blue-200' : 'bg-emerald-50 border-emerald-200'} border rounded-lg p-4`}>
+                    <p className={`text-xs ${matchMode === 'match' ? 'text-blue-600' : 'text-emerald-600'} uppercase tracking-wide mb-3 font-medium`}>
+                      {matchMode === 'match' ? 'Match to Existing' : 'Create Transaction'}
+                    </p>
 
-                    {/* Transaction Type Dropdown */}
+                    {/* Grouped Match Summary - show when we have multiple transactions to link */}
+                    {matchMode === 'match' && reviewingSuggestion?.matchMode === 'match_group' && (reviewingSuggestion.existingTransactions || reviewingSuggestion.existingInterestEntries) && (
+                      <div className="mb-4 space-y-2">
+                        {(() => {
+                          const capitalTxs = reviewingSuggestion.existingTransactions || [];
+                          const interestEntries = reviewingSuggestion.existingInterestEntries || [];
+                          const totalItems = capitalTxs.length + interestEntries.length;
+                          const isLoanType = reviewingSuggestion.type === 'loan_repayment' || reviewingSuggestion.type === 'loan_disbursement';
+                          const isInvestorType = reviewingSuggestion.type === 'investor_withdrawal' || reviewingSuggestion.type === 'investor_credit' || reviewingSuggestion.type === 'interest_withdrawal';
+
+                          // Calculate totals
+                          const capitalTotal = capitalTxs.reduce((sum, tx) => sum + (parseFloat(tx.amount) || 0), 0);
+                          const interestTotal = interestEntries.reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
+                          const grandTotal = capitalTotal + interestTotal;
+
+                          return (
+                            <>
+                              <p className="text-sm font-medium text-blue-800">
+                                Linking to {totalItems} existing {isLoanType ? 'repayment' : 'transaction'}{totalItems > 1 ? 's' : ''}:
+                              </p>
+                              <div className="bg-white rounded-lg border border-blue-200 divide-y divide-blue-100 max-h-48 overflow-y-auto">
+                                {/* Capital transactions (loans or investor capital) */}
+                                {capitalTxs.map((tx, idx) => {
+                                  if (isLoanType) {
+                                    const loan = loans.find(l => l.id === tx.loan_id);
+                                    const borrowerName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
+                                    return (
+                                      <div key={tx.id || `tx-${idx}`} className="p-2 flex justify-between items-center text-sm">
+                                        <div className="flex-1 min-w-0 mr-2">
+                                          <p className="font-medium text-slate-700">{loan?.loan_number || 'Unknown Loan'}</p>
+                                          <p className="text-xs text-slate-500">{borrowerName}</p>
+                                        </div>
+                                        <p className="font-mono font-semibold text-emerald-600 whitespace-nowrap">{formatCurrency(tx.amount)}</p>
+                                      </div>
+                                    );
+                                  } else {
+                                    // Investor capital transaction
+                                    const investor = investors.find(i => i.id === tx.investor_id);
+                                    const investorName = investor?.business_name || investor?.name || 'Unknown';
+                                    return (
+                                      <div key={tx.id || `tx-${idx}`} className="p-2 flex justify-between items-center text-sm">
+                                        <div className="flex-1 min-w-0 mr-2">
+                                          <p className="font-medium text-slate-700">{tx.type?.replace('_', ' ') || 'Capital'}</p>
+                                          <p className="text-xs text-slate-500">{investorName}</p>
+                                        </div>
+                                        <p className="font-mono font-semibold text-red-600 whitespace-nowrap">{formatCurrency(tx.amount)}</p>
+                                      </div>
+                                    );
+                                  }
+                                })}
+                                {/* Interest entries */}
+                                {interestEntries.map((interest, idx) => {
+                                  const investor = investors.find(i => i.id === interest.investor_id);
+                                  const investorName = investor?.business_name || investor?.name || 'Unknown';
+                                  return (
+                                    <div key={interest.id || `int-${idx}`} className="p-2 flex justify-between items-center text-sm">
+                                      <div className="flex-1 min-w-0 mr-2">
+                                        <p className="font-medium text-slate-700">Interest Withdrawal</p>
+                                        <p className="text-xs text-slate-500">{investorName}</p>
+                                      </div>
+                                      <p className="font-mono font-semibold text-red-600 whitespace-nowrap">{formatCurrency(interest.amount)}</p>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                              <div className="flex justify-between text-sm pt-1 border-t border-blue-200">
+                                <span className="font-medium text-blue-800">Total:</span>
+                                <span className="font-mono font-bold text-blue-800">
+                                  {formatCurrency(grandTotal)}
+                                </span>
+                              </div>
+                              {Math.abs(grandTotal - Math.abs(selectedEntry.amount)) < 0.01 && (
+                                <p className="text-xs text-emerald-600 flex items-center gap-1">
+                                  <Check className="w-3 h-3" />
+                                  Amounts match exactly
+                                </p>
+                              )}
+                            </>
+                          );
+                        })()}
+                      </div>
+                    )}
+
+                    {/* Transaction Type Dropdown - hide when showing grouped match */}
+                    {!(matchMode === 'match' && reviewingSuggestion?.matchMode === 'match_group') && (
                     <div className="space-y-3">
                       <div>
                         <Label className="text-xs text-slate-500 uppercase">Transaction Type</Label>
@@ -3621,6 +5177,9 @@ export default function BankReconciliation() {
                             setEntitySearch('');
                             setSelectedOffsetEntries([]);
                             setOffsetNotes('');
+                            // Reset multi-loan state when type changes
+                            setMultiLoanAllocations([]);
+                            setMultiLoanBorrowerId(null);
                           }}
                         >
                           <SelectTrigger className="mt-1">
@@ -3638,7 +5197,8 @@ export default function BankReconciliation() {
                               <>
                                 <SelectItem value="expense">Expense</SelectItem>
                                 <SelectItem value="loan_disbursement">Loan Disbursement</SelectItem>
-                                <SelectItem value="investor_withdrawal">Investor Withdrawal</SelectItem>
+                                <SelectItem value="investor_withdrawal">Investor Capital Withdrawal</SelectItem>
+                                <SelectItem value="interest_withdrawal">Investor Interest Withdrawal</SelectItem>
                                 <SelectItem value="offset">Funds Returned</SelectItem>
                               </>
                             )}
@@ -3647,7 +5207,7 @@ export default function BankReconciliation() {
                       </div>
 
                       {/* Selected Entity Display */}
-                      {selectedInvestor && (reconciliationType === 'investor_withdrawal' || reconciliationType === 'investor_credit') && (
+                      {selectedInvestor && (reconciliationType === 'investor_withdrawal' || reconciliationType === 'investor_credit' || reconciliationType === 'interest_withdrawal') && (
                         <div className="bg-white rounded-lg p-2 border border-emerald-300">
                           <p className="text-xs text-slate-400 uppercase">Investor Account</p>
                           <p className="text-sm font-semibold text-slate-900">{selectedInvestor.business_name || selectedInvestor.name}</p>
@@ -3657,7 +5217,8 @@ export default function BankReconciliation() {
                         </div>
                       )}
 
-                      {selectedLoan && (reconciliationType === 'loan_repayment' || reconciliationType === 'loan_disbursement') && (
+                      {/* Single loan display for disbursements */}
+                      {selectedLoan && reconciliationType === 'loan_disbursement' && (
                         <div className="bg-white rounded-lg p-2 border border-emerald-300">
                           <p className="text-xs text-slate-400 uppercase">Loan</p>
                           <p className="text-sm font-semibold text-slate-900">{selectedLoan.loan_number}</p>
@@ -3665,24 +5226,61 @@ export default function BankReconciliation() {
                         </div>
                       )}
 
-                      {/* Amount (auto-filled) */}
+                      {/* Multi-loan display for repayments */}
+                      {multiLoanAllocations.length > 0 && reconciliationType === 'loan_repayment' && (
+                        <div className="bg-white rounded-lg p-2 border border-emerald-300">
+                          <p className="text-xs text-slate-400 uppercase">Loan{multiLoanAllocations.length > 1 ? 's' : ''}</p>
+                          <p className="text-sm font-semibold text-slate-900">
+                            {multiLoanAllocations.length === 1
+                              ? multiLoanAllocations[0].loan.loan_number
+                              : `${multiLoanAllocations.length} loans`}
+                          </p>
+                          <p className="text-xs text-slate-500">
+                            {multiLoanAllocations.length === 1
+                              ? getBorrowerName(multiLoanAllocations[0].loan.borrower_id)
+                              : `${getBorrowerName(multiLoanBorrowerId)} (${multiLoanAllocations.map(a => a.loan.loan_number).join(', ')})`}
+                          </p>
+                        </div>
+                      )}
+
+                      {/* Amount - show selected transaction amount when matching */}
                       <div>
                         <p className="text-xs text-slate-400 uppercase">Amount</p>
                         <p className="text-lg font-bold text-emerald-600">
-                          {formatCurrency(Math.abs(selectedEntry.amount))} ✓
+                          {matchMode === 'match' && selectedExistingTx
+                            ? formatCurrency(Math.abs(selectedExistingTx.amount))
+                            : formatCurrency(Math.abs(selectedEntry.amount))} ✓
                         </p>
                       </div>
 
-                      {/* Date (auto-filled) */}
+                      {/* Date - show selected transaction date when matching, otherwise bank date */}
                       <div>
                         <p className="text-xs text-slate-400 uppercase">Date</p>
-                        <p className="text-sm font-medium text-emerald-600">
-                          {selectedEntry.statement_date && isValid(parseISO(selectedEntry.statement_date))
-                            ? format(parseISO(selectedEntry.statement_date), 'dd MMM yyyy')
-                            : '-'} ✓
-                        </p>
+                        {(() => {
+                          // When matching, show the transaction date
+                          const displayDate = matchMode === 'match' && selectedExistingTx?.date
+                            ? selectedExistingTx.date
+                            : selectedEntry.statement_date;
+                          const bankDate = selectedEntry.statement_date;
+                          const txDate = selectedExistingTx?.date;
+
+                          // Check if dates match (for match mode)
+                          const datesMatch = matchMode === 'match' && txDate && bankDate
+                            ? Math.abs(differenceInDays(parseISO(txDate), parseISO(bankDate))) === 0
+                            : true;
+
+                          return (
+                            <p className={`text-sm font-medium ${datesMatch ? 'text-emerald-600' : 'text-amber-600'}`}>
+                              {displayDate && isValid(parseISO(displayDate))
+                                ? format(parseISO(displayDate), 'dd MMM yyyy')
+                                : '-'}
+                              {datesMatch ? ' ✓' : ` (bank: ${bankDate ? format(parseISO(bankDate), 'dd MMM') : '?'})`}
+                            </p>
+                          );
+                        })()}
                       </div>
                     </div>
+                    )}
                   </div>
                 </div>
 
@@ -3698,7 +5296,14 @@ export default function BankReconciliation() {
                       {/* Entity Search */}
                       {(reconciliationType === 'loan_repayment' || reconciliationType === 'loan_disbursement') && (
                         <div className="space-y-3">
-                          <Label>Select Loan</Label>
+                          <div className="flex items-center justify-between">
+                            <Label>Select Loan{reconciliationType === 'loan_repayment' && 's'}</Label>
+                            {reconciliationType === 'loan_repayment' && multiLoanAllocations.length > 0 && (
+                              <span className="text-xs text-slate-500">
+                                {multiLoanAllocations.length} loan{multiLoanAllocations.length > 1 ? 's' : ''} selected
+                              </span>
+                            )}
+                          </div>
                           <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                             <Input
@@ -3709,68 +5314,163 @@ export default function BankReconciliation() {
                             />
                           </div>
                           <div className="max-h-48 overflow-y-auto border rounded-lg divide-y">
-                            {filteredLoans.slice(0, 10).map(loan => (
-                              <div
-                                key={loan.id}
-                                className={`p-3 cursor-pointer hover:bg-slate-50 ${selectedLoan?.id === loan.id ? 'bg-emerald-50 border-l-4 border-emerald-500' : ''}`}
-                                onClick={() => setSelectedLoan(loan)}
-                              >
-                                <div className="flex justify-between">
-                                  <div>
-                                    <p className="font-medium">{loan.loan_number}</p>
-                                    <p className="text-sm text-slate-500">{getBorrowerName(loan.borrower_id)}</p>
+                            {filteredLoans
+                              .filter(loan => {
+                                // For repayments with multi-loan mode: filter to same borrower if one is selected
+                                if (reconciliationType === 'loan_repayment' && multiLoanBorrowerId) {
+                                  return loan.borrower_id === multiLoanBorrowerId;
+                                }
+                                return true;
+                              })
+                              .slice(0, 10).map(loan => {
+                                const isInAllocation = multiLoanAllocations.some(a => a.loan.id === loan.id);
+                                const isSelected = reconciliationType === 'loan_disbursement'
+                                  ? selectedLoan?.id === loan.id
+                                  : isInAllocation;
+                                const lastPayment = getLastPayment(loan.id);
+                                const nextDue = getNextDuePayment(loan.id);
+                                const isOverdue = nextDue && new Date(nextDue.due_date) < new Date();
+                                return (
+                                  <div
+                                    key={loan.id}
+                                    className={`p-3 cursor-pointer hover:bg-slate-50 ${isSelected ? 'bg-emerald-50 border-l-4 border-emerald-500' : ''} ${isInAllocation ? 'opacity-60' : ''}`}
+                                    onClick={() => {
+                                      if (reconciliationType === 'loan_repayment') {
+                                        // Multi-loan mode for repayments
+                                        if (!isInAllocation) {
+                                          addLoanToAllocation(loan);
+                                        }
+                                      } else {
+                                        // Single loan mode for disbursements
+                                        setSelectedLoan(loan);
+                                      }
+                                    }}
+                                  >
+                                    <div className="flex justify-between">
+                                      <div className="flex-1 min-w-0">
+                                        <p className="font-medium">{loan.loan_number}</p>
+                                        <p className="text-sm text-slate-500">{getBorrowerName(loan.borrower_id)}</p>
+                                        {/* Last payment info */}
+                                        {lastPayment && (
+                                          <p className="text-xs text-slate-400 mt-1">
+                                            Last: {formatCurrency(lastPayment.amount)} on {format(parseISO(lastPayment.date), 'dd MMM')}
+                                          </p>
+                                        )}
+                                      </div>
+                                      <div className="text-right shrink-0 ml-2">
+                                        <p className="text-xs text-slate-500">Balance: {formatCurrency((loan.principal_amount || 0) - (loan.principal_paid || 0))}</p>
+                                        {/* Expected payment info */}
+                                        {nextDue && (
+                                          <div className={`text-xs mt-1 ${isOverdue ? 'text-red-600 font-medium' : 'text-blue-600'}`}>
+                                            <p>{isOverdue ? 'Overdue' : 'Due'}: {formatCurrency(nextDue.total_due || nextDue.amount || 0)}</p>
+                                            <p className="text-slate-400">{format(parseISO(nextDue.due_date), 'dd MMM')}</p>
+                                          </div>
+                                        )}
+                                        {!nextDue && (
+                                          <p className="text-xs text-slate-400 mt-1">No schedule</p>
+                                        )}
+                                      </div>
+                                    </div>
                                   </div>
-                                  <div className="text-right">
-                                    <p className="text-sm font-medium">{formatCurrency(loan.principal_amount)}</p>
-                                    <p className="text-xs text-slate-500">Balance: {formatCurrency((loan.principal_amount || 0) - (loan.principal_paid || 0))}</p>
-                                  </div>
-                                </div>
-                              </div>
-                            ))}
+                                );
+                              })}
                             {filteredLoans.length === 0 && (
                               <p className="p-3 text-sm text-slate-500">No matching loans found</p>
                             )}
+                            {multiLoanBorrowerId && (
+                              <div className="p-2 bg-blue-50 text-center">
+                                <button
+                                  className="text-xs text-blue-600 hover:underline"
+                                  onClick={() => {
+                                    setMultiLoanAllocations([]);
+                                    setMultiLoanBorrowerId(null);
+                                  }}
+                                >
+                                  Clear selection to see all borrowers
+                                </button>
+                              </div>
+                            )}
                           </div>
 
-                          {/* Split Amounts for Repayments */}
-                          {reconciliationType === 'loan_repayment' && selectedLoan && (
+                          {/* Multi-Loan Allocations for Repayments */}
+                          {reconciliationType === 'loan_repayment' && multiLoanAllocations.length > 0 && (
                             <div className="bg-slate-50 rounded-lg p-4 space-y-3">
-                              <Label className="text-base">Payment Split</Label>
-                              <div className="grid grid-cols-3 gap-3">
-                                <div>
-                                  <Label className="text-xs">Capital</Label>
-                                  <Input
-                                    type="number"
-                                    value={splitAmounts.capital}
-                                    onChange={(e) => setSplitAmounts(prev => ({ ...prev, capital: parseFloat(e.target.value) || 0 }))}
-                                  />
-                                </div>
-                                <div>
-                                  <Label className="text-xs">Interest</Label>
-                                  <Input
-                                    type="number"
-                                    value={splitAmounts.interest}
-                                    onChange={(e) => setSplitAmounts(prev => ({ ...prev, interest: parseFloat(e.target.value) || 0 }))}
-                                  />
-                                </div>
-                                <div>
-                                  <Label className="text-xs">Fees</Label>
-                                  <Input
-                                    type="number"
-                                    value={splitAmounts.fees}
-                                    onChange={(e) => setSplitAmounts(prev => ({ ...prev, fees: parseFloat(e.target.value) || 0 }))}
-                                  />
-                                </div>
-                              </div>
-                              <p className="text-sm text-slate-500">
-                                Total: {formatCurrency(splitAmounts.capital + splitAmounts.interest + splitAmounts.fees)} /
-                                Bank: {formatCurrency(Math.abs(selectedEntry.amount))}
-                                {Math.abs((splitAmounts.capital + splitAmounts.interest + splitAmounts.fees) - Math.abs(selectedEntry.amount)) > 0.01 && (
-                                  <span className="text-amber-600 ml-2">
-                                    (Difference: {formatCurrency(Math.abs(selectedEntry.amount) - (splitAmounts.capital + splitAmounts.interest + splitAmounts.fees))})
-                                  </span>
-                                )}
+                              <Label className="text-base">Payment Allocation</Label>
+                              <p className="text-xs text-slate-500">
+                                Allocate {formatCurrency(Math.abs(selectedEntry.amount))} across {multiLoanAllocations.length} loan{multiLoanAllocations.length > 1 ? 's' : ''}
                               </p>
+
+                              {multiLoanAllocations.map((allocation, idx) => (
+                                <div key={allocation.loan.id} className="border border-slate-200 rounded-lg p-3 bg-white">
+                                  <div className="flex justify-between items-center mb-2">
+                                    <div>
+                                      <span className="font-medium text-sm">{allocation.loan.loan_number}</span>
+                                      <span className="text-xs text-slate-500 ml-2">
+                                        (Balance: {formatCurrency((allocation.loan.principal_amount || 0) - (allocation.loan.principal_paid || 0))})
+                                      </span>
+                                    </div>
+                                    <button
+                                      type="button"
+                                      className="text-slate-400 hover:text-red-500 p-1"
+                                      onClick={() => removeLoanFromAllocation(idx)}
+                                    >
+                                      <X className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                  <div className="grid grid-cols-3 gap-2">
+                                    <div>
+                                      <Label className="text-xs">Principal</Label>
+                                      <Input
+                                        type="number"
+                                        value={allocation.principal || ''}
+                                        onChange={(e) => updateLoanAllocation(idx, 'principal', e.target.value)}
+                                        className="h-8 text-sm"
+                                      />
+                                    </div>
+                                    <div>
+                                      <Label className="text-xs">Interest</Label>
+                                      <Input
+                                        type="number"
+                                        value={allocation.interest || ''}
+                                        onChange={(e) => updateLoanAllocation(idx, 'interest', e.target.value)}
+                                        className="h-8 text-sm"
+                                      />
+                                    </div>
+                                    <div>
+                                      <Label className="text-xs">Fees</Label>
+                                      <Input
+                                        type="number"
+                                        value={allocation.fees || ''}
+                                        onChange={(e) => updateLoanAllocation(idx, 'fees', e.target.value)}
+                                        className="h-8 text-sm"
+                                      />
+                                    </div>
+                                  </div>
+                                  <p className="text-xs text-slate-500 mt-1">
+                                    Subtotal: {formatCurrency((allocation.principal || 0) + (allocation.interest || 0) + (allocation.fees || 0))}
+                                  </p>
+                                </div>
+                              ))}
+
+                              {/* Running total */}
+                              <div className={`p-2 rounded ${Math.abs(totalMultiLoanAllocated - Math.abs(selectedEntry.amount)) < 0.01 ? 'bg-emerald-100' : 'bg-amber-100'}`}>
+                                <p className={`text-sm font-medium ${Math.abs(totalMultiLoanAllocated - Math.abs(selectedEntry.amount)) < 0.01 ? 'text-emerald-700' : 'text-amber-700'}`}>
+                                  Total Allocated: {formatCurrency(totalMultiLoanAllocated)} / Bank: {formatCurrency(Math.abs(selectedEntry.amount))}
+                                  {Math.abs(totalMultiLoanAllocated - Math.abs(selectedEntry.amount)) >= 0.01 && (
+                                    <span className="ml-2">
+                                      (Remaining: {formatCurrency(Math.abs(selectedEntry.amount) - totalMultiLoanAllocated)})
+                                    </span>
+                                  )}
+                                </p>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Legacy single-loan split (for disbursements only) */}
+                          {reconciliationType === 'loan_disbursement' && selectedLoan && (
+                            <div className="bg-slate-50 rounded-lg p-4 space-y-3">
+                              <Label className="text-base">Selected Loan</Label>
+                              <p className="text-sm">{selectedLoan.loan_number} - {getBorrowerName(selectedLoan.borrower_id)}</p>
                             </div>
                           )}
                         </div>
@@ -4121,7 +5821,7 @@ export default function BankReconciliation() {
                     disabled={
                       isReconciling ||
                       !reconciliationType ||
-                      (reconciliationType === 'loan_repayment' && matchMode === 'create' && !selectedLoan) ||
+                      (reconciliationType === 'loan_repayment' && matchMode === 'create' && multiLoanAllocations.length === 0) ||
                       (reconciliationType === 'loan_disbursement' && matchMode === 'create' && !selectedLoan) ||
                       (reconciliationType.startsWith('investor_') && matchMode === 'create' && !selectedInvestor) ||
                       (matchMode === 'match' && !selectedExistingTx && reconciliationType !== 'offset') ||

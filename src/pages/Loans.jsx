@@ -81,8 +81,12 @@ export default function Loans() {
     searchParams.get('status') || (hasFilter ? 'all' : 'Live')
   );
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'active');
-  const [sortField, setSortField] = useState('created_date');
-  const [sortDirection, setSortDirection] = useState('desc');
+  const [sortField, setSortField] = useState(() => {
+    return localStorage.getItem('loans-sort-field') || 'created_date';
+  });
+  const [sortDirection, setSortDirection] = useState(() => {
+    return localStorage.getItem('loans-sort-direction') || 'desc';
+  });
 
   // Column configuration - order and widths
   const defaultColumnOrder = ['loan_number', 'description', 'date', 'borrower', 'product', 'principal', 'arr_fee', 'exit_fee', 'outstanding', 'last_payment', 'next_due', 'status'];
@@ -332,10 +336,14 @@ export default function Loans() {
 
   const handleSort = (field) => {
     if (sortField === field) {
-      setSortDirection(sortDirection === 'asc' ? 'desc' : 'asc');
+      const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      setSortDirection(newDirection);
+      localStorage.setItem('loans-sort-direction', newDirection);
     } else {
       setSortField(field);
       setSortDirection('asc');
+      localStorage.setItem('loans-sort-field', field);
+      localStorage.setItem('loans-sort-direction', 'asc');
     }
   };
 
