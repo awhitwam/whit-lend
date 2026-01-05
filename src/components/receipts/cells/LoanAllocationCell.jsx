@@ -40,8 +40,9 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
     }
   }));
 
-  const formatCurrency = (value) => {
+  const formatCurrency = (value, suppressZero = false) => {
     const num = parseFloat(value) || 0;
+    if (suppressZero && num === 0) return '';
     return new Intl.NumberFormat('en-GB', {
       style: 'currency',
       currency: 'GBP',
@@ -209,20 +210,20 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
     <div
       ref={containerRef}
       className={cn(
-        'px-2 py-1',
+        'px-1 py-1',
         isFocused && 'ring-2 ring-blue-500 ring-inset rounded'
       )}
       tabIndex={isFocused ? 0 : -1}
     >
       {/* Header row with allocation column labels - hide in single-loan mode */}
       {!isSingleLoanMode && (
-        <div className="flex items-center gap-2 px-2 py-1 text-[10px] text-slate-500 uppercase font-medium">
+        <div className="flex items-center gap-1 px-1 py-1 text-[10px] text-slate-500 uppercase font-medium">
           <div className="w-4 shrink-0"></div>{/* Checkbox spacer */}
-          <div className="w-[320px] shrink-0">Loan</div>
-          <div className="flex-1 min-w-[150px]">Note</div>
-          <div className="w-24 text-right">Interest</div>
-          <div className="w-24 text-right">Capital</div>
-          <div className="w-20 text-right">Fees</div>
+          <div className="w-[300px] shrink-0">Loan</div>
+          <div className="flex-1 min-w-[120px]">Note</div>
+          <div className="w-20 text-right">Interest</div>
+          <div className="w-20 text-right">Capital</div>
+          <div className="w-16 text-right">Fees</div>
         </div>
       )}
 
@@ -246,7 +247,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
             <div
               key={loan.id}
               className={cn(
-                'flex items-center gap-2 px-2 py-1.5 rounded border transition-colors',
+                'flex items-center gap-1 px-1 py-1 rounded border transition-colors',
                 isSelected ? 'bg-blue-50 border-blue-200' : 'bg-slate-50 border-slate-200 hover:border-slate-300'
               )}
             >
@@ -260,7 +261,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
               )}
 
               {/* Loan Info Section */}
-              <div className="flex items-center gap-2 w-[320px] shrink-0">
+              <div className="flex items-center gap-1 w-[300px] shrink-0">
                 {/* Loan Number */}
                 <span className="font-medium text-sm whitespace-nowrap">#{loan.loan_number}</span>
 
@@ -305,14 +306,18 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                     <div className="space-y-2 text-sm">
                       <div className="font-medium">#{loan.loan_number} Details</div>
                       <div className="grid grid-cols-2 gap-1 text-xs">
-                        <div>
-                          <span className="text-slate-500">Principal O/S:</span>
-                          <span className="ml-1 font-medium">{formatCurrency(outstanding.principal)}</span>
-                        </div>
-                        <div>
-                          <span className="text-slate-500">Interest O/S:</span>
-                          <span className="ml-1 font-medium">{formatCurrency(outstanding.interest)}</span>
-                        </div>
+                        {outstanding.principal > 0 && (
+                          <div>
+                            <span className="text-slate-500">Principal O/S:</span>
+                            <span className="ml-1 font-medium">{formatCurrency(outstanding.principal)}</span>
+                          </div>
+                        )}
+                        {outstanding.interest > 0 && (
+                          <div>
+                            <span className="text-slate-500">Interest O/S:</span>
+                            <span className="ml-1 font-medium">{formatCurrency(outstanding.interest)}</span>
+                          </div>
+                        )}
                       </div>
                       {nextSchedule && (
                         <div className="pt-1 border-t text-xs">
@@ -339,13 +344,13 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                 placeholder="Note..."
                 disabled={!isSelected}
                 className={cn(
-                  'h-7 flex-1 min-w-[150px] text-xs px-2',
+                  'h-7 flex-1 min-w-[120px] text-xs px-1',
                   !isSelected && 'bg-slate-100 text-slate-400'
                 )}
               />
 
               {/* Allocation Inputs - aligned with header columns (Interest, Capital, Fees) */}
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-1">
                 <Input
                   ref={el => inputRefs.current[`${loan.id}-interest`] = el}
                   type="number"
@@ -356,7 +361,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   min="0"
                   disabled={!isSelected}
                   className={cn(
-                    'h-7 w-24 text-sm text-right px-2',
+                    'h-7 w-20 text-sm text-right px-1',
                     !isSelected && 'bg-slate-100 text-slate-400',
                     interestOver && 'border-amber-500 bg-amber-50'
                   )}
@@ -371,7 +376,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   min="0"
                   disabled={!isSelected}
                   className={cn(
-                    'h-7 w-24 text-sm text-right px-2',
+                    'h-7 w-20 text-sm text-right px-1',
                     !isSelected && 'bg-slate-100 text-slate-400',
                     principalOver && 'border-amber-500 bg-amber-50'
                   )}
@@ -386,7 +391,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   min="0"
                   disabled={!isSelected}
                   className={cn(
-                    'h-7 w-20 text-sm text-right px-2',
+                    'h-7 w-16 text-sm text-right px-1',
                     !isSelected && 'bg-slate-100 text-slate-400'
                   )}
                 />

@@ -111,19 +111,19 @@ export default function ReceiptsSpreadsheet({
         >
           <thead>
             <tr className="bg-slate-100 border-b">
-              <th className="w-8 px-1 py-2 border-r"></th>
-              <th className="px-2 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wider border-r w-[160px]">
+              <th className="w-8 px-1 py-1 border-r"></th>
+              <th className="px-1 py-1 text-left text-xs font-medium text-slate-600 uppercase tracking-wider border-r w-[140px]">
                 Date / Amount
               </th>
               {!hideBorrowerColumn && (
-                <th className="px-2 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wider border-r w-[180px]">
+                <th className="px-1 py-1 text-left text-xs font-medium text-slate-600 uppercase tracking-wider border-r w-[160px]">
                   Borrower
                 </th>
               )}
-              <th className="px-2 py-2 text-left text-xs font-medium text-slate-600 uppercase tracking-wider border-r">
+              <th className="px-1 py-1 text-left text-xs font-medium text-slate-600 uppercase tracking-wider border-r">
                 Loan(s) & Allocation
               </th>
-              <th className="w-10 px-2 py-2"></th>
+              <th className="w-8 px-1 py-1"></th>
             </tr>
           </thead>
           <tbody>
@@ -165,7 +165,7 @@ export default function ReceiptsSpreadsheet({
 
       {/* Add row button - hide in single row mode */}
       {!singleRowMode && (
-        <div className="px-4 py-3 bg-slate-50 border-t">
+        <div className="px-2 py-2 bg-slate-50 border-t">
           <Button
             variant="outline"
             size="sm"

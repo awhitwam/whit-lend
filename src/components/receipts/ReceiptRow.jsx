@@ -93,9 +93,9 @@ const ReceiptRow = forwardRef(function ReceiptRow({
       )}
     >
       {/* Row handle */}
-      <td className="w-8 px-1 border-r bg-slate-50">
+      <td className="w-6 px-0.5 border-r bg-slate-50">
         <div className="flex items-center justify-center text-slate-400">
-          <GripVertical className="w-4 h-4" />
+          <GripVertical className="w-3 h-3" />
         </div>
       </td>
 
@@ -145,15 +145,15 @@ const ReceiptRow = forwardRef(function ReceiptRow({
       </td>
 
       {/* Actions */}
-      <td className="w-12 px-2">
+      <td className="w-8 px-1">
         <Button
           variant="ghost"
           size="sm"
-          className="h-7 w-7 p-0 text-slate-400 hover:text-red-500"
+          className="h-6 w-6 p-0 text-slate-400 hover:text-red-500"
           onClick={() => onDelete?.(rowIndex)}
           title="Delete row"
         >
-          <Trash2 className="w-4 h-4" />
+          <Trash2 className="w-3 h-3" />
         </Button>
       </td>
     </tr>

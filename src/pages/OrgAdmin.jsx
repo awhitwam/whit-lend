@@ -3,17 +3,20 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Progress } from "@/components/ui/progress";
-import { ShieldCheck, Building2, Plus, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle } from 'lucide-react';
-import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, Save, MapPin, Phone, Mail, Globe } from 'lucide-react';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
+import { supabase } from '@/lib/supabaseClient';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
+import { toast } from 'sonner';
 
 export default function OrgAdmin() {
-  const { canAdmin, currentOrganization } = useOrganization();
+  const { canAdmin, currentOrganization, refreshOrganizations } = useOrganization();
   const queryClient = useQueryClient();
-  const [isCreateOrgOpen, setIsCreateOrgOpen] = useState(false);
 
   // Clear data state
   const [clearing, setClearing] = useState(false);
@@ -25,6 +28,21 @@ export default function OrgAdmin() {
   const [regeneratingSchedules, setRegeneratingSchedules] = useState(false);
   const [scheduleRegenerationResult, setScheduleRegenerationResult] = useState(null);
 
+  // Organization details state
+  const [orgDetails, setOrgDetails] = useState({
+    name: '',
+    description: '',
+    address_line1: '',
+    address_line2: '',
+    city: '',
+    postcode: '',
+    country: '',
+    phone: '',
+    email: '',
+    website: ''
+  });
+  const [orgDetailsChanged, setOrgDetailsChanged] = useState(false);
+
   // Reset clear data state when organization changes
   useEffect(() => {
     setClearing(false);
@@ -33,6 +51,69 @@ export default function OrgAdmin() {
     setClearProgress({ current: 0, total: 0, step: '' });
     setScheduleRegenerationResult(null);
   }, [currentOrganization?.id]);
+
+  // Load organization details when org changes
+  useEffect(() => {
+    if (currentOrganization) {
+      setOrgDetails({
+        name: currentOrganization.name || '',
+        description: currentOrganization.description || '',
+        address_line1: currentOrganization.address_line1 || '',
+        address_line2: currentOrganization.address_line2 || '',
+        city: currentOrganization.city || '',
+        postcode: currentOrganization.postcode || '',
+        country: currentOrganization.country || '',
+        phone: currentOrganization.phone || '',
+        email: currentOrganization.email || '',
+        website: currentOrganization.website || ''
+      });
+      setOrgDetailsChanged(false);
+    }
+  }, [currentOrganization]);
+
+  // Update organization details mutation
+  const updateOrgDetailsMutation = useMutation({
+    mutationFn: async (details) => {
+      const { error } = await supabase
+        .from('organizations')
+        .update({
+          name: details.name,
+          description: details.description || null,
+          address_line1: details.address_line1 || null,
+          address_line2: details.address_line2 || null,
+          city: details.city || null,
+          postcode: details.postcode || null,
+          country: details.country || null,
+          phone: details.phone || null,
+          email: details.email || null,
+          website: details.website || null
+        })
+        .eq('id', currentOrganization.id);
+
+      if (error) throw error;
+    },
+    onSuccess: () => {
+      toast.success('Organization details saved');
+      refreshOrganizations();
+      setOrgDetailsChanged(false);
+    },
+    onError: (error) => {
+      toast.error('Failed to save organization details', { description: error.message });
+    }
+  });
+
+  const handleOrgDetailsChange = (field, value) => {
+    setOrgDetails(prev => ({ ...prev, [field]: value }));
+    setOrgDetailsChanged(true);
+  };
+
+  const handleSaveOrgDetails = () => {
+    if (!orgDetails.name.trim()) {
+      toast.error('Organization name is required');
+      return;
+    }
+    updateOrgDetailsMutation.mutate(orgDetails);
+  };
 
   // Regenerate all loan schedules for current org
   const regenerateSchedulesMutation = useMutation({
@@ -112,7 +193,7 @@ export default function OrgAdmin() {
     //           investor_transactions → investors
     //           audit_logs (entity_id may reference loans/borrowers but no FK)
 
-    const totalSteps = 18;
+    const totalSteps = 19;
 
     // 1. Delete audit logs for current organization (using org-filtered API)
     setClearProgress({ current: 1, total: totalSteps, step: 'Deleting audit logs...' });
@@ -492,6 +573,20 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete investor products: ${e.message}`);
     }
 
+    // 19. Delete loan products (must be after loans since loans reference them)
+    setClearProgress({ current: 19, total: totalSteps, step: 'Deleting loan products...' });
+    try {
+      const loanProducts = await api.entities.LoanProduct.list();
+      if (loanProducts.length > 0) {
+        addLog(`  Deleting ${loanProducts.length} loan products...`);
+        for (const lp of loanProducts) {
+          await api.entities.LoanProduct.delete(lp.id);
+        }
+      }
+    } catch (e) {
+      addLog(`  Note: Could not delete loan products: ${e.message}`);
+    }
+
     addLog('Data cleared successfully');
   };
 
@@ -758,7 +853,7 @@ export default function OrgAdmin() {
 
   // Handle clear all data
   const handleClearAllData = async () => {
-    if (!window.confirm(`Are you sure you want to delete ALL data for "${currentOrganization?.name}"?\n\nThis will delete:\n• All borrowers\n• All loans\n• All transactions\n• All repayment schedules\n• All properties and security\n• All expenses and expense categories\n• All investors, investor transactions, and investor products\n• All investor interest records\n• All bank reconciliation data (statements, entries, patterns)\n• All other income records\n• All audit logs\n\nThis action CANNOT be undone!`)) {
+    if (!window.confirm(`Are you sure you want to delete ALL data for "${currentOrganization?.name}"?\n\nThis will delete:\n• All borrowers\n• All loans\n• All loan products\n• All transactions\n• All repayment schedules\n• All properties and security\n• All expenses and expense categories\n• All investors, investor transactions, and investor products\n• All investor interest records\n• All bank reconciliation data (statements, entries, patterns)\n• All other income records\n• All audit logs\n\nThis action CANNOT be undone!`)) {
       return;
     }
 
@@ -866,29 +961,150 @@ export default function OrgAdmin() {
           </AlertDescription>
         </Alert>
 
-        <div className="grid gap-6 md:grid-cols-2">
-          {/* Create Organization */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Building2 className="w-5 h-5 text-blue-600" />
-                Organizations
-              </CardTitle>
-              <CardDescription>
-                Create and manage organizations
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              <p className="text-sm text-slate-600 mb-4">
-                Create a new organization to separate loan portfolios, borrowers, and financial data.
-                Each organization has its own users, settings, and theme.
-              </p>
-              <Button onClick={() => setIsCreateOrgOpen(true)} className="bg-blue-600 hover:bg-blue-700">
-                <Plus className="w-4 h-4 mr-2" />
-                Create Organization
+        {/* Organization Details Card - Full Width */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Building2 className="w-5 h-5 text-blue-600" />
+              Organization Details
+            </CardTitle>
+            <CardDescription>
+              Manage your organization's name, address, and contact information
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid gap-6 md:grid-cols-2">
+              {/* Left Column - Basic Info */}
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor="org-name">Organization Name *</Label>
+                  <Input
+                    id="org-name"
+                    value={orgDetails.name}
+                    onChange={(e) => handleOrgDetailsChange('name', e.target.value)}
+                    placeholder="Organization name"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-description">Description</Label>
+                  <Textarea
+                    id="org-description"
+                    value={orgDetails.description}
+                    onChange={(e) => handleOrgDetailsChange('description', e.target.value)}
+                    placeholder="Brief description of the organization"
+                    rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-email" className="flex items-center gap-1">
+                    <Mail className="w-3 h-3" /> Email
+                  </Label>
+                  <Input
+                    id="org-email"
+                    type="email"
+                    value={orgDetails.email}
+                    onChange={(e) => handleOrgDetailsChange('email', e.target.value)}
+                    placeholder="contact@example.com"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-phone" className="flex items-center gap-1">
+                    <Phone className="w-3 h-3" /> Phone
+                  </Label>
+                  <Input
+                    id="org-phone"
+                    value={orgDetails.phone}
+                    onChange={(e) => handleOrgDetailsChange('phone', e.target.value)}
+                    placeholder="+44 123 456 7890"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-website" className="flex items-center gap-1">
+                    <Globe className="w-3 h-3" /> Website
+                  </Label>
+                  <Input
+                    id="org-website"
+                    value={orgDetails.website}
+                    onChange={(e) => handleOrgDetailsChange('website', e.target.value)}
+                    placeholder="https://example.com"
+                  />
+                </div>
+              </div>
+
+              {/* Right Column - Address */}
+              <div className="space-y-4">
+                <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                  <MapPin className="w-4 h-4" /> Address
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-address1">Address Line 1</Label>
+                  <Input
+                    id="org-address1"
+                    value={orgDetails.address_line1}
+                    onChange={(e) => handleOrgDetailsChange('address_line1', e.target.value)}
+                    placeholder="Street address"
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-address2">Address Line 2</Label>
+                  <Input
+                    id="org-address2"
+                    value={orgDetails.address_line2}
+                    onChange={(e) => handleOrgDetailsChange('address_line2', e.target.value)}
+                    placeholder="Apartment, suite, etc. (optional)"
+                  />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-2">
+                    <Label htmlFor="org-city">City</Label>
+                    <Input
+                      id="org-city"
+                      value={orgDetails.city}
+                      onChange={(e) => handleOrgDetailsChange('city', e.target.value)}
+                      placeholder="City"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="org-postcode">Postcode</Label>
+                    <Input
+                      id="org-postcode"
+                      value={orgDetails.postcode}
+                      onChange={(e) => handleOrgDetailsChange('postcode', e.target.value)}
+                      placeholder="Postcode"
+                    />
+                  </div>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-country">Country</Label>
+                  <Input
+                    id="org-country"
+                    value={orgDetails.country}
+                    onChange={(e) => handleOrgDetailsChange('country', e.target.value)}
+                    placeholder="Country"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Save Button */}
+            <div className="mt-6 flex justify-end">
+              <Button
+                onClick={handleSaveOrgDetails}
+                disabled={!orgDetailsChanged || updateOrgDetailsMutation.isPending}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {updateOrgDetailsMutation.isPending ? (
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                ) : (
+                  <Save className="w-4 h-4 mr-2" />
+                )}
+                Save Details
               </Button>
-            </CardContent>
-          </Card>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="grid gap-6 md:grid-cols-2">
 
           {/* Schedule Regeneration */}
           <Card>
@@ -1089,11 +1305,6 @@ export default function OrgAdmin() {
             </CardContent>
           </Card>
         </div>
-
-        <CreateOrganizationDialog
-          open={isCreateOrgOpen}
-          onClose={() => setIsCreateOrgOpen(false)}
-        />
       </div>
     </div>
   );

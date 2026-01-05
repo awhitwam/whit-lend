@@ -4,11 +4,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { Loader2, Calculator, Calendar, TrendingDown, DollarSign, FileText, Download } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { Loader2, Calculator, Calendar, TrendingDown, DollarSign, FileText, Download, ChevronDown, ArrowRight, Receipt } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 import { generateSettlementStatementPDF } from './LoanPDFGenerator';
 import { format, differenceInDays } from 'date-fns';
 import { useOrganization } from '@/lib/OrganizationContext';
+import { cn } from '@/lib/utils';
 
 function calculateSettlementAmount(loan, settlementDate, transactions = []) {
   const startDate = new Date(loan.start_date);
@@ -16,7 +18,9 @@ function calculateSettlementAmount(loan, settlementDate, transactions = []) {
   settleDate.setHours(0, 0, 0, 0);
   startDate.setHours(0, 0, 0, 0);
 
-  const daysElapsed = Math.max(0, differenceInDays(settleDate, startDate));
+  // Add 1 to include the settlement day itself in the interest calculation
+  // Interest accrues up to and including the settlement date
+  const daysElapsed = Math.max(0, differenceInDays(settleDate, startDate) + 1);
   const principal = loan.principal_amount;
   const annualRate = loan.interest_rate / 100;
   const dailyRate = annualRate / 365;
@@ -31,44 +35,109 @@ function calculateSettlementAmount(loan, settlementDate, transactions = []) {
   const totalInterestPaid = repayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
   const principalRemaining = principal - totalPrincipalPaid;
 
-  // Calculate interest day by day, adjusting principal when payments occur
-  let totalInterestAccrued = 0;
+  // Build detailed interest periods between principal-changing events
+  const interestPeriods = [];
   let runningPrincipal = principal;
-  const dailyBreakdown = [];
+  let periodStartDate = startDate;
+  let totalInterestAccrued = 0;
 
-  // Create a map of principal payments by date
-  const principalPaymentsByDate = {};
-  repayments.forEach(tx => {
-    if (tx.principal_applied > 0) {
-      const dateKey = format(new Date(tx.date), 'yyyy-MM-dd');
-      principalPaymentsByDate[dateKey] = (principalPaymentsByDate[dateKey] || 0) + tx.principal_applied;
+  // Get all dates where principal changed (payments with principal applied)
+  const principalChangeEvents = repayments
+    .filter(tx => tx.principal_applied > 0)
+    .map(tx => ({
+      date: new Date(tx.date),
+      principalApplied: tx.principal_applied,
+      interestApplied: tx.interest_applied || 0,
+      amount: tx.amount,
+      reference: tx.reference || tx.description || ''
+    }))
+    .sort((a, b) => a.date - b.date);
+
+  // The calculation end date is the day AFTER settlement (to include settlement day's interest)
+  // This matches how calculateAccruedInterestWithTransactions works
+  const calculationEndDate = new Date(settleDate);
+  calculationEndDate.setDate(calculationEndDate.getDate() + 1);
+
+  // Calculate interest for each period between principal changes
+  let eventIndex = 0;
+  while (periodStartDate < calculationEndDate) {
+    // Find the end of this period (next principal change or end date)
+    let periodEndDate;
+    let principalPayment = 0;
+    let eventDetails = null;
+
+    if (eventIndex < principalChangeEvents.length) {
+      const nextEvent = principalChangeEvents[eventIndex];
+      if (nextEvent.date <= settleDate) {
+        periodEndDate = nextEvent.date;
+        principalPayment = nextEvent.principalApplied;
+        eventDetails = nextEvent;
+        eventIndex++;
+      } else {
+        periodEndDate = calculationEndDate;
+      }
+    } else {
+      periodEndDate = calculationEndDate;
     }
+
+    // Calculate days in this period
+    const daysInPeriod = differenceInDays(periodEndDate, periodStartDate);
+
+    if (daysInPeriod > 0) {
+      // Calculate interest for this period
+      const periodInterest = runningPrincipal * dailyRate * daysInPeriod;
+      totalInterestAccrued += periodInterest;
+
+      interestPeriods.push({
+        startDate: new Date(periodStartDate),
+        endDate: new Date(periodEndDate),
+        days: daysInPeriod,
+        openingPrincipal: runningPrincipal,
+        dailyRate,
+        periodInterest,
+        principalPayment,
+        closingPrincipal: runningPrincipal - principalPayment,
+        eventDetails
+      });
+
+      // Update principal for next period
+      runningPrincipal = Math.max(0, runningPrincipal - principalPayment);
+    }
+
+    periodStartDate = periodEndDate;
+  }
+
+  // Build transaction summary with running balances
+  const transactionHistory = [];
+  let runningPrincipalBal = principal;
+
+  // Add initial disbursement
+  transactionHistory.push({
+    date: startDate,
+    type: 'Disbursement',
+    description: 'Loan disbursement',
+    amount: principal,
+    principalApplied: 0,
+    interestApplied: 0,
+    principalBalance: principal
   });
 
-  // Calculate interest day by day
-  for (let day = 0; day < daysElapsed; day++) {
-    const currentDate = new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000);
-    const dateKey = format(currentDate, 'yyyy-MM-dd');
+  // Process each repayment
+  for (const tx of repayments) {
+    const txDate = new Date(tx.date);
 
-    // Check if principal was reduced on this day
-    if (principalPaymentsByDate[dateKey]) {
-      runningPrincipal -= principalPaymentsByDate[dateKey];
-      runningPrincipal = Math.max(0, runningPrincipal);
-    }
+    // Apply the payment
+    runningPrincipalBal -= (tx.principal_applied || 0);
 
-    // Calculate interest for this day based on current principal
-    const dayInterest = runningPrincipal * dailyRate;
-    totalInterestAccrued += dayInterest;
-
-    // Store first 14 days for breakdown display
-    if (day < 14) {
-      dailyBreakdown.push({
-        day: day + 1,
-        date: currentDate,
-        balance: runningPrincipal,
-        dailyInterest: dayInterest
-      });
-    }
+    transactionHistory.push({
+      date: txDate,
+      type: tx.type,
+      description: tx.reference || tx.description || 'Payment',
+      amount: tx.amount,
+      principalApplied: tx.principal_applied || 0,
+      interestApplied: tx.interest_applied || 0,
+      principalBalance: Math.max(0, runningPrincipalBal)
+    });
   }
 
   const interestRemaining = Math.max(0, totalInterestAccrued - totalInterestPaid);
@@ -86,7 +155,10 @@ function calculateSettlementAmount(loan, settlementDate, transactions = []) {
     settlementAmount,
     daysElapsed,
     dailyRate,
-    dailyBreakdown
+    annualRate,
+    interestPeriods,
+    transactionHistory,
+    repaymentCount: repayments.length
   };
 }
 
@@ -104,6 +176,8 @@ export default function SettleLoanModal({
   const [settlementAmount, setSettlementAmount] = useState('');
   const [reference, setReference] = useState('');
   const [notes, setNotes] = useState('');
+  const [showInterestDetails, setShowInterestDetails] = useState(false);
+  const [showTransactions, setShowTransactions] = useState(false);
 
   const settlement = loan ? calculateSettlementAmount(loan, settlementDate, transactions) : null;
 
@@ -137,10 +211,12 @@ export default function SettleLoanModal({
       interestDue: settlement.interestRemaining,
       exitFee: settlement.exitFee,
       totalSettlement: settlement.settlementAmount,
-      dailyBreakdown: settlement.dailyBreakdown,
+      interestPeriods: settlement.interestPeriods,
+      transactionHistory: settlement.transactionHistory,
       daysElapsed: settlement.daysElapsed,
       dailyRate: settlement.dailyRate,
-      organizationName: currentOrganization?.name || '',
+      annualRate: settlement.annualRate,
+      organization: currentOrganization || null,
       borrower: borrower || null
     };
     generateSettlementStatementPDF(loan, settlementData);
@@ -286,28 +362,203 @@ export default function SettleLoanModal({
             </Card>
           </div>
 
-          {settlement.dailyBreakdown.length > 0 && (
-            <Card className="bg-amber-50 border-amber-200">
-              <CardContent className="p-4">
-                <h3 className="font-semibold text-slate-900 flex items-center gap-2 mb-3">
-                  <TrendingDown className="w-4 h-4" />
-                  Interest Calculation
-                </h3>
-                <div className="text-sm">
-                  <p className="text-slate-700">
-                    <span className="font-semibold">{settlement.daysElapsed} days</span>
-                    {' @ '}
-                    <span className="font-semibold text-amber-600">
-                      {formatCurrency(settlement.interestRemaining / settlement.daysElapsed)} per day
-                    </span>
-                    {' = '}
-                    <span className="font-bold text-amber-700">
-                      {formatCurrency(settlement.interestRemaining)}
-                    </span>
+          {/* Detailed Interest Calculation */}
+          <Collapsible open={showInterestDetails} onOpenChange={setShowInterestDetails}>
+            <Card className="border-amber-200">
+              <CollapsibleTrigger asChild>
+                <button className="w-full p-4 text-left hover:bg-amber-50/50 transition-colors">
+                  <div className="flex items-center justify-between">
+                    <h3 className="font-semibold text-slate-900 flex items-center gap-2">
+                      <TrendingDown className="w-4 h-4 text-amber-600" />
+                      Interest Calculation Details
+                    </h3>
+                    <ChevronDown className={cn(
+                      "w-5 h-5 text-slate-400 transition-transform",
+                      showInterestDetails && "rotate-180"
+                    )} />
+                  </div>
+                  <p className="text-sm text-slate-600 mt-1">
+                    {settlement.daysElapsed} days @ {(settlement.annualRate * 100).toFixed(2)}% p.a.
+                    ({(settlement.dailyRate * 100).toFixed(6)}% daily)
+                    {settlement.interestPeriods.length > 1 && ` across ${settlement.interestPeriods.length} periods`}
                   </p>
-                </div>
-              </CardContent>
+                </button>
+              </CollapsibleTrigger>
+              <CollapsibleContent>
+                <CardContent className="pt-0 pb-4 px-4">
+                  {/* Formula Explanation */}
+                  <div className="bg-slate-50 rounded-lg p-3 mb-4 text-sm">
+                    <p className="font-medium text-slate-700 mb-2">Calculation Formula:</p>
+                    <code className="text-xs bg-white px-2 py-1 rounded border block">
+                      Daily Interest = Principal Balance × (Annual Rate ÷ 365)
+                    </code>
+                    <p className="text-slate-500 mt-2 text-xs">
+                      Rate: {(settlement.annualRate * 100).toFixed(2)}% ÷ 365 = {(settlement.dailyRate * 100).toFixed(6)}% per day
+                    </p>
+                  </div>
+
+                  {/* Interest Periods Table */}
+                  <div className="border rounded-lg overflow-hidden">
+                    <table className="w-full text-sm">
+                      <thead className="bg-slate-100">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">Period</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Days</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Principal</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Interest</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y">
+                        {settlement.interestPeriods.map((period, idx) => (
+                          <tr key={idx} className={cn(
+                            period.principalPayment > 0 && "bg-green-50"
+                          )}>
+                            <td className="px-3 py-2">
+                              <div className="flex items-center gap-1 text-xs">
+                                <span>{format(period.startDate, 'dd/MM/yy')}</span>
+                                <ArrowRight className="w-3 h-3 text-slate-400" />
+                                <span>{format(period.endDate, 'dd/MM/yy')}</span>
+                              </div>
+                              {period.principalPayment > 0 && (
+                                <div className="text-xs text-green-600 mt-0.5">
+                                  Payment: {formatCurrency(period.principalPayment)} principal
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-mono">{period.days}</td>
+                            <td className="px-3 py-2 text-right">
+                              <span className="font-medium">{formatCurrency(period.openingPrincipal)}</span>
+                              {period.principalPayment > 0 && (
+                                <span className="text-xs text-slate-400 block">
+                                  → {formatCurrency(period.closingPrincipal)}
+                                </span>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 text-right font-medium text-amber-600">
+                              {formatCurrency(period.periodInterest)}
+                            </td>
+                          </tr>
+                        ))}
+                        {/* Totals Row */}
+                        <tr className="bg-amber-50 font-medium">
+                          <td className="px-3 py-2">Total Accrued</td>
+                          <td className="px-3 py-2 text-right font-mono">{settlement.daysElapsed}</td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2 text-right text-amber-700">
+                            {formatCurrency(settlement.interestAccrued)}
+                          </td>
+                        </tr>
+                        <tr className="bg-green-50">
+                          <td className="px-3 py-2 text-green-700">Less: Interest Paid</td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2 text-right text-green-600">
+                            ({formatCurrency(settlement.interestPaid)})
+                          </td>
+                        </tr>
+                        <tr className="bg-amber-100 font-bold">
+                          <td className="px-3 py-2 text-amber-800">Interest Outstanding</td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2 text-right text-amber-800">
+                            {formatCurrency(settlement.interestRemaining)}
+                          </td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </CardContent>
+              </CollapsibleContent>
             </Card>
+          </Collapsible>
+
+          {/* Transaction History */}
+          {settlement.transactionHistory.length > 1 && (
+            <Collapsible open={showTransactions} onOpenChange={setShowTransactions}>
+              <Card className="border-blue-200">
+                <CollapsibleTrigger asChild>
+                  <button className="w-full p-4 text-left hover:bg-blue-50/50 transition-colors">
+                    <div className="flex items-center justify-between">
+                      <h3 className="font-semibold text-slate-900 flex items-center gap-2">
+                        <Receipt className="w-4 h-4 text-blue-600" />
+                        Transaction History
+                      </h3>
+                      <ChevronDown className={cn(
+                        "w-5 h-5 text-slate-400 transition-transform",
+                        showTransactions && "rotate-180"
+                      )} />
+                    </div>
+                    <p className="text-sm text-slate-600 mt-1">
+                      {settlement.repaymentCount} repayment{settlement.repaymentCount !== 1 ? 's' : ''} recorded
+                    </p>
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <CardContent className="pt-0 pb-4 px-4">
+                    <div className="border rounded-lg overflow-hidden">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-100">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">Date</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">Description</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Amount</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Principal</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Interest</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Balance</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y">
+                          {settlement.transactionHistory.map((tx, idx) => (
+                            <tr key={idx} className={cn(
+                              tx.type === 'Disbursement' && "bg-blue-50",
+                              tx.type === 'Repayment' && "bg-green-50/50"
+                            )}>
+                              <td className="px-3 py-2 text-xs">
+                                {format(tx.date, 'dd/MM/yyyy')}
+                              </td>
+                              <td className="px-3 py-2">
+                                <div className="flex items-center gap-2">
+                                  <span className={cn(
+                                    "text-xs px-1.5 py-0.5 rounded",
+                                    tx.type === 'Disbursement' && "bg-blue-100 text-blue-700",
+                                    tx.type === 'Repayment' && "bg-green-100 text-green-700"
+                                  )}>
+                                    {tx.type}
+                                  </span>
+                                  <span className="text-slate-600 truncate max-w-[120px]" title={tx.description}>
+                                    {tx.description}
+                                  </span>
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium">
+                                {tx.type === 'Disbursement' ? (
+                                  <span className="text-blue-600">{formatCurrency(tx.amount)}</span>
+                                ) : (
+                                  <span className="text-green-600">{formatCurrency(tx.amount)}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right text-xs">
+                                {tx.principalApplied > 0 && (
+                                  <span className="text-green-600">-{formatCurrency(tx.principalApplied)}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right text-xs">
+                                {tx.interestApplied > 0 && (
+                                  <span className="text-amber-600">-{formatCurrency(tx.interestApplied)}</span>
+                                )}
+                              </td>
+                              <td className="px-3 py-2 text-right font-medium">
+                                {formatCurrency(tx.principalBalance)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </CardContent>
+                </CollapsibleContent>
+              </Card>
+            </Collapsible>
           )}
 
           <div className="space-y-4 border-t pt-4">

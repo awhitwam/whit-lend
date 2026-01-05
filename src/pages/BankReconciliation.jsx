@@ -1772,6 +1772,33 @@ export default function BankReconciliation() {
     return filtered;
   }, [bankStatements, activeTab, filter, searchTerm, suggestedMatches, confidenceFilter, dismissedSuggestions, reconciliationEntries, loanTransactions, loans, borrowers, investorTransactions, investors, expenses, sortBy, sortDirection, investorInterestEntries, expenseTypes]);
 
+  // Calculate counts for each confidence level (for Match tab dropdown)
+  const confidenceCounts = useMemo(() => {
+    // Get matchable entries (unreconciled with match-type suggestions)
+    const matchable = bankStatements.filter(s => {
+      if (s.is_reconciled) return false;
+      if (dismissedSuggestions.has(s.id)) return false;
+      const suggestion = suggestedMatches.get(s.id);
+      return suggestion && isMatchType(suggestion.matchMode);
+    });
+
+    const counts = { all: matchable.length, '100': 0, '90': 0, '70': 0, '50': 0, low: 0 };
+
+    matchable.forEach(s => {
+      const suggestion = suggestedMatches.get(s.id);
+      if (!suggestion) return;
+      const confidence = Math.round(suggestion.confidence * 100);
+
+      if (confidence >= 90) counts['100']++;
+      else if (confidence >= 80) counts['90']++;
+      else if (confidence >= 65) counts['70']++;
+      else if (confidence >= 50) counts['50']++;
+      else if (confidence > 0) counts['low']++;
+    });
+
+    return counts;
+  }, [bankStatements, suggestedMatches, dismissedSuggestions]);
+
   // Filter entities based on search
   const filteredLoans = useMemo(() => {
     if (!entitySearch) return loans.filter(l => l.status === 'Live' || l.status === 'Active');
@@ -1963,6 +1990,14 @@ export default function BankReconciliation() {
           setSelectedExistingTx(suggestion.existingTransactions[0]);
         } else if (suggestion.existingInterestEntries?.length > 0) {
           setSelectedExistingTx(suggestion.existingInterestEntries[0]);
+        }
+      } else if (suggestion.matchMode === 'grouped_disbursement' && suggestion.existingTransaction) {
+        // Grouped disbursement - multiple bank debits → single disbursement transaction
+        setMatchMode('match');
+        setSelectedExistingTx(suggestion.existingTransaction);
+        // Also set the loan if available
+        if (suggestion.loan) {
+          setSelectedLoan(suggestion.loan);
         }
       } else {
         setMatchMode('create');
@@ -2893,10 +2928,19 @@ export default function BankReconciliation() {
         let interestId = null;
 
         // If matching to existing transaction, just link it
-        if (suggestion.matchMode === 'match') {
+        if (suggestion.matchMode === 'match' || suggestion.matchMode === 'grouped_disbursement') {
           if (suggestion.existingTransaction) {
-            // Skip if transaction has been deleted
+            // Skip if transaction has been deleted or no longer exists in database
             if (suggestion.existingTransaction.is_deleted) {
+              failed++;
+              continue;
+            }
+            // Verify transaction still exists in current data
+            const txExists = suggestion.type === 'loan_repayment' || suggestion.type === 'loan_disbursement'
+              ? loanTransactions.some(tx => tx.id === suggestion.existingTransaction.id && !tx.is_deleted)
+              : investorTransactions.some(tx => tx.id === suggestion.existingTransaction.id);
+            if (!txExists) {
+              console.warn('Skipping auto-reconcile: transaction no longer exists', suggestion.existingTransaction.id);
               failed++;
               continue;
             }
@@ -2910,11 +2954,13 @@ export default function BankReconciliation() {
           }
         } else if (suggestion.matchMode === 'match_group' && suggestion.existingTransactions) {
           // Handle grouped matches (multiple transactions summing to bank amount)
-          // Filter out any deleted transactions
-          const txGroup = suggestion.existingTransactions.filter(tx => !tx.is_deleted);
+          // Filter out any deleted transactions AND verify they still exist in database
+          const txGroup = suggestion.existingTransactions.filter(tx =>
+            !tx.is_deleted && loanTransactions.some(lt => lt.id === tx.id && !lt.is_deleted)
+          );
           if (txGroup.length === 0) {
             failed++;
-            continue; // Skip - all transactions in group were deleted
+            continue; // Skip - all transactions in group were deleted or no longer exist
           }
 
           // Create a reconciliation entry for each transaction in the group
@@ -3085,7 +3131,7 @@ export default function BankReconciliation() {
       let expenseId = null;
       let interestId = null;
 
-      if (suggestion.matchMode === 'match' && (suggestion.existingTransaction || suggestion.existingExpense || suggestion.existingInterest)) {
+      if ((suggestion.matchMode === 'match' || suggestion.matchMode === 'grouped_disbursement') && (suggestion.existingTransaction || suggestion.existingExpense || suggestion.existingInterest)) {
         // Link to existing single transaction
         if (suggestion.existingTransaction) {
           const tx = suggestion.existingTransaction;
@@ -3093,7 +3139,15 @@ export default function BankReconciliation() {
           if (tx.is_deleted) {
             return { success: false, error: 'Transaction has been deleted' };
           }
-          if (suggestion.type === 'loan_repayment' || suggestion.type === 'loan_disbursement') {
+          // Verify transaction still exists in current data
+          const isLoanTx = suggestion.type === 'loan_repayment' || suggestion.type === 'loan_disbursement';
+          const txExists = isLoanTx
+            ? loanTransactions.some(lt => lt.id === tx.id && !lt.is_deleted)
+            : investorTransactions.some(it => it.id === tx.id);
+          if (!txExists) {
+            return { success: false, error: 'Transaction no longer exists' };
+          }
+          if (isLoanTx) {
             transactionId = tx.id;
           } else if (suggestion.type.startsWith('investor_')) {
             investorTransactionId = tx.id;
@@ -3109,9 +3163,14 @@ export default function BankReconciliation() {
 
         if (suggestion.existingTransactions) {
           // Grouped loan repayments or investor transactions
-          // Filter out any deleted transactions
-          const txGroup = suggestion.existingTransactions.filter(tx => !tx.is_deleted);
+          // Filter out any deleted transactions AND verify they exist in database
           const isLoanTx = suggestion.type === 'loan_repayment' || suggestion.type === 'loan_disbursement';
+          const txGroup = suggestion.existingTransactions.filter(tx => {
+            if (tx.is_deleted) return false;
+            return isLoanTx
+              ? loanTransactions.some(lt => lt.id === tx.id && !lt.is_deleted)
+              : investorTransactions.some(it => it.id === tx.id);
+          });
 
           for (const tx of txGroup) {
             await api.entities.ReconciliationEntry.create({
@@ -4073,39 +4132,59 @@ export default function BankReconciliation() {
             {/* Confidence Filter - only on Match tab */}
             {activeTab === 'match' && filter !== 'reconciled' && (
               <Select value={confidenceFilter} onValueChange={setConfidenceFilter}>
-                <SelectTrigger className="w-44">
+                <SelectTrigger className="w-52">
                   <SelectValue placeholder="Match %" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="all">All confidence</SelectItem>
+                  <SelectItem value="all">
+                    <span className="flex items-center justify-between w-full gap-3">
+                      <span>All confidence</span>
+                      <span className="text-slate-400 text-xs">{confidenceCounts.all}</span>
+                    </span>
+                  </SelectItem>
                   <SelectItem value="100">
-                    <span className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
-                      90%+ (Best)
+                    <span className="flex items-center justify-between w-full gap-3">
+                      <span className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-500"></span>
+                        90%+ (Best)
+                      </span>
+                      <span className="text-slate-400 text-xs">{confidenceCounts['100']}</span>
                     </span>
                   </SelectItem>
                   <SelectItem value="90">
-                    <span className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
-                      80-89% (Good)
+                    <span className="flex items-center justify-between w-full gap-3">
+                      <span className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                        80-89% (Good)
+                      </span>
+                      <span className="text-slate-400 text-xs">{confidenceCounts['90']}</span>
                     </span>
                   </SelectItem>
                   <SelectItem value="70">
-                    <span className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-blue-400"></span>
-                      65-79% (Fair)
+                    <span className="flex items-center justify-between w-full gap-3">
+                      <span className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-blue-400"></span>
+                        65-79% (Fair)
+                      </span>
+                      <span className="text-slate-400 text-xs">{confidenceCounts['70']}</span>
                     </span>
                   </SelectItem>
                   <SelectItem value="50">
-                    <span className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-amber-400"></span>
-                      50-64% (Check)
+                    <span className="flex items-center justify-between w-full gap-3">
+                      <span className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-amber-400"></span>
+                        50-64% (Check)
+                      </span>
+                      <span className="text-slate-400 text-xs">{confidenceCounts['50']}</span>
                     </span>
                   </SelectItem>
                   <SelectItem value="low">
-                    <span className="flex items-center gap-2">
-                      <span className="w-2 h-2 rounded-full bg-slate-400"></span>
-                      Below 50%
+                    <span className="flex items-center justify-between w-full gap-3">
+                      <span className="flex items-center gap-2">
+                        <span className="w-2 h-2 rounded-full bg-slate-400"></span>
+                        Below 50%
+                      </span>
+                      <span className="text-slate-400 text-xs">{confidenceCounts.low}</span>
                     </span>
                   </SelectItem>
                 </SelectContent>

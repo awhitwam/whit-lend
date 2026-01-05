@@ -31,6 +31,74 @@ import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { logBulkImportEvent, AuditAction } from '@/lib/auditLog';
 
 /**
+ * Parse a CSV line handling quoted fields (for fields containing commas)
+ */
+function parseCSVLine(line) {
+  const result = [];
+  let current = '';
+  let inQuotes = false;
+
+  for (const char of line) {
+    if (char === '"') {
+      inQuotes = !inQuotes;
+    } else if (char === ',' && !inQuotes) {
+      result.push(current.trim());
+      current = '';
+    } else {
+      current += char;
+    }
+  }
+  result.push(current.trim());
+  return result;
+}
+
+/**
+ * Parse the 360 CSV disbursements format:
+ *
+ * Disbursed Date,Name,Loan Product,Loan#,Interest Rate,Duration,Disbursed,Outstanding,Status,Bank Account
+ * 25/05/2019,Kirit Patel - SAI Products Ltd,...,1000001,...,"250,000.00",...
+ */
+function parse360Format(text) {
+  const lines = text.split('\n');
+  const allDisbursements = [];
+
+  // Skip header row
+  for (let i = 1; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (!line) continue;
+
+    // Parse CSV (handle quoted fields with commas)
+    const fields = parseCSVLine(line);
+
+    const dateStr = fields[0];  // DD/MM/YYYY
+    const loanNumber = fields[3];
+    const amountStr = fields[6];
+
+    // Skip if no date or no loan number (e.g., totals row)
+    if (!dateStr || !loanNumber || !/^\d{2}\/\d{2}\/\d{4}$/.test(dateStr)) continue;
+
+    // Parse amount (remove commas)
+    const amount = amountStr?.replace(/,/g, '') || '0';
+
+    allDisbursements.push({
+      loanNumber,
+      date: dateStr,
+      amount,
+      rawLine: line
+    });
+  }
+
+  // Count disbursements per loan - only include loans with multiple disbursements
+  const countByLoan = {};
+  allDisbursements.forEach(d => {
+    countByLoan[d.loanNumber] = (countByLoan[d.loanNumber] || 0) + 1;
+  });
+
+  // Filter to only loans with more than 1 disbursement
+  return allDisbursements.filter(d => countByLoan[d.loanNumber] > 1);
+}
+
+/**
  * Parse the ADW historical disbursements format:
  *
  * loan 1000113
@@ -46,7 +114,7 @@ import { logBulkImportEvent, AuditAction } from '@/lib/auditLog';
  */
 function parseADWFormat(text) {
   const lines = text.split('\n');
-  const disbursements = [];
+  const allDisbursements = [];
   let currentLoanNumber = null;
 
   for (const line of lines) {
@@ -71,7 +139,7 @@ function parseADWFormat(text) {
         const dateStr = parts[0].trim();
         const amountStr = parts[1].trim();
 
-        disbursements.push({
+        allDisbursements.push({
           loanNumber: currentLoanNumber,
           date: dateStr,
           amount: amountStr,
@@ -81,7 +149,14 @@ function parseADWFormat(text) {
     }
   }
 
-  return disbursements;
+  // Count disbursements per loan - only include loans with multiple disbursements
+  const countByLoan = {};
+  allDisbursements.forEach(d => {
+    countByLoan[d.loanNumber] = (countByLoan[d.loanNumber] || 0) + 1;
+  });
+
+  // Filter to only loans with more than 1 disbursement
+  return allDisbursements.filter(d => countByLoan[d.loanNumber] > 1);
 }
 
 function parseDate(dateStr) {
@@ -146,7 +221,9 @@ export default function ImportHistoricalDisbursements() {
 
     if (selectedFile) {
       selectedFile.text().then(text => {
-        const parsed = parseADWFormat(text);
+        // Auto-detect format: 360 CSV has "Disbursed Date" header, ADW has "loan XXXXXX"
+        const is360Format = text.includes('Disbursed Date') && text.includes('Loan#');
+        const parsed = is360Format ? parse360Format(text) : parseADWFormat(text);
         setParsedData(parsed);
         setStep('preview');
       });
@@ -333,7 +410,7 @@ export default function ImportHistoricalDisbursements() {
             <Banknote className="w-8 h-8 text-emerald-600" />
             Import Historical Disbursements
           </h1>
-          <p className="text-slate-500 mt-1">Import disbursements from ADW export format</p>
+          <p className="text-slate-500 mt-1">Import disbursements from ADW or 360 export formats</p>
         </div>
 
         {/* Progress Steps */}
@@ -357,7 +434,7 @@ export default function ImportHistoricalDisbursements() {
           <Card>
             <CardHeader>
               <CardTitle>Upload Disbursements File</CardTitle>
-              <CardDescription>Select a file exported from ADW containing historical disbursements</CardDescription>
+              <CardDescription>Select a file exported from ADW (.txt) or 360 (.csv) containing historical disbursements</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
               <Input
@@ -366,18 +443,26 @@ export default function ImportHistoricalDisbursements() {
                 onChange={handleFileChange}
                 disabled={isProcessing}
               />
-              <div className="bg-slate-50 rounded-lg p-4 text-sm">
-                <h4 className="font-medium text-slate-700 mb-2">Expected Format:</h4>
-                <pre className="text-xs text-slate-600 font-mono bg-white p-3 rounded border overflow-x-auto">
+              <div className="bg-slate-50 rounded-lg p-4 text-sm space-y-4">
+                <div>
+                  <h4 className="font-medium text-slate-700 mb-2">ADW Format (.txt):</h4>
+                  <pre className="text-xs text-slate-600 font-mono bg-white p-3 rounded border overflow-x-auto">
 {`loan 1000113
 
 07/11/2024	132,000.00	0%/Year	Lump-Sum	...
-05/11/2024	133,300.00	0%/Year	Lump-Sum	...
 
 loan 1000116
 
 09/12/2025	50,000.00	0%/Day	Lump-Sum	...`}
-                </pre>
+                  </pre>
+                </div>
+                <div>
+                  <h4 className="font-medium text-slate-700 mb-2">360 Format (.csv):</h4>
+                  <pre className="text-xs text-slate-600 font-mono bg-white p-3 rounded border overflow-x-auto">
+{`Disbursed Date,Name,Loan Product,Loan#,...,Disbursed,...
+25/05/2019,John Smith,...,1000001,...,"250,000.00",...`}
+                  </pre>
+                </div>
               </div>
             </CardContent>
           </Card>

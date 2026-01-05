@@ -1262,8 +1262,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   const today = new Date();
                   const dailyRate = loan.interest_rate / 100 / 365;
 
-                  // Assign each transaction to exactly ONE schedule period (closest due date)
+                  // PASS 1: Assign each transaction to its closest schedule period
                   const txAssignments = new Map();
+
                   repaymentTransactions.forEach(tx => {
                     const txDate = new Date(tx.date);
                     let closestSchedule = null;
@@ -1285,6 +1286,76 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       txAssignments.get(closestSchedule.id).push(tx);
                     }
                   });
+
+                  // PASS 2: Redistribute excess transactions from crowded periods to empty adjacent periods
+                  const RANGE_DAYS = 60;
+                  const rangeMsec = RANGE_DAYS * 24 * 60 * 60 * 1000;
+
+                  // Find schedule index by ID for adjacency lookup
+                  const scheduleIndexById = new Map();
+                  sortedSchedule.forEach((s, idx) => scheduleIndexById.set(s.id, idx));
+
+                  // Identify empty periods
+                  const emptyPeriodIds = new Set(
+                    sortedSchedule
+                      .filter(s => !txAssignments.has(s.id) || txAssignments.get(s.id).length === 0)
+                      .map(s => s.id)
+                  );
+
+                  // Process crowded periods (more than 1 transaction)
+                  for (const [periodId, transactions] of txAssignments.entries()) {
+                    while (transactions.length > 1 && emptyPeriodIds.size > 0) {
+                      const periodIdx = scheduleIndexById.get(periodId);
+                      const periodDueDate = new Date(sortedSchedule[periodIdx].due_date);
+
+                      // Find the transaction furthest from this period's due date
+                      let furthestTx = null;
+                      let furthestDiff = -1;
+                      transactions.forEach(tx => {
+                        const diff = Math.abs(new Date(tx.date) - periodDueDate);
+                        if (diff > furthestDiff) {
+                          furthestDiff = diff;
+                          furthestTx = tx;
+                        }
+                      });
+
+                      // Find nearest empty period within range
+                      let bestEmptyId = null;
+                      let bestDistance = Infinity;
+
+                      for (const emptyId of emptyPeriodIds) {
+                        const emptyIdx = scheduleIndexById.get(emptyId);
+                        const emptyDueDate = new Date(sortedSchedule[emptyIdx].due_date);
+                        const txDate = new Date(furthestTx.date);
+
+                        // Check if empty period is within 60-day range of the transaction
+                        const txToEmptyDiff = Math.abs(txDate - emptyDueDate);
+                        if (txToEmptyDiff <= rangeMsec) {
+                          // Prefer closer empty periods (by index distance from crowded period)
+                          const indexDistance = Math.abs(emptyIdx - periodIdx);
+                          if (indexDistance < bestDistance) {
+                            bestDistance = indexDistance;
+                            bestEmptyId = emptyId;
+                          }
+                        }
+                      }
+
+                      if (bestEmptyId) {
+                        // Move transaction to empty period
+                        const txIndex = transactions.indexOf(furthestTx);
+                        transactions.splice(txIndex, 1);
+
+                        if (!txAssignments.has(bestEmptyId)) {
+                          txAssignments.set(bestEmptyId, []);
+                        }
+                        txAssignments.get(bestEmptyId).push(furthestTx);
+                        emptyPeriodIds.delete(bestEmptyId);
+                      } else {
+                        // No eligible empty period found, stop redistributing for this period
+                        break;
+                      }
+                    }
+                  }
 
                   // Build rows WITHOUT running balances first, then sort, then calculate balances
                   const rows = [];
@@ -1395,6 +1466,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   let runningInterestAccrued = 0;
                   let runningInterestPaid = 0;
 
+                  // Track principal balance at each period boundary for interest calculations
+                  // Key: period start date as ISO string, Value: principal balance at that date
+                  const principalAtDate = new Map();
+                  // Initialize with principal amount at loan start (disbursement happens at/before first period)
+                  principalAtDate.set(new Date(loan.start_date).toISOString().split('T')[0], loan.principal_amount);
+
                   rows.forEach(row => {
                     if (row.type === 'disbursement') {
                       prevPrincipalBalance = runningPrincipalBalance;
@@ -1402,6 +1479,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       row.balance = runningInterestAccrued - runningInterestPaid;
                       row.principalBalance = runningPrincipalBalance;
                       row.principalChanged = true;
+                      // Record balance after this date
+                      principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
                       expandedRows.push(row);
                     } else if (row.type === 'further_advance') {
                       prevPrincipalBalance = runningPrincipalBalance;
@@ -1409,13 +1488,120 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       row.balance = runningInterestAccrued - runningInterestPaid;
                       row.principalBalance = runningPrincipalBalance;
                       row.principalChanged = true;
+                      // Record balance after this date
+                      principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
                       expandedRows.push(row);
                     } else if (row.type === 'schedule_header') {
-                      // Accrue interest for this period
-                      runningInterestAccrued += row.expectedInterest;
-                      row.balance = runningInterestAccrued - runningInterestPaid;
                       row.principalBalance = runningPrincipalBalance;
                       row.principalChanged = false;
+
+                      // Calculate principalAtPeriodStart by finding the most recent balance before/at periodStartDate
+                      if (row.periodStartDate) {
+                        const periodStartKey = row.periodStartDate.toISOString().split('T')[0];
+                        // Find the latest recorded balance at or before periodStartDate
+                        let bestDate = null;
+                        let bestBalance = loan.principal_amount;
+                        for (const [dateKey, balance] of principalAtDate.entries()) {
+                          if (dateKey <= periodStartKey && (!bestDate || dateKey > bestDate)) {
+                            bestDate = dateKey;
+                            bestBalance = balance;
+                          }
+                        }
+                        row.principalAtPeriodStart = bestBalance;
+                      } else {
+                        row.principalAtPeriodStart = loan.principal_amount;
+                      }
+
+                      // Recalculate expectedInterest based on actual principal during period (for non-Fixed Charge loans)
+                      if (!isFixedCharge && row.periodStartDate && row.principalAtPeriodStart > 0) {
+                        const periodStart = row.periodStartDate;
+                        const periodEnd = row.date;
+                        // Use penalty rate if applicable, otherwise use regular interest rate
+                        const rateToUse = (loan.penalty_rate && loan.penalty_rate_from && new Date(loan.penalty_rate_from) <= periodEnd)
+                          ? loan.penalty_rate
+                          : loan.interest_rate;
+                        const dailyRate = rateToUse / 100 / 365;
+
+                        // Find further advances and capital repayments during this period
+                        const capitalChangesInPeriod = [];
+
+                        // Find further advances from rows array
+                        rows.filter(r => r.type === 'further_advance' && r.date > periodStart && r.date <= periodEnd)
+                          .forEach(r => capitalChangesInPeriod.push({ type: 'advance', date: r.date, amount: r.principal }));
+
+                        // Find capital repayments from period transactions
+                        (row.periodTransactions || [])
+                          .filter(tx => tx.principal_applied > 0)
+                          .forEach(tx => capitalChangesInPeriod.push({ type: 'repayment', date: new Date(tx.date), amount: tx.principal_applied }));
+
+                        // Sort by date
+                        capitalChangesInPeriod.sort((a, b) => a.date - b.date);
+
+                        if (capitalChangesInPeriod.length > 0) {
+                          // Calculate segmented interest
+                          let segmentPrincipal = row.principalAtPeriodStart;
+                          let segmentStart = periodStart;
+                          let totalInterest = 0;
+
+                          capitalChangesInPeriod.forEach(change => {
+                            const daysInSegment = differenceInDays(change.date, segmentStart);
+                            if (daysInSegment > 0) {
+                              totalInterest += segmentPrincipal * dailyRate * daysInSegment;
+                            }
+                            // Update principal
+                            if (change.type === 'advance') {
+                              segmentPrincipal += change.amount;
+                            } else {
+                              segmentPrincipal = Math.max(0, segmentPrincipal - change.amount);
+                            }
+                            segmentStart = change.date;
+                          });
+
+                          // Final segment
+                          const finalDays = differenceInDays(periodEnd, segmentStart);
+                          if (finalDays > 0 && segmentPrincipal > 0) {
+                            totalInterest += segmentPrincipal * dailyRate * finalDays;
+                          }
+
+                          row.expectedInterest = totalInterest;
+                          row.interest = totalInterest;
+                        } else {
+                          // No capital changes - simple calculation based on principalAtPeriodStart
+                          const days = differenceInDays(periodEnd, periodStart);
+                          // Only recalculate if we have valid days; otherwise keep the database value
+                          // (handles stub periods where periodStart = periodEnd = disbursement date)
+                          if (days > 0) {
+                            row.expectedInterest = row.principalAtPeriodStart * dailyRate * days;
+                            row.interest = row.expectedInterest;
+                          }
+                          // else: keep row.interest as set from scheduleRow.interest_amount
+                        }
+
+                        // Recalculate status based on new expectedInterest
+                        const periodInterestPaid = row.periodInterestPaid || 0;
+                        if (row.isPastDue) {
+                          if (periodInterestPaid >= row.expectedInterest - 0.01) {
+                            if (periodInterestPaid > row.expectedInterest + 0.01) {
+                              row.status = 'overpaid';
+                              row.statusVariance = periodInterestPaid - row.expectedInterest;
+                            } else {
+                              row.status = 'paid';
+                            }
+                          } else if (periodInterestPaid > 0.01) {
+                            row.status = 'underpaid';
+                            row.statusVariance = periodInterestPaid - row.expectedInterest;
+                          } else {
+                            row.status = 'overdue';
+                          }
+                        }
+                      }
+
+                      // Accrue interest for this period (after recalculation)
+                      runningInterestAccrued += row.expectedInterest;
+                      row.balance = runningInterestAccrued - runningInterestPaid;
+
+                      // Record balance at this period end date
+                      principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
                       expandedRows.push(row);
 
                       // Group transactions by date for same-day receipts
@@ -1612,7 +1798,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                               const scheduleRow = row.scheduleRow;
                               const dailyRate = effectiveRate / 100 / 365;
-                              const principalStart = scheduleRow?.calculation_principal_start || row.principalBalance || loan.principal_amount;
+                              // Use principalAtPeriodStart for accurate segment calculations (accounts for previous advances)
+                              const principalStart = row.principalAtPeriodStart || scheduleRow?.calculation_principal_start || row.principalBalance || loan.principal_amount;
                               const days = scheduleRow?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
                               const dailyInterestAmount = principalStart * dailyRate;
 
@@ -1656,26 +1843,35 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               // Check for capital payments within this period to show split interest
                               const capitalPayments = (row.periodTransactions || [])
                                 .filter(tx => tx.principal_applied > 0)
-                                .sort((a, b) => new Date(a.date) - new Date(b.date));
+                                .map(tx => ({ type: 'repayment', date: new Date(tx.date), amount: tx.principal_applied }));
 
-                              if (capitalPayments.length > 0 && row.periodStartDate) {
-                                // Calculate interest segments split by capital payments
-                                const periodStart = new Date(row.periodStartDate);
-                                const periodEnd = row.date;
+                              // Also find further advances (disbursements) within this period
+                              const periodStart = row.periodStartDate ? new Date(row.periodStartDate) : null;
+                              const periodEnd = row.date;
+                              const furtherAdvancesInPeriod = periodStart ? sortedRows
+                                .filter(r => r.type === 'further_advance' && r.date > periodStart && r.date <= periodEnd)
+                                .map(r => ({ type: 'advance', date: r.date, amount: r.principal })) : [];
+
+                              // Combine and sort by date
+                              const capitalChanges = [...capitalPayments, ...furtherAdvancesInPeriod]
+                                .sort((a, b) => a.date - b.date);
+
+                              if (capitalChanges.length > 0 && periodStart) {
+                                // Calculate interest segments split by capital changes
                                 let runningPrincipal = principalStart;
                                 const segments = [];
 
                                 let segmentStart = periodStart;
 
-                                capitalPayments.forEach((payment, paymentIdx) => {
-                                  const paymentDate = new Date(payment.date);
-                                  const daysInSegment = differenceInDays(paymentDate, segmentStart);
+                                capitalChanges.forEach((change, changeIdx) => {
+                                  const changeDate = change.date;
+                                  const daysInSegment = differenceInDays(changeDate, segmentStart);
 
                                   if (daysInSegment > 0) {
                                     const segmentDailyInterest = runningPrincipal * dailyRate;
                                     const segmentInterest = segmentDailyInterest * daysInSegment;
                                     segments.push({
-                                      label: paymentIdx === 0 ? 'before repayment' : `segment ${paymentIdx}`,
+                                      label: change.type === 'advance' ? 'before advance' : 'before repayment',
                                       days: daysInSegment,
                                       dailyAmount: segmentDailyInterest,
                                       total: segmentInterest,
@@ -1683,18 +1879,22 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                     });
                                   }
 
-                                  // Reduce principal after payment
-                                  runningPrincipal = Math.max(0, runningPrincipal - payment.principal_applied);
-                                  segmentStart = paymentDate;
+                                  // Update principal based on change type
+                                  if (change.type === 'advance') {
+                                    runningPrincipal += change.amount;
+                                  } else {
+                                    runningPrincipal = Math.max(0, runningPrincipal - change.amount);
+                                  }
+                                  segmentStart = changeDate;
                                 });
 
-                                // Final segment from last payment to period end
+                                // Final segment from last change to period end
                                 const finalDays = differenceInDays(periodEnd, segmentStart);
                                 if (finalDays > 0 && runningPrincipal > 0) {
                                   const finalDailyInterest = runningPrincipal * dailyRate;
                                   const finalInterest = finalDailyInterest * finalDays;
                                   segments.push({
-                                    label: 'after repayment',
+                                    label: 'after change',
                                     days: finalDays,
                                     dailyAmount: finalDailyInterest,
                                     total: finalInterest,
@@ -1967,12 +2167,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     : ''
                 }
               >
-                <TableCell className="py-1">
-                  <p className="font-medium text-xs">{format(row.date, 'dd/MM/yy')}</p>
+                <TableCell className="py-1.5">
+                  <p className="font-medium text-sm">{format(row.date, 'dd/MM/yy')}</p>
                 </TableCell>
 
                 {/* Actual Transactions */}
-                <TableCell className="text-right font-mono text-xs py-1">
+                <TableCell className="text-right font-mono text-sm py-1.5">
                   {row.rowType === 'disbursement' ? (
                     <span className="text-red-600 font-semibold">{formatCurrency(loan.principal_amount)}</span>
                   ) : row.rowType === 'further_advance' ? (
@@ -1983,7 +2183,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     formatCurrency(row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0))
                   ) : '-'}
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs py-1">
+                <TableCell className="text-right font-mono text-sm py-1.5">
                   {(viewMode === 'separate' && row.rowType === 'transaction') ? (() => {
                     const interestPaid = row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
                     const feesPaid = row.transactions.reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
@@ -2006,21 +2206,21 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 </TableCell>
 
                 {/* Expected Schedule */}
-                <TableCell className="text-right font-mono text-xs border-l-2 border-slate-200 py-1">
+                <TableCell className="text-right font-mono text-sm border-l-2 border-slate-200 py-1.5">
                   {(viewMode === 'separate' && row.rowType === 'schedule' && row.expectedInterest !== undefined) ? (
                     isFixedCharge ? (
                       // Fixed Charge loan - show simple monthly charge (use monthlyCharge directly for reliability)
-                      <div className="text-xs">
+                      <div className="text-sm">
                         <span className="text-purple-600 font-semibold">{formatCurrency(monthlyCharge)}</span>
-                        <span className="text-[10px] text-slate-500 ml-1">(monthly charge)</span>
+                        <span className="text-xs text-slate-500 ml-1">(monthly charge)</span>
                       </div>
                     ) : (
                     <TooltipProvider>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <div className="cursor-help text-xs">
+                          <div className="cursor-help text-sm">
                             {formatCurrency(row.expectedInterest)}
-                            <span className="text-[10px] text-slate-500 ml-1">
+                            <span className="text-xs text-slate-500 ml-1">
                               {(() => {
                                 const scheduleEntry = row.scheduleEntry;
                                 const dailyRate = loan.interest_rate / 100 / 365;
@@ -2041,12 +2241,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                   : new Date(loan.start_date);
                                 const periodEnd = new Date(scheduleEntry.due_date);
 
-                                // Find capital transactions within this period
+                                // Find capital transactions (repayments) and disbursements within this period
                                 const capitalTxInPeriod = combinedRows.filter(r =>
-                                  r.rowType === 'transaction' &&
                                   r.date > periodStart &&
                                   r.date <= periodEnd &&
-                                  r.transactions.some(tx => tx.principal_applied > 0)
+                                  (
+                                    (r.rowType === 'transaction' && r.transactions.some(tx => tx.principal_applied > 0)) ||
+                                    r.rowType === 'further_advance'
+                                  )
                                 ).sort((a, b) => a.date - b.date);
 
                                 if (capitalTxInPeriod.length === 0) {
@@ -2064,7 +2266,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                   const principalPaidBeforePeriodStart = transactions
                                     .filter(tx => !tx.is_deleted && tx.type === 'Repayment' && new Date(tx.date) <= periodStart)
                                     .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                                  let runningPrincipal = loan.principal_amount - principalPaidBeforePeriodStart;
+                                  const disbursementsBeforePeriodStart = transactions
+                                    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement' && new Date(tx.date) <= periodStart && new Date(tx.date) > new Date(loan.start_date))
+                                    .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+                                  let runningPrincipal = loan.principal_amount - principalPaidBeforePeriodStart + disbursementsBeforePeriodStart;
 
                                   for (const txRow of capitalTxInPeriod) {
                                     const daysInSegment = differenceInDays(txRow.date, segmentStart);
@@ -2073,8 +2278,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                       segments.push(`${daysInSegment}d × ${formatCurrency(dailyInterestAmount)}/day`);
                                     }
 
-                                    const principalPaid = txRow.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                                    runningPrincipal = Math.max(0, runningPrincipal - principalPaid);
+                                    // Handle both repayments (subtract) and disbursements (add)
+                                    if (txRow.rowType === 'further_advance') {
+                                      runningPrincipal += txRow.amount || 0;
+                                    } else {
+                                      const principalPaid = txRow.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                                      runningPrincipal = Math.max(0, runningPrincipal - principalPaid);
+                                    }
                                     segmentStart = txRow.date;
                                   }
 
@@ -2125,11 +2335,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                 : new Date(loan.start_date);
                               const periodEnd = new Date(scheduleEntry.due_date);
 
+                              // Find capital transactions (repayments) and disbursements within this period
                               const capitalTxInPeriod = combinedRows.filter(r =>
-                                r.rowType === 'transaction' &&
                                 r.date > periodStart &&
                                 r.date <= periodEnd &&
-                                r.transactions.some(tx => tx.principal_applied > 0)
+                                (
+                                  (r.rowType === 'transaction' && r.transactions.some(tx => tx.principal_applied > 0)) ||
+                                  r.rowType === 'further_advance'
+                                )
                               ).sort((a, b) => a.date - b.date);
 
                               if (capitalTxInPeriod.length === 0) {
@@ -2147,7 +2360,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                 const principalPaidBeforePeriodStart = transactions
                                   .filter(tx => !tx.is_deleted && tx.type === 'Repayment' && new Date(tx.date) <= periodStart)
                                   .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                                let runningPrincipal = loan.principal_amount - principalPaidBeforePeriodStart;
+                                const disbursementsBeforePeriodStart = transactions
+                                  .filter(tx => !tx.is_deleted && tx.type === 'Disbursement' && new Date(tx.date) <= periodStart && new Date(tx.date) > new Date(loan.start_date))
+                                  .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+                                let runningPrincipal = loan.principal_amount - principalPaidBeforePeriodStart + disbursementsBeforePeriodStart;
                                 const segments = [];
 
                                 for (const txRow of capitalTxInPeriod) {
@@ -2162,8 +2378,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                     });
                                   }
 
-                                  const principalPaid = txRow.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                                  runningPrincipal = Math.max(0, runningPrincipal - principalPaid);
+                                  // Handle both repayments (subtract) and disbursements (add)
+                                  if (txRow.rowType === 'further_advance') {
+                                    runningPrincipal += txRow.amount || 0;
+                                  } else {
+                                    const principalPaid = txRow.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+                                    runningPrincipal = Math.max(0, runningPrincipal - principalPaid);
+                                  }
                                   segmentStart = txRow.date;
                                 }
 
@@ -2219,8 +2440,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     </div>
                   ) : ''}
                 </TableCell>
-                <TableCell className="text-right font-mono text-xs font-semibold py-1">
-                  {(viewMode === 'merged' && effectiveSchedule.length > 0) ? formatCurrency(row.principalOutstanding + row.interestOutstanding) : 
+                <TableCell className="text-right font-mono text-sm font-semibold py-1.5">
+                  {(viewMode === 'merged' && effectiveSchedule.length > 0) ? formatCurrency(row.principalOutstanding + row.interestOutstanding) :
                    (viewMode === 'separate' && row.rowType === 'schedule') ? formatCurrency(row.principalOutstanding + row.interestOutstanding) : ''}
                 </TableCell>
               </TableRow>
@@ -2244,7 +2465,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     Totals
                   </TableCell>
                   <TableCell className="text-right py-2">
-                    <div className="text-xs space-y-0.5">
+                    <div className="text-sm space-y-0.5">
                       <div className="font-mono text-slate-600">{formatCurrency(totalExpectedPrincipal)} owed</div>
                       <div className="font-mono text-emerald-600">-{formatCurrency(totalPrincipalPaid)} paid</div>
                       <div className={`font-mono font-bold border-t pt-0.5 ${principalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -2253,7 +2474,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     </div>
                   </TableCell>
                   <TableCell className="text-right py-2">
-                    <div className="text-xs space-y-0.5">
+                    <div className="text-sm space-y-0.5">
                       <div className="font-mono text-slate-600">{formatCurrency(totalExpectedInterest)} owed</div>
                       <div className="font-mono text-emerald-600">-{formatCurrency(totalInterestPaid)} paid</div>
                       <div className={`font-mono font-bold border-t pt-0.5 ${interestOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
@@ -2265,9 +2486,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     </div>
                   </TableCell>
                   <TableCell colSpan={2} className="text-right py-2">
-                    <div className="text-xs">
+                    <div className="text-sm">
                       <div className="text-slate-700 font-semibold">{totalOutstanding < 0 ? 'Total Overpaid:' : 'Total Outstanding:'}</div>
-                      <div className={`font-mono font-bold text-base ${totalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                      <div className={`font-mono font-bold text-lg ${totalOutstanding < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                         {totalOutstanding < 0 ? '-' : ''}{formatCurrency(Math.abs(totalOutstanding))}
                       </div>
                     </div>

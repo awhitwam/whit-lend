@@ -101,9 +101,6 @@ const navigation = [
         children: [
           { name: 'Loandisc Import', href: 'ImportLoandisc', icon: FileSpreadsheet },
           { name: 'Loandisc Expenses', href: 'ImportExpenses', icon: Receipt },
-          { name: 'Import Borrowers', href: 'ImportBorrowers', icon: Users },
-          { name: 'Import Transactions', href: 'ImportTransactions', icon: CreditCard },
-          { name: 'Import Disbursements', href: 'ImportDisbursements', icon: Banknote },
           { name: 'Historical Disbursements', href: 'ImportHistoricalDisbursements', icon: FileSpreadsheet },
           { name: 'Import Investors', href: 'ImportInvestors', icon: TrendingUp },
           { name: 'Import Investor Txns', href: 'ImportInvestorTransactions', icon: CreditCard },
@@ -167,7 +164,7 @@ export default function Layout({ children, currentPageName }) {
   const filteredNavigation = getFilteredNavigation(canAdmin(), isSuperAdmin);
 
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'BankReconciliation2', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportBorrowers', 'ImportTransactions', 'ImportDisbursements', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'BankReconciliation2', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {

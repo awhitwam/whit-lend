@@ -60,7 +60,7 @@ export default function ReceiptEntryPanel({
       style={{ maxHeight: '60vh' }}
     >
       {/* Panel Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b bg-slate-50">
+      <div className="flex items-center justify-between px-2 py-2 border-b bg-slate-50">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
             <Receipt className="w-4 h-4 text-slate-600" />
@@ -111,7 +111,7 @@ export default function ReceiptEntryPanel({
 
       {/* Content - scrollable */}
       <div className="overflow-y-auto" style={{ maxHeight: 'calc(60vh - 48px)' }}>
-        <div className="p-4">
+        <div className="px-2 py-2">
           <ReceiptEntryContent
             mode={mode}
             lockedBorrowerId={borrowerId}

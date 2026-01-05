@@ -900,8 +900,8 @@ export function calculateAccruedInterest(loan, asOfDate = new Date()) {
   today.setHours(0, 0, 0, 0);
   startDate.setHours(0, 0, 0, 0);
 
-  // Days elapsed since loan start
-  const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)));
+  // Days elapsed since loan start (add 1 to include today's interest)
+  const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)) + 1);
 
   const periodsPerYear = loan.period === 'Monthly' ? 12 : 52;
   const daysPerPeriod = loan.period === 'Monthly' ? 30.417 : 7; // Average days
@@ -1076,8 +1076,10 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
   const today = new Date(asOfDate);
   today.setHours(0, 0, 0, 0);
   startDate.setHours(0, 0, 0, 0);
+  const startDateKey = startDate.toISOString().split('T')[0];
 
-  const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)));
+  // Add 1 to include today's interest (interest accrues up to and including today)
+  const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)) + 1);
   const principal = loan.principal_amount;
   const annualRate = loan.interest_rate / 100;
   const dailyRate = annualRate / 365;
@@ -1087,10 +1089,21 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
     .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+  // Get disbursement transactions (further advances) - exclude initial disbursement on start date
+  const disbursements = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+    .filter(tx => {
+      const txDate = new Date(tx.date);
+      txDate.setHours(0, 0, 0, 0);
+      return txDate.toISOString().split('T')[0] !== startDateKey;
+    })
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
   // Calculate totals from actual transactions
   const totalPrincipalPaid = repayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
   const totalInterestPaid = repayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-  const principalRemaining = principal - totalPrincipalPaid;
+  const totalDisbursed = disbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const principalRemaining = principal + totalDisbursed - totalPrincipalPaid;
 
   // Create a map of principal payments by date
   const principalPaymentsByDate = {};
@@ -1103,13 +1116,27 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
     }
   });
 
-  // Calculate interest day by day, adjusting principal when payments occur
+  // Create a map of disbursements (further advances) by date
+  const disbursementsByDate = {};
+  disbursements.forEach(tx => {
+    const txDate = new Date(tx.date);
+    txDate.setHours(0, 0, 0, 0);
+    const dateKey = txDate.toISOString().split('T')[0];
+    disbursementsByDate[dateKey] = (disbursementsByDate[dateKey] || 0) + (tx.amount || 0);
+  });
+
+  // Calculate interest day by day, adjusting principal when payments/disbursements occur
   let totalInterestAccrued = 0;
   let runningPrincipal = principal;
 
   for (let day = 0; day < daysElapsed; day++) {
     const currentDate = new Date(startDate.getTime() + day * 24 * 60 * 60 * 1000);
     const dateKey = currentDate.toISOString().split('T')[0];
+
+    // Check if principal was increased by disbursement on this day
+    if (disbursementsByDate[dateKey]) {
+      runningPrincipal += disbursementsByDate[dateKey];
+    }
 
     // Check if principal was reduced on this day
     if (principalPaymentsByDate[dateKey]) {
@@ -1122,7 +1149,7 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
     totalInterestAccrued += dayInterest;
   }
 
-  const interestRemaining = Math.max(0, totalInterestAccrued - totalInterestPaid);
+  const interestRemaining = totalInterestAccrued - totalInterestPaid;
 
   return {
     interestAccrued: Math.round(totalInterestAccrued * 100) / 100,

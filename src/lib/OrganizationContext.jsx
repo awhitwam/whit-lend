@@ -63,7 +63,7 @@ export const OrganizationProvider = ({ children }) => {
 
       const { data: organizations, error: orgError } = await supabase
         .from('organizations')
-        .select('id, name, slug, description, logo_url, settings')
+        .select('id, name, slug, description, logo_url, settings, address_line1, address_line2, city, postcode, country, phone, email, website')
         .in('id', orgIds);
 
       if (orgError) {

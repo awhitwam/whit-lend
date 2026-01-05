@@ -42,9 +42,11 @@ import {
   Play,
   CheckCircle,
   XCircle,
-  AlertCircle
+  AlertCircle,
+  Plus
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
+import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
 
 export default function SuperAdmin() {
   const { isSuperAdmin, user } = useAuth();
@@ -64,6 +66,9 @@ export default function SuperAdmin() {
   // Nightly jobs state
   const [runningJob, setRunningJob] = useState(null);
   const [jobResult, setJobResult] = useState(null);
+
+  // Create organization dialog state
+  const [isCreateOrgOpen, setIsCreateOrgOpen] = useState(false);
 
   // Fetch all users across all organizations
   const { data: allUsers = [], isLoading: loadingUsers } = useQuery({
@@ -471,9 +476,15 @@ export default function SuperAdmin() {
           {/* Organizations Tab */}
           <TabsContent value="organizations" className="mt-6">
             <Card>
-              <CardHeader>
-                <CardTitle>All Organizations</CardTitle>
-                <CardDescription>System-wide organization list</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between">
+                <div>
+                  <CardTitle>All Organizations</CardTitle>
+                  <CardDescription>System-wide organization list</CardDescription>
+                </div>
+                <Button onClick={() => setIsCreateOrgOpen(true)} className="bg-blue-600 hover:bg-blue-700">
+                  <Plus className="w-4 h-4 mr-2" />
+                  Create Organization
+                </Button>
               </CardHeader>
               <CardContent>
                 {isLoading ? (
@@ -913,6 +924,16 @@ export default function SuperAdmin() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Create Organization Dialog */}
+      <CreateOrganizationDialog
+        open={isCreateOrgOpen}
+        onClose={() => {
+          setIsCreateOrgOpen(false);
+          // Refresh organizations list after creation
+          queryClient.invalidateQueries(['super-admin-organizations']);
+        }}
+      />
     </div>
   );
 }

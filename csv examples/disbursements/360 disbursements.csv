@@ -1,0 +1,59 @@
+Disbursed Date,Name,Loan Product,Loan#,Interest Rate,Duration,Disbursed,Outstanding,Status,Bank Account (Released)
+25/05/2019,Kirit Patel - SAI Products Ltd,"Rollup Loan, 6 Months minimum term",1000001,1.25%/Month,15 Months,"250,000.00",0,Fully Paid,Starling Bank
+04/09/2019,"Andrew Tock - Andrew Tock, Sole Trader","Serviced Loan, 6 Months minimum term",1000002,1.35%/Month,24 Months,"82,500.00",0,Fully Paid,Starling Bank
+17/01/2020,Samantha Berry-Dagnall - Berrys Properties Limited,"Rollup Loan, 6 Months minimum term",1000003,1.25%/Month,19 Months,"171,500.00",0,Fully Paid,Starling Bank
+17/02/2020,Mark & Jenna Lickley - JMMS Holdings Ltd,"Serviced Loan, 6 Months minimum term",1000004,1.25%/Month,12 Months,"460,000.00",0,Fully Paid,Starling Bank
+27/02/2020,Lee Clarke - Bobstar 2005 Ltd,"Serviced Loan, 6 Months minimum term",1000005,1.25%/Month,12 Months,"475,000.00",0,Fully Paid,Starling Bank
+10/04/2020,Francis Ward - FHW Ltd,"Serviced Loan, 6 Months minimum term",1000006,1.25%/Month,12 Months,"110,000.00",0,Fully Paid,Starling Bank
+08/11/2019,Christopher Houghton - Huddco Ltd,"Serviced Loan, 6 Months minimum term",1000007,1.25%/Month,6 Months,"425,000.00",0,Fully Paid,Starling Bank
+16/04/2020,Brian Taylor - TLC Care Management,"Rollup Loan then Serviced, 6 Months minimum term",1000008,"2,150.00/Month",6 Months,"160,000.00",0,Fully Paid,Starling Bank
+23/07/2020,Steven Green - SG Seaview Ltd,"Serviced Loan, 6 Months minimum term",1000009,1.25%/Month,16 Months,"500,000.00",0,Fully Paid,Starling Bank
+07/08/2020,Nick Clarke - Nick & Eva Clarke,"Rollup Loan, 6 Months minimum term",1000010,1.25%/Month,12 Months,"400,000.00","173,416.00",Restructured,Starling Bank
+31/10/2020,Francis Ward - Howard and Ward Properties Ltd,"Serviced Loan, 6 Months minimum term",1000011,1.25%/Month,12 Months,"230,000.00",0,Fully Paid,Starling Bank
+03/12/2020,Francis Ward - VG Developments (NE) Ltd,"Serviced Loan, 6 Months minimum term",1000012,1.25%/Month,55 Months,"350,000.00","442,500.00",Missed Repayment,Starling Bank
+24/02/2021,John King - Nest Egg Investments (Northern) Limited,"Serviced Loan, 4 Months minimum term",1000013,1.25%/Month,12 Months,"160,000.00",0,Fully Paid,Starling Bank
+09/06/2021,Mark & Jenna Lickley - Cornish Mims Ltd,"Serviced Loan, 6 Months minimum term",1000014,1.25%/Month,12 Months,"230,000.00",0,Fully Paid,Starling Bank
+23/08/2021,John King - Nest Egg Investments (Northern) Limited,"Serviced Loan, 6 Months minimum term",1000015,1.25%/Month,12 Months,"125,000.00",0,Fully Paid,Starling Bank
+31/08/2021,John King - Nest Egg Investments (Northern) Limited,"Serviced Loan, 6 Months minimum term",1000015,1.25%/Month,6 Months,"40,000.00",,Disbursement,Starling Bank
+10/09/2021,John King - Nest Egg Investments (Northern) Limited,"Serviced Loan, 6 Months minimum term",1000015,1.25%/Month,6 Months,"40,000.00",,Disbursement,Starling Bank
+24/09/2021,John King - Nest Egg Investments (Northern) Limited,"Serviced Loan, 6 Months minimum term",1000015,1.25%/Month,6 Months,"40,000.00",,Disbursement,Starling Bank
+01/11/2021,Brian Taylor - TLC Care Management,"Rollup Loan then Serviced, 6 Months minimum term",1000016,1.25%/Month,12 Months,"195,000.00","195,000.00",Past Maturity,Starling Bank
+06/12/2021,Francis Ward - C & F Developments Ltd,"Rollup Loan, 6 Months minimum term",1000017,1.25%/Month,12 Months,"635,000.00","939,937.50",Missed Repayment,Starling Bank
+29/07/2022,Francis Ward - VG Developments (NE) Ltd,"Serviced Loan, 6 Months minimum term",1000018,1.25%/Month,12 Months,"85,000.00",0,Fully Paid,Starling Bank
+21/10/2022,Nick Clarke - Nick & Eva Clarke,"Serviced Loan, 6 Months minimum term",1000020,1.25%/Month,1 Years,0,"165,252.16",Past Maturity,Starling Bank
+09/12/2022,Brian Taylor - TLC Care Management,"Serviced Loan, 6 Months minimum term",1000021,1.25%/Month,12 Months,"102,000.00","104,000.00",Past Maturity,Starling Bank
+17/03/2023,Francis Ward  - Howard & Ward Properties Ltd,"Serviced Loan, 6 Months minimum term",1000022,1.25%/Month,12 Months,"867,000.00",0,Fully Paid,Starling Bank
+10/03/2023,Francis Ward  - Howard & Ward Properties Ltd,"Serviced Loan, 6 Months minimum term",1000023,1.25%/Month,12 Months,"815,000.00","1,066,062.50",Restructured,Starling Bank
+19/05/2023,Francis Ward  - Howard & Ward Properties Ltd,"Rollup Loan then Serviced, 6 Months minimum term",1000024,"16,250.00/Loan",4 Months,"300,000.00","383,677.24",Restructured,Starling Bank
+27/06/2023,Nick Clarke - Nick & Eva Clarke,Facility fixed charge,1000025,300.00/Month,1 Years,0.01,0.01,Past Maturity,Starling Bank
+27/06/2023,Nick Clarke - Nick & Eva Clarke,"Rollup Loan then Serviced, 6 Months minimum term",1000026,1.25%/Month,2 Years,"150,000.00","300,000.00",Past Maturity,Starling Bank
+23/08/2023,Nick Clarke - Nick & Eva Clarke,"Rollup Loan then Serviced, 6 Months minimum term",1000026,1.25%/Month,23 Months,"100,000.00",,Disbursement,Starling Bank
+27/02/2024,Nick Clarke - Nick & Eva Clarke,"Rollup Loan then Serviced, 6 Months minimum term",1000026,1.25%/Month,16 Months,"50,000.00",,Disbursement,Starling Bank
+10/07/2023,Mark & Jenna Lickley - Cornish Mims Ltd,"Serviced Loan, 6 Months minimum term",1000027,1.25%/Month,1 Years,"500,000.00","505,000.00",Past Maturity,Starling Bank
+25/07/2023,Andrew & Sandra Barnes - B.A.S Properties Ltd,"Serviced Loan, 6 Months minimum term",1000028,1.25%/Month,12 Months,"153,000.00",-62.88,Fully Paid,Starling Bank
+20/07/2023,Mark Chappell - Thornton Riseborough,"Serviced Loan, 6 Months minimum term",1000029,1.25%/Month,12 Months,"70,000.00",0,Fully Paid,Starling Bank
+27/10/2023,Mark & Jenna Lickley - Cornish Mims Ltd,"Serviced Loan, 6 Months minimum term",1000030,1.25%/Month,12 Months,"918,000.00","1,064,700.00",Not Taken Up,Starling Bank
+17/11/2023,John King - Nest Egg Investments (Northern) Limited,"Serviced Loan, 6 Months minimum term",1000031,1.25%/Month,2 Years,"474,300.00","525,020.70",Past Maturity,Starling Bank
+14/11/2024,John King - Nest Egg Investments (Northern) Limited,"Serviced Loan, 6 Months minimum term",1000031,1.25%/Month,1 Years,"27,000.00",,Disbursement,Starling Bank
+12/12/2023,Francis Ward  - Ward Capital Ltd,"Serviced Loan, 6 Months minimum term",1000032,1.25%/Month,12 Months,"280,500.00",0,Fully Paid,Starling Bank
+19/04/2024,Mitchell Welch - Mitchell Welch,"Serviced Loan, 6 Months minimum term",1000033,1.25%/Month,1 Years,"77,000.00","79,000.00",Past Maturity,Starling Bank
+06/06/2024,Columb & Michelle Reid - Masham Holiday Let,"Serviced Loan, 6 Months minimum term",1000034,1.25%/Month,12 Months,"52,000.00","53,000.00",Past Maturity,Starling Bank
+10/09/2024,Oliver & Robyn Shipley - York Kitchens & Interiors Ltd,Facility fixed charge,1000035,300.00/Month,12 Months,0.01,"3,600.01",Missed Repayment,Starling Bank
+10/09/2024,Oliver & Robyn Shipley - York Kitchens & Interiors Ltd,"Serviced Loan, 6 Months minimum term",1000036,1.25%/Month,1 Years,"113,000.00",0,Fully Paid,Starling Bank
+08/10/2024,Oliver & Robyn Shipley - York Kitchens & Interiors Ltd,"Serviced Loan, 6 Months minimum term",1000036,1.25%/Month,12 Months,"100,000.00",,Disbursement,Starling Bank
+04/11/2024,Oliver & Robyn Shipley - York Kitchens & Interiors Ltd,"Serviced Loan, 6 Months minimum term",1000036,1.25%/Month,1 Years,"50,000.00",,Disbursement,Starling Bank
+27/11/2024,Oliver & Robyn Shipley - York Kitchens & Interiors Ltd,"Serviced Loan, 6 Months minimum term",1000036,1.25%/Month,12 Months,"40,000.00",,Disbursement,Starling Bank
+19/10/2024,Francis Ward  - Howard & Ward Properties Ltd*,"Rollup Loan then Serviced, 6 Months minimum term",1000037,"120,000.00/Loan",6 Months,"100,000.00","570,000.00",Missed Repayment,Starling Bank
+14/11/2024,Robert Smaje Christopher Georgiou - Global Fabrication Ltd,"Rollup Loan then Serviced, 6 Months minimum term",1000038,1.25%/Month,12 Months,"146,000.00","101,285.05",Past Maturity,Starling Bank
+12/11/2024,Mark Chappell - Hall & Gates,"Serviced Loan, 6 Months minimum term",1000039,1.25%/Month,12 Months,"135,000.00",0,Fully Paid,Starling Bank
+03/02/2025,Matthew & Anne-Marie Johnson - Handsfree Group,"Serviced Loan, 6 Months minimum term",1000040,1.25%/Month,6 Months,"80,000.00","81,000.00",Past Maturity,Starling Bank
+26/02/2025,Brian Taylor - TLC Care Management,"Serviced Loan, 6 Months minimum term",1000041,1.25%/Month,12 Months,"105,000.00","108,139.90",Current,Starling Bank
+06/05/2025,Oliver & Robyn Shipley - York Kitchens & Interiors Ltd,"Serviced Loan, 6 Months minimum term",1000042,1.25%/Month,12 Months,"30,000.00","96,481.22",Missed Repayment,Starling Bank
+16/06/2025,Oliver & Robyn Shipley - York Kitchens & Interiors Ltd,"Serviced Loan, 6 Months minimum term",1000042,1.25%/Month,1 Years,"35,000.00",,Disbursement,Starling Bank
+18/08/2025,Oliver & Robyn Shipley - York Kitchens & Interiors Ltd,"Serviced Loan, 6 Months minimum term",1000042,1.25%/Month,1 Years,"25,000.00",,Disbursement,Starling Bank
+06/06/2025,Francis Ward  - Howard & Ward Properties Ltd*,"Serviced Loan, 6 Months minimum term",1000043,0%/Month,6 Months,"1,059,883.20","1,329,250.00",Past Maturity,Cash
+23/05/2025,Francis Ward  - Howard & Ward Properties Ltd,"Rollup Loan then Serviced, 6 Months minimum term",1000044,0%/Month,6 Months,"225,000.00","121,375.00",Restructured,Starling Bank
+17/06/2025,Andrew Pearse - Andy Pearse,"Serviced Loan, 6 Months minimum term",1000045,10%/Year,6 Months,"43,000.00","4,689.36",Past Maturity,Starling Bank
+09/09/2025,Francis Ward  - Howard & Ward Properties Ltd,"Rollup Loan then Serviced, 6 Months minimum term",1000046,0%/Day,6 Months,0,"130,140.63",Current,Cash
+12/12/2025,Brian Taylor - TLC Care Management,"Serviced Loan, 6 Months minimum term",1000047,1.25%/Month,1 Years,"52,000.00","60,800.00",Current,Starling Bank
+,,,,,,"12,438,683.22","8,603,264.40",,
