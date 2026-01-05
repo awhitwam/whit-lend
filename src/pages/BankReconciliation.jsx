@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
+import { useSearchParams, Link } from 'react-router-dom';
 import { api } from '@/api/dataClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Button } from "@/components/ui/button";
@@ -18,7 +18,7 @@ import {
   Upload, CheckCircle2, AlertCircle, Loader2, Search, FileCheck,
   ArrowUpRight, ArrowDownLeft, Check, Link2, Unlink,
   Sparkles, Wand2, Zap, CheckSquare, Receipt, Coins, Tag, Plus, X, Undo2,
-  ChevronUp, ChevronDown
+  ChevronUp, ChevronDown, ChevronRight
 } from 'lucide-react';
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -531,6 +531,7 @@ export default function BankReconciliation() {
   const [confidenceFilter, setConfidenceFilter] = useState('all'); // all, 100, 90, 70, 50, none
   const [sortBy, setSortBy] = useState('date'); // date, amount, linksTo
   const [sortDirection, setSortDirection] = useState('desc'); // asc, desc
+  const [expandedGroups, setExpandedGroups] = useState(new Set()); // For grouped reconciled view
 
   // Auto-reconcile state
   const [isAutoMatching, setIsAutoMatching] = useState(false);
@@ -2008,6 +2009,63 @@ export default function BankReconciliation() {
 
     return filtered;
   }, [bankStatements, activeTab, filter, searchTerm, suggestedMatches, confidenceFilter, dismissedSuggestions, reconciliationEntries, loanTransactions, loans, borrowers, investorTransactions, investors, expenses, sortBy, sortDirection, investorInterestEntries, expenseTypes]);
+
+  // Group reconciled statements by import date for collapsed view
+  const reconciledByImportDate = useMemo(() => {
+    if (filter !== 'reconciled') return null;
+
+    const reconciled = filteredStatements.filter(s => s.is_reconciled);
+    const groups = new Map();
+
+    reconciled.forEach(statement => {
+      // Group by date portion of created_at (import date)
+      const importDate = format(new Date(statement.created_at), 'yyyy-MM-dd');
+      if (!groups.has(importDate)) {
+        groups.set(importDate, {
+          date: importDate,
+          displayDate: format(new Date(statement.created_at), 'dd MMM yyyy'),
+          statements: [],
+          totalIn: 0,
+          totalOut: 0
+        });
+      }
+      const group = groups.get(importDate);
+      group.statements.push(statement);
+      if (statement.amount > 0) {
+        group.totalIn += statement.amount;
+      } else {
+        group.totalOut += Math.abs(statement.amount);
+      }
+    });
+
+    // Sort by date descending (most recent imports first)
+    return Array.from(groups.values()).sort((a, b) =>
+      new Date(b.date) - new Date(a.date)
+    );
+  }, [filteredStatements, filter]);
+
+  // Toggle expand/collapse for reconciled groups
+  const toggleGroupExpanded = (groupDate) => {
+    setExpandedGroups(prev => {
+      const next = new Set(prev);
+      if (next.has(groupDate)) {
+        next.delete(groupDate);
+      } else {
+        next.add(groupDate);
+      }
+      return next;
+    });
+  };
+
+  const expandAllGroups = () => {
+    if (reconciledByImportDate) {
+      setExpandedGroups(new Set(reconciledByImportDate.map(g => g.date)));
+    }
+  };
+
+  const collapseAllGroups = () => {
+    setExpandedGroups(new Set());
+  };
 
   // Calculate counts for each confidence level (for Match tab dropdown)
   const confidenceCounts = useMemo(() => {
@@ -3847,10 +3905,10 @@ export default function BankReconciliation() {
 
   // Bulk create expenses - create expense records for selected entries with assigned expense types
   const handleBulkCreateExpenses = async () => {
-    // Get selected entries that have expense types assigned
+    // Get selected entries that have expense types assigned (manually or via pattern)
     const entriesToCreate = [...selectedEntries]
       .map(id => bankStatements.find(s => s.id === id))
-      .filter(entry => entry && !entry.is_reconciled && entryExpenseTypes.has(entry.id));
+      .filter(entry => entry && !entry.is_reconciled && (entryExpenseTypes.has(entry.id) || expenseTypeSuggestions.has(entry.id)));
 
     if (entriesToCreate.length === 0) return;
 
@@ -3866,7 +3924,10 @@ export default function BankReconciliation() {
 
     for (const entry of entriesToCreate) {
       try {
-        const expenseTypeId = entryExpenseTypes.get(entry.id);
+        // Use manually assigned expense type first, then fall back to pattern suggestion
+        // Note: expenseTypeSuggestions stores objects with { expenseTypeId, ... }
+        const patternSuggestion = expenseTypeSuggestions.get(entry.id);
+        const expenseTypeId = entryExpenseTypes.get(entry.id) || patternSuggestion?.expenseTypeId;
         const expenseType = expenseTypes.find(t => t.id === expenseTypeId);
         const amount = Math.abs(entry.amount);
 
@@ -4488,7 +4549,10 @@ export default function BankReconciliation() {
           }).length;
           const selectedWithExpenseType = [...selectedEntries].filter(id => {
             const entry = bankStatements.find(s => s.id === id);
-            return entry && !entry.is_reconciled && entryExpenseTypes.has(id);
+            // Include both manually set expense types AND pattern-matched expense suggestions
+            const hasManualExpenseType = entryExpenseTypes.has(id);
+            const hasPatternExpenseType = expenseTypeSuggestions.has(id);
+            return entry && !entry.is_reconciled && (hasManualExpenseType || hasPatternExpenseType);
           }).length;
           const selectedWithOtherIncome = [...selectedEntries].filter(id => {
             const entry = bankStatements.find(s => s.id === id);
@@ -4622,6 +4686,242 @@ export default function BankReconciliation() {
                   ? 'No bank statements imported yet. Upload a CSV file above.'
                   : 'No statements match your filters.'}
               </div>
+            ) : filter === 'reconciled' && reconciledByImportDate ? (
+              /* Grouped view for reconciled items */
+              <div className="p-4 space-y-3">
+                {reconciledByImportDate.length === 0 ? (
+                  <div className="text-center py-8 text-slate-500">
+                    No reconciled items to display.
+                  </div>
+                ) : (
+                  <>
+                    {/* Expand/Collapse controls */}
+                    {reconciledByImportDate.length > 1 && (
+                      <div className="flex items-center justify-end gap-2 text-sm mb-2">
+                        <Button variant="ghost" size="sm" onClick={expandAllGroups}>
+                          Expand All
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={collapseAllGroups}>
+                          Collapse All
+                        </Button>
+                      </div>
+                    )}
+                    {reconciledByImportDate.map(group => (
+                      <div key={group.date} className="border rounded-lg overflow-hidden">
+                        {/* Group Header */}
+                        <button
+                          onClick={() => toggleGroupExpanded(group.date)}
+                          className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
+                        >
+                          <div className="flex items-center gap-3">
+                            <ChevronRight className={`w-4 h-4 transition-transform ${expandedGroups.has(group.date) ? 'rotate-90' : ''}`} />
+                            <span className="font-medium text-slate-700">Imported {group.displayDate}</span>
+                            <Badge variant="outline" className="text-slate-600">{group.statements.length} item{group.statements.length !== 1 ? 's' : ''}</Badge>
+                          </div>
+                          <div className="flex items-center gap-4 text-sm">
+                            {group.totalIn > 0 && <span className="text-emerald-600 font-medium">+{formatCurrency(group.totalIn)}</span>}
+                            {group.totalOut > 0 && <span className="text-red-600 font-medium">-{formatCurrency(group.totalOut)}</span>}
+                          </div>
+                        </button>
+
+                        {/* Group Content - Expandable */}
+                        {expandedGroups.has(group.date) && (
+                          <div className="border-t">
+                            <table className="w-full table-fixed">
+                              <thead>
+                                <tr className="border-b bg-slate-50/50">
+                                  <th className="px-2 py-2 w-8">
+                                    <Checkbox
+                                      checked={group.statements.length > 0 && group.statements.every(s => selectedEntries.has(s.id))}
+                                      onCheckedChange={(checked) => {
+                                        if (checked) {
+                                          // Select all in this group
+                                          setSelectedEntries(prev => {
+                                            const next = new Set(prev);
+                                            group.statements.forEach(s => next.add(s.id));
+                                            return next;
+                                          });
+                                        } else {
+                                          // Deselect all in this group
+                                          setSelectedEntries(prev => {
+                                            const next = new Set(prev);
+                                            group.statements.forEach(s => next.delete(s.id));
+                                            return next;
+                                          });
+                                        }
+                                      }}
+                                      className="border-slate-300"
+                                    />
+                                  </th>
+                                  <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase w-24">Date</th>
+                                  <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase w-[30%]">Description</th>
+                                  <th className="px-3 py-2 text-left text-xs font-medium text-slate-500 uppercase min-w-[280px]">Links To</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase w-28">Amount</th>
+                                  <th className="px-3 py-2 text-right text-xs font-medium text-slate-500 uppercase w-28">Actions</th>
+                                </tr>
+                              </thead>
+                              <tbody className="divide-y">
+                                {group.statements.map(entry => {
+                                  // Get reconciliation entries for this bank statement
+                                  const recons = reconciliationEntries.filter(r => r.bank_statement_id === entry.id);
+
+                                  // Build links summary (same as original view)
+                                  const links = [];
+                                  for (const recon of recons) {
+                                    if (recon.loan_transaction_id) {
+                                      const tx = loanTransactions.find(t => t.id === recon.loan_transaction_id);
+                                      const loan = tx ? loans.find(l => l.id === tx.loan_id) : null;
+                                      links.push({
+                                        type: 'loan',
+                                        label: loan ? `${tx?.type || 'Loan'}: ${loan.borrower_name}` : (tx?.type || 'Loan Transaction'),
+                                        loanNumber: loan?.loan_number,
+                                        loanId: loan?.id,
+                                        amount: recon.amount,
+                                        txDate: tx?.date
+                                      });
+                                    }
+                                    if (recon.investor_transaction_id) {
+                                      const tx = investorTransactions.find(t => t.id === recon.investor_transaction_id);
+                                      const investor = tx ? investors.find(i => i.id === tx.investor_id) : null;
+                                      links.push({
+                                        type: 'investor',
+                                        label: investor ? `${tx?.type?.replace('_', ' ') || 'Investor'}: ${investor.business_name || investor.name}` : (tx?.type?.replace('_', ' ') || 'Investor Transaction'),
+                                        investorId: investor?.id,
+                                        amount: recon.amount,
+                                        txDate: tx?.date
+                                      });
+                                    }
+                                    if (recon.interest_id) {
+                                      const interest = investorInterestEntries.find(i => i.id === recon.interest_id);
+                                      const investor = interest ? investors.find(i => i.id === interest.investor_id) : null;
+                                      links.push({
+                                        type: 'interest',
+                                        label: investor ? `Interest: ${investor.business_name || investor.name}` : 'Interest',
+                                        investorId: investor?.id,
+                                        amount: recon.amount,
+                                        txDate: interest?.date
+                                      });
+                                    }
+                                    if (recon.expense_id) {
+                                      const exp = expenses.find(e => e.id === recon.expense_id);
+                                      const expType = exp ? expenseTypes.find(t => t.id === exp.type_id) : null;
+                                      links.push({
+                                        type: 'expense',
+                                        label: expType ? `Expense: ${expType.name}` : 'Expense',
+                                        href: '/Expenses',
+                                        amount: recon.amount,
+                                        txDate: exp?.date
+                                      });
+                                    }
+                                    if (recon.other_income_id) {
+                                      links.push({
+                                        type: 'other_income',
+                                        label: 'Other Income',
+                                        href: '/OtherIncome',
+                                        amount: recon.amount
+                                      });
+                                    }
+                                  }
+
+                                  return (
+                                    <tr
+                                      key={entry.id}
+                                      className={`hover:bg-slate-50 cursor-pointer ${selectedEntries.has(entry.id) ? 'bg-purple-100/50' : ''}`}
+                                      onClick={(e) => {
+                                        // Don't open details if clicking checkbox
+                                        if (e.target.closest('button') || e.target.closest('[role="checkbox"]')) return;
+                                        setSelectedEntry(entry);
+                                      }}
+                                    >
+                                      <td className="px-2 py-1.5" onClick={(e) => e.stopPropagation()}>
+                                        <Checkbox
+                                          checked={selectedEntries.has(entry.id)}
+                                          onCheckedChange={() => toggleEntrySelection(entry.id)}
+                                          className="border-slate-300"
+                                        />
+                                      </td>
+                                      <td className="px-3 py-1.5 text-sm text-slate-700">
+                                        {entry.statement_date && isValid(parseISO(entry.statement_date))
+                                          ? format(parseISO(entry.statement_date), 'dd MMM yyyy')
+                                          : '-'}
+                                      </td>
+                                      <td className="px-3 py-1.5">
+                                        <div className="text-sm truncate" title={entry.description}>
+                                          {entry.description || '-'}
+                                        </div>
+                                        <div className="text-xs text-slate-400">{entry.bank_source}</div>
+                                      </td>
+                                      <td className="px-3 py-1.5 min-w-[280px]" onClick={(e) => e.stopPropagation()}>
+                                        {links.length === 0 ? (
+                                          <span className="text-xs text-slate-400">-</span>
+                                        ) : (
+                                          <div className="space-y-0.5">
+                                            {links.map((link, idx) => {
+                                              // Determine the href for the link
+                                              let linkHref = link.href;
+                                              if (link.type === 'loan' && link.loanId) {
+                                                linkHref = `/LoanDetails?id=${link.loanId}`;
+                                              } else if ((link.type === 'investor' || link.type === 'interest') && link.investorId) {
+                                                linkHref = `/InvestorDetails?id=${link.investorId}`;
+                                              }
+
+                                              const colorClass = link.type === 'loan' ? 'text-blue-600 hover:text-blue-800' :
+                                                link.type === 'investor' ? 'text-purple-600 hover:text-purple-800' :
+                                                link.type === 'interest' ? 'text-amber-600 hover:text-amber-800' :
+                                                link.type === 'expense' ? 'text-orange-600 hover:text-orange-800' :
+                                                'text-emerald-600 hover:text-emerald-800';
+
+                                              return (
+                                                <div key={idx} className={`text-xs truncate ${colorClass}`} title={link.label}>
+                                                  {linkHref ? (
+                                                    <Link to={linkHref} className="font-medium hover:underline">
+                                                      {link.label}
+                                                    </Link>
+                                                  ) : (
+                                                    <span className="font-medium">{link.label}</span>
+                                                  )}
+                                                  {link.loanNumber && <span className="text-slate-400 ml-1">({link.loanNumber})</span>}
+                                                  {link.txDate && (
+                                                    <span className="text-slate-400 ml-1">
+                                                      {format(parseISO(link.txDate), 'dd MMM')}
+                                                    </span>
+                                                  )}
+                                                  {link.amount && Math.abs(link.amount) !== Math.abs(entry.amount) && (
+                                                    <span className="text-slate-400 ml-1">{formatCurrency(link.amount)}</span>
+                                                  )}
+                                                </div>
+                                              );
+                                            })}
+                                          </div>
+                                        )}
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right">
+                                        <span className={`text-sm font-medium ${entry.amount > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                                          {entry.amount > 0 ? '+' : ''}{formatCurrency(entry.amount)}
+                                        </span>
+                                      </td>
+                                      <td className="px-3 py-1.5 text-right">
+                                        <Button
+                                          variant="ghost"
+                                          size="sm"
+                                          onClick={() => setSelectedEntry(entry)}
+                                          title="View details"
+                                        >
+                                          <Search className="w-4 h-4" />
+                                        </Button>
+                                      </td>
+                                    </tr>
+                                  );
+                                })}
+                              </tbody>
+                            </table>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
+              </div>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full table-fixed">
@@ -4687,8 +4987,13 @@ export default function BankReconciliation() {
                       // Can also select if unreconciled debit with expense type assigned (for bulk expense creation)
                       const hasExpenseTypeAssigned = entryExpenseTypes.has(entry.id);
                       const canSelectForExpense = !entry.is_reconciled && entry.amount < 0 && hasExpenseTypeAssigned;
-                      // Show expense type dropdown for unreconciled debits without high-confidence suggestions
-                      const showExpenseTypeDropdown = !entry.is_reconciled && entry.amount < 0 && (!suggestion || suggestion.confidence < 0.7);
+                      // Show expense type dropdown for unreconciled debits that either:
+                      // 1. Have no suggestion or low-confidence suggestion, OR
+                      // 2. Have an expense-type suggestion (from pattern matching) - so user can override
+                      // Check: suggestion.type === 'expense', OR suggestion has expense_type_id (pattern with expense), OR expenseTypeSuggestions has entry
+                      const isExpenseSuggestion = suggestion?.type === 'expense' || suggestion?.expense_type_id || expenseTypeSuggestions.has(entry.id);
+                      const showExpenseTypeDropdown = !entry.is_reconciled && entry.amount < 0 &&
+                        (!suggestion || suggestion.confidence < 0.7 || isExpenseSuggestion);
                       // Can also select if marked as other income (for credits)
                       const isMarkedAsOtherIncome = entryOtherIncome.has(entry.id);
                       const canSelectForOtherIncome = !entry.is_reconciled && entry.amount > 0 && isMarkedAsOtherIncome;
@@ -4885,6 +5190,41 @@ export default function BankReconciliation() {
                                   // Check if this entry is part of a grouped suggestion elsewhere
                                   const groupedInfoCreate = entriesInGroupedSuggestions.get(entry.id);
                                   const isPartOfGroupCreate = groupedInfoCreate && groupedInfoCreate.primaryEntryId !== entry.id;
+
+                                  // For expense suggestions with expense_type_id (pattern matches), show dropdown to allow override
+                                  const isExpenseWithType = suggestion.expense_type_id || suggestion.type === 'expense';
+                                  const expenseSuggestionForCreate = expenseTypeSuggestions.get(entry.id);
+                                  // Pre-select the pattern's expense type if not already set by user
+                                  const currentExpenseType = entryExpenseTypes.get(entry.id) || suggestion.expense_type_id || '';
+
+                                  if (isExpenseWithType && entry.amount < 0) {
+                                    return (
+                                      <div className="space-y-0.5">
+                                        <div className="flex items-center gap-1">
+                                          <span className="text-xs text-amber-600 font-medium">+ Expense</span>
+                                          <ExpenseTypeCombobox
+                                            expenseTypes={expenseTypes}
+                                            selectedTypeId={currentExpenseType}
+                                            expenseSuggestion={expenseSuggestionForCreate || (suggestion.expense_type_id ? { expenseTypeId: suggestion.expense_type_id, reason: suggestion.reason } : null)}
+                                            onSelect={(typeId) => setEntryExpenseType(entry.id, typeId)}
+                                          />
+                                        </div>
+                                        <div className="text-xs text-slate-400 truncate" title={suggestion.reason}>
+                                          {suggestion.reason}
+                                        </div>
+                                        {/* Warning if part of grouped suggestion */}
+                                        {isPartOfGroupCreate && groupedInfoCreate.groupType === 'disbursement' && (
+                                          <div
+                                            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-700 text-xs font-medium"
+                                            title={`Part of grouped disbursement: ${groupedInfoCreate.suggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → ${groupedInfoCreate.suggestion.loan?.borrower_name || 'Unknown'}`}
+                                          >
+                                            <Link2 className="w-3 h-3 flex-shrink-0" />
+                                            Combined payment
+                                          </div>
+                                        )}
+                                      </div>
+                                    );
+                                  }
 
                                   return (
                                     <div className="space-y-0.5">

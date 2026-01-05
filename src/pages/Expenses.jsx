@@ -10,7 +10,8 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Receipt, Edit, Trash2, Settings, FileText, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Search, Receipt, Edit, Trash2, Settings, FileText, ChevronLeft, ChevronRight, Landmark } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import ExpenseForm from '@/components/expense/ExpenseForm';
@@ -51,6 +52,33 @@ export default function Expenses() {
     queryKey: ['loans'],
     queryFn: () => api.entities.Loan.list('-created_date')
   });
+
+  // Fetch reconciliation entries to show which expenses are matched to bank statements
+  const { data: reconciliationEntries = [] } = useQuery({
+    queryKey: ['expense-reconciliation-entries'],
+    queryFn: () => api.entities.ReconciliationEntry.list()
+  });
+
+  // Fetch bank statements to show details about matched entries
+  const { data: bankStatements = [] } = useQuery({
+    queryKey: ['bank-statements'],
+    queryFn: () => api.entities.BankStatement.list(),
+    enabled: reconciliationEntries.length > 0
+  });
+
+  // Build a map of expense ID -> array of bank statement details for quick lookup
+  const reconciliationMap = new Map();
+  reconciliationEntries
+    .filter(entry => entry.expense_id)
+    .forEach(entry => {
+      const bankStatement = bankStatements.find(bs => bs.id === entry.bank_statement_id);
+      const existing = reconciliationMap.get(entry.expense_id) || [];
+      existing.push({ entry, bankStatement });
+      reconciliationMap.set(entry.expense_id, existing);
+    });
+
+  // Set for simple boolean checks
+  const reconciledExpenseIds = new Set(reconciliationMap.keys());
 
   const createExpenseMutation = useMutation({
     mutationFn: async (data) => {
@@ -278,6 +306,7 @@ export default function Expenses() {
             }
           />
         ) : (
+          <TooltipProvider>
           <Card>
             <Table>
               <TableHeader>
@@ -287,6 +316,14 @@ export default function Expenses() {
                   <TableHead>Description</TableHead>
                   <TableHead>Linked Loan</TableHead>
                   <TableHead className="text-right">Amount</TableHead>
+                  <TableHead className="w-8 text-center">
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <Landmark className="w-3 h-3 text-slate-400 mx-auto" />
+                      </TooltipTrigger>
+                      <TooltipContent><p>Bank Reconciled</p></TooltipContent>
+                    </Tooltip>
+                  </TableHead>
                   <TableHead className="w-12"></TableHead>
                 </TableRow>
               </TableHeader>
@@ -317,6 +354,44 @@ export default function Expenses() {
                     </TableCell>
                     <TableCell className="text-right font-mono font-semibold text-red-600">
                       {formatCurrency(expense.amount)}
+                    </TableCell>
+                    <TableCell className="text-center">
+                      {reconciledExpenseIds.has(expense.id) ? (
+                        (() => {
+                          const matches = reconciliationMap.get(expense.id) || [];
+                          return (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <Landmark className="w-3.5 h-3.5 text-emerald-500 cursor-help mx-auto" />
+                              </TooltipTrigger>
+                              <TooltipContent className="max-w-xs">
+                                <div className="space-y-2">
+                                  <p className="font-medium text-emerald-400">
+                                    Matched to {matches.length > 1 ? `${matches.length} bank entries` : 'Bank Statement'}
+                                  </p>
+                                  {matches.map((match, idx) => {
+                                    const bs = match?.bankStatement;
+                                    return (
+                                      <div key={idx} className={matches.length > 1 ? 'border-t border-slate-600 pt-1' : ''}>
+                                        {bs ? (
+                                          <>
+                                            <p className="text-xs"><span className="text-slate-400">Date:</span> {format(new Date(bs.statement_date), 'dd/MM/yyyy')}</p>
+                                            <p className="text-xs"><span className="text-slate-400">Amount:</span> {formatCurrency(Math.abs(bs.amount))}</p>
+                                            <p className="text-xs"><span className="text-slate-400">Source:</span> {bs.bank_source}</p>
+                                            {bs.description && <p className="text-xs text-slate-300 truncate max-w-[200px]">{bs.description}</p>}
+                                          </>
+                                        ) : (
+                                          <p className="text-xs text-slate-400">Bank statement details unavailable</p>
+                                        )}
+                                      </div>
+                                    );
+                                  })}
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          );
+                        })()
+                      ) : null}
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
@@ -380,6 +455,7 @@ export default function Expenses() {
               </div>
             )}
           </Card>
+          </TooltipProvider>
         )}
 
         {/* Expense Form Dialog */}
