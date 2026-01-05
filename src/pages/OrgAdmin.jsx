@@ -6,13 +6,15 @@ import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, Save, MapPin, Phone, Mail, Globe } from 'lucide-react';
+import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, Save, MapPin, Phone, Mail, Globe, Download, Upload, HardDrive } from 'lucide-react';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
 import { supabase } from '@/lib/supabaseClient';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
+import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 import { toast } from 'sonner';
+import { format } from 'date-fns';
 
 export default function OrgAdmin() {
   const { canAdmin, currentOrganization, refreshOrganizations } = useOrganization();
@@ -42,6 +44,14 @@ export default function OrgAdmin() {
     website: ''
   });
   const [orgDetailsChanged, setOrgDetailsChanged] = useState(false);
+
+  // Backup/Restore state
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState({ current: 0, total: 0, step: '' });
+  const [isRestoring, setIsRestoring] = useState(false);
+  const [restoreProgress, setRestoreProgress] = useState({ current: 0, total: 0, step: '' });
+  const [restorePreview, setRestorePreview] = useState(null);
+  const [restoreConfirmText, setRestoreConfirmText] = useState('');
 
   // Reset clear data state when organization changes
   useEffect(() => {
@@ -927,6 +937,232 @@ export default function OrgAdmin() {
     }
   };
 
+  // Entity name mapping for backup/restore
+  const getEntityName = (tableName) => {
+    const map = {
+      'loan_products': 'LoanProduct',
+      'investor_products': 'InvestorProduct',
+      'expense_types': 'ExpenseType',
+      'first_charge_holders': 'FirstChargeHolder',
+      'borrowers': 'Borrower',
+      'properties': 'Property',
+      'Investor': 'Investor',
+      'loans': 'Loan',
+      'InvestorTransaction': 'InvestorTransaction',
+      'investor_interest': 'InvestorInterest',
+      'transactions': 'Transaction',
+      'repayment_schedules': 'RepaymentSchedule',
+      'loan_properties': 'LoanProperty',
+      'expenses': 'Expense',
+      'value_history': 'ValueHistory',
+      'bank_statements': 'BankStatement',
+      'other_income': 'OtherIncome',
+      'borrower_loan_preferences': 'BorrowerLoanPreference',
+      'receipt_drafts': 'ReceiptDraft',
+      'reconciliation_patterns': 'ReconciliationPattern',
+      'reconciliation_entries': 'ReconciliationEntry',
+      'audit_logs': 'AuditLog'
+    };
+    return map[tableName] || tableName;
+  };
+
+  // Export backup function
+  const handleExportBackup = async () => {
+    setIsExporting(true);
+    setLogs([]);
+    addLog('Starting backup export...');
+
+    const backup = {
+      version: '1.0',
+      exportDate: new Date().toISOString(),
+      organizationId: currentOrganization.id,
+      organizationName: currentOrganization.name,
+      tables: {},
+      metadata: { recordCounts: {} }
+    };
+
+    // Tables to export in FK-safe order
+    const tables = [
+      'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
+      'borrowers', 'properties', 'Investor',
+      'loans', 'InvestorTransaction', 'investor_interest',
+      'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
+      'value_history', 'bank_statements', 'other_income',
+      'borrower_loan_preferences', 'receipt_drafts',
+      'reconciliation_patterns', 'reconciliation_entries',
+      'audit_logs'
+    ];
+
+    try {
+      for (let i = 0; i < tables.length; i++) {
+        const table = tables[i];
+        const entityName = getEntityName(table);
+        setExportProgress({ current: i + 1, total: tables.length, step: `Exporting ${table}...` });
+        addLog(`  Exporting ${table}...`);
+
+        try {
+          const data = await api.entities[entityName].list();
+          backup.tables[table] = data;
+          backup.metadata.recordCounts[table] = data.length;
+          addLog(`    Found ${data.length} records`);
+        } catch (err) {
+          addLog(`    Warning: Could not export ${table}: ${err.message}`);
+          backup.tables[table] = [];
+          backup.metadata.recordCounts[table] = 0;
+        }
+      }
+
+      // Generate and download file
+      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const safeName = currentOrganization.name.replace(/[^a-zA-Z0-9]/g, '-');
+      a.download = `backup-${safeName}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.json`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      // Calculate total records
+      const totalRecords = Object.values(backup.metadata.recordCounts).reduce((a, b) => a + b, 0);
+      addLog(`Backup complete! ${totalRecords} total records exported.`);
+
+      // Log audit
+      await logAudit({
+        action: AuditAction.ORG_BACKUP_EXPORT,
+        entityType: EntityType.ORGANIZATION,
+        entityId: currentOrganization.id,
+        entityName: currentOrganization.name,
+        details: {
+          totalRecords,
+          recordCounts: backup.metadata.recordCounts
+        }
+      });
+
+      toast.success(`Backup exported successfully (${totalRecords} records)`);
+    } catch (err) {
+      addLog(`Error: ${err.message}`);
+      toast.error('Failed to export backup');
+    } finally {
+      setIsExporting(false);
+      setExportProgress({ current: 0, total: 0, step: '' });
+    }
+  };
+
+  // Handle file selection for restore
+  const handleRestoreFileSelect = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const text = await file.text();
+      const backup = JSON.parse(text);
+
+      // Validate backup structure
+      if (!backup.version || !backup.tables || !backup.metadata) {
+        toast.error('Invalid backup file format');
+        return;
+      }
+
+      // Calculate total records
+      const totalRecords = Object.values(backup.metadata.recordCounts || {}).reduce((a, b) => a + b, 0);
+
+      setRestorePreview({
+        ...backup,
+        totalRecords,
+        fileName: file.name
+      });
+      setRestoreConfirmText('');
+    } catch (err) {
+      toast.error('Could not read backup file: ' + err.message);
+    }
+  };
+
+  // Execute restore
+  const executeRestore = async () => {
+    if (!restorePreview) return;
+
+    setIsRestoring(true);
+    setLogs([]);
+    addLog('Starting restore process...');
+    addLog('WARNING: This will delete ALL existing data first!');
+
+    try {
+      // Step 1: Clear all existing data
+      addLog('Step 1: Clearing existing data...');
+      setRestoreProgress({ current: 1, total: 3, step: 'Clearing existing data...' });
+      await clearAllData();
+
+      // Step 2: Restore data in FK-safe order
+      addLog('Step 2: Restoring data from backup...');
+      setRestoreProgress({ current: 2, total: 3, step: 'Restoring data...' });
+
+      const restoreOrder = [
+        'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
+        'borrowers', 'properties', 'Investor',
+        'loans', 'InvestorTransaction', 'investor_interest',
+        'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
+        'value_history', 'bank_statements', 'other_income',
+        'borrower_loan_preferences', 'receipt_drafts',
+        'reconciliation_patterns', 'reconciliation_entries'
+      ];
+
+      let restoredCount = 0;
+      for (const table of restoreOrder) {
+        const records = restorePreview.tables[table];
+        if (records && records.length > 0) {
+          const entityName = getEntityName(table);
+          addLog(`  Restoring ${table} (${records.length} records)...`);
+
+          try {
+            // Strip organization_id - createMany will inject current org
+            const cleanRecords = records.map(r => {
+              const { organization_id, ...rest } = r;
+              return rest;
+            });
+
+            await api.entities[entityName].createMany(cleanRecords);
+            restoredCount += records.length;
+            addLog(`    Restored ${records.length} records`);
+          } catch (err) {
+            addLog(`    ERROR restoring ${table}: ${err.message}`);
+          }
+        }
+      }
+
+      // Step 3: Refresh queries
+      addLog('Step 3: Refreshing application data...');
+      setRestoreProgress({ current: 3, total: 3, step: 'Refreshing data...' });
+      queryClient.invalidateQueries();
+
+      // Log audit
+      await logAudit({
+        action: AuditAction.ORG_BACKUP_RESTORE,
+        entityType: EntityType.ORGANIZATION,
+        entityId: currentOrganization.id,
+        entityName: currentOrganization.name,
+        details: {
+          sourceOrgId: restorePreview.organizationId,
+          sourceOrgName: restorePreview.organizationName,
+          backupDate: restorePreview.exportDate,
+          restoredRecords: restoredCount
+        }
+      });
+
+      addLog(`Restore complete! ${restoredCount} records restored.`);
+      toast.success(`Backup restored successfully (${restoredCount} records)`);
+      setRestorePreview(null);
+      setRestoreConfirmText('');
+    } catch (err) {
+      addLog(`Error during restore: ${err.message}`);
+      toast.error('Failed to restore backup: ' + err.message);
+    } finally {
+      setIsRestoring(false);
+      setRestoreProgress({ current: 0, total: 0, step: '' });
+    }
+  };
+
   if (!canAdmin()) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -1173,6 +1409,154 @@ export default function OrgAdmin() {
                   </AlertDescription>
                 </Alert>
               )}
+            </CardContent>
+          </Card>
+
+          {/* Data Backup & Restore */}
+          <Card className="border-blue-200">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <HardDrive className="w-5 h-5 text-blue-600" />
+                Data Backup & Restore
+              </CardTitle>
+              <CardDescription>
+                Export and restore complete organization data
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Export Section */}
+              <div className="space-y-3">
+                <div>
+                  <h4 className="font-medium text-slate-900">Export Backup</h4>
+                  <p className="text-sm text-slate-600">
+                    Download a complete backup of all organization data as a JSON file.
+                  </p>
+                </div>
+                <Button
+                  variant="outline"
+                  onClick={handleExportBackup}
+                  disabled={isExporting || isRestoring || clearing}
+                  className="w-full"
+                >
+                  {isExporting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      {exportProgress.step || 'Exporting...'}
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 mr-2" />
+                      Export Backup
+                    </>
+                  )}
+                </Button>
+                {isExporting && exportProgress.total > 0 && (
+                  <Progress value={(exportProgress.current / exportProgress.total) * 100} />
+                )}
+              </div>
+
+              {/* Restore Section */}
+              <div className="border-t pt-4 space-y-3">
+                <div>
+                  <h4 className="font-medium text-slate-900">Restore Backup</h4>
+                  <p className="text-sm text-slate-600">
+                    Upload a backup file to restore organization data.
+                  </p>
+                </div>
+                <Alert className="border-amber-200 bg-amber-50">
+                  <AlertTriangle className="w-4 h-4 text-amber-600" />
+                  <AlertDescription className="text-amber-800 text-sm">
+                    Restoring will <strong>DELETE all current data</strong> and replace it with the backup.
+                  </AlertDescription>
+                </Alert>
+                <Input
+                  type="file"
+                  accept=".json"
+                  onChange={handleRestoreFileSelect}
+                  disabled={isExporting || isRestoring || clearing}
+                  className="cursor-pointer"
+                />
+
+                {/* Restore Preview */}
+                {restorePreview && (
+                  <div className="p-4 bg-slate-50 rounded-lg border space-y-3">
+                    <div className="space-y-1 text-sm">
+                      <p><strong>File:</strong> {restorePreview.fileName}</p>
+                      <p><strong>Organization:</strong> {restorePreview.organizationName}</p>
+                      <p><strong>Backup Date:</strong> {format(new Date(restorePreview.exportDate), 'PPpp')}</p>
+                      <p><strong>Total Records:</strong> {restorePreview.totalRecords.toLocaleString()}</p>
+                    </div>
+
+                    {/* Record counts breakdown */}
+                    <div className="text-xs text-slate-600 max-h-24 overflow-y-auto">
+                      {Object.entries(restorePreview.metadata.recordCounts || {})
+                        .filter(([, count]) => count > 0)
+                        .map(([table, count]) => (
+                          <span key={table} className="inline-block mr-3">
+                            {table}: {count}
+                          </span>
+                        ))}
+                    </div>
+
+                    {/* Confirmation */}
+                    <div className="space-y-2">
+                      <Label htmlFor="restore-confirm" className="text-sm">
+                        Type <strong>RESTORE</strong> to confirm:
+                      </Label>
+                      <Input
+                        id="restore-confirm"
+                        value={restoreConfirmText}
+                        onChange={(e) => setRestoreConfirmText(e.target.value)}
+                        placeholder="RESTORE"
+                        className="font-mono"
+                      />
+                    </div>
+
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        onClick={() => {
+                          setRestorePreview(null);
+                          setRestoreConfirmText('');
+                        }}
+                        disabled={isRestoring}
+                        className="flex-1"
+                      >
+                        Cancel
+                      </Button>
+                      <Button
+                        variant="destructive"
+                        onClick={executeRestore}
+                        disabled={isRestoring || restoreConfirmText !== 'RESTORE'}
+                        className="flex-1"
+                      >
+                        {isRestoring ? (
+                          <>
+                            <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            Restoring...
+                          </>
+                        ) : (
+                          <>
+                            <Upload className="w-4 h-4 mr-2" />
+                            Restore Backup
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Restore Progress */}
+                {isRestoring && restoreProgress.total > 0 && (
+                  <div className="space-y-2">
+                    <div className="flex justify-between text-sm text-slate-600">
+                      <span>{restoreProgress.step}</span>
+                      <span>{restoreProgress.current} / {restoreProgress.total}</span>
+                    </div>
+                    <Progress value={(restoreProgress.current / restoreProgress.total) * 100} />
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
 

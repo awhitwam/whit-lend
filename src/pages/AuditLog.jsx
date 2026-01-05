@@ -134,11 +134,24 @@ export default function AuditLog() {
     const previousValues = parseJson(log.previous_values);
     const newValues = parseJson(log.new_values);
 
+    const result = [];
+
+    // Check for edit_reason in details (loan edits, transaction edits, etc.)
+    if (details?.edit_reason) {
+      result.push(
+        <div key="edit_reason" className="text-xs mb-1 p-1.5 bg-amber-50 border border-amber-200 rounded">
+          <span className="font-medium text-amber-700">Reason:</span>{' '}
+          <span className="text-amber-900 italic">{details.edit_reason}</span>
+        </div>
+      );
+    }
+
     // If we have previous and new values, show a diff
     if (previousValues && newValues) {
       const changedKeys = Object.keys(newValues).filter(k => {
         if (skipKeys.includes(k)) return false;
         if (k.endsWith('_id')) return false;
+        if (k === 'edit_reason') return false; // Already shown above
         const oldVal = previousValues[k];
         const newVal = newValues[k];
         // Skip if both are null/undefined
@@ -147,7 +160,7 @@ export default function AuditLog() {
       });
 
       if (changedKeys.length > 0) {
-        return changedKeys.slice(0, 3).map(key => (
+        const changes = changedKeys.slice(0, 3).map(key => (
           <div key={key} className="text-xs">
             <span className="font-medium">{formatFieldName(key)}:</span>{' '}
             <span className="text-red-500 line-through mr-1">
@@ -158,30 +171,33 @@ export default function AuditLog() {
             </span>
           </div>
         ));
+        result.push(...changes);
       }
     }
 
     // If we have details, show them (filtered)
-    if (details && typeof details === 'object') {
+    if (details && typeof details === 'object' && result.length <= 1) {
       const entries = Object.entries(details).filter(([key, value]) => {
         if (skipKeys.includes(key)) return false;
+        if (key === 'edit_reason') return false; // Already shown above
         if (key.endsWith('_id') && isUuid(value)) return false;
         if (value === null || value === undefined) return false;
         if (isUuid(value)) return false;
         return true;
       });
 
-      if (entries.length === 0) return '-';
-
-      return entries.slice(0, 5).map(([key, value]) => (
-        <div key={key} className="text-xs">
-          <span className="font-medium">{formatFieldName(key)}:</span>{' '}
-          <span className="text-slate-600">{formatValue(value, key)}</span>
-        </div>
-      ));
+      if (entries.length > 0) {
+        const detailItems = entries.slice(0, 5).map(([key, value]) => (
+          <div key={key} className="text-xs">
+            <span className="font-medium">{formatFieldName(key)}:</span>{' '}
+            <span className="text-slate-600">{formatValue(value, key)}</span>
+          </div>
+        ));
+        result.push(...detailItems);
+      }
     }
 
-    return '-';
+    return result.length > 0 ? result : '-';
   };
 
   // Fields that should be formatted as currency

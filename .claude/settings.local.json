@@ -25,7 +25,8 @@
       "Bash(npx supabase sql:*)",
       "Bash(git grep:*)",
       "Bash(ren:*)",
-      "Bash(ren \"supabase\\\\migrations\\\\043_borrower_keywords.sql\" \"047_borrower_keywords.sql\")"
+      "Bash(ren \"supabase\\\\migrations\\\\043_borrower_keywords.sql\" \"047_borrower_keywords.sql\")",
+      "Bash(timeout 60 npx vite build:*)"
     ]
   }
 }

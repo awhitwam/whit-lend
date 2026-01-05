@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo, useEffect, useRef } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { api } from '@/api/dataClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -409,6 +409,111 @@ function levenshteinSimilarity(s1, s2) {
   return 1 - matrix[len1][len2] / maxLen;
 }
 
+// Expense Type Combobox with search
+function ExpenseTypeCombobox({ expenseTypes, selectedTypeId, expenseSuggestion, onSelect }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState('');
+  const inputRef = useRef(null);
+
+  const selectedType = expenseTypes.find(t => t.id === selectedTypeId);
+
+  // Filter expense types based on search
+  const filteredTypes = useMemo(() => {
+    if (!search.trim()) return expenseTypes;
+    const searchLower = search.toLowerCase();
+    return expenseTypes.filter(type =>
+      type.name.toLowerCase().includes(searchLower)
+    );
+  }, [expenseTypes, search]);
+
+  // Focus input when popover opens
+  useEffect(() => {
+    if (open && inputRef.current) {
+      setTimeout(() => inputRef.current?.focus(), 0);
+    }
+  }, [open]);
+
+  const handleSelect = (typeId) => {
+    onSelect(typeId);
+    setOpen(false);
+    setSearch('');
+  };
+
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button className="flex items-center gap-1 text-xs hover:underline cursor-pointer">
+          {selectedType ? (
+            <>
+              <Tag className="w-3 h-3 text-amber-600" />
+              <span className="text-amber-700">{selectedType.name}</span>
+            </>
+          ) : expenseSuggestion ? (
+            <>
+              <Sparkles className="w-3 h-3 text-purple-500" />
+              <span className="text-purple-600">{expenseSuggestion.expenseTypeName}?</span>
+            </>
+          ) : (
+            <span className="text-slate-400">+ type</span>
+          )}
+        </button>
+      </PopoverTrigger>
+      <PopoverContent className="w-56 p-1" align="start">
+        <div className="pb-1">
+          <Input
+            ref={inputRef}
+            placeholder="Search expense types..."
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-7 text-xs"
+          />
+        </div>
+        <div className="max-h-48 overflow-y-auto">
+          {expenseSuggestion && !search && (
+            <>
+              <button
+                onClick={() => handleSelect(expenseSuggestion.expenseTypeId)}
+                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-purple-50 flex items-center gap-1.5 bg-purple-50/50"
+              >
+                <Sparkles className="w-3 h-3 text-purple-600 flex-shrink-0" />
+                <span className="flex-1 text-purple-900">{expenseSuggestion.expenseTypeName}</span>
+                <span className="text-purple-500">{Math.round(expenseSuggestion.confidence * 100)}%</span>
+              </button>
+              <div className="border-b border-slate-100 my-1" />
+            </>
+          )}
+          {filteredTypes.length === 0 ? (
+            <div className="px-2 py-2 text-xs text-slate-400 text-center">No matches found</div>
+          ) : (
+            filteredTypes
+              .filter(type => !expenseSuggestion || type.id !== expenseSuggestion.expenseTypeId || search)
+              .map(type => (
+                <button
+                  key={type.id}
+                  onClick={() => handleSelect(type.id)}
+                  className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-slate-100 ${selectedTypeId === type.id ? 'bg-slate-100 font-medium' : ''}`}
+                >
+                  {type.name}
+                </button>
+              ))
+          )}
+          {selectedTypeId && (
+            <>
+              <div className="border-t border-slate-100 mt-1 pt-1" />
+              <button
+                onClick={() => handleSelect(null)}
+                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-red-50 text-red-600"
+              >
+                Clear
+              </button>
+            </>
+          )}
+        </div>
+      </PopoverContent>
+    </Popover>
+  );
+}
+
 export default function BankReconciliation() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -464,7 +569,8 @@ export default function BankReconciliation() {
   const [isBulkCreatingExpenses, setIsBulkCreatingExpenses] = useState(false);
   const [bulkExpenseProgress, setBulkExpenseProgress] = useState({ current: 0, total: 0 });
 
-  const setEntryExpenseType = (entryId, expenseTypeId) => {
+  // Simple setter - the propagation logic will be in a separate function defined after data is loaded
+  const setEntryExpenseTypeSimple = (entryId, expenseTypeId) => {
     setEntryExpenseTypes(prev => {
       const next = new Map(prev);
       if (expenseTypeId) {
@@ -853,6 +959,19 @@ export default function BankReconciliation() {
           if (matchingSubset && matchingSubset.length >= 2) {
             const loan = loans.find(l => l.id === tx.loan_id);
 
+            // CRITICAL: Check that bank entries are within reasonable date range of the disbursement transaction
+            // A grouped match with 181+ days gap makes no sense
+            const txDate = tx.date;
+            const maxDaysFromTransaction = 14; // Bank entries must be within 14 days of the disbursement
+            const allEntriesNearTransaction = matchingSubset.every(e =>
+              datesWithinDays(e.statement_date, txDate, maxDaysFromTransaction)
+            );
+
+            // Skip if bank entries are too far from the transaction date
+            if (!allEntriesNearTransaction) {
+              continue; // Try next disbursement
+            }
+
             // Validate that grouped entries are actually related
             // (similar descriptions OR borrower name appears in descriptions)
             const entriesAreRelated = groupHasRelatedDescriptions(matchingSubset);
@@ -870,7 +989,22 @@ export default function BankReconciliation() {
               datesWithinDays(e.statement_date, entry.statement_date, 0)
             );
 
-            const score = allSameDay ? 0.92 : 0.85;
+            // Also factor in proximity to the transaction date
+            const allNearTransaction = matchingSubset.every(e =>
+              datesWithinDays(e.statement_date, txDate, 3)
+            );
+
+            // Score based on both same-day grouping AND proximity to transaction
+            let score;
+            if (allSameDay && allNearTransaction) {
+              score = 0.92; // Same day entries, within 3 days of transaction
+            } else if (allSameDay) {
+              score = 0.75; // Same day entries, but further from transaction (4-14 days)
+            } else if (allNearTransaction) {
+              score = 0.80; // Different day entries, but close to transaction
+            } else {
+              score = 0.60; // Different days, further from transaction
+            }
 
             if (score > bestScore) {
               bestScore = score;
@@ -1483,6 +1617,38 @@ export default function BankReconciliation() {
     return entryConflicts;
   }, [bankStatements, suggestedMatches]);
 
+  // Track entries that are part of grouped payment suggestions (as secondary entries)
+  // This is used to show a warning when someone tries to create a new transaction for an entry
+  // that's already part of a grouped match suggestion
+  const entriesInGroupedSuggestions = useMemo(() => {
+    const grouped = new Map(); // Map<entryId, { primaryEntryId, suggestion }>
+
+    for (const [primaryEntryId, suggestion] of suggestedMatches) {
+      // Check grouped_disbursement (multiple bank debits → single disbursement)
+      if (suggestion.matchMode === 'grouped_disbursement' && suggestion.groupedEntries) {
+        for (const groupedEntry of suggestion.groupedEntries) {
+          // Mark all entries in the group (including the primary)
+          grouped.set(groupedEntry.id, {
+            primaryEntryId,
+            suggestion,
+            groupType: 'disbursement'
+          });
+        }
+      }
+      // Check grouped_payment (single bank credit → multiple repayments)
+      if (suggestion.matchMode === 'grouped' && suggestion.existingTransactions) {
+        // This is for grouped repayments - mark the primary entry
+        grouped.set(primaryEntryId, {
+          primaryEntryId,
+          suggestion,
+          groupType: 'payment'
+        });
+      }
+    }
+
+    return grouped;
+  }, [suggestedMatches]);
+
   // Compute expense type suggestions for unreconciled debits (for dropdown pre-selection)
   const expenseTypeSuggestions = useMemo(() => {
     const suggestions = new Map(); // Map<entryId, { expenseTypeId, expenseTypeName, confidence, reason }>
@@ -1552,6 +1718,77 @@ export default function BankReconciliation() {
 
     return suggestions;
   }, [bankStatements, patterns, expenseTypes, suggestedMatches]);
+
+  // Set expense type with propagation to similar entries
+  const setEntryExpenseType = (entryId, expenseTypeId) => {
+    // First, set the expense type for the source entry
+    setEntryExpenseTypeSimple(entryId, expenseTypeId);
+
+    if (!expenseTypeId) return; // Only propagate when setting, not clearing
+
+    // Find the source entry to get its description
+    const sourceEntry = bankStatements.find(s => s.id === entryId);
+    if (!sourceEntry || !sourceEntry.description) return;
+
+    // Extract keywords from source entry description
+    const sourceKeywords = extractVendorKeywords(sourceEntry.description);
+    if (sourceKeywords.length === 0) return;
+
+    // Find similar unclassified debit entries
+    const similarEntries = bankStatements.filter(entry => {
+      // Skip the source entry itself
+      if (entry.id === entryId) return false;
+      // Only consider unreconciled debit entries (negative amounts)
+      if (entry.is_reconciled || entry.amount >= 0) return false;
+      // Skip entries that already have an expense type set
+      if (entryExpenseTypes.has(entry.id)) return false;
+      // Skip entries with high-confidence match suggestions (they're for matching, not creating)
+      const suggestion = suggestedMatches.get(entry.id);
+      if (suggestion && suggestion.confidence >= 0.7 && isMatchType(suggestion.matchMode)) return false;
+
+      // Extract keywords from this entry's description
+      const entryKeywords = extractVendorKeywords(entry.description);
+      if (entryKeywords.length === 0) return false;
+
+      // Calculate fuzzy match score
+      let matchCount = 0;
+      for (const sourceKw of sourceKeywords) {
+        for (const entryKw of entryKeywords) {
+          if (sourceKw === entryKw) {
+            matchCount += 1;
+          } else if (sourceKw.includes(entryKw) || entryKw.includes(sourceKw)) {
+            matchCount += 0.7;
+          } else if (levenshteinSimilarity(sourceKw, entryKw) >= 0.75) {
+            matchCount += 0.5;
+          }
+        }
+      }
+
+      // Require at least 50% keyword match
+      const keywordScore = matchCount / Math.max(sourceKeywords.length, entryKeywords.length);
+      return keywordScore >= 0.5;
+    });
+
+    // Propagate the expense type to similar entries
+    if (similarEntries.length > 0) {
+      setEntryExpenseTypes(prev => {
+        const next = new Map(prev);
+        similarEntries.forEach(entry => {
+          next.set(entry.id, expenseTypeId);
+        });
+        return next;
+      });
+
+      // Auto-select those entries for bulk processing
+      setSelectedEntries(prev => {
+        const next = new Set(prev);
+        similarEntries.forEach(entry => {
+          next.add(entry.id);
+        });
+        return next;
+      });
+    }
+  };
 
   // Auto-apply high-confidence expense type suggestions to dropdown
   useEffect(() => {
@@ -4243,7 +4480,7 @@ export default function BankReconciliation() {
             const entry = bankStatements.find(s => s.id === id);
             if (!entry || entry.is_reconciled) return false;
             const suggestion = suggestedMatches.get(id);
-            return suggestion && suggestion.confidence >= 0.9;
+            return suggestion && suggestion.confidence >= 0.8;
           }).length;
           const selectedReconciled = [...selectedEntries].filter(id => {
             const entry = bankStatements.find(s => s.id === id);
@@ -4587,14 +4824,51 @@ export default function BankReconciliation() {
                                     linkText = `${suggestion.groupedEntries?.length || 0} debits → ${suggestion.loan?.loan_number || 'Unknown'}`;
                                   }
 
+                                  // Get match explanation for amount/date
+                                  const matchTx = suggestion.existingTransaction || suggestion.existingExpense || suggestion.existingInterest;
+                                  let matchExplanation = null;
+                                  if (matchTx) {
+                                    // For grouped_disbursement, use combined amount from all grouped entries
+                                    if (suggestion.matchMode === 'grouped_disbursement' && suggestion.groupedEntries) {
+                                      const groupedTotal = suggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+                                      const syntheticEntry = { amount: groupedTotal, statement_date: entry.statement_date };
+                                      matchExplanation = getMatchExplanation(syntheticEntry, matchTx, matchTx.date ? 'date' : 'statement_date');
+                                    } else {
+                                      matchExplanation = getMatchExplanation(entry, matchTx, matchTx.date ? 'date' : 'statement_date');
+                                    }
+                                  }
+
+                                  // For grouped_disbursement, show the other bank entries in the group
+                                  const otherGroupedEntries = suggestion.matchMode === 'grouped_disbursement' && suggestion.groupedEntries
+                                    ? suggestion.groupedEntries.filter(e => e.id !== entry.id)
+                                    : [];
+
                                   return (
                                     <div className="space-y-0.5">
                                       <div className="text-xs text-blue-600 font-medium truncate" title={linkText}>
                                         → {linkText}
                                       </div>
-                                      <div className="text-xs text-slate-400 truncate" title={suggestion.reason}>
-                                        {suggestion.reason}
-                                      </div>
+                                      {matchExplanation ? (
+                                        <div className="flex items-center gap-2 text-xs">
+                                          <span className={`${matchExplanation.amount.color === 'emerald' ? 'text-emerald-600' : matchExplanation.amount.color === 'amber' ? 'text-amber-600' : 'text-red-500'}`}>
+                                            {matchExplanation.amount.text}
+                                          </span>
+                                          <span className="text-slate-300">•</span>
+                                          <span className={`${matchExplanation.date.color === 'emerald' ? 'text-emerald-600' : matchExplanation.date.color === 'amber' ? 'text-amber-600' : 'text-slate-400'}`}>
+                                            {matchExplanation.date.text}
+                                          </span>
+                                        </div>
+                                      ) : (
+                                        <div className="text-xs text-slate-400 truncate" title={suggestion.reason}>
+                                          {suggestion.reason}
+                                        </div>
+                                      )}
+                                      {/* Show other bank entries in grouped disbursement */}
+                                      {otherGroupedEntries.length > 0 && (
+                                        <div className="text-xs text-purple-600 truncate" title={otherGroupedEntries.map(e => `${format(parseISO(e.statement_date), 'dd/MM')}: ${formatCurrency(Math.abs(e.amount))}`).join(', ')}>
+                                          + {otherGroupedEntries.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} = {formatCurrency(suggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0))}
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 } else {
@@ -4608,6 +4882,10 @@ export default function BankReconciliation() {
                                     createText += investor ? `: ${investor.business_name || investor.name}` : '';
                                   }
 
+                                  // Check if this entry is part of a grouped suggestion elsewhere
+                                  const groupedInfoCreate = entriesInGroupedSuggestions.get(entry.id);
+                                  const isPartOfGroupCreate = groupedInfoCreate && groupedInfoCreate.primaryEntryId !== entry.id;
+
                                   return (
                                     <div className="space-y-0.5">
                                       <div className="text-xs text-amber-600 font-medium truncate" title={createText}>
@@ -4616,79 +4894,51 @@ export default function BankReconciliation() {
                                       <div className="text-xs text-slate-400 truncate" title={suggestion.reason}>
                                         {suggestion.reason}
                                       </div>
+                                      {/* Warning if part of grouped suggestion */}
+                                      {isPartOfGroupCreate && groupedInfoCreate.groupType === 'disbursement' && (
+                                        <div
+                                          className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-700 text-xs font-medium"
+                                          title={`Part of grouped disbursement: ${groupedInfoCreate.suggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → ${groupedInfoCreate.suggestion.loan?.borrower_name || 'Unknown'}`}
+                                        >
+                                          <Link2 className="w-3 h-3 flex-shrink-0" />
+                                          Combined payment
+                                        </div>
+                                      )}
                                     </div>
                                   );
                                 }
                               }
 
+                              // Check if this entry is part of a grouped suggestion (e.g., grouped disbursement)
+                              const groupedInfo = entriesInGroupedSuggestions.get(entry.id);
+                              const isPartOfGroupedSuggestion = groupedInfo && groupedInfo.primaryEntryId !== entry.id;
+
                               // For unreconciled debits without high-confidence suggestion, show expense type selector
                               if (showExpenseTypeDropdown) {
                                 const expenseSuggestion = expenseTypeSuggestions.get(entry.id);
                                 const currentValue = entryExpenseTypes.get(entry.id) || '';
-                                const selectedType = expenseTypes.find(t => t.id === currentValue);
 
                                 return (
-                                  <div className="flex items-center gap-1">
-                                    <span className="text-xs text-amber-600 font-medium">+ Expense</span>
-                                    <Popover>
-                                      <PopoverTrigger asChild>
-                                        <button className="flex items-center gap-1 text-xs hover:underline cursor-pointer">
-                                          {selectedType ? (
-                                            <>
-                                              <Tag className="w-3 h-3 text-amber-600" />
-                                              <span className="text-amber-700">{selectedType.name}</span>
-                                            </>
-                                          ) : expenseSuggestion ? (
-                                            <>
-                                              <Sparkles className="w-3 h-3 text-purple-500" />
-                                              <span className="text-purple-600">{expenseSuggestion.expenseTypeName}?</span>
-                                            </>
-                                          ) : (
-                                            <span className="text-slate-400">+ type</span>
-                                          )}
-                                        </button>
-                                      </PopoverTrigger>
-                                      <PopoverContent className="w-48 p-1" align="start">
-                                        <div className="max-h-48 overflow-y-auto">
-                                          {expenseSuggestion && (
-                                            <>
-                                              <button
-                                                onClick={() => setEntryExpenseType(entry.id, expenseSuggestion.expenseTypeId)}
-                                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-purple-50 flex items-center gap-1.5 bg-purple-50/50"
-                                              >
-                                                <Sparkles className="w-3 h-3 text-purple-600 flex-shrink-0" />
-                                                <span className="flex-1 text-purple-900">{expenseSuggestion.expenseTypeName}</span>
-                                                <span className="text-purple-500">{Math.round(expenseSuggestion.confidence * 100)}%</span>
-                                              </button>
-                                              <div className="border-b border-slate-100 my-1" />
-                                            </>
-                                          )}
-                                          {expenseTypes
-                                            .filter(type => !expenseSuggestion || type.id !== expenseSuggestion.expenseTypeId)
-                                            .map(type => (
-                                              <button
-                                                key={type.id}
-                                                onClick={() => setEntryExpenseType(entry.id, type.id)}
-                                                className={`w-full text-left px-2 py-1.5 text-xs rounded hover:bg-slate-100 ${currentValue === type.id ? 'bg-slate-100 font-medium' : ''}`}
-                                              >
-                                                {type.name}
-                                              </button>
-                                            ))
-                                          }
-                                          {currentValue && (
-                                            <>
-                                              <div className="border-t border-slate-100 mt-1 pt-1" />
-                                              <button
-                                                onClick={() => setEntryExpenseType(entry.id, null)}
-                                                className="w-full text-left px-2 py-1.5 text-xs rounded hover:bg-red-50 text-red-600"
-                                              >
-                                                Clear
-                                              </button>
-                                            </>
-                                          )}
-                                        </div>
-                                      </PopoverContent>
-                                    </Popover>
+                                  <div className="space-y-0.5">
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-xs text-amber-600 font-medium">+ Expense</span>
+                                      <ExpenseTypeCombobox
+                                        expenseTypes={expenseTypes}
+                                        selectedTypeId={currentValue}
+                                        expenseSuggestion={expenseSuggestion}
+                                        onSelect={(typeId) => setEntryExpenseType(entry.id, typeId)}
+                                      />
+                                    </div>
+                                    {/* Warning if part of grouped suggestion */}
+                                    {isPartOfGroupedSuggestion && groupedInfo.groupType === 'disbursement' && (
+                                      <div
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-700 text-xs font-medium"
+                                        title={`Part of grouped disbursement: ${groupedInfo.suggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → ${groupedInfo.suggestion.loan?.borrower_name || 'Unknown'}`}
+                                      >
+                                        <Link2 className="w-3 h-3 flex-shrink-0" />
+                                        Combined payment
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               }
@@ -4696,19 +4946,31 @@ export default function BankReconciliation() {
                               // For unreconciled credits without high-confidence suggestion, show other income toggle
                               if (showOtherIncomeCheckbox) {
                                 return (
-                                  <button
-                                    onClick={() => toggleEntryOtherIncome(entry.id, !entryOtherIncome.has(entry.id))}
-                                    className="flex items-center gap-1 text-xs hover:underline cursor-pointer"
-                                  >
-                                    {entryOtherIncome.has(entry.id) ? (
-                                      <>
-                                        <Coins className="w-3 h-3 text-emerald-600" />
-                                        <span className="text-emerald-700">Other Income</span>
-                                      </>
-                                    ) : (
-                                      <span className="text-slate-400">+ income</span>
+                                  <div className="space-y-0.5">
+                                    <button
+                                      onClick={() => toggleEntryOtherIncome(entry.id, !entryOtherIncome.has(entry.id))}
+                                      className="flex items-center gap-1 text-xs hover:underline cursor-pointer"
+                                    >
+                                      {entryOtherIncome.has(entry.id) ? (
+                                        <>
+                                          <Coins className="w-3 h-3 text-emerald-600" />
+                                          <span className="text-emerald-700">Other Income</span>
+                                        </>
+                                      ) : (
+                                        <span className="text-slate-400">+ income</span>
+                                      )}
+                                    </button>
+                                    {/* Warning if part of grouped suggestion */}
+                                    {isPartOfGroupedSuggestion && groupedInfo.groupType === 'disbursement' && (
+                                      <div
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-red-100 border border-red-300 text-red-700 text-xs font-medium"
+                                        title={`Part of grouped disbursement: ${groupedInfo.suggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → ${groupedInfo.suggestion.loan?.borrower_name || 'Unknown'}`}
+                                      >
+                                        <Link2 className="w-3 h-3 flex-shrink-0" />
+                                        Combined payment
+                                      </div>
                                     )}
-                                  </button>
+                                  </div>
                                 );
                               }
 
@@ -5093,6 +5355,18 @@ export default function BankReconciliation() {
                     // Create a synthetic transaction object with combined amount for getMatchExplanation
                     const syntheticTx = { amount: combinedTotal, date: txDate };
                     explanation = selectedEntry ? getMatchExplanation(selectedEntry, syntheticTx, 'date') : null;
+                  } else if (reviewingSuggestion.matchMode === 'grouped_disbursement' && reviewingSuggestion.groupedEntries) {
+                    // For grouped disbursement: multiple bank entries → single transaction
+                    // Create a synthetic bank entry with the combined amount from all grouped entries
+                    const groupedTotal = reviewingSuggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+                    const syntheticBankEntry = {
+                      amount: groupedTotal,
+                      statement_date: selectedEntry?.statement_date
+                    };
+                    const txToCompare = reviewingSuggestion.existingTransaction;
+                    explanation = txToCompare
+                      ? getMatchExplanation(syntheticBankEntry, txToCompare, 'date')
+                      : null;
                   } else {
                     const txToCompare = selectedExistingTx ||
                       reviewingSuggestion.existingTransaction ||
@@ -5166,6 +5440,30 @@ export default function BankReconciliation() {
                           <span className="text-amber-600 font-medium">Name match</span> - Found entity name in bank description. Will create a new transaction.
                         </div>
                       )}
+                      {/* Warning if this entry is part of a grouped suggestion elsewhere */}
+                      {(() => {
+                        const groupedInfoDialog = entriesInGroupedSuggestions.get(selectedEntry?.id);
+                        const isPartOfGroup = groupedInfoDialog && groupedInfoDialog.primaryEntryId !== selectedEntry?.id;
+                        if (!isPartOfGroup || groupedInfoDialog?.groupType !== 'disbursement') return null;
+
+                        const groupedSuggestion = groupedInfoDialog.suggestion;
+                        return (
+                          <div className="pt-2 border-t border-red-200 mt-2 bg-red-50 rounded-lg p-2">
+                            <div className="flex items-start gap-2 text-red-700">
+                              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                              <div className="text-xs">
+                                <div className="font-medium mb-1">Part of combined payment</div>
+                                <div className="text-red-600">
+                                  This entry is suggested as part of a grouped disbursement:
+                                </div>
+                                <div className="text-red-600 mt-1">
+                                  {groupedSuggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → {groupedSuggestion.loan?.borrower_name || 'Unknown'}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
                   );
                 })()}

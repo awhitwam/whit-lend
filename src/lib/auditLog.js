@@ -69,7 +69,11 @@ export const AuditAction = {
   LOAN_PROPERTY_REMOVE: 'loan_property_remove',
   VALUATION_CREATE: 'valuation_create',
   FIRST_CHARGE_HOLDER_CREATE: 'first_charge_holder_create',
-  FIRST_CHARGE_HOLDER_UPDATE: 'first_charge_holder_update'
+  FIRST_CHARGE_HOLDER_UPDATE: 'first_charge_holder_update',
+
+  // Backup/Restore
+  ORG_BACKUP_EXPORT: 'org_backup_export',
+  ORG_BACKUP_RESTORE: 'org_backup_restore'
 };
 
 // Entity types for categorization

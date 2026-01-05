@@ -8,7 +8,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Loader2, Percent, Building2, Pencil, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Loader2, Percent, Building2, Pencil, RefreshCw, Landmark } from 'lucide-react';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -67,6 +68,20 @@ export default function InvestorDetails() {
       return products[0];
     },
     enabled: !!investor?.investor_product_id
+  });
+
+  // Fetch reconciliation entries to show which transactions are matched to bank statements
+  const { data: reconciliationEntries = [] } = useQuery({
+    queryKey: ['investor-reconciliation-entries', investorId],
+    queryFn: () => api.entities.ReconciliationEntry.list(),
+    enabled: !!investorId
+  });
+
+  // Fetch bank statements to show details about matched entries
+  const { data: bankStatements = [] } = useQuery({
+    queryKey: ['bank-statements'],
+    queryFn: () => api.entities.BankStatement.list(),
+    enabled: reconciliationEntries.length > 0
   });
 
   const updateMutation = useMutation({
@@ -403,6 +418,34 @@ export default function InvestorDetails() {
     [interestEntries]
   );
 
+  // Build maps of transaction/interest ID -> array of bank statement details for reconciliation indicator
+  // Uses arrays to support transactions matched to multiple bank entries
+  const capitalTxReconciliationMap = useMemo(() => {
+    const map = new Map();
+    reconciliationEntries
+      .filter(entry => entry.investor_transaction_id)
+      .forEach(entry => {
+        const bankStatement = bankStatements.find(bs => bs.id === entry.bank_statement_id);
+        const existing = map.get(entry.investor_transaction_id) || [];
+        existing.push({ entry, bankStatement });
+        map.set(entry.investor_transaction_id, existing);
+      });
+    return map;
+  }, [reconciliationEntries, bankStatements]);
+
+  const interestReconciliationMap = useMemo(() => {
+    const map = new Map();
+    reconciliationEntries
+      .filter(entry => entry.interest_id)
+      .forEach(entry => {
+        const bankStatement = bankStatements.find(bs => bs.id === entry.bank_statement_id);
+        const existing = map.get(entry.interest_id) || [];
+        existing.push({ entry, bankStatement });
+        map.set(entry.interest_id, existing);
+      });
+    return map;
+  }, [reconciliationEntries, bankStatements]);
+
 
   if (investorLoading) {
     return (
@@ -642,30 +685,38 @@ export default function InvestorDetails() {
             ) : (
               <div className="space-y-1">
                 {/* Header row */}
-                <div className="grid grid-cols-12 gap-2 px-3 py-2 text-xs font-medium text-slate-500 uppercase border-b">
-                  <div className="col-span-2">Date</div>
-                  <div className="col-span-5">Details</div>
-                  <div className="col-span-2 text-right">Debit</div>
-                  <div className="col-span-2 text-right">Credit</div>
-                  <div className="col-span-1"></div>
+                <div className="flex gap-2 px-3 py-2 text-xs font-medium text-slate-500 uppercase border-b">
+                  <div className="w-24 shrink-0">Date</div>
+                  <div className="w-28 shrink-0">Type</div>
+                  <div className="flex-1 min-w-0">Details</div>
+                  <div className="w-20 shrink-0 text-right">Debit</div>
+                  <div className="w-20 shrink-0 text-right">Credit</div>
+                  <div className="w-16 shrink-0"></div>
                 </div>
 
                 {/* Flat transaction list */}
+                <TooltipProvider>
                 {mergedItems.map((item) => {
                   const isInterest = item.itemType === 'interest';
                   const isDebit = isInterest ? item.type === 'debit' : item.type === 'capital_out';
                   const isCredit = isInterest ? item.type === 'credit' : item.type === 'capital_in';
                   const isStruckOut = isInterest && struckOutIds.has(item.id);
 
+                  // Check reconciliation status (now returns array of matches)
+                  const reconMatches = isInterest
+                    ? interestReconciliationMap.get(item.id)
+                    : capitalTxReconciliationMap.get(item.id);
+                  const isReconciled = reconMatches && reconMatches.length > 0;
+
                   return (
                     <div
                       key={`${item.itemType}-${item.id}`}
-                      className={`grid grid-cols-12 gap-2 px-3 py-2 items-center border-b hover:bg-slate-50 ${isInterest ? 'bg-amber-50/30' : ''}`}
+                      className={`flex gap-2 px-3 py-2 items-center border-b hover:bg-slate-50 ${isInterest ? 'bg-amber-50/30' : ''}`}
                     >
-                      <div className="col-span-2">
+                      <div className="w-24 shrink-0">
                         <span className="text-sm">{format(new Date(item.date), 'dd MMM yyyy')}</span>
                       </div>
-                      <div className="col-span-5 flex items-center gap-2">
+                      <div className="w-28 shrink-0">
                         {isInterest ? (
                           <Badge variant="outline" className={`text-xs bg-amber-50 text-amber-700 border-amber-200 ${isStruckOut ? 'opacity-60' : ''}`}>
                             {item.type === 'credit' ? 'Interest Credit' : 'Interest Withdrawn'}
@@ -676,27 +727,62 @@ export default function InvestorDetails() {
                             {item.type === 'capital_in' ? 'Capital In' : 'Capital Out'}
                           </Badge>
                         )}
+                      </div>
+                      <div className="flex-1 min-w-0">
                         {(item.description || item.notes) && (
-                          <span className={`text-sm text-slate-600 ${isStruckOut ? 'opacity-60' : ''}`} title={item.description || item.notes}>
+                          <span className={`text-sm text-slate-600 truncate block ${isStruckOut ? 'opacity-60' : ''}`} title={item.description || item.notes}>
                             {item.description || item.notes}
                           </span>
                         )}
                       </div>
-                      <div className="col-span-2 text-right">
+                      <div className="w-20 shrink-0 text-right">
                         {isDebit && (
                           <span className={`text-sm text-red-600 ${isStruckOut ? 'line-through opacity-60' : ''}`}>
                             {formatCurrency(item.amount)}
                           </span>
                         )}
                       </div>
-                      <div className="col-span-2 text-right">
+                      <div className="w-20 shrink-0 text-right">
                         {isCredit && (
                           <span className={`text-sm text-emerald-600 ${isStruckOut ? 'line-through opacity-60' : ''}`}>
                             {formatCurrency(item.amount)}
                           </span>
                         )}
                       </div>
-                      <div className="col-span-1 flex justify-end gap-1">
+                      <div className="w-16 shrink-0 flex justify-end gap-1">
+                        {/* Bank reconciliation indicator */}
+                        {isReconciled && (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-blue-500 cursor-help flex items-center">
+                                <Landmark className="w-3.5 h-3.5" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs">
+                              <div className="text-xs space-y-2">
+                                <div className="font-medium text-blue-600">
+                                  Matched to {reconMatches.length > 1 ? `${reconMatches.length} bank entries` : 'bank statement'}
+                                </div>
+                                {reconMatches.map((match, idx) => (
+                                  <div key={idx} className={reconMatches.length > 1 ? 'border-t border-slate-200 pt-1' : ''}>
+                                    {match.bankStatement && (
+                                      <>
+                                        <div>Date: {format(new Date(match.bankStatement.statement_date), 'dd MMM yyyy')}</div>
+                                        <div>Amount: {formatCurrency(Math.abs(match.bankStatement.amount))}</div>
+                                        <div>Source: {match.bankStatement.bank_source || '-'}</div>
+                                        {match.bankStatement.description && (
+                                          <div className="text-slate-500 truncate max-w-[200px]">
+                                            {match.bankStatement.description}
+                                          </div>
+                                        )}
+                                      </>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </TooltipContent>
+                          </Tooltip>
+                        )}
                         <Button
                           variant="ghost"
                           size="icon"
@@ -732,18 +818,20 @@ export default function InvestorDetails() {
                     </div>
                   );
                 })}
+                </TooltipProvider>
 
                 {/* Totals row */}
-                <div className="grid grid-cols-12 gap-2 px-3 py-3 bg-slate-100 rounded-lg border-2 border-slate-200 mt-4">
-                  <div className="col-span-2 font-semibold text-slate-700">Totals</div>
-                  <div className="col-span-5"></div>
-                  <div className="col-span-2 text-right font-bold text-red-600">
+                <div className="flex gap-2 px-3 py-3 bg-slate-100 rounded-lg border-2 border-slate-200 mt-4">
+                  <div className="w-24 shrink-0 font-semibold text-slate-700">Totals</div>
+                  <div className="w-28 shrink-0"></div>
+                  <div className="flex-1 min-w-0"></div>
+                  <div className="w-20 shrink-0 text-right font-bold text-red-600">
                     {formatCurrency(capitalOut + interestDebits)}
                   </div>
-                  <div className="col-span-2 text-right font-bold text-emerald-600">
+                  <div className="w-20 shrink-0 text-right font-bold text-emerald-600">
                     {formatCurrency(capitalIn + interestCredits)}
                   </div>
-                  <div className="col-span-1"></div>
+                  <div className="w-16 shrink-0"></div>
                 </div>
               </div>
             )}

@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { useState, useEffect, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -7,11 +6,12 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, AlertTriangle, Percent, Zap, TrendingUp } from 'lucide-react';
+import { Loader2, AlertTriangle, Percent, Zap, TrendingUp, ArrowLeft, ChevronRight, X, Edit } from 'lucide-react';
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
+import { format } from 'date-fns';
 
-export default function EditLoanModal({
+export default function EditLoanPanel({
   isOpen,
   onClose,
   loan,
@@ -42,6 +42,11 @@ export default function EditLoanModal({
     product_type: loan?.product_type || ''
   });
 
+  // Confirmation step state
+  const [showConfirmation, setShowConfirmation] = useState(false);
+  const [editReason, setEditReason] = useState('');
+  const [pendingSubmitData, setPendingSubmitData] = useState(null);
+
   const { data: products = [] } = useQuery({
     queryKey: ['loan-products'],
     queryFn: () => api.entities.LoanProduct.list()
@@ -53,8 +58,155 @@ export default function EditLoanModal({
   const isIrregularIncome = selectedProduct?.product_type === 'Irregular Income' || formData.product_type === 'Irregular Income';
   const isSpecialType = isFixedCharge || isIrregularIncome;
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
+  // Detect changes between current loan and form data
+  const changes = useMemo(() => {
+    if (!loan) return [];
+    const changeList = [];
+    const formatCurrency = (val) => `£${parseFloat(val || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
+    const formatDate = (val) => val ? format(new Date(val), 'dd MMM yyyy') : '-';
+
+    // Product change
+    if (formData.product_id !== loan.product_id) {
+      const oldProduct = products.find(p => p.id === loan.product_id);
+      const newProduct = products.find(p => p.id === formData.product_id);
+      changeList.push({
+        field: 'Product',
+        from: oldProduct?.name || loan.product_name || '-',
+        to: newProduct?.name || '-'
+      });
+    }
+
+    // Principal amount
+    if (parseFloat(formData.principal_amount) !== parseFloat(loan.principal_amount || 0)) {
+      changeList.push({
+        field: 'Principal Amount',
+        from: formatCurrency(loan.principal_amount),
+        to: formatCurrency(formData.principal_amount)
+      });
+    }
+
+    // Monthly charge (Fixed Charge)
+    if (parseFloat(formData.monthly_charge) !== parseFloat(loan.monthly_charge || 0)) {
+      changeList.push({
+        field: 'Monthly Charge',
+        from: formatCurrency(loan.monthly_charge),
+        to: formatCurrency(formData.monthly_charge)
+      });
+    }
+
+    // Interest rate
+    if (parseFloat(formData.interest_rate) !== parseFloat(loan.interest_rate || 0)) {
+      changeList.push({
+        field: 'Interest Rate',
+        from: `${loan.interest_rate || 0}%`,
+        to: `${formData.interest_rate || 0}%`
+      });
+    }
+
+    // Interest rate override
+    if (formData.override_interest_rate !== loan.override_interest_rate) {
+      changeList.push({
+        field: 'Interest Rate Override',
+        from: loan.override_interest_rate ? 'Enabled' : 'Disabled',
+        to: formData.override_interest_rate ? 'Enabled' : 'Disabled'
+      });
+    }
+
+    // Overridden rate
+    if (formData.override_interest_rate && parseFloat(formData.overridden_rate) !== parseFloat(loan.overridden_rate || 0)) {
+      changeList.push({
+        field: 'Custom Interest Rate',
+        from: `${loan.overridden_rate || 0}%`,
+        to: `${formData.overridden_rate || 0}%`
+      });
+    }
+
+    // Duration
+    if (parseInt(formData.duration) !== parseInt(loan.duration || 0)) {
+      changeList.push({
+        field: 'Duration',
+        from: `${loan.duration || 0} periods`,
+        to: `${formData.duration || 0} periods`
+      });
+    }
+
+    // Start date
+    if (formData.start_date !== loan.start_date) {
+      changeList.push({
+        field: 'Start Date',
+        from: formatDate(loan.start_date),
+        to: formatDate(formData.start_date)
+      });
+    }
+
+    // Arrangement fee
+    if (parseFloat(formData.arrangement_fee) !== parseFloat(loan.arrangement_fee || 0)) {
+      changeList.push({
+        field: 'Arrangement Fee',
+        from: formatCurrency(loan.arrangement_fee),
+        to: formatCurrency(formData.arrangement_fee)
+      });
+    }
+
+    // Exit fee
+    if (parseFloat(formData.exit_fee) !== parseFloat(loan.exit_fee || 0)) {
+      changeList.push({
+        field: 'Exit Fee',
+        from: formatCurrency(loan.exit_fee),
+        to: formatCurrency(formData.exit_fee)
+      });
+    }
+
+    // Penalty rate enabled
+    if (formData.has_penalty_rate !== loan.has_penalty_rate) {
+      changeList.push({
+        field: 'Penalty Rate',
+        from: loan.has_penalty_rate ? 'Enabled' : 'Disabled',
+        to: formData.has_penalty_rate ? 'Enabled' : 'Disabled'
+      });
+    }
+
+    // Penalty rate value
+    if (formData.has_penalty_rate && parseFloat(formData.penalty_rate) !== parseFloat(loan.penalty_rate || 0)) {
+      changeList.push({
+        field: 'Penalty Rate Value',
+        from: `${loan.penalty_rate || 0}%`,
+        to: `${formData.penalty_rate || 0}%`
+      });
+    }
+
+    // Penalty rate from date
+    if (formData.has_penalty_rate && formData.penalty_rate_from !== loan.penalty_rate_from) {
+      changeList.push({
+        field: 'Penalty Rate From',
+        from: formatDate(loan.penalty_rate_from),
+        to: formatDate(formData.penalty_rate_from)
+      });
+    }
+
+    // Description
+    if ((formData.description || '') !== (loan.description || '')) {
+      changeList.push({
+        field: 'Description',
+        from: loan.description || '(empty)',
+        to: formData.description || '(empty)'
+      });
+    }
+
+    return changeList;
+  }, [formData, loan, products]);
+
+  // Reset confirmation state when modal closes
+  useEffect(() => {
+    if (!isOpen) {
+      setShowConfirmation(false);
+      setEditReason('');
+      setPendingSubmitData(null);
+    }
+  }, [isOpen]);
+
+  // Build submit data based on loan type
+  const buildSubmitData = () => {
     const product = products.find(p => p.id === formData.product_id);
 
     // Handle Fixed Charge Facility
@@ -62,7 +214,7 @@ export default function EditLoanModal({
       const monthlyCharge = parseFloat(formData.monthly_charge) || 0;
       const duration = parseInt(formData.duration) || 0;
 
-      onSubmit({
+      return {
         product_id: formData.product_id,
         product_name: product?.name || loan.product_name,
         product_type: 'Fixed Charge',
@@ -85,13 +237,12 @@ export default function EditLoanModal({
         has_penalty_rate: false,
         penalty_rate: null,
         penalty_rate_from: null
-      });
-      return;
+      };
     }
 
     // Handle Irregular Income
     if (isIrregularIncome) {
-      onSubmit({
+      return {
         product_id: formData.product_id,
         product_name: product?.name || loan.product_name,
         product_type: 'Irregular Income',
@@ -112,8 +263,7 @@ export default function EditLoanModal({
         has_penalty_rate: formData.has_penalty_rate,
         penalty_rate: formData.has_penalty_rate ? parseFloat(formData.penalty_rate) || null : null,
         penalty_rate_from: formData.has_penalty_rate ? formData.penalty_rate_from || null : null
-      });
-      return;
+      };
     }
 
     // Standard loan handling
@@ -121,7 +271,7 @@ export default function EditLoanModal({
       ? parseFloat(formData.overridden_rate)
       : parseFloat(formData.interest_rate);
 
-    onSubmit({
+    return {
       product_id: formData.product_id,
       product_name: product?.name || loan.product_name,
       product_type: product?.product_type || 'Standard',
@@ -143,7 +293,36 @@ export default function EditLoanModal({
       has_penalty_rate: formData.has_penalty_rate,
       penalty_rate: formData.has_penalty_rate ? parseFloat(formData.penalty_rate) || null : null,
       penalty_rate_from: formData.has_penalty_rate ? formData.penalty_rate_from || null : null
-    });
+    };
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+
+    // If there are meaningful changes, show confirmation
+    if (changes.length > 0) {
+      const submitData = buildSubmitData();
+      setPendingSubmitData(submitData);
+      setShowConfirmation(true);
+    } else {
+      // No changes, just close
+      onClose();
+    }
+  };
+
+  const handleConfirmSubmit = () => {
+    if (pendingSubmitData) {
+      // Include the edit reason in the submission
+      onSubmit({
+        ...pendingSubmitData,
+        _editReason: editReason.trim() || null
+      });
+    }
+  };
+
+  const handleBackToEdit = () => {
+    setShowConfirmation(false);
+    setEditReason('');
   };
 
   const handleChange = (field, value) => {
@@ -167,24 +346,104 @@ export default function EditLoanModal({
     }
   };
 
+  if (!isOpen || !loan) return null;
+
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-lg max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle>
-            Edit {isFixedCharge ? 'Facility' : isIrregularIncome ? 'Irregular Income Loan' : 'Loan'}
-          </DialogTitle>
-        </DialogHeader>
-
-        <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2 mb-4">
-          <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
-          <div className="text-sm text-amber-800">
-            <p className="font-medium">Warning</p>
-            <p>Editing this {isFixedCharge ? 'facility' : 'loan'} will recalculate the repayment schedule. Existing payments will be reapplied to the new schedule.</p>
-          </div>
+    <div className="h-full flex flex-col bg-white border-l shadow-xl">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b bg-slate-50">
+        <div className="flex items-center gap-2">
+          <Edit className="w-5 h-5 text-blue-600" />
+          <h2 className="text-lg font-semibold">
+            {showConfirmation ? 'Confirm Changes' : `Edit ${isFixedCharge ? 'Facility' : isIrregularIncome ? 'Irregular Income Loan' : 'Loan'}`}
+          </h2>
         </div>
+        <Button variant="ghost" size="icon" onClick={onClose}>
+          <X className="w-5 h-5" />
+        </Button>
+      </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto p-6">
+        {showConfirmation ? (
+          /* Confirmation Step */
+          <div className="space-y-4">
+            {/* Change Summary */}
+            <div className="p-4 bg-slate-50 rounded-lg border">
+              <h4 className="text-sm font-semibold text-slate-700 mb-3 flex items-center gap-2">
+                <ChevronRight className="w-4 h-4" />
+                Changes to be applied ({changes.length})
+              </h4>
+              <div className="space-y-2 max-h-64 overflow-y-auto">
+                {changes.map((change, idx) => (
+                  <div key={idx} className="flex justify-between items-start text-sm py-1 border-b border-slate-100 last:border-0">
+                    <span className="text-slate-600 font-medium">{change.field}</span>
+                    <div className="text-right">
+                      <span className="text-red-600 line-through mr-2">{change.from}</span>
+                      <span className="text-emerald-600">{change.to}</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* Warning about schedule recalculation */}
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+              <div className="text-sm text-amber-800">
+                <p className="font-medium">Schedule will be recalculated</p>
+                <p>The repayment schedule will be regenerated and all existing payments will be reapplied.</p>
+              </div>
+            </div>
+
+            {/* Reason for changes */}
+            <div className="space-y-2">
+              <Label htmlFor="edit-reason" className="text-sm font-medium">
+                Reason for changes <span className="text-red-500">*</span>
+              </Label>
+              <Textarea
+                id="edit-reason"
+                value={editReason}
+                onChange={(e) => setEditReason(e.target.value)}
+                placeholder="Please explain why these changes are being made (e.g., 'Correcting incorrect principal amount', 'Customer requested rate adjustment')"
+                rows={3}
+                className="resize-none"
+                autoFocus
+              />
+              <p className="text-xs text-slate-500">
+                This reason will be recorded in the audit trail for compliance purposes.
+              </p>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex gap-2 pt-4">
+              <Button type="button" variant="outline" onClick={handleBackToEdit} disabled={isLoading} className="flex-1">
+                <ArrowLeft className="w-4 h-4 mr-2" />
+                Back to Edit
+              </Button>
+              <Button
+                type="button"
+                onClick={handleConfirmSubmit}
+                disabled={isLoading || !editReason.trim()}
+                className="flex-1"
+              >
+                {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                Confirm Changes
+              </Button>
+            </div>
+          </div>
+        ) : (
+          /* Edit Form Step */
+          <div className="space-y-4">
+            <div className="p-3 bg-amber-50 border border-amber-200 rounded-lg flex items-start gap-2">
+              <AlertTriangle className="w-5 h-5 text-amber-600 mt-0.5" />
+              <div className="text-sm text-amber-800">
+                <p className="font-medium">Warning</p>
+                <p>Editing this {isFixedCharge ? 'facility' : 'loan'} will recalculate the repayment schedule. Existing payments will be reapplied to the new schedule.</p>
+              </div>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="product">Loan Product *</Label>
             <Select
@@ -448,17 +707,19 @@ export default function EditLoanModal({
             />
           </div>
 
-          <DialogFooter>
-            <Button type="button" variant="outline" onClick={onClose}>
+          {/* Action Buttons */}
+          <div className="flex gap-2 pt-4">
+            <Button type="button" variant="outline" onClick={onClose} className="flex-1">
               Cancel
             </Button>
-            <Button type="submit" disabled={isLoading}>
-              {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              Update {isFixedCharge ? 'Facility' : 'Loan'}
+            <Button type="submit" disabled={isLoading || changes.length === 0} className="flex-1">
+              {changes.length === 0 ? 'No Changes' : `Review Changes (${changes.length})`}
             </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+          </div>
+            </form>
+          </div>
+        )}
+      </div>
+    </div>
   );
 }

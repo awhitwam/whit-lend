@@ -40,7 +40,9 @@ import {
   Zap,
   Coins,
   Link2,
-  Receipt
+  Receipt,
+  ArrowRight,
+  Landmark
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -61,13 +63,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
-import EditLoanModal from '@/components/loan/EditLoanModal';
+import EditLoanPanel from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
 import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
-import ImportRestructureModal from '@/components/loan/ImportRestructureModal';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -95,7 +96,6 @@ export default function LoanDetails() {
   const [processingMessage, setProcessingMessage] = useState('');
   const [disbursementSort, setDisbursementSort] = useState('date-desc');
   const [activeTab, setActiveTab] = useState('overview');
-  const [isImportRestructureOpen, setIsImportRestructureOpen] = useState(false);
   const [isReceiptDialogOpen, setIsReceiptDialogOpen] = useState(false);
   const [deleteTransactionDialogOpen, setDeleteTransactionDialogOpen] = useState(false);
   const [deleteTransactionTarget, setDeleteTransactionTarget] = useState(null);
@@ -107,6 +107,12 @@ export default function LoanDetails() {
   const [editReceiptTarget, setEditReceiptTarget] = useState(null);
   const [editReceiptValues, setEditReceiptValues] = useState({ principal: 0, interest: 0, fees: 0 });
   const [isSavingReceipt, setIsSavingReceipt] = useState(false);
+  const [editDisbursementDialogOpen, setEditDisbursementDialogOpen] = useState(false);
+  const [editDisbursementTarget, setEditDisbursementTarget] = useState(null);
+  const [editDisbursementValues, setEditDisbursementValues] = useState({ date: '', amount: '', notes: '' });
+  const [isSavingDisbursement, setIsSavingDisbursement] = useState(false);
+  const [convertingExpense, setConvertingExpense] = useState(null);
+  const [isConvertingExpense, setIsConvertingExpense] = useState(false);
   const queryClient = useQueryClient();
 
   const { data: loan, isLoading: loanLoading } = useQuery({
@@ -145,6 +151,35 @@ export default function LoanDetails() {
     enabled: !!loanId
   });
 
+  // Fetch reconciliation entries to show which transactions are matched to bank statements
+  const { data: reconciliationEntries = [] } = useQuery({
+    queryKey: ['loan-reconciliation-entries', loanId],
+    queryFn: () => api.entities.ReconciliationEntry.list(),
+    enabled: !!loanId
+  });
+
+  // Fetch bank statements to show details about matched entries
+  const { data: bankStatements = [] } = useQuery({
+    queryKey: ['bank-statements'],
+    queryFn: () => api.entities.BankStatement.list(),
+    enabled: reconciliationEntries.length > 0
+  });
+
+  // Build a map of transaction ID -> array of bank statement details for quick lookup
+  // Uses arrays to support transactions matched to multiple bank entries
+  const reconciliationMap = new Map();
+  reconciliationEntries
+    .filter(entry => entry.loan_transaction_id)
+    .forEach(entry => {
+      const bankStatement = bankStatements.find(bs => bs.id === entry.bank_statement_id);
+      const existing = reconciliationMap.get(entry.loan_transaction_id) || [];
+      existing.push({ entry, bankStatement });
+      reconciliationMap.set(entry.loan_transaction_id, existing);
+    });
+
+  // Keep the Set for simple boolean checks
+  const reconciledTransactionIds = new Set(reconciliationMap.keys());
+
   const { data: borrower } = useQuery({
     queryKey: ['borrower', loan?.borrower_id],
     queryFn: async () => {
@@ -159,6 +194,10 @@ export default function LoanDetails() {
       setIsProcessing(true);
       setProcessingMessage('Updating loan...');
       toast.loading('Updating loan...', { id: 'edit-loan' });
+
+      // Extract edit reason before processing (don't save to database)
+      const editReason = updatedData._editReason;
+      delete updatedData._editReason;
 
       // Fetch the product to get its settings
       const products = await api.entities.LoanProduct.filter({ id: updatedData.product_id });
@@ -192,8 +231,11 @@ export default function LoanDetails() {
       // Update loan with new parameters
       await api.entities.Loan.update(loanId, updatedData);
 
-      // Log loan update to audit trail
-      await logLoanEvent(AuditAction.LOAN_UPDATE, loan, updatedData, previousValues);
+      // Log loan update to audit trail with edit reason
+      await logLoanEvent(AuditAction.LOAN_UPDATE, loan, {
+        ...updatedData,
+        edit_reason: editReason
+      }, previousValues);
 
       toast.loading('Regenerating schedule...', { id: 'edit-loan' });
 
@@ -526,6 +568,62 @@ export default function LoanDetails() {
     }
   };
 
+  const executeExpenseConversion = async (expense) => {
+    if (!expense || !loan) return;
+
+    setIsConvertingExpense(true);
+    toast.loading('Converting expense to disbursement...', { id: 'convert-expense' });
+
+    try {
+      // 1. Create disbursement transaction
+      await api.entities.Transaction.create({
+        loan_id: loan.id,
+        borrower_id: loan.borrower_id,
+        date: expense.date,
+        type: 'Disbursement',
+        amount: expense.amount,
+        principal_applied: expense.amount,
+        interest_applied: 0,
+        fees_applied: 0,
+        notes: `Converted from expense: ${expense.type_name}`,
+        reference: expense.description || ''
+      });
+
+      // 2. Delete the expense
+      await api.entities.Expense.delete(expense.id);
+
+      // 3. Regenerate loan schedule
+      await regenerateLoanSchedule(loan.id);
+
+      // 4. Log audit - use logLoanEvent(action, loan, details)
+      await logLoanEvent(AuditAction.LOAN_UPDATE, loan, {
+        action: 'expense_converted_to_disbursement',
+        expense_id: expense.id,
+        expense_type: expense.type_name,
+        expense_amount: expense.amount,
+        expense_date: expense.date,
+        converted_by: user?.email
+      });
+
+      // 5. Refresh data - invalidate to force refetch
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ['loan', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loan-expenses', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
+
+      toast.success('Expense converted to disbursement', { id: 'convert-expense' });
+      setConvertingExpense(null);
+    } catch (error) {
+      console.error('Failed to convert expense:', error);
+      toast.error('Failed to convert expense to disbursement', { id: 'convert-expense' });
+    } finally {
+      setIsConvertingExpense(false);
+    }
+  };
+
   const paymentMutation = useMutation({
     mutationFn: async (paymentData) => {
       setIsProcessing(true);
@@ -740,10 +838,10 @@ export default function LoanDetails() {
           </div>
         )}
 
-        {/* Main content area - shrinks when settlement panel is open */}
+        {/* Main content area - shrinks when side panel is open */}
         <div className={cn(
           "flex-1 flex flex-col overflow-hidden transition-all duration-300",
-          isSettleOpen && "mr-0"
+          (isSettleOpen || isEditOpen) && "mr-0"
         )}>
         <div className="p-4 md:p-6 space-y-4 flex flex-col flex-1 overflow-hidden">
         {/* Header */}
@@ -806,6 +904,17 @@ export default function LoanDetails() {
                     </Button>
                   </>
                 )}
+                {loan.status !== 'Closed' && (
+                  <Button
+                    size="sm"
+                    variant={isEditOpen ? "default" : "secondary"}
+                    onClick={() => setIsEditOpen(!isEditOpen)}
+                    className={cn("h-7 text-xs", isEditOpen && "bg-blue-600 hover:bg-blue-700")}
+                  >
+                    <Edit className="w-3 h-3 mr-1" />
+                    Edit
+                  </Button>
+                )}
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
                     <Button variant="secondary" size="sm" className="h-7">
@@ -816,10 +925,6 @@ export default function LoanDetails() {
                     <DropdownMenuItem onClick={handleGenerateLoanStatement}>
                       <Download className="w-4 h-4 mr-2" />
                       Download Statement
-                    </DropdownMenuItem>
-                    <DropdownMenuItem onClick={() => setIsImportRestructureOpen(true)}>
-                      <Download className="w-4 h-4 mr-2 rotate-180" />
-                      Import Restructure Transactions
                     </DropdownMenuItem>
                     {loan.status !== 'Closed' && (
                       <>
@@ -836,12 +941,6 @@ export default function LoanDetails() {
                       <DropdownMenuItem onClick={() => toggleAutoExtendMutation.mutate()}>
                         <Repeat className="w-4 h-4 mr-2" />
                         {loan.auto_extend ? 'Disable' : 'Enable'} Auto-Extend
-                      </DropdownMenuItem>
-                    )}
-                    {loan.status !== 'Closed' && (
-                      <DropdownMenuItem onClick={() => setIsEditOpen(true)}>
-                        <Edit className="w-4 h-4 mr-2" />
-                        Edit Loan
                       </DropdownMenuItem>
                     )}
                     <DropdownMenuItem 
@@ -1133,6 +1232,14 @@ export default function LoanDetails() {
                                   <th className="text-right py-1.5 px-2 text-xs font-semibold text-slate-700">Fees</th>
                                 )}
                                 <th className="text-left py-1.5 px-2 text-xs font-semibold text-slate-700">Notes</th>
+                                <th className="w-6 py-1.5 px-1">
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Landmark className="w-3 h-3 text-slate-400" />
+                                    </TooltipTrigger>
+                                    <TooltipContent><p>Bank Reconciled</p></TooltipContent>
+                                  </Tooltip>
+                                </th>
                                 <th className="w-8"></th>
                               </tr>
                             </thead>
@@ -1148,6 +1255,46 @@ export default function LoanDetails() {
                                     <td className="py-1 px-2 text-sm text-purple-600 text-right">{(tx.fees_applied || 0) > 0 ? formatCurrency(tx.fees_applied) : ''}</td>
                                   )}
                                   <td className="py-1 px-2 text-sm text-slate-500 max-w-[200px] truncate" title={tx.notes || ''}>{tx.notes || '—'}</td>
+                                  <td className="py-1 px-1 text-center">
+                                    {reconciledTransactionIds.has(tx.id) ? (
+                                      (() => {
+                                        const matches = reconciliationMap.get(tx.id) || [];
+                                        return (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Landmark className="w-3.5 h-3.5 text-emerald-500 cursor-help" />
+                                            </TooltipTrigger>
+                                            <TooltipContent className="max-w-xs">
+                                              <div className="space-y-2">
+                                                <p className="font-medium text-emerald-400">
+                                                  Matched to {matches.length > 1 ? `${matches.length} bank entries` : 'Bank Statement'}
+                                                </p>
+                                                {matches.map((match, idx) => {
+                                                  const bs = match?.bankStatement;
+                                                  return (
+                                                    <div key={idx} className={matches.length > 1 ? 'border-t border-slate-600 pt-1' : ''}>
+                                                      {bs ? (
+                                                        <>
+                                                          <p className="text-xs"><span className="text-slate-400">Date:</span> {format(new Date(bs.statement_date), 'dd/MM/yyyy')}</p>
+                                                          <p className="text-xs"><span className="text-slate-400">Amount:</span> {formatCurrency(Math.abs(bs.amount))}</p>
+                                                          <p className="text-xs"><span className="text-slate-400">Source:</span> {bs.bank_source}</p>
+                                                          {bs.description && <p className="text-xs text-slate-300 truncate max-w-[200px]">{bs.description}</p>}
+                                                        </>
+                                                      ) : (
+                                                        <p className="text-xs text-slate-400">Bank statement details loading...</p>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        );
+                                      })()
+                                    ) : (
+                                      <span className="text-slate-300">—</span>
+                                    )}
+                                  </td>
                                   <td className="py-0.5 px-1">
                                     <DropdownMenu>
                                       <DropdownMenuTrigger asChild>
@@ -1326,6 +1473,15 @@ export default function LoanDetails() {
                                 <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Notes</th>
                                 <th className="text-right py-1 px-2 text-xs font-semibold text-emerald-700">Amount</th>
                                 <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Running Total</th>
+                                <th className="w-6 py-1 px-1">
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Landmark className="w-3 h-3 text-slate-400" />
+                                    </TooltipTrigger>
+                                    <TooltipContent><p>Bank Reconciled</p></TooltipContent>
+                                  </Tooltip>
+                                </th>
+                                <th className="w-8 py-1 px-1"></th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-100">
@@ -1351,6 +1507,73 @@ export default function LoanDetails() {
                                   </td>
                                   <td className="py-1 px-2 text-xs text-slate-700 text-right font-semibold">
                                     {formatCurrency(balanceMap[entry.id])}
+                                  </td>
+                                  <td className="py-1 px-1 text-center">
+                                    {reconciledTransactionIds.has(entry.id) ? (
+                                      (() => {
+                                        const matches = reconciliationMap.get(entry.id) || [];
+                                        return (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Landmark className="w-3.5 h-3.5 text-emerald-500 cursor-help" />
+                                            </TooltipTrigger>
+                                            <TooltipContent className="max-w-xs">
+                                              <div className="space-y-2">
+                                                <p className="font-medium text-emerald-400">
+                                                  Matched to {matches.length > 1 ? `${matches.length} bank entries` : 'Bank Statement'}
+                                                </p>
+                                                {matches.map((match, idx) => {
+                                                  const bs = match?.bankStatement;
+                                                  return (
+                                                    <div key={idx} className={matches.length > 1 ? 'border-t border-slate-600 pt-1' : ''}>
+                                                      {bs ? (
+                                                        <>
+                                                          <p className="text-xs"><span className="text-slate-400">Date:</span> {format(new Date(bs.statement_date), 'dd/MM/yyyy')}</p>
+                                                          <p className="text-xs"><span className="text-slate-400">Amount:</span> {formatCurrency(Math.abs(bs.amount))}</p>
+                                                          <p className="text-xs"><span className="text-slate-400">Source:</span> {bs.bank_source}</p>
+                                                          {bs.description && <p className="text-xs text-slate-300 truncate max-w-[200px]">{bs.description}</p>}
+                                                        </>
+                                                      ) : (
+                                                        <p className="text-xs text-slate-400">Bank statement details loading...</p>
+                                                      )}
+                                                    </div>
+                                                  );
+                                                })}
+                                              </div>
+                                            </TooltipContent>
+                                          </Tooltip>
+                                        );
+                                      })()
+                                    ) : (
+                                      <span className="text-slate-300">—</span>
+                                    )}
+                                  </td>
+                                  <td className="py-0.5 px-1">
+                                    <DropdownMenu>
+                                      <DropdownMenuTrigger asChild>
+                                        <Button variant="ghost" size="icon" className="h-6 w-6">
+                                          <MoreHorizontal className="w-3.5 h-3.5" />
+                                        </Button>
+                                      </DropdownMenuTrigger>
+                                      <DropdownMenuContent align="end">
+                                        <DropdownMenuItem
+                                          onClick={() => {
+                                            // Find the original transaction to get all fields
+                                            const tx = transactions.find(t => t.id === entry.id);
+                                            setEditDisbursementTarget(tx);
+                                            setEditDisbursementValues({
+                                              date: tx?.date || '',
+                                              amount: tx?.amount?.toString() || '',
+                                              notes: tx?.notes || ''
+                                            });
+                                            setEditDisbursementDialogOpen(true);
+                                          }}
+                                        >
+                                          <Edit className="w-4 h-4 mr-2" />
+                                          Edit Disbursement
+                                        </DropdownMenuItem>
+                                      </DropdownMenuContent>
+                                    </DropdownMenu>
                                   </td>
                                 </tr>
                               ))}
@@ -1399,7 +1622,24 @@ export default function LoanDetails() {
                             )}
                           </div>
                         </div>
-                        <p className="font-semibold text-red-600">{formatCurrency(expense.amount)}</p>
+                        <div className="flex items-center gap-2">
+                          <p className="font-semibold text-red-600">{formatCurrency(expense.amount)}</p>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="h-8 w-8 p-0"
+                                onClick={() => setConvertingExpense(expense)}
+                              >
+                                <ArrowRight className="w-4 h-4 text-blue-600" />
+                              </Button>
+                            </TooltipTrigger>
+                            <TooltipContent>
+                              <p>Convert to Disbursement</p>
+                            </TooltipContent>
+                          </Tooltip>
+                        </div>
                       </div>
                     ))}
                   </div>
@@ -1464,25 +1704,7 @@ export default function LoanDetails() {
           isLoading={paymentMutation.isPending}
         />
 
-        {/* Edit Loan Modal */}
-        <EditLoanModal
-          isOpen={isEditOpen}
-          onClose={() => setIsEditOpen(false)}
-          loan={loan}
-          onSubmit={(data) => editLoanMutation.mutate(data)}
-          isLoading={editLoanMutation.isPending}
-        />
 
-        {/* Import Restructure Transactions Modal */}
-        <ImportRestructureModal
-          isOpen={isImportRestructureOpen}
-          onClose={() => setIsImportRestructureOpen(false)}
-          loan={loan}
-          onImportComplete={() => {
-            queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] });
-            queryClient.refetchQueries({ queryKey: ['loan', loanId] });
-          }}
-        />
 
         {/* Receipt Entry Panel */}
         <ReceiptEntryPanel
@@ -2034,6 +2256,218 @@ export default function LoanDetails() {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Edit Disbursement Dialog */}
+        <AlertDialog open={editDisbursementDialogOpen} onOpenChange={(open) => {
+          setEditDisbursementDialogOpen(open);
+          if (!open) {
+            setEditDisbursementTarget(null);
+            setIsSavingDisbursement(false);
+          }
+        }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2">
+                <Edit className="w-5 h-5" />
+                Edit Disbursement
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Update the disbursement details. Changes will be audit logged.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+
+            {editDisbursementTarget && (
+              <div className="py-4 space-y-4">
+                <div className="space-y-3">
+                  <div>
+                    <Label htmlFor="edit-disb-date" className="text-sm font-medium">Date</Label>
+                    <Input
+                      id="edit-disb-date"
+                      type="date"
+                      value={editDisbursementValues.date?.split('T')[0] || ''}
+                      onChange={(e) => setEditDisbursementValues(prev => ({
+                        ...prev,
+                        date: e.target.value
+                      }))}
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-disb-amount" className="text-sm font-medium">Amount</Label>
+                    <Input
+                      id="edit-disb-amount"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={editDisbursementValues.amount || ''}
+                      onChange={(e) => setEditDisbursementValues(prev => ({
+                        ...prev,
+                        amount: e.target.value
+                      }))}
+                      className="mt-1"
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-disb-notes" className="text-sm font-medium">Notes</Label>
+                    <Input
+                      id="edit-disb-notes"
+                      type="text"
+                      value={editDisbursementValues.notes || ''}
+                      onChange={(e) => setEditDisbursementValues(prev => ({
+                        ...prev,
+                        notes: e.target.value
+                      }))}
+                      className="mt-1"
+                      placeholder="Optional notes"
+                    />
+                  </div>
+                </div>
+
+                {/* Change Summary */}
+                {(() => {
+                  const newAmount = parseFloat(editDisbursementValues.amount) || 0;
+                  const oldAmount = editDisbursementTarget.amount || 0;
+                  const amountDiff = newAmount - oldAmount;
+                  const dateChanged = editDisbursementValues.date?.split('T')[0] !== editDisbursementTarget.date?.split('T')[0];
+                  const hasChanges = amountDiff !== 0 || dateChanged || editDisbursementValues.notes !== (editDisbursementTarget.notes || '');
+
+                  return hasChanges ? (
+                    <div className="p-3 rounded-lg border bg-amber-50 border-amber-200">
+                      <div className="text-sm font-medium text-amber-700 mb-1">Changes:</div>
+                      {amountDiff !== 0 && (
+                        <div className="flex justify-between items-center text-sm">
+                          <span className="text-amber-600">Amount change:</span>
+                          <span className={`font-medium ${amountDiff > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                            {amountDiff > 0 ? '+' : ''}{formatCurrency(amountDiff)}
+                          </span>
+                        </div>
+                      )}
+                      {dateChanged && (
+                        <div className="text-sm text-amber-600">Date will be updated</div>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="p-3 rounded-lg border bg-slate-50 border-slate-200">
+                      <div className="text-sm text-slate-500">No changes made</div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isSavingDisbursement}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={async () => {
+                  if (!editDisbursementTarget) return;
+
+                  const newAmount = parseFloat(editDisbursementValues.amount) || 0;
+                  if (newAmount <= 0) {
+                    toast.error('Amount must be greater than 0');
+                    return;
+                  }
+
+                  setIsSavingDisbursement(true);
+
+                  try {
+                    const oldAmount = editDisbursementTarget.amount || 0;
+                    const oldDate = editDisbursementTarget.date;
+                    const oldNotes = editDisbursementTarget.notes || '';
+
+                    // Update the transaction
+                    await api.entities.Transaction.update(editDisbursementTarget.id, {
+                      date: editDisbursementValues.date,
+                      amount: newAmount,
+                      principal_applied: newAmount, // Disbursements apply fully to principal
+                      notes: editDisbursementValues.notes || null
+                    });
+
+                    // Log the change with full details
+                    await logTransactionEvent(
+                      AuditAction.TRANSACTION_UPDATE,
+                      { id: editDisbursementTarget.id, type: 'Disbursement', amount: newAmount, loan_id: loan.id },
+                      { loan_number: loan.loan_number },
+                      {
+                        action: 'edit_disbursement',
+                        previous_amount: oldAmount,
+                        new_amount: newAmount,
+                        previous_date: oldDate,
+                        new_date: editDisbursementValues.date,
+                        previous_notes: oldNotes,
+                        new_notes: editDisbursementValues.notes || ''
+                      }
+                    );
+
+                    // Refresh data
+                    await Promise.all([
+                      queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+                      queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
+                      queryClient.invalidateQueries({ queryKey: ['loans'] })
+                    ]);
+
+                    toast.success('Disbursement updated');
+                    setEditDisbursementDialogOpen(false);
+                    setEditDisbursementTarget(null);
+                  } catch (error) {
+                    console.error('Failed to update disbursement:', error);
+                    toast.error('Failed to update disbursement');
+                  } finally {
+                    setIsSavingDisbursement(false);
+                  }
+                }}
+                disabled={isSavingDisbursement || !editDisbursementValues.amount || parseFloat(editDisbursementValues.amount) <= 0}
+              >
+                {isSavingDisbursement ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  'Save Changes'
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Convert Expense to Disbursement Dialog */}
+        <AlertDialog open={!!convertingExpense} onOpenChange={(open) => !open && setConvertingExpense(null)}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Convert to Disbursement?</AlertDialogTitle>
+              <AlertDialogDescription className="space-y-2">
+                <p>
+                  This will convert the expense <strong>"{convertingExpense?.type_name}"</strong> ({formatCurrency(convertingExpense?.amount || 0)})
+                  into a loan disbursement.
+                </p>
+                <p className="text-amber-600 font-medium">
+                  The amount will be added to the loan principal and will accrue interest from {convertingExpense?.date ? format(new Date(convertingExpense.date), 'MMM dd, yyyy') : 'the expense date'}.
+                </p>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isConvertingExpense}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => executeExpenseConversion(convertingExpense)}
+                disabled={isConvertingExpense}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                {isConvertingExpense ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Converting...
+                  </>
+                ) : (
+                  <>
+                    <ArrowRight className="w-4 h-4 mr-2" />
+                    Convert to Disbursement
+                  </>
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
         </div>
         </div>
 
@@ -2046,6 +2480,19 @@ export default function LoanDetails() {
               loan={loan}
               borrower={borrower}
               transactions={transactions}
+            />
+          </div>
+        )}
+
+        {/* Edit Loan Panel - slides in from right */}
+        {isEditOpen && (
+          <div className="w-[500px] flex-shrink-0 h-full overflow-hidden">
+            <EditLoanPanel
+              isOpen={isEditOpen}
+              onClose={() => setIsEditOpen(false)}
+              loan={loan}
+              onSubmit={(data) => editLoanMutation.mutate(data)}
+              isLoading={editLoanMutation.isPending}
             />
           </div>
         )}
