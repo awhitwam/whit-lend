@@ -42,7 +42,9 @@ const tableMap = {
   InvestorInterest: 'investor_interest',
   // Receipts module
   ReceiptDraft: 'receipt_drafts',
-  BorrowerLoanPreference: 'borrower_loan_preferences'
+  BorrowerLoanPreference: 'borrower_loan_preferences',
+  // Accepted orphans (unreconciled entries marked as intentional)
+  AcceptedOrphan: 'accepted_orphans'
 };
 
 // Tables that should have organization_id filter applied
@@ -75,7 +77,9 @@ const orgScopedTables = [
   'investor_interest',
   // Receipts module
   'receipt_drafts',
-  'borrower_loan_preferences'
+  'borrower_loan_preferences',
+  // Accepted orphans
+  'accepted_orphans'
 ];
 
 // Map column names that differ between code and database

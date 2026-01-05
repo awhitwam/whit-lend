@@ -29,6 +29,7 @@ import OrgAdmin from './pages/OrgAdmin';
 import BankReconciliation from './pages/BankReconciliation';
 import BankReconciliation2 from './pages/BankReconciliation2';
 import OtherIncome from './pages/OtherIncome';
+import OrphanedEntries from './pages/OrphanedEntries';
 import Receipts from './pages/Receipts';
 import About from './pages/About';
 import __Layout from './Layout.jsx';
@@ -66,6 +67,7 @@ export const PAGES = {
     "BankReconciliation": BankReconciliation,
     "BankReconciliation2": BankReconciliation2,
     "OtherIncome": OtherIncome,
+    "OrphanedEntries": OrphanedEntries,
     "Receipts": Receipts,
     "About": About,
 }

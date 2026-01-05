@@ -203,10 +203,52 @@ export default function OrgAdmin() {
     //           investor_transactions → investors
     //           audit_logs (entity_id may reference loans/borrowers but no FK)
 
-    const totalSteps = 19;
+    const totalSteps = 22;
 
-    // 1. Delete audit logs for current organization (using org-filtered API)
-    setClearProgress({ current: 1, total: totalSteps, step: 'Deleting audit logs...' });
+    // 1. Delete accepted orphans (no FK dependencies)
+    setClearProgress({ current: 1, total: totalSteps, step: 'Deleting accepted orphans...' });
+    try {
+      const acceptedOrphans = await api.entities.AcceptedOrphan.list();
+      if (acceptedOrphans.length > 0) {
+        addLog(`  Deleting ${acceptedOrphans.length} accepted orphans...`);
+        for (const ao of acceptedOrphans) {
+          await api.entities.AcceptedOrphan.delete(ao.id);
+        }
+      }
+    } catch (e) {
+      addLog(`  Note: Could not delete accepted orphans: ${e.message}`);
+    }
+
+    // 2. Delete borrower loan preferences (no FK dependencies)
+    setClearProgress({ current: 2, total: totalSteps, step: 'Deleting borrower preferences...' });
+    try {
+      const preferences = await api.entities.BorrowerLoanPreference.list();
+      if (preferences.length > 0) {
+        addLog(`  Deleting ${preferences.length} borrower loan preferences...`);
+        for (const pref of preferences) {
+          await api.entities.BorrowerLoanPreference.delete(pref.id);
+        }
+      }
+    } catch (e) {
+      addLog(`  Note: Could not delete borrower preferences: ${e.message}`);
+    }
+
+    // 3. Delete receipt drafts (no FK dependencies)
+    setClearProgress({ current: 3, total: totalSteps, step: 'Deleting receipt drafts...' });
+    try {
+      const receipts = await api.entities.ReceiptDraft.list();
+      if (receipts.length > 0) {
+        addLog(`  Deleting ${receipts.length} receipt drafts...`);
+        for (const r of receipts) {
+          await api.entities.ReceiptDraft.delete(r.id);
+        }
+      }
+    } catch (e) {
+      addLog(`  Note: Could not delete receipt drafts: ${e.message}`);
+    }
+
+    // 4. Delete audit logs for current organization (using org-filtered API)
+    setClearProgress({ current: 4, total: totalSteps, step: 'Deleting audit logs...' });
     addLog(`  Deleting audit logs for current organization...`);
     try {
       const auditLogs = await api.entities.AuditLog.list();
@@ -227,8 +269,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete audit logs: ${e.message}`);
     }
 
-    // 2. Delete reconciliation entries (references bank_statements)
-    setClearProgress({ current: 2, total: totalSteps, step: 'Deleting reconciliation entries...' });
+    // 5. Delete reconciliation entries (references bank_statements)
+    setClearProgress({ current: 5, total: totalSteps, step: 'Deleting reconciliation entries...' });
     try {
       const entries = await api.entities.ReconciliationEntry.list();
       if (entries.length > 0) {
@@ -241,8 +283,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete reconciliation entries: ${e.message}`);
     }
 
-    // 3. Delete reconciliation patterns
-    setClearProgress({ current: 3, total: totalSteps, step: 'Deleting reconciliation patterns...' });
+    // 6. Delete reconciliation patterns
+    setClearProgress({ current: 6, total: totalSteps, step: 'Deleting reconciliation patterns...' });
     try {
       const patterns = await api.entities.ReconciliationPattern.list();
       if (patterns.length > 0) {
@@ -255,8 +297,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete reconciliation patterns: ${e.message}`);
     }
 
-    // 4. Delete bank statements
-    setClearProgress({ current: 4, total: totalSteps, step: 'Deleting bank statements...' });
+    // 7. Delete bank statements
+    setClearProgress({ current: 7, total: totalSteps, step: 'Deleting bank statements...' });
     try {
       const statements = await api.entities.BankStatement.list();
       if (statements.length > 0) {
@@ -269,8 +311,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete bank statements: ${e.message}`);
     }
 
-    // 5. Delete value_history (references loan_properties via loan_property_id)
-    setClearProgress({ current: 5, total: totalSteps, step: 'Deleting value history...' });
+    // 8. Delete value_history (references loan_properties via loan_property_id)
+    setClearProgress({ current: 8, total: totalSteps, step: 'Deleting value history...' });
     try {
       const valueHistory = await api.entities.ValueHistory.list();
       if (valueHistory.length > 0) {
@@ -283,8 +325,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete value history: ${e.message}`);
     }
 
-    // 6. Delete loan_properties (references loans via loan_id, properties via property_id)
-    setClearProgress({ current: 6, total: totalSteps, step: 'Deleting loan-property links...' });
+    // 9. Delete loan_properties (references loans via loan_id, properties via property_id)
+    setClearProgress({ current: 9, total: totalSteps, step: 'Deleting loan-property links...' });
     try {
       const loanProperties = await api.entities.LoanProperty.list();
       if (loanProperties.length > 0) {
@@ -297,8 +339,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete loan-properties: ${e.message}`);
     }
 
-    // 7. Delete properties (no FK to loans, but loan_properties references it)
-    setClearProgress({ current: 7, total: totalSteps, step: 'Deleting properties...' });
+    // 10. Delete properties (no FK to loans, but loan_properties references it)
+    setClearProgress({ current: 10, total: totalSteps, step: 'Deleting properties...' });
     try {
       const properties = await api.entities.Property.list();
       if (properties.length > 0) {
@@ -311,8 +353,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete properties: ${e.message}`);
     }
 
-    // 8. Delete transactions for current organization (using org-filtered API)
-    setClearProgress({ current: 8, total: totalSteps, step: 'Deleting transactions...' });
+    // 11. Delete transactions for current organization (using org-filtered API)
+    setClearProgress({ current: 11, total: totalSteps, step: 'Deleting transactions...' });
     addLog(`  Deleting transactions for current organization...`);
     try {
       const transactions = await api.entities.Transaction.list();
@@ -335,8 +377,8 @@ export default function OrgAdmin() {
       addLog(`    Error during transaction deletion: ${err.message}`);
     }
 
-    // 9. Delete repayment schedules for current organization (using org-filtered API)
-    setClearProgress({ current: 9, total: totalSteps, step: 'Deleting repayment schedules...' });
+    // 12. Delete repayment schedules for current organization (using org-filtered API)
+    setClearProgress({ current: 12, total: totalSteps, step: 'Deleting repayment schedules...' });
     addLog(`  Deleting repayment schedules for current organization...`);
     try {
       const schedules = await api.entities.RepaymentSchedule.list();
@@ -359,8 +401,8 @@ export default function OrgAdmin() {
       addLog(`    Error during schedule deletion: ${err.message}`);
     }
 
-    // 10. Delete expenses (references expense_types via expense_type_id - nullable)
-    setClearProgress({ current: 10, total: totalSteps, step: 'Deleting expenses...' });
+    // 13. Delete expenses (references expense_types via expense_type_id - nullable)
+    setClearProgress({ current: 13, total: totalSteps, step: 'Deleting expenses...' });
     try {
       const expenses = await api.entities.Expense.list();
       if (expenses.length > 0) {
@@ -384,8 +426,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not list/delete expenses: ${e.message}`);
     }
 
-    // 11. Delete expense types (categories)
-    setClearProgress({ current: 11, total: totalSteps, step: 'Deleting expense categories...' });
+    // 14. Delete expense types (categories)
+    setClearProgress({ current: 14, total: totalSteps, step: 'Deleting expense categories...' });
     try {
       const expenseTypes = await api.entities.ExpenseType.list();
       if (expenseTypes.length > 0) {
@@ -409,8 +451,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete expense categories: ${e.message}`);
     }
 
-    // 12. Delete other income
-    setClearProgress({ current: 12, total: totalSteps, step: 'Deleting other income...' });
+    // 15. Delete other income
+    setClearProgress({ current: 15, total: totalSteps, step: 'Deleting other income...' });
     try {
       const otherIncome = await api.entities.OtherIncome.list();
       if (otherIncome.length > 0) {
@@ -423,8 +465,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete other income: ${e.message}`);
     }
 
-    // 13. Delete investor interest records (references investors)
-    setClearProgress({ current: 13, total: totalSteps, step: 'Deleting investor interest...' });
+    // 16. Delete investor interest records (references investors)
+    setClearProgress({ current: 16, total: totalSteps, step: 'Deleting investor interest...' });
     try {
       const investorInterest = await api.entities.InvestorInterest.list();
       if (investorInterest.length > 0) {
@@ -437,8 +479,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete investor interest: ${e.message}`);
     }
 
-    // 14. Delete investor transactions (references investors)
-    setClearProgress({ current: 14, total: totalSteps, step: 'Deleting investor transactions...' });
+    // 17. Delete investor transactions (references investors)
+    setClearProgress({ current: 17, total: totalSteps, step: 'Deleting investor transactions...' });
     try {
       const investorTx = await api.entities.InvestorTransaction.list();
       if (investorTx.length > 0) {
@@ -451,8 +493,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete investor transactions: ${e.message}`);
     }
 
-    // 15. Delete loans (references borrowers via borrower_id, self-references via restructured_from_loan_id)
-    setClearProgress({ current: 15, total: totalSteps, step: 'Deleting loans...' });
+    // 18. Delete loans (references borrowers via borrower_id, self-references via restructured_from_loan_id)
+    setClearProgress({ current: 18, total: totalSteps, step: 'Deleting loans...' });
     let loans = await api.entities.Loan.list();
     const initialLoanCount = loans.length;
     addLog(`  Deleting ${loans.length} loans...`);
@@ -534,8 +576,8 @@ export default function OrgAdmin() {
       addLog(`    Deleted ${initialLoanCount} loans successfully`);
     }
 
-    // 16. Delete borrowers (no FK references to other tables)
-    setClearProgress({ current: 16, total: totalSteps, step: 'Deleting borrowers...' });
+    // 19. Delete borrowers (no FK references to other tables)
+    setClearProgress({ current: 19, total: totalSteps, step: 'Deleting borrowers...' });
     const borrowers = await api.entities.Borrower.list();
     addLog(`  Deleting ${borrowers.length} borrowers...`);
 
@@ -555,8 +597,8 @@ export default function OrgAdmin() {
       throw new Error(`Failed to delete ${borrowerErrors} borrowers. There may be loans still referencing them.`);
     }
 
-    // 17. Delete investors
-    setClearProgress({ current: 17, total: totalSteps, step: 'Deleting investors...' });
+    // 20. Delete investors
+    setClearProgress({ current: 20, total: totalSteps, step: 'Deleting investors...' });
     try {
       const investors = await api.entities.Investor.list();
       if (investors.length > 0) {
@@ -569,8 +611,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete investors: ${e.message}`);
     }
 
-    // 18. Delete investor products
-    setClearProgress({ current: 18, total: totalSteps, step: 'Deleting investor products...' });
+    // 21. Delete investor products
+    setClearProgress({ current: 21, total: totalSteps, step: 'Deleting investor products...' });
     try {
       const investorProducts = await api.entities.InvestorProduct.list();
       if (investorProducts.length > 0) {
@@ -583,8 +625,8 @@ export default function OrgAdmin() {
       addLog(`  Note: Could not delete investor products: ${e.message}`);
     }
 
-    // 19. Delete loan products (must be after loans since loans reference them)
-    setClearProgress({ current: 19, total: totalSteps, step: 'Deleting loan products...' });
+    // 22. Delete loan products (must be after loans since loans reference them)
+    setClearProgress({ current: 22, total: totalSteps, step: 'Deleting loan products...' });
     try {
       const loanProducts = await api.entities.LoanProduct.list();
       if (loanProducts.length > 0) {
@@ -961,6 +1003,7 @@ export default function OrgAdmin() {
       'receipt_drafts': 'ReceiptDraft',
       'reconciliation_patterns': 'ReconciliationPattern',
       'reconciliation_entries': 'ReconciliationEntry',
+      'accepted_orphans': 'AcceptedOrphan',
       'audit_logs': 'AuditLog'
     };
     return map[tableName] || tableName;
@@ -990,6 +1033,7 @@ export default function OrgAdmin() {
       'value_history', 'bank_statements', 'other_income',
       'borrower_loan_preferences', 'receipt_drafts',
       'reconciliation_patterns', 'reconciliation_entries',
+      'accepted_orphans',
       'audit_logs'
     ];
 
@@ -1105,7 +1149,8 @@ export default function OrgAdmin() {
         'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
         'value_history', 'bank_statements', 'other_income',
         'borrower_loan_preferences', 'receipt_drafts',
-        'reconciliation_patterns', 'reconciliation_entries'
+        'reconciliation_patterns', 'reconciliation_entries',
+        'accepted_orphans'
       ];
 
       let restoredCount = 0;
