@@ -1845,6 +1845,9 @@ export default function BankReconciliation() {
           if (tx.type !== expectedType) return false;
           const isReconciled = reconciliationEntries.some(re => re.loan_transaction_id === tx.id);
           if (isReconciled) return false;
+          // Exclude transactions already part of the current suggestion
+          if (reviewingSuggestion?.existingTransaction?.id === tx.id) return false;
+          if (reviewingSuggestion?.existingTransactions?.some(t => t.id === tx.id)) return false;
           const txDate = tx.date ? parseISO(tx.date) : null;
           const amountMatch = Math.abs(tx.amount - entryAmount) / entryAmount < 0.01;
           const dateMatch = txDate && Math.abs(entryDate.getTime() - txDate.getTime()) <= 3 * 24 * 60 * 60 * 1000;

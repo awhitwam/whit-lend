@@ -1,20 +1,25 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Loader2, Calculator, Calendar, TrendingDown, DollarSign, FileText, Download, ChevronDown, ArrowRight, Receipt } from 'lucide-react';
-import { formatCurrency } from './LoanCalculator';
+import { Calculator, Calendar, TrendingDown, FileText, Download, ChevronDown, ArrowRight, Receipt, X } from 'lucide-react';
+import { formatCurrency, calculateAccruedInterestWithTransactions } from './LoanCalculator';
 import { generateSettlementStatementPDF } from './LoanPDFGenerator';
-import { format, differenceInDays } from 'date-fns';
+import { format, differenceInDays, isValid } from 'date-fns';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { cn } from '@/lib/utils';
 
 function calculateSettlementAmount(loan, settlementDate, transactions = []) {
   const startDate = new Date(loan.start_date);
   const settleDate = new Date(settlementDate);
+
+  // Return null if dates are invalid (e.g., while user is typing)
+  if (!isValid(settleDate) || !isValid(startDate)) {
+    return null;
+  }
+
   settleDate.setHours(0, 0, 0, 0);
   startDate.setHours(0, 0, 0, 0);
 
@@ -25,52 +30,85 @@ function calculateSettlementAmount(loan, settlementDate, transactions = []) {
   const annualRate = loan.interest_rate / 100;
   const dailyRate = annualRate / 365;
 
+  // Use the shared calculation function for accurate interest calculation
+  // This ensures consistency with the main panel's display
+  const liveCalc = calculateAccruedInterestWithTransactions(loan, transactions, settleDate);
+
   // Get repayment transactions sorted by date
   const repayments = transactions
     .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  // Calculate totals from actual transactions
-  const totalPrincipalPaid = repayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-  const totalInterestPaid = repayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-  const principalRemaining = principal - totalPrincipalPaid;
+  // Get disbursement transactions (further advances) - exclude initial disbursement on start date
+  const startDateKey = startDate.toISOString().split('T')[0];
+  const disbursements = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+    .filter(tx => {
+      const txDate = new Date(tx.date);
+      txDate.setHours(0, 0, 0, 0);
+      return txDate.toISOString().split('T')[0] !== startDateKey;
+    })
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  // Build detailed interest periods between principal-changing events
+  // Use authoritative values from the shared calculation
+  const totalInterestAccrued = liveCalc.interestAccrued;
+  const totalInterestPaid = liveCalc.interestPaid;
+  const principalRemaining = liveCalc.principalRemaining;
+
+  // Calculate totals for reference
+  const totalPrincipalPaid = repayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+
+  // Build detailed interest periods for display purposes
   const interestPeriods = [];
   let runningPrincipal = principal;
   let periodStartDate = startDate;
-  let totalInterestAccrued = 0;
 
-  // Get all dates where principal changed (payments with principal applied)
-  const principalChangeEvents = repayments
-    .filter(tx => tx.principal_applied > 0)
-    .map(tx => ({
+  // Get all dates where principal changed (payments with principal applied OR further advances)
+  const principalChangeEvents = [
+    // Repayments reduce principal
+    ...repayments
+      .filter(tx => tx.principal_applied > 0)
+      .map(tx => ({
+        date: new Date(tx.date),
+        principalApplied: tx.principal_applied,
+        disbursementAmount: 0,
+        interestApplied: tx.interest_applied || 0,
+        amount: tx.amount,
+        reference: tx.reference || tx.description || '',
+        type: 'repayment'
+      })),
+    // Further advances increase principal
+    ...disbursements.map(tx => ({
       date: new Date(tx.date),
-      principalApplied: tx.principal_applied,
-      interestApplied: tx.interest_applied || 0,
+      principalApplied: 0,
+      disbursementAmount: tx.amount,
+      interestApplied: 0,
       amount: tx.amount,
-      reference: tx.reference || tx.description || ''
+      reference: tx.reference || tx.description || '',
+      type: 'disbursement'
     }))
-    .sort((a, b) => a.date - b.date);
+  ].sort((a, b) => a.date - b.date);
 
   // The calculation end date is the day AFTER settlement (to include settlement day's interest)
   // This matches how calculateAccruedInterestWithTransactions works
   const calculationEndDate = new Date(settleDate);
   calculationEndDate.setDate(calculationEndDate.getDate() + 1);
 
-  // Calculate interest for each period between principal changes
+  // Build interest periods for display (principal changes BEFORE daily interest calculation)
   let eventIndex = 0;
   while (periodStartDate < calculationEndDate) {
     // Find the end of this period (next principal change or end date)
     let periodEndDate;
     let principalPayment = 0;
+    let disbursementAmount = 0;
     let eventDetails = null;
 
     if (eventIndex < principalChangeEvents.length) {
       const nextEvent = principalChangeEvents[eventIndex];
       if (nextEvent.date <= settleDate) {
         periodEndDate = nextEvent.date;
-        principalPayment = nextEvent.principalApplied;
+        principalPayment = nextEvent.principalApplied || 0;
+        disbursementAmount = nextEvent.disbursementAmount || 0;
         eventDetails = nextEvent;
         eventIndex++;
       } else {
@@ -84,9 +122,11 @@ function calculateSettlementAmount(loan, settlementDate, transactions = []) {
     const daysInPeriod = differenceInDays(periodEndDate, periodStartDate);
 
     if (daysInPeriod > 0) {
-      // Calculate interest for this period
+      // Calculate interest for this period (for display purposes)
       const periodInterest = runningPrincipal * dailyRate * daysInPeriod;
-      totalInterestAccrued += periodInterest;
+
+      // Principal change: add disbursements first, then subtract repayments (matching LoanCalculator order)
+      const principalChange = disbursementAmount - principalPayment;
 
       interestPeriods.push({
         startDate: new Date(periodStartDate),
@@ -96,12 +136,13 @@ function calculateSettlementAmount(loan, settlementDate, transactions = []) {
         dailyRate,
         periodInterest,
         principalPayment,
-        closingPrincipal: runningPrincipal - principalPayment,
+        disbursementAmount,
+        closingPrincipal: runningPrincipal + principalChange,
         eventDetails
       });
 
       // Update principal for next period
-      runningPrincipal = Math.max(0, runningPrincipal - principalPayment);
+      runningPrincipal = Math.max(0, runningPrincipal + principalChange);
     }
 
     periodStartDate = periodEndDate;
@@ -122,22 +163,43 @@ function calculateSettlementAmount(loan, settlementDate, transactions = []) {
     principalBalance: principal
   });
 
-  // Process each repayment
-  for (const tx of repayments) {
+  // Combine repayments and further advances, sorted by date
+  const allTransactions = [
+    ...repayments.map(tx => ({ ...tx, txType: 'repayment' })),
+    ...disbursements.map(tx => ({ ...tx, txType: 'disbursement' }))
+  ].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // Process each transaction
+  for (const tx of allTransactions) {
     const txDate = new Date(tx.date);
 
-    // Apply the payment
-    runningPrincipalBal -= (tx.principal_applied || 0);
+    if (tx.txType === 'repayment') {
+      // Repayment reduces principal
+      runningPrincipalBal -= (tx.principal_applied || 0);
 
-    transactionHistory.push({
-      date: txDate,
-      type: tx.type,
-      description: tx.reference || tx.description || 'Payment',
-      amount: tx.amount,
-      principalApplied: tx.principal_applied || 0,
-      interestApplied: tx.interest_applied || 0,
-      principalBalance: Math.max(0, runningPrincipalBal)
-    });
+      transactionHistory.push({
+        date: txDate,
+        type: tx.type,
+        description: tx.reference || tx.description || 'Payment',
+        amount: tx.amount,
+        principalApplied: tx.principal_applied || 0,
+        interestApplied: tx.interest_applied || 0,
+        principalBalance: Math.max(0, runningPrincipalBal)
+      });
+    } else {
+      // Further advance increases principal
+      runningPrincipalBal += tx.amount;
+
+      transactionHistory.push({
+        date: txDate,
+        type: 'Disbursement',
+        description: tx.reference || tx.description || 'Further advance',
+        amount: tx.amount,
+        principalApplied: 0,
+        interestApplied: 0,
+        principalBalance: runningPrincipalBal
+      });
+    }
   }
 
   const interestRemaining = Math.max(0, totalInterestAccrued - totalInterestPaid);
@@ -167,40 +229,14 @@ export default function SettleLoanModal({
   onClose,
   loan,
   borrower,
-  transactions = [],
-  onSubmit,
-  isLoading
+  transactions = []
 }) {
   const { currentOrganization } = useOrganization();
   const [settlementDate, setSettlementDate] = useState(format(new Date(), 'yyyy-MM-dd'));
-  const [settlementAmount, setSettlementAmount] = useState('');
-  const [reference, setReference] = useState('');
-  const [notes, setNotes] = useState('');
   const [showInterestDetails, setShowInterestDetails] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
 
   const settlement = loan ? calculateSettlementAmount(loan, settlementDate, transactions) : null;
-
-  // Update settlement amount when calculation changes
-  useState(() => {
-    if (settlement) {
-      setSettlementAmount(settlement.settlementAmount.toString());
-    }
-  }, [settlement?.settlementAmount]);
-
-  const handleSubmit = (e) => {
-    e.preventDefault();
-    onSubmit({
-      amount: parseFloat(settlementAmount) || settlement.settlementAmount,
-      date: settlementDate,
-      reference,
-      notes: notes || `Settlement of loan as of ${format(new Date(settlementDate), 'MMM dd, yyyy')}`,
-      overpayment_option: 'credit',
-      loan_id: loan.id,
-      borrower_id: loan.borrower_id,
-      type: 'Repayment'
-    });
-  };
 
   const handleDownloadPDF = () => {
     const settlementData = {
@@ -222,19 +258,30 @@ export default function SettleLoanModal({
     generateSettlementStatementPDF(loan, settlementData);
   };
 
-  if (!loan || !settlement) return null;
+  if (!isOpen || !loan) return null;
 
   return (
-    <Dialog open={isOpen} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-3xl max-h-[90vh] overflow-y-auto">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2">
-            <Calculator className="w-5 h-5 text-emerald-600" />
-            Loan Settlement Calculator
-          </DialogTitle>
-        </DialogHeader>
+    <div className="h-full flex flex-col bg-white border-l shadow-xl">
+      {/* Header */}
+      <div className="flex items-center justify-between px-6 py-4 border-b bg-slate-50">
+        <div className="flex items-center gap-2">
+          <Calculator className="w-5 h-5 text-emerald-600" />
+          <h2 className="text-lg font-semibold">Settlement Calculator</h2>
+        </div>
+        <div className="flex items-center gap-2">
+          <Button variant="secondary" size="sm" onClick={handleDownloadPDF} disabled={!settlement}>
+            <Download className="w-4 h-4 mr-2" />
+            Download PDF
+          </Button>
+          <Button variant="ghost" size="icon" onClick={onClose}>
+            <X className="w-5 h-5" />
+          </Button>
+        </div>
+      </div>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
+      {/* Scrollable content */}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="space-y-6">
           <div className="p-4 bg-slate-50 rounded-lg space-y-2">
             <div className="flex justify-between text-sm">
               <span className="text-slate-500">Borrower</span>
@@ -264,9 +311,16 @@ export default function SettleLoanModal({
               required
             />
             <p className="text-xs text-slate-500">
-              {settlement.daysElapsed} days elapsed since loan start
+              {settlement ? `${settlement.daysElapsed} days elapsed since loan start` : 'Enter a valid date'}
             </p>
           </div>
+
+          {!settlement ? (
+            <div className="p-4 bg-amber-50 border border-amber-200 rounded-lg text-amber-700 text-sm">
+              Please enter a valid settlement date to calculate the amount.
+            </div>
+          ) : (
+            <>
 
           <div className="space-y-4">
             <h3 className="font-semibold text-slate-900 flex items-center gap-2">
@@ -351,7 +405,7 @@ export default function SettleLoanModal({
                   <div>
                     <p className="text-sm text-emerald-700 font-medium">Total Settlement Amount</p>
                     <p className="text-xs text-emerald-600 mt-1">
-                      As of {format(new Date(settlementDate), 'MMM dd, yyyy')}
+                      As of {isValid(new Date(settlementDate)) ? format(new Date(settlementDate), 'MMM dd, yyyy') : 'Invalid date'}
                     </p>
                   </div>
                   <p className="text-3xl font-bold text-emerald-900">
@@ -561,69 +615,11 @@ export default function SettleLoanModal({
             </Collapsible>
           )}
 
-          <div className="space-y-4 border-t pt-4">
-            <h3 className="font-semibold text-slate-900">Payment Details</h3>
-            
-            <div className="space-y-2">
-              <Label htmlFor="settlement_amount" className="flex items-center gap-2">
-                <DollarSign className="w-4 h-4" />
-                Settlement Amount *
-              </Label>
-              <Input
-                id="settlement_amount"
-                type="number"
-                step="0.01"
-                value={settlementAmount || settlement?.settlementAmount || ''}
-                onChange={(e) => setSettlementAmount(e.target.value)}
-                placeholder={formatCurrency(settlement?.settlementAmount || 0)}
-                required
-              />
-              <p className="text-xs text-slate-500">
-                Calculated amount: {formatCurrency(settlement?.settlementAmount || 0)}
-              </p>
-            </div>
+          </>
+          )}
 
-            <div className="space-y-2">
-              <Label htmlFor="reference">Reference Number</Label>
-              <Input
-                id="reference"
-                value={reference}
-                onChange={(e) => setReference(e.target.value)}
-                placeholder="e.g. Transaction reference"
-              />
-            </div>
-
-            <div className="space-y-2">
-              <Label htmlFor="notes">Notes</Label>
-              <Input
-                id="notes"
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                placeholder="Additional settlement notes..."
-              />
-            </div>
-          </div>
-
-          <DialogFooter className="gap-2">
-            <Button type="button" variant="outline" onClick={onClose}>
-              Cancel
-            </Button>
-            <Button type="button" variant="secondary" onClick={handleDownloadPDF}>
-              <Download className="w-4 h-4 mr-2" />
-              Download PDF
-            </Button>
-            <Button 
-              type="submit" 
-              disabled={isLoading}
-              className="bg-emerald-600 hover:bg-emerald-700"
-            >
-              {isLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-              <DollarSign className="w-4 h-4 mr-2" />
-              Record Settlement Payment
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
+        </div>
+      </div>
+    </div>
   );
 }

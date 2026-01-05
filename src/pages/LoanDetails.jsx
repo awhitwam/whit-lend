@@ -71,6 +71,7 @@ import ImportRestructureModal from '@/components/loan/ImportRestructureModal';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { cn } from '@/lib/utils';
 
 export default function LoanDetails() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -728,7 +729,7 @@ export default function LoanDetails() {
   const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
 
     return (
-      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col overflow-hidden">
+      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 to-slate-100 flex overflow-hidden">
         {/* Processing Overlay */}
         {isProcessing && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
@@ -739,6 +740,11 @@ export default function LoanDetails() {
           </div>
         )}
 
+        {/* Main content area - shrinks when settlement panel is open */}
+        <div className={cn(
+          "flex-1 flex flex-col overflow-hidden transition-all duration-300",
+          isSettleOpen && "mr-0"
+        )}>
         <div className="p-4 md:p-6 space-y-4 flex flex-col flex-1 overflow-hidden">
         {/* Header */}
         <Card className="overflow-hidden">
@@ -784,16 +790,16 @@ export default function LoanDetails() {
                   <>
                     <Button
                       size="sm"
-                      variant="secondary"
-                      onClick={() => setIsSettleOpen(true)}
-                      className="h-7 text-xs"
+                      variant={isSettleOpen ? "default" : "secondary"}
+                      onClick={() => setIsSettleOpen(!isSettleOpen)}
+                      className={cn("h-7 text-xs", isSettleOpen && "bg-slate-700 hover:bg-slate-800")}
                     >
                       Settle
                     </Button>
                     <Button
                       size="sm"
-                      onClick={() => setIsReceiptDialogOpen(true)}
-                      className="bg-emerald-600 hover:bg-emerald-700 h-7 text-xs"
+                      onClick={() => setIsReceiptDialogOpen(!isReceiptDialogOpen)}
+                      className={cn("h-7 text-xs", isReceiptDialogOpen ? "bg-emerald-700 hover:bg-emerald-800" : "bg-emerald-600 hover:bg-emerald-700")}
                     >
                       <Receipt className="w-3 h-3 mr-1" />
                       Receipt
@@ -1467,20 +1473,6 @@ export default function LoanDetails() {
           isLoading={editLoanMutation.isPending}
         />
 
-        {/* Settle Loan Modal */}
-        <SettleLoanModal
-          isOpen={isSettleOpen}
-          onClose={() => setIsSettleOpen(false)}
-          loan={loan}
-          borrower={borrower}
-          transactions={transactions}
-          onSubmit={(data) => {
-            paymentMutation.mutate(data);
-            setIsSettleOpen(false);
-          }}
-          isLoading={paymentMutation.isPending}
-        />
-
         {/* Import Restructure Transactions Modal */}
         <ImportRestructureModal
           isOpen={isImportRestructureOpen}
@@ -2043,6 +2035,20 @@ export default function LoanDetails() {
           </AlertDialogContent>
         </AlertDialog>
         </div>
+        </div>
+
+        {/* Settlement Panel - slides in from right */}
+        {isSettleOpen && (
+          <div className="w-[600px] flex-shrink-0 h-full overflow-hidden">
+            <SettleLoanModal
+              isOpen={isSettleOpen}
+              onClose={() => setIsSettleOpen(false)}
+              loan={loan}
+              borrower={borrower}
+              transactions={transactions}
+            />
+          </div>
+        )}
         </div>
         );
         }
