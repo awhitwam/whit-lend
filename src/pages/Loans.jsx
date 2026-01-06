@@ -3,6 +3,7 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -109,6 +110,7 @@ const getProductAbbreviation = (productName) => {
 
 export default function Loans() {
   const navigate = useNavigate();
+  const { currentOrganization } = useOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
   const [searchTerm, setSearchTerm] = useState('');
   const borrowerFilter = searchParams.get('borrower') || null;
@@ -203,23 +205,24 @@ export default function Loans() {
   }, [hasFilter]);
 
   const { data: allLoans = [], isLoading } = useQuery({
-    queryKey: ['loans'],
-    queryFn: () => api.entities.Loan.list('-created_date')
+    queryKey: ['loans', currentOrganization?.id],
+    queryFn: () => api.entities.Loan.list('-created_date'),
+    enabled: !!currentOrganization
   });
 
   const { data: filterBorrower } = useQuery({
-    queryKey: ['borrower', borrowerFilter],
+    queryKey: ['borrower', borrowerFilter, currentOrganization?.id],
     queryFn: async () => {
       const borrowers = await api.entities.Borrower.filter({ id: borrowerFilter });
       return borrowers[0];
     },
-    enabled: !!borrowerFilter
+    enabled: !!borrowerFilter && !!currentOrganization
   });
 
   const { data: allBorrowers = [] } = useQuery({
-    queryKey: ['borrowers'],
+    queryKey: ['borrowers', currentOrganization?.id],
     queryFn: () => api.entities.Borrower.list(),
-    enabled: !!contactEmailFilter
+    enabled: !!contactEmailFilter && !!currentOrganization
   });
 
   const contactBorrowerIds = useMemo(() => {
@@ -229,14 +232,18 @@ export default function Loans() {
       .map(b => b.id);
   }, [contactEmailFilter, allBorrowers]);
 
-  const { data: allTransactions = [] } = useQuery({
-    queryKey: ['all-transactions'],
-    queryFn: () => api.entities.Transaction.list()
+  // Only fetch transactions for interest calculation (principal uses cached value)
+  // Still need transactions for: interest calculation, last payment, charges outstanding
+  const { data: allTransactions = [], isLoading: isLoadingTransactions } = useQuery({
+    queryKey: ['all-transactions', currentOrganization?.id],
+    queryFn: () => api.entities.Transaction.list('-date', 10000),
+    enabled: !!currentOrganization
   });
 
   const { data: allSchedules = [] } = useQuery({
-    queryKey: ['all-schedules'],
-    queryFn: () => api.entities.RepaymentSchedule.list()
+    queryKey: ['all-schedules', currentOrganization?.id],
+    queryFn: () => api.entities.RepaymentSchedule.list(),
+    enabled: !!currentOrganization
   });
 
   // Calculate further advances per loan (disbursements beyond the first one)
@@ -364,13 +371,21 @@ export default function Loans() {
           break;
         case 'principal_amount':
         case 'principal_bal':
-          // Sort by principal remaining (using live calculation)
-          const aPrinTransactions = allTransactions.filter(t => t.loan_id === a.id);
-          const bPrinTransactions = allTransactions.filter(t => t.loan_id === b.id);
-          const aPrinCalc = calculateAccruedInterestWithTransactions(a, aPrinTransactions);
-          const bPrinCalc = calculateAccruedInterestWithTransactions(b, bPrinTransactions);
-          aVal = aPrinCalc.principalRemaining;
-          bVal = bPrinCalc.principalRemaining;
+          // Use cached principal_remaining if available, otherwise calculate
+          if (a.principal_remaining !== null && a.principal_remaining !== undefined) {
+            aVal = a.principal_remaining;
+          } else {
+            const aPrinTransactions = allTransactions.filter(t => t.loan_id === a.id);
+            const aPrinCalc = calculateAccruedInterestWithTransactions(a, aPrinTransactions);
+            aVal = aPrinCalc.principalRemaining;
+          }
+          if (b.principal_remaining !== null && b.principal_remaining !== undefined) {
+            bVal = b.principal_remaining;
+          } else {
+            const bPrinTransactions = allTransactions.filter(t => t.loan_id === b.id);
+            const bPrinCalc = calculateAccruedInterestWithTransactions(b, bPrinTransactions);
+            bVal = bPrinCalc.principalRemaining;
+          }
           break;
         case 'start_date':
           aVal = new Date(a.start_date);
@@ -642,11 +657,15 @@ export default function Loans() {
             </TooltipProvider>
           );
         }
+        // Use cached principal_remaining from database if available
+        const displayPrincipal = loan.principal_remaining !== null && loan.principal_remaining !== undefined
+          ? loan.principal_remaining
+          : principalRemaining;
         return (
           <span className={`font-mono text-sm font-semibold ${
-            principalRemaining <= 0 ? 'text-emerald-600' : 'text-slate-700'
+            displayPrincipal <= 0 ? 'text-emerald-600' : 'text-slate-700'
           }`}>
-            {principalRemaining <= 0 ? '£0' : formatCurrency(principalRemaining)}
+            {displayPrincipal <= 0 ? '£0' : formatCurrency(displayPrincipal)}
           </span>
         );
       }
@@ -906,7 +925,7 @@ export default function Loans() {
             </div>
 
             {/* Content */}
-            {isLoading ? (
+            {isLoading || isLoadingTransactions ? (
               <div className="bg-white rounded-lg border border-slate-200">
                 <div className="p-4 space-y-2">
                   {Array(8).fill(0).map((_, i) => (

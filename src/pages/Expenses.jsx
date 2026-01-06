@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -35,35 +36,40 @@ export default function Expenses() {
   const [typeSearchTerm, setTypeSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  
+
   const queryClient = useQueryClient();
+  const { currentOrganization } = useOrganization();
 
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
-    queryKey: ['expenses'],
-    queryFn: () => api.entities.Expense.list('-date')
+    queryKey: ['expenses', currentOrganization?.id],
+    queryFn: () => api.entities.Expense.list('-date'),
+    enabled: !!currentOrganization
   });
 
   const { data: expenseTypes = [], isLoading: typesLoading } = useQuery({
-    queryKey: ['expense-types'],
-    queryFn: () => api.entities.ExpenseType.list('name')
+    queryKey: ['expense-types', currentOrganization?.id],
+    queryFn: () => api.entities.ExpenseType.list('name'),
+    enabled: !!currentOrganization
   });
 
   const { data: loans = [] } = useQuery({
-    queryKey: ['loans'],
-    queryFn: () => api.entities.Loan.list('-created_date')
+    queryKey: ['loans', currentOrganization?.id],
+    queryFn: () => api.entities.Loan.list('-created_date'),
+    enabled: !!currentOrganization
   });
 
   // Fetch reconciliation entries to show which expenses are matched to bank statements
   const { data: reconciliationEntries = [] } = useQuery({
-    queryKey: ['expense-reconciliation-entries'],
-    queryFn: () => api.entities.ReconciliationEntry.list()
+    queryKey: ['expense-reconciliation-entries', currentOrganization?.id],
+    queryFn: () => api.entities.ReconciliationEntry.list(),
+    enabled: !!currentOrganization
   });
 
   // Fetch bank statements to show details about matched entries
   const { data: bankStatements = [] } = useQuery({
-    queryKey: ['bank-statements'],
+    queryKey: ['bank-statements', currentOrganization?.id],
     queryFn: () => api.entities.BankStatement.list(),
-    enabled: reconciliationEntries.length > 0
+    enabled: !!currentOrganization && reconciliationEntries.length > 0
   });
 
   // Build a map of expense ID -> array of bank statement details for quick lookup

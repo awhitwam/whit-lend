@@ -105,6 +105,11 @@ export const OrganizationProvider = ({ children }) => {
   const switchOrganization = (organizationId) => {
     const org = organizations.find(o => o.id === organizationId);
     if (org) {
+      // CRITICAL: Update the organization ID getter SYNCHRONOUSLY before state change
+      // This prevents a race condition where queries fire with the old org ID
+      // during React's async state update cycle
+      setOrganizationIdGetter(() => org.id);
+
       setCurrentOrganization(org);
       setMemberRole(org.role);
       sessionStorage.setItem('currentOrganizationId', organizationId);

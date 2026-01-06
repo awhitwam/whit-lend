@@ -1163,22 +1163,28 @@ export default function ImportLoandisc() {
 
               // Create initial Disbursement transaction if loan is released (has start_date)
               if (created.start_date && created.status !== 'Pending') {
-                const disbursementAmount = created.net_disbursed ||
+                const netDisbursementAmount = created.net_disbursed ||
                   (created.principal_amount - (created.arrangement_fee || 0));
-                if (disbursementAmount > 0) {
+                const grossAmount = created.principal_amount;
+                const deductedFee = created.arrangement_fee || 0;
+
+                if (netDisbursementAmount > 0) {
                   await api.entities.Transaction.create({
                     loan_id: created.id,
                     borrower_id: created.borrower_id,
                     date: created.start_date,
                     type: 'Disbursement',
-                    amount: disbursementAmount,
-                    principal_applied: disbursementAmount,
+                    amount: netDisbursementAmount,  // Net amount (what borrower receives)
+                    gross_amount: grossAmount,  // Gross amount (what borrower owes)
+                    deducted_fee: deductedFee,  // Fee deducted at source
+                    deducted_interest: 0,  // No advance interest on import
+                    principal_applied: grossAmount,  // Principal = gross amount
                     interest_applied: 0,
                     fees_applied: 0,
                     notes: 'Initial loan disbursement (import)'
                   });
                   if (isDebugLoan) {
-                    addLog(`[DEBUG LOAN ${loanNumber}] Created Disbursement transaction: ${disbursementAmount}`);
+                    addLog(`[DEBUG LOAN ${loanNumber}] Created Disbursement transaction: gross=${grossAmount}, net=${netDisbursementAmount}, fee=${deductedFee}`);
                   }
                 }
               }

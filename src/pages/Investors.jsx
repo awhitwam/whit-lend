@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { logInvestorEvent, AuditAction } from '@/lib/auditLog';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -19,16 +20,19 @@ export default function Investors() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingInvestor, setEditingInvestor] = useState(null);
   const queryClient = useQueryClient();
+  const { currentOrganization } = useOrganization();
 
   const { data: investors = [], isLoading } = useQuery({
-    queryKey: ['investors'],
-    queryFn: () => api.entities.Investor.list()
+    queryKey: ['investors', currentOrganization?.id],
+    queryFn: () => api.entities.Investor.list(),
+    enabled: !!currentOrganization
   });
 
   // Fetch all interest entries to calculate due/accruing amounts
   const { data: allInterestEntries = [] } = useQuery({
-    queryKey: ['allInvestorInterest'],
-    queryFn: () => api.entities.InvestorInterest.list()
+    queryKey: ['allInvestorInterest', currentOrganization?.id],
+    queryFn: () => api.entities.InvestorInterest.list(),
+    enabled: !!currentOrganization
   });
 
   // Calculate interest due and accruing for each investor

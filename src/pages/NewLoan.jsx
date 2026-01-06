@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, FileText, AlertCircle } from 'lucide-react';
@@ -14,15 +15,18 @@ export default function NewLoan() {
   const urlParams = new URLSearchParams(window.location.search);
   const preselectedBorrowerId = urlParams.get('borrower');
   const queryClient = useQueryClient();
+  const { currentOrganization } = useOrganization();
 
   const { data: borrowers = [], isLoading: borrowersLoading } = useQuery({
-    queryKey: ['borrowers'],
-    queryFn: () => api.entities.Borrower.list()
+    queryKey: ['borrowers', currentOrganization?.id],
+    queryFn: () => api.entities.Borrower.list(),
+    enabled: !!currentOrganization
   });
 
   const { data: products = [], isLoading: productsLoading } = useQuery({
-    queryKey: ['products'],
-    queryFn: () => api.entities.LoanProduct.list()
+    queryKey: ['products', currentOrganization?.id],
+    queryFn: () => api.entities.LoanProduct.list(),
+    enabled: !!currentOrganization
   });
 
   const createLoanMutation = useMutation({

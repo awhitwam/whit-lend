@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
@@ -25,6 +26,7 @@ export default function OtherIncome() {
   const [editingItem, setEditingItem] = useState(null);
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
+  const { currentOrganization } = useOrganization();
 
   // Form state
   const [formData, setFormData] = useState({
@@ -36,8 +38,9 @@ export default function OtherIncome() {
   const queryClient = useQueryClient();
 
   const { data: incomeItems = [], isLoading } = useQuery({
-    queryKey: ['other-income'],
-    queryFn: () => api.entities.OtherIncome.list('-date')
+    queryKey: ['other-income', currentOrganization?.id],
+    queryFn: () => api.entities.OtherIncome.list('-date'),
+    enabled: !!currentOrganization
   });
 
   const createMutation = useMutation({

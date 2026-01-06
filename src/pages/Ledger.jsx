@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -15,6 +16,7 @@ import { useNavigate } from 'react-router-dom';
 
 export default function Ledger() {
   const navigate = useNavigate();
+  const { currentOrganization } = useOrganization();
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState('date');
   const [sortDirection, setSortDirection] = useState('desc');
@@ -22,38 +24,45 @@ export default function Ledger() {
   const [itemsPerPage, setItemsPerPage] = useState(25);
 
   const { data: transactions = [], isLoading: transactionsLoading } = useQuery({
-    queryKey: ['transactions'],
-    queryFn: () => api.entities.Transaction.list('-date')
+    queryKey: ['transactions', currentOrganization?.id],
+    queryFn: () => api.entities.Transaction.list('-date'),
+    enabled: !!currentOrganization
   });
 
   const { data: loans = [], isLoading: loansLoading } = useQuery({
-    queryKey: ['loans'],
-    queryFn: () => api.entities.Loan.list('-created_date')
+    queryKey: ['loans', currentOrganization?.id],
+    queryFn: () => api.entities.Loan.list('-created_date'),
+    enabled: !!currentOrganization
   });
 
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
-    queryKey: ['expenses'],
-    queryFn: () => api.entities.Expense.list('-date')
+    queryKey: ['expenses', currentOrganization?.id],
+    queryFn: () => api.entities.Expense.list('-date'),
+    enabled: !!currentOrganization
   });
 
   const { data: investorTransactions = [], isLoading: investorTxLoading } = useQuery({
-    queryKey: ['investor-transactions'],
-    queryFn: () => api.entities.InvestorTransaction.list('-date')
+    queryKey: ['investor-transactions', currentOrganization?.id],
+    queryFn: () => api.entities.InvestorTransaction.list('-date'),
+    enabled: !!currentOrganization
   });
 
   const { data: investors = [], isLoading: investorsLoading } = useQuery({
-    queryKey: ['investors'],
-    queryFn: () => api.entities.Investor.list()
+    queryKey: ['investors', currentOrganization?.id],
+    queryFn: () => api.entities.Investor.list(),
+    enabled: !!currentOrganization
   });
 
   const { data: reconciliationEntries = [], isLoading: reconcilingLoading } = useQuery({
-    queryKey: ['reconciliation-entries'],
-    queryFn: () => api.entities.ReconciliationEntry.list('-created_at')
+    queryKey: ['reconciliation-entries', currentOrganization?.id],
+    queryFn: () => api.entities.ReconciliationEntry.list('-created_at'),
+    enabled: !!currentOrganization
   });
 
   const { data: bankStatements = [], isLoading: bankStatementsLoading } = useQuery({
-    queryKey: ['bank-statements'],
-    queryFn: () => api.entities.BankStatement.list('-statement_date')
+    queryKey: ['bank-statements', currentOrganization?.id],
+    queryFn: () => api.entities.BankStatement.list('-statement_date'),
+    enabled: !!currentOrganization
   });
 
   const isLoading = transactionsLoading || loansLoading || expensesLoading || investorTxLoading || investorsLoading || reconcilingLoading || bankStatementsLoading;

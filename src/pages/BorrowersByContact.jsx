@@ -1,19 +1,24 @@
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Users } from 'lucide-react';
 import ContactGroupView from '@/components/borrower/ContactGroupView';
 import EmptyState from '@/components/ui/EmptyState';
 
 export default function BorrowersByContact() {
+  const { currentOrganization } = useOrganization();
+
   const { data: allBorrowers = [], isLoading } = useQuery({
-    queryKey: ['borrowers'],
-    queryFn: () => api.entities.Borrower.list('-created_date')
+    queryKey: ['borrowers', currentOrganization?.id],
+    queryFn: () => api.entities.Borrower.list('-created_date'),
+    enabled: !!currentOrganization
   });
 
   // Fetch all loans to calculate counts per borrower
   const { data: allLoans = [] } = useQuery({
-    queryKey: ['loans-for-counts'],
-    queryFn: () => api.entities.Loan.list()
+    queryKey: ['loans-for-counts', currentOrganization?.id],
+    queryFn: () => api.entities.Loan.list(),
+    enabled: !!currentOrganization
   });
 
   // Filter out deleted borrowers

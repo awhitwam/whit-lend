@@ -1102,7 +1102,8 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
   // Calculate totals from actual transactions
   const totalPrincipalPaid = repayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
   const totalInterestPaid = repayments.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-  const totalDisbursed = disbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  // Use gross_amount for disbursements (what borrower owes), fallback to amount for legacy data
+  const totalDisbursed = disbursements.reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
   const principalRemaining = principal + totalDisbursed - totalPrincipalPaid;
 
   // Create a map of principal payments by date
@@ -1117,12 +1118,13 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
   });
 
   // Create a map of disbursements (further advances) by date
+  // Use gross_amount (what borrower owes), fallback to amount for legacy data
   const disbursementsByDate = {};
   disbursements.forEach(tx => {
     const txDate = new Date(tx.date);
     txDate.setHours(0, 0, 0, 0);
     const dateKey = txDate.toISOString().split('T')[0];
-    disbursementsByDate[dateKey] = (disbursementsByDate[dateKey] || 0) + (tx.amount || 0);
+    disbursementsByDate[dateKey] = (disbursementsByDate[dateKey] || 0) + ((tx.gross_amount ?? tx.amount) || 0);
   });
 
   // Calculate interest day by day, adjusting principal when payments/disbursements occur

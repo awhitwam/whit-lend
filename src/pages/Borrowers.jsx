@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Plus, Users, Upload } from 'lucide-react';
@@ -15,22 +16,26 @@ export default function Borrowers() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingBorrower, setEditingBorrower] = useState(null);
   const queryClient = useQueryClient();
+  const { currentOrganization } = useOrganization();
 
   const { data: allBorrowers = [], isLoading } = useQuery({
-    queryKey: ['borrowers'],
-    queryFn: () => api.entities.Borrower.list('-created_date')
+    queryKey: ['borrowers', currentOrganization?.id],
+    queryFn: () => api.entities.Borrower.list('-created_date'),
+    enabled: !!currentOrganization
   });
 
   // Fetch all loans to calculate counts per borrower
   const { data: allLoans = [] } = useQuery({
-    queryKey: ['loans'],
-    queryFn: () => api.entities.Loan.list()
+    queryKey: ['loans', currentOrganization?.id],
+    queryFn: () => api.entities.Loan.list(),
+    enabled: !!currentOrganization
   });
 
   // Fetch all transactions to calculate outstanding amounts
   const { data: allTransactions = [] } = useQuery({
-    queryKey: ['all-transactions'],
-    queryFn: () => api.entities.Transaction.list()
+    queryKey: ['all-transactions', currentOrganization?.id],
+    queryFn: () => api.entities.Transaction.list(),
+    enabled: !!currentOrganization
   });
 
   // Calculate loan counts and financial metrics per borrower

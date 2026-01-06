@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { api } from '@/api/dataClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -16,10 +17,12 @@ export default function Products() {
   const [isFormOpen, setIsFormOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
   const queryClient = useQueryClient();
+  const { currentOrganization } = useOrganization();
 
   const { data: products = [], isLoading } = useQuery({
-    queryKey: ['products'],
-    queryFn: () => api.entities.LoanProduct.list('-created_date')
+    queryKey: ['products', currentOrganization?.id],
+    queryFn: () => api.entities.LoanProduct.list('-created_date'),
+    enabled: !!currentOrganization
   });
 
   const createMutation = useMutation({
