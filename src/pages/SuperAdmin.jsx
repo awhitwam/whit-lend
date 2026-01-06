@@ -47,6 +47,7 @@ import {
 } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
+import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 
 export default function SuperAdmin() {
   const { isSuperAdmin, user } = useAuth();
@@ -69,6 +70,9 @@ export default function SuperAdmin() {
 
   // Create organization dialog state
   const [isCreateOrgOpen, setIsCreateOrgOpen] = useState(false);
+
+  // Schedule regeneration state
+  const [selectedOrgForSchedules, setSelectedOrgForSchedules] = useState('');
 
   // Fetch all users across all organizations
   const { data: allUsers = [], isLoading: loadingUsers } = useQuery({
@@ -289,6 +293,74 @@ export default function SuperAdmin() {
       organizationId: selectedOrgForAdd,
       role: selectedRoleForAdd
     });
+  };
+
+  // Handle regenerating all schedules for an organization
+  const handleRegenerateSchedules = async () => {
+    if (!selectedOrgForSchedules) return;
+
+    setRunningJob('regenerate_schedules');
+    setJobResult(null);
+
+    const result = {
+      task: 'regenerate_schedules',
+      processed: 0,
+      succeeded: 0,
+      failed: 0,
+      skipped: 0,
+      details: []
+    };
+
+    try {
+      const selectedOrg = allOrganizations.find(o => o.id === selectedOrgForSchedules);
+
+      // Fetch Live loans for selected organization
+      const { data: liveLoans, error } = await supabase
+        .from('loans')
+        .select('id, loan_number')
+        .eq('organization_id', selectedOrgForSchedules)
+        .eq('status', 'Live')
+        .eq('is_deleted', false);
+
+      if (error) throw error;
+
+      // Process each loan
+      for (const loan of (liveLoans || [])) {
+        result.processed++;
+        try {
+          await regenerateLoanSchedule(loan.id, {
+            endDate: new Date() // Regenerate up to today
+          });
+          result.succeeded++;
+          result.details.push({
+            loan: loan.loan_number,
+            status: 'success'
+          });
+        } catch (err) {
+          result.failed++;
+          result.details.push({
+            loan: loan.loan_number,
+            status: 'failed',
+            error: err.message
+          });
+        }
+      }
+
+      setJobResult({
+        ...result,
+        summary: {
+          organization: selectedOrg?.name,
+          total_processed: result.processed,
+          total_succeeded: result.succeeded,
+          total_failed: result.failed,
+          total_skipped: result.skipped
+        }
+      });
+    } catch (err) {
+      setJobResult({ error: err.message });
+    } finally {
+      setRunningJob(null);
+    }
   };
 
   // Access check
@@ -621,6 +693,42 @@ export default function SuperAdmin() {
                   )}
                 </Button>
 
+                {/* Regenerate Schedules Section */}
+                <div className="border rounded-lg p-4 bg-slate-50 space-y-3 mt-4">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 text-slate-600" />
+                    <span className="font-medium text-slate-900">Regenerate Schedules</span>
+                  </div>
+                  <p className="text-sm text-slate-500">
+                    Regenerate repayment schedules for all Live loans in an organization, recalculating interest based on current transaction history.
+                  </p>
+                  <div className="flex gap-2">
+                    <Select value={selectedOrgForSchedules} onValueChange={setSelectedOrgForSchedules}>
+                      <SelectTrigger className="w-64">
+                        <SelectValue placeholder="Select organization..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {allOrganizations.map(org => (
+                          <SelectItem key={org.id} value={org.id}>
+                            {org.name}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Button
+                      onClick={handleRegenerateSchedules}
+                      disabled={!selectedOrgForSchedules || !!runningJob}
+                    >
+                      {runningJob === 'regenerate_schedules' ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Play className="w-4 h-4 mr-2" />
+                      )}
+                      Regenerate
+                    </Button>
+                  </div>
+                </div>
+
                 {/* Job Result */}
                 {jobResult && (
                   <Alert className={jobResult.error ? 'border-red-200 bg-red-50' : 'border-emerald-200 bg-emerald-50'}>
@@ -634,7 +742,11 @@ export default function SuperAdmin() {
                         <span>Error: {jobResult.error}</span>
                       ) : (
                         <div className="space-y-1">
-                          <p className="font-medium">Job completed successfully</p>
+                          <p className="font-medium">
+                            {jobResult.task === 'regenerate_schedules'
+                              ? `Schedules regenerated for ${jobResult.summary?.organization || 'organization'}`
+                              : 'Job completed successfully'}
+                          </p>
                           <p className="text-sm">
                             Processed: {jobResult.summary?.total_processed || 0} |
                             Succeeded: {jobResult.summary?.total_succeeded || 0} |

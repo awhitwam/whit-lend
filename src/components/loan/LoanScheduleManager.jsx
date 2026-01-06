@@ -44,10 +44,11 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     // Delete any existing schedule entries
     await api.entities.RepaymentSchedule.deleteWhere({ loan_id: loanId });
 
-    // Update loan with zero interest values
+    // Update loan with zero interest values and sync product_type
     await api.entities.Loan.update(loanId, {
       interest_rate: 0,
       interest_type: 'None',
+      product_type: 'Irregular Income',
       total_interest: 0,
       total_repayable: loan.principal_amount + (loan.exit_fee || 0)
     });
@@ -190,10 +191,11 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   const finalBalance = finalSchedule.length > 0 ? finalSchedule[finalSchedule.length - 1].balance : currentPrincipalOutstanding;
   const totalRepayable = totalInterest + currentPrincipalOutstanding + (loan.exit_fee || 0);
 
-  // Update loan - use effective rate (which may be overridden)
+  // Update loan - use effective rate (which may be overridden) and sync product_type
   await api.entities.Loan.update(loanId, {
     interest_rate: effectiveInterestRate,
     interest_type: product.interest_type,
+    product_type: product.product_type || 'Standard',
     period: product.period,
     total_interest: Math.round(totalInterest * 100) / 100,
     total_repayable: Math.round(totalRepayable * 100) / 100
