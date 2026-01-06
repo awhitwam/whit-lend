@@ -39,19 +39,50 @@ export default function NewLoan() {
 
       // Create initial Disbursement transaction if loan is released (has start_date)
       if (loan.start_date && loan.status !== 'Pending') {
-        const disbursementAmount = loan.net_disbursed || (loan.principal_amount - (loan.arrangement_fee || 0));
-        if (disbursementAmount > 0) {
-          await api.entities.Transaction.create({
+        const grossAmount = loan.principal_amount;
+        const deductedFee = loan.arrangement_fee || 0;
+        const deductedInterest = loan.advance_interest || 0;  // Support advance interest at loan creation
+        const netAmount = loan.net_disbursed || (grossAmount - deductedFee - deductedInterest);
+
+        if (netAmount >= 0) {
+          // Build disbursement notes
+          const deductionParts = [];
+          if (deductedFee > 0) deductionParts.push(`£${deductedFee.toFixed(2)} arrangement fee`);
+          if (deductedInterest > 0) deductionParts.push(`£${deductedInterest.toFixed(2)} advance interest`);
+          const disbursementNotes = deductionParts.length > 0
+            ? `Initial loan disbursement (${deductionParts.join(' + ')} deducted)`
+            : 'Initial loan disbursement';
+
+          const disbursement = await api.entities.Transaction.create({
             loan_id: loan.id,
             borrower_id: loan.borrower_id,
             date: loan.start_date,
             type: 'Disbursement',
-            amount: disbursementAmount,
-            principal_applied: disbursementAmount,
-            interest_applied: 0,
-            fees_applied: 0,
-            notes: 'Initial loan disbursement'
+            gross_amount: grossAmount,
+            deducted_fee: deductedFee,
+            deducted_interest: deductedInterest,
+            amount: netAmount,  // Net cash paid
+            principal_applied: grossAmount,  // Full gross goes to principal
+            interest_applied: 0,  // Interest is handled by linked repayment
+            fees_applied: deductedFee,
+            notes: disbursementNotes
           });
+
+          // If there's deducted interest, create a linked repayment transaction
+          if (deductedInterest > 0) {
+            await api.entities.Transaction.create({
+              loan_id: loan.id,
+              borrower_id: loan.borrower_id,
+              date: loan.start_date,
+              type: 'Repayment',
+              amount: deductedInterest,
+              principal_applied: 0,
+              interest_applied: deductedInterest,
+              fees_applied: 0,
+              linked_disbursement_id: disbursement.id,
+              notes: 'Advance interest deducted from disbursement'
+            });
+          }
         }
       }
 

@@ -65,6 +65,27 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   // Track individually expanded periods (when globally collapsed, these are expanded)
   const [expandedPeriods, setExpandedPeriods] = useState(new Set());
 
+  // Track expanded disbursements (for showing linked repayments)
+  const [expandedDisbursements, setExpandedDisbursements] = useState(new Set());
+
+  // Toggle a disbursement's expansion
+  const toggleDisbursementExpansion = (disbursementId) => {
+    setExpandedDisbursements(prev => {
+      const next = new Set(prev);
+      if (next.has(disbursementId)) {
+        next.delete(disbursementId);
+      } else {
+        next.add(disbursementId);
+      }
+      return next;
+    });
+  };
+
+  // Check if a disbursement should show its children
+  const isDisbursementExpanded = (disbursementId) => {
+    return expandedDisbursements.has(disbursementId);
+  };
+
   // Toggle a single period's expansion
   const togglePeriodExpansion = (periodId) => {
     setExpandedPeriods(prev => {
@@ -1096,16 +1117,38 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   // First disbursement transaction is the initial "Loan Disbursement"
                   // Subsequent disbursement transactions are "Further Advances"
                   disbursementTransactions.forEach((tx, index) => {
-                    // For initial disbursement, show GROSS amount with net amount note
                     const isInitial = index === 0;
-                    const netNote = isInitial && loan.arrangement_fee && loan.net_disbursed
-                      ? ` (${formatCurrency(loan.net_disbursed)} net)`
-                      : '';
+
+                    // Use gross_amount if available (new field), fallback to amount for legacy
+                    let grossAmount = tx.gross_amount ?? tx.amount;
+                    const deductedFee = tx.deducted_fee || 0;
+                    const deductedInterest = tx.deducted_interest || 0;
+                    const netAmount = tx.amount;
+                    const hasDeductions = deductedFee > 0 || deductedInterest > 0;
+
+                    // For legacy initial disbursements, use loan.principal_amount as gross
+                    const hasLegacyDeductions = isInitial && !hasDeductions && loan.arrangement_fee && loan.net_disbursed;
+                    if (hasLegacyDeductions) {
+                      grossAmount = loan.principal_amount;
+                    }
+
+                    // For initial disbursement, show GROSS amount with net amount note
+                    let netNote = '';
+                    if (hasDeductions) {
+                      const deductionParts = [];
+                      if (deductedFee > 0) deductionParts.push(`${formatCurrency(deductedFee)} fee`);
+                      if (deductedInterest > 0) deductionParts.push(`${formatCurrency(deductedInterest)} interest`);
+                      netNote = ` (${formatCurrency(netAmount)} net, ${deductionParts.join(' + ')} deducted)`;
+                    } else if (hasLegacyDeductions) {
+                      // Fallback for legacy data where deductions are stored at loan level
+                      netNote = ` (${formatCurrency(loan.net_disbursed)} net, ${formatCurrency(loan.arrangement_fee)} fee deducted)`;
+                    }
+
                     rows.push({
                       type: isInitial ? 'disbursement' : 'further_advance',
                       date: new Date(tx.date),
-                      description: isInitial ? `Loan Disbursement${netNote}` : 'Further Advance',
-                      principal: isInitial ? loan.principal_amount : tx.amount,
+                      description: isInitial ? `Loan Disbursement${netNote}` : `Further Advance${netNote}`,
+                      principal: grossAmount,  // Use gross for principal tracking
                       transaction: tx,
                       sortOrder: isInitial ? 0 : 1
                     });
@@ -1362,21 +1405,61 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                   // First disbursement transaction is the initial "Loan Disbursement"
                   // Subsequent disbursement transactions are "Further Advances"
+                  // Also find any linked repayments (for deducted interest)
+                  const linkedRepaymentsByDisbursement = new Map();
+                  repaymentTransactions.forEach(tx => {
+                    if (tx.linked_disbursement_id) {
+                      linkedRepaymentsByDisbursement.set(tx.linked_disbursement_id, tx);
+                    }
+                  });
+
                   disbursementTransactions.forEach((tx, index) => {
-                    // For initial disbursement, show GROSS amount with net amount note
                     const isInitial = index === 0;
-                    const netNote = isInitial && loan.arrangement_fee && loan.net_disbursed
-                      ? ` (${formatCurrency(loan.net_disbursed)} net)`
-                      : '';
+
+                    // Use gross_amount if available (new field), fallback to amount for legacy
+                    let grossAmount = tx.gross_amount ?? tx.amount;
+                    const deductedFee = tx.deducted_fee || 0;
+                    const deductedInterest = tx.deducted_interest || 0;
+                    const netAmount = tx.amount;
+                    const hasDeductions = deductedFee > 0 || deductedInterest > 0;
+
+                    // For legacy initial disbursements, use loan.principal_amount as gross
+                    const hasLegacyDeductions = isInitial && !hasDeductions && loan.arrangement_fee && loan.net_disbursed;
+                    if (hasLegacyDeductions) {
+                      grossAmount = loan.principal_amount;
+                    }
+
+                    // Find linked repayment for this disbursement (if any)
+                    const linkedRepayment = linkedRepaymentsByDisbursement.get(tx.id);
+                    const linkedInterestPaid = linkedRepayment ? (linkedRepayment.interest_applied || linkedRepayment.amount || 0) : 0;
+
+                    let netNote = '';
+                    if (hasDeductions) {
+                      const deductionParts = [];
+                      if (deductedFee > 0) deductionParts.push(`${formatCurrency(deductedFee)} fee`);
+                      if (deductedInterest > 0) deductionParts.push(`${formatCurrency(deductedInterest)} interest`);
+                      netNote = ` (${formatCurrency(netAmount)} net, ${deductionParts.join(' + ')} deducted)`;
+                    } else if (hasLegacyDeductions) {
+                      // Fallback for legacy data where deductions are stored at loan level
+                      netNote = ` (${formatCurrency(loan.net_disbursed)} net, ${formatCurrency(loan.arrangement_fee)} fee deducted)`;
+                    }
+
                     rows.push({
                       type: isInitial ? 'disbursement' : 'further_advance',
                       date: new Date(tx.date),
-                      description: isInitial ? `Loan Disbursement${netNote}` : 'Further Advance',
-                      principal: isInitial ? loan.principal_amount : tx.amount,
+                      description: isInitial ? `Loan Disbursement${netNote}` : `Further Advance${netNote}`,
+                      principal: grossAmount, // Use gross amount for principal tracking
                       interest: 0,
                       balance: 0, // Will be calculated after sorting
                       transaction: tx,
-                      sortOrder: isInitial ? 0 : 1
+                      sortOrder: isInitial ? 0 : 1,
+                      grossAmount,
+                      deductedFee,
+                      deductedInterest,
+                      netAmount,
+                      hasDeductions,
+                      linkedRepayment,
+                      linkedInterestPaid
                     });
                   });
 
@@ -1482,6 +1565,22 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       // Record balance after this date
                       principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
                       expandedRows.push(row);
+
+                      // Add linked repayment as child row if exists
+                      if (row.linkedRepayment) {
+                        runningInterestPaid += row.linkedInterestPaid;
+                        expandedRows.push({
+                          type: 'disbursement_child',
+                          parentDisbursementId: row.transaction.id,
+                          date: new Date(row.linkedRepayment.date),
+                          description: 'Advance interest deducted from disbursement',
+                          principal: 0,
+                          interest: row.linkedInterestPaid,
+                          balance: runningInterestAccrued - runningInterestPaid,
+                          principalBalance: runningPrincipalBalance,
+                          transaction: row.linkedRepayment
+                        });
+                      }
                     } else if (row.type === 'further_advance') {
                       prevPrincipalBalance = runningPrincipalBalance;
                       runningPrincipalBalance += row.principal;
@@ -1491,6 +1590,22 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       // Record balance after this date
                       principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
                       expandedRows.push(row);
+
+                      // Add linked repayment as child row if exists
+                      if (row.linkedRepayment) {
+                        runningInterestPaid += row.linkedInterestPaid;
+                        expandedRows.push({
+                          type: 'disbursement_child',
+                          parentDisbursementId: row.transaction.id,
+                          date: new Date(row.linkedRepayment.date),
+                          description: 'Advance interest deducted from disbursement',
+                          principal: 0,
+                          interest: row.linkedInterestPaid,
+                          balance: runningInterestAccrued - runningInterestPaid,
+                          principalBalance: runningPrincipalBalance,
+                          transaction: row.linkedRepayment
+                        });
+                      }
                     } else if (row.type === 'schedule_header') {
                       row.principalBalance = runningPrincipalBalance;
                       row.principalChanged = false;
@@ -1698,11 +1813,29 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       return null;
                     }
 
+                    // Skip disbursement children when their parent disbursement is collapsed
+                    if (row.type === 'disbursement_child' && !isDisbursementExpanded(row.parentDisbursementId)) {
+                      return null;
+                    }
+
                     if (row.type === 'disbursement') {
+                      const hasLinkedRepayment = !!row.linkedRepayment;
+                      const isExpanded = isDisbursementExpanded(row.transaction.id);
                       return (
-                        <TableRow key={`disbursement-${idx}`} className="bg-red-50/50 border-l-4 border-red-500">
+                        <TableRow
+                          key={`disbursement-${idx}`}
+                          className={`bg-red-50/50 border-l-4 border-red-500 ${hasLinkedRepayment ? 'cursor-pointer hover:bg-red-100/50' : ''}`}
+                          onClick={hasLinkedRepayment ? () => toggleDisbursementExpansion(row.transaction.id) : undefined}
+                        >
                           <TableCell className="py-0.5 font-medium text-sm">
-                            {format(row.date, 'dd/MM/yy')}
+                            <div className="flex items-center gap-1">
+                              {format(row.date, 'dd/MM/yy')}
+                              {hasLinkedRepayment && (
+                                isExpanded
+                                  ? <ChevronDown className="w-3 h-3 text-red-400" />
+                                  : <ChevronRight className="w-3 h-3 text-red-400" />
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="py-0.5 font-semibold text-red-700 text-sm">
                             {row.description}
@@ -1713,7 +1846,32 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           <TableCell className="py-0.5 text-right font-mono text-red-600 font-semibold text-sm">
                             {formatCurrency(row.principalBalance)}
                           </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-sm">
+                            {row.linkedInterestPaid > 0 ? (
+                              <span className="text-emerald-600">{formatCurrency(row.linkedInterestPaid)}</span>
+                            ) : '—'}
+                          </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
+                          <TableCell className="py-0.5">—</TableCell>
+                        </TableRow>
+                      );
+                    }
+
+                    if (row.type === 'disbursement_child') {
+                      return (
+                        <TableRow key={`disbursement-child-${idx}`} className="bg-red-50/30 border-l-4 border-red-300">
+                          <TableCell className="py-0.5 pl-6 text-slate-500 text-sm">
+                            ↳ {format(row.date, 'dd/MM/yy')}
+                          </TableCell>
+                          <TableCell className="py-0.5 text-slate-600 text-sm italic">
+                            Receipt: {row.description}
+                          </TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-emerald-600 text-sm">
+                            {formatCurrency(row.interest)}
+                          </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
                           <TableCell className="py-0.5">—</TableCell>
@@ -1722,10 +1880,23 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     }
 
                     if (row.type === 'further_advance') {
+                      const hasLinkedRepayment = !!row.linkedRepayment;
+                      const isExpanded = isDisbursementExpanded(row.transaction.id);
                       return (
-                        <TableRow key={`further-advance-${idx}`} className="bg-orange-50/50 border-l-4 border-orange-500">
+                        <TableRow
+                          key={`further-advance-${idx}`}
+                          className={`bg-orange-50/50 border-l-4 border-orange-500 ${hasLinkedRepayment ? 'cursor-pointer hover:bg-orange-100/50' : ''}`}
+                          onClick={hasLinkedRepayment ? () => toggleDisbursementExpansion(row.transaction.id) : undefined}
+                        >
                           <TableCell className="py-0.5 font-medium text-sm">
-                            {format(row.date, 'dd/MM/yy')}
+                            <div className="flex items-center gap-1">
+                              {format(row.date, 'dd/MM/yy')}
+                              {hasLinkedRepayment && (
+                                isExpanded
+                                  ? <ChevronDown className="w-3 h-3 text-orange-400" />
+                                  : <ChevronRight className="w-3 h-3 text-orange-400" />
+                              )}
+                            </div>
                           </TableCell>
                           <TableCell className="py-0.5 font-semibold text-orange-700 text-sm">
                             {row.description}
@@ -1736,7 +1907,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           <TableCell className="py-0.5 text-right font-mono text-orange-600 font-semibold text-sm">
                             {formatCurrency(row.principalBalance)}
                           </TableCell>
-                          <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-sm">
+                            {row.linkedInterestPaid > 0 ? (
+                              <span className="text-emerald-600">{formatCurrency(row.linkedInterestPaid)}</span>
+                            ) : '—'}
+                          </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
                           <TableCell className="py-0.5">—</TableCell>

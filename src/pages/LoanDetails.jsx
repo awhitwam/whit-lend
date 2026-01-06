@@ -109,7 +109,13 @@ export default function LoanDetails() {
   const [isSavingReceipt, setIsSavingReceipt] = useState(false);
   const [editDisbursementDialogOpen, setEditDisbursementDialogOpen] = useState(false);
   const [editDisbursementTarget, setEditDisbursementTarget] = useState(null);
-  const [editDisbursementValues, setEditDisbursementValues] = useState({ date: '', amount: '', notes: '' });
+  const [editDisbursementValues, setEditDisbursementValues] = useState({
+    date: '',
+    gross_amount: '',
+    deducted_fee: '',
+    deducted_interest: '',
+    notes: ''
+  });
   const [isSavingDisbursement, setIsSavingDisbursement] = useState(false);
   const [convertingExpense, setConvertingExpense] = useState(null);
   const [isConvertingExpense, setIsConvertingExpense] = useState(false);
@@ -284,9 +290,38 @@ export default function LoanDetails() {
         interest_paid: totalInterestPaid
       });
 
-      // Note: Disbursement creation is handled by regenerateLoanSchedule (line 198)
-      // which uses fresh transaction data. Removed duplicate check here to prevent
-      // stale React Query data from causing duplicate disbursement transactions.
+      // Update initial disbursement transaction if principal or arrangement fee changed
+      const newPrincipal = updatedData.principal_amount ?? loan.principal_amount;
+      const newArrangementFee = updatedData.arrangement_fee ?? loan.arrangement_fee ?? 0;
+      const newNetDisbursed = updatedData.net_disbursed ?? (newPrincipal - newArrangementFee);
+      const oldNetDisbursed = loan.net_disbursed ?? (loan.principal_amount - (loan.arrangement_fee || 0));
+
+      // Check if any disbursement-related fields changed
+      const principalChanged = Math.abs(newPrincipal - loan.principal_amount) > 0.01;
+      const feeChanged = Math.abs(newArrangementFee - (loan.arrangement_fee || 0)) > 0.01;
+
+      if (principalChanged || feeChanged) {
+        // Find and update the initial disbursement transaction
+        const allTx = await api.entities.Transaction.filter({ loan_id: loanId });
+        const disbursementTx = allTx.find(t => t.type === 'Disbursement' && !t.is_deleted);
+
+        if (disbursementTx) {
+          // Preserve existing deducted_interest if any
+          const existingDeductedInterest = disbursementTx.deducted_interest || 0;
+          const netAmount = newPrincipal - newArrangementFee - existingDeductedInterest;
+
+          await api.entities.Transaction.update(disbursementTx.id, {
+            gross_amount: newPrincipal,
+            deducted_fee: newArrangementFee,
+            deducted_interest: existingDeductedInterest,
+            amount: netAmount,
+            principal_applied: newPrincipal,  // Full gross amount
+            fees_applied: newArrangementFee,
+            interest_applied: existingDeductedInterest
+          });
+          console.log(`Updated disbursement: gross=${newPrincipal}, fee=${newArrangementFee}, net=${netAmount}`);
+        }
+      }
     },
     onSuccess: async () => {
       setProcessingMessage('Refreshing data...');
@@ -709,7 +744,7 @@ export default function LoanDetails() {
       // Calculate total principal including disbursements
       const disbursementTotal = transactions
         .filter(t => !t.is_deleted && t.type === 'Disbursement')
-        .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+        .reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
       const loanTotalPrincipal = loan.principal_amount + disbursementTotal;
 
       const updateData = {
@@ -804,10 +839,14 @@ export default function LoanDetails() {
     .filter(t => !t.is_deleted && t.type === 'Disbursement')
     .sort((a, b) => new Date(a.date) - new Date(b.date));
   const furtherAdvances = allDisbursements.slice(1); // Skip the first disbursement (initial principal)
-  const totalFurtherAdvances = furtherAdvances.reduce((sum, tx) => sum + (tx.amount || 0), 0);
+  const totalFurtherAdvances = furtherAdvances.reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
 
   // Total principal = initial amount + further advances only (not the initial disbursement again)
   const totalPrincipal = loan.principal_amount + totalFurtherAdvances;
+
+  // Calculate total net disbursed (actual cash paid out) from all disbursements
+  // Uses tx.amount which is the net amount (after deductions)
+  const totalNetDisbursed = allDisbursements.reduce((sum, tx) => sum + (tx.amount || 0), 0);
 
   // Calculate totals from repayment schedule
   const schedulePrincipalPaid = schedule.reduce((sum, row) => sum + (row.principal_paid || 0), 0);
@@ -1037,10 +1076,10 @@ export default function LoanDetails() {
                       <span className="text-slate-500 text-xs">Start Date</span>
                       <p className="font-bold text-lg">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
                     </div>
-                    {loan.net_disbursed && (
+                    {totalNetDisbursed !== totalPrincipal && (
                       <div>
                         <span className="text-slate-500 text-xs">Net Disbursed</span>
-                        <p className="font-bold text-lg text-emerald-600">{formatCurrency(loan.net_disbursed)}</p>
+                        <p className="font-bold text-lg text-emerald-600">{formatCurrency(totalNetDisbursed)}</p>
                       </div>
                     )}
                     {product && (
@@ -1390,8 +1429,12 @@ export default function LoanDetails() {
                     id: t.id,
                     date: new Date(t.date),
                     description: index === 0 ? 'Initial Disbursement' : 'Additional Drawdown',
-                    amount: t.amount,
-                    notes: t.notes || (index === 0 ? 'Loan originated' : '')
+                    gross_amount: t.gross_amount ?? t.amount,  // Gross amount (or amount for legacy)
+                    deducted_fee: t.deducted_fee || 0,
+                    deducted_interest: t.deducted_interest || 0,
+                    amount: t.amount,  // Net amount (cash paid)
+                    notes: t.notes || (index === 0 ? 'Loan originated' : ''),
+                    hasDeductions: (t.deducted_fee || 0) > 0 || (t.deducted_interest || 0) > 0
                   }));
 
                   // Sort based on selection
@@ -1405,16 +1448,18 @@ export default function LoanDetails() {
                     }
                   });
 
-                  // Calculate running balance (in date order)
+                  // Calculate running balance (in date order) - use GROSS for principal tracking
                   const dateOrderedEntries = [...disbursementEntries].sort((a, b) => a.date - b.date);
                   let runningBalance = 0;
                   const balanceMap = {};
                   dateOrderedEntries.forEach(entry => {
-                    runningBalance += entry.amount;
+                    runningBalance += entry.gross_amount;  // Use gross for principal balance
                     balanceMap[entry.id] = runningBalance;
                   });
 
-                  const totalDisbursed = disbursementEntries.reduce((sum, e) => sum + e.amount, 0);
+                  const totalGross = disbursementEntries.reduce((sum, e) => sum + e.gross_amount, 0);
+                  const totalNet = disbursementEntries.reduce((sum, e) => sum + e.amount, 0);
+                  const totalDeductions = totalGross - totalNet;
 
                   // Toggle select all
                   const allSelected = disbursementEntries.length > 0 && disbursementEntries.every(e => selectedDisbursements.has(e.id));
@@ -1440,13 +1485,21 @@ export default function LoanDetails() {
 
                   return (
                     <>
-                      <div className="grid grid-cols-2 gap-3 mb-4 p-3 bg-slate-50 rounded-lg">
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 p-3 bg-slate-50 rounded-lg">
                         <div>
-                          <p className="text-[10px] text-slate-500 mb-0.5">Total Disbursed</p>
-                          <p className="text-sm font-bold text-emerald-600">{formatCurrency(totalDisbursed)}</p>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Gross Disbursed</p>
+                          <p className="text-sm font-bold text-slate-900">{formatCurrency(totalGross)}</p>
                         </div>
                         <div>
-                          <p className="text-[10px] text-slate-500 mb-0.5">Number of Disbursements</p>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Deductions</p>
+                          <p className="text-sm font-bold text-amber-600">{totalDeductions > 0 ? `-${formatCurrency(totalDeductions)}` : '-'}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Net Paid Out</p>
+                          <p className="text-sm font-bold text-emerald-600">{formatCurrency(totalNet)}</p>
+                        </div>
+                        <div>
+                          <p className="text-[10px] text-slate-500 mb-0.5">Count</p>
                           <p className="text-sm font-bold text-slate-900">{disbursementEntries.length}</p>
                         </div>
                       </div>
@@ -1470,9 +1523,10 @@ export default function LoanDetails() {
                                 </th>
                                 <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Date</th>
                                 <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Description</th>
-                                <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Notes</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-emerald-700">Amount</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Running Total</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Gross</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-amber-600">Deductions</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-emerald-700">Net</th>
+                                <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Principal</th>
                                 <th className="w-6 py-1 px-1">
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -1498,9 +1552,37 @@ export default function LoanDetails() {
                                     <Badge variant="default" className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
                                       {entry.description}
                                     </Badge>
+                                    {entry.notes && (
+                                      <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[150px]" title={entry.notes}>
+                                        {entry.notes}
+                                      </p>
+                                    )}
                                   </td>
-                                  <td className="py-1 px-2 text-xs text-slate-500">
-                                    {entry.notes || '-'}
+                                  <td className="py-1 px-2 text-xs text-slate-700 text-right font-medium">
+                                    {formatCurrency(entry.gross_amount)}
+                                  </td>
+                                  <td className="py-1 px-2 text-xs text-right">
+                                    {entry.hasDeductions ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <span className="text-amber-600 cursor-help">
+                                            -{formatCurrency(entry.deducted_fee + entry.deducted_interest)}
+                                          </span>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="left">
+                                          <div className="text-xs space-y-1">
+                                            {entry.deducted_fee > 0 && (
+                                              <p>Fee: {formatCurrency(entry.deducted_fee)}</p>
+                                            )}
+                                            {entry.deducted_interest > 0 && (
+                                              <p>Interest: {formatCurrency(entry.deducted_interest)}</p>
+                                            )}
+                                          </div>
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    ) : (
+                                      <span className="text-slate-300">-</span>
+                                    )}
                                   </td>
                                   <td className="py-1 px-2 text-xs text-emerald-600 text-right font-medium">
                                     {formatCurrency(entry.amount)}
@@ -1563,7 +1645,9 @@ export default function LoanDetails() {
                                             setEditDisbursementTarget(tx);
                                             setEditDisbursementValues({
                                               date: tx?.date || '',
-                                              amount: tx?.amount?.toString() || '',
+                                              gross_amount: (tx?.gross_amount ?? tx?.amount)?.toString() || '',
+                                              deducted_fee: (tx?.deducted_fee || 0).toString(),
+                                              deducted_interest: (tx?.deducted_interest || 0).toString(),
                                               notes: tx?.notes || ''
                                             });
                                             setEditDisbursementDialogOpen(true);
@@ -2292,22 +2376,80 @@ export default function LoanDetails() {
                       className="mt-1"
                     />
                   </div>
-                  <div>
-                    <Label htmlFor="edit-disb-amount" className="text-sm font-medium">Amount</Label>
-                    <Input
-                      id="edit-disb-amount"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={editDisbursementValues.amount || ''}
-                      onChange={(e) => setEditDisbursementValues(prev => ({
-                        ...prev,
-                        amount: e.target.value
-                      }))}
-                      className="mt-1"
-                      placeholder="0.00"
-                    />
+
+                  {/* Gross Amount and Net Amount (calculated) */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="edit-disb-gross" className="text-sm font-medium">Gross Amount *</Label>
+                      <Input
+                        id="edit-disb-gross"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editDisbursementValues.gross_amount || ''}
+                        onChange={(e) => setEditDisbursementValues(prev => ({
+                          ...prev,
+                          gross_amount: e.target.value
+                        }))}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Added to principal</p>
+                    </div>
+                    <div>
+                      <Label className="text-sm font-medium">Net Amount</Label>
+                      <Input
+                        type="text"
+                        value={formatCurrency(
+                          (parseFloat(editDisbursementValues.gross_amount) || 0) -
+                          (parseFloat(editDisbursementValues.deducted_fee) || 0) -
+                          (parseFloat(editDisbursementValues.deducted_interest) || 0)
+                        )}
+                        disabled
+                        className="mt-1 bg-slate-50"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Cash paid out</p>
+                    </div>
                   </div>
+
+                  {/* Deductions */}
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="edit-disb-fee" className="text-sm font-medium">Deducted Fee</Label>
+                      <Input
+                        id="edit-disb-fee"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editDisbursementValues.deducted_fee || ''}
+                        onChange={(e) => setEditDisbursementValues(prev => ({
+                          ...prev,
+                          deducted_fee: e.target.value
+                        }))}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Arrangement fee</p>
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-disb-interest" className="text-sm font-medium">Deducted Interest</Label>
+                      <Input
+                        id="edit-disb-interest"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editDisbursementValues.deducted_interest || ''}
+                        onChange={(e) => setEditDisbursementValues(prev => ({
+                          ...prev,
+                          deducted_interest: e.target.value
+                        }))}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                      <p className="text-xs text-slate-500 mt-1">Applied to schedule</p>
+                    </div>
+                  </div>
+
                   <div>
                     <Label htmlFor="edit-disb-notes" className="text-sm font-medium">Notes</Label>
                     <Input
@@ -2326,26 +2468,67 @@ export default function LoanDetails() {
 
                 {/* Change Summary */}
                 {(() => {
-                  const newAmount = parseFloat(editDisbursementValues.amount) || 0;
-                  const oldAmount = editDisbursementTarget.amount || 0;
-                  const amountDiff = newAmount - oldAmount;
+                  const newGross = parseFloat(editDisbursementValues.gross_amount) || 0;
+                  const newFee = parseFloat(editDisbursementValues.deducted_fee) || 0;
+                  const newInterest = parseFloat(editDisbursementValues.deducted_interest) || 0;
+                  const newNet = newGross - newFee - newInterest;
+
+                  const oldGross = editDisbursementTarget.gross_amount ?? editDisbursementTarget.amount ?? 0;
+                  const oldFee = editDisbursementTarget.deducted_fee ?? 0;
+                  const oldInterest = editDisbursementTarget.deducted_interest ?? 0;
+                  const oldNet = oldGross - oldFee - oldInterest;
+
+                  const grossChanged = Math.abs(newGross - oldGross) > 0.01;
+                  const feeChanged = Math.abs(newFee - oldFee) > 0.01;
+                  const interestChanged = Math.abs(newInterest - oldInterest) > 0.01;
                   const dateChanged = editDisbursementValues.date?.split('T')[0] !== editDisbursementTarget.date?.split('T')[0];
-                  const hasChanges = amountDiff !== 0 || dateChanged || editDisbursementValues.notes !== (editDisbursementTarget.notes || '');
+                  const notesChanged = editDisbursementValues.notes !== (editDisbursementTarget.notes || '');
+                  const hasChanges = grossChanged || feeChanged || interestChanged || dateChanged || notesChanged;
 
                   return hasChanges ? (
                     <div className="p-3 rounded-lg border bg-amber-50 border-amber-200">
-                      <div className="text-sm font-medium text-amber-700 mb-1">Changes:</div>
-                      {amountDiff !== 0 && (
-                        <div className="flex justify-between items-center text-sm">
-                          <span className="text-amber-600">Amount change:</span>
-                          <span className={`font-medium ${amountDiff > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                            {amountDiff > 0 ? '+' : ''}{formatCurrency(amountDiff)}
-                          </span>
-                        </div>
-                      )}
-                      {dateChanged && (
-                        <div className="text-sm text-amber-600">Date will be updated</div>
-                      )}
+                      <div className="text-sm font-medium text-amber-700 mb-2">Changes:</div>
+                      <div className="space-y-1 text-sm">
+                        {grossChanged && (
+                          <div className="flex justify-between">
+                            <span className="text-amber-600">Gross amount:</span>
+                            <span>
+                              <span className="text-slate-400 line-through mr-2">{formatCurrency(oldGross)}</span>
+                              <span className="text-emerald-600 font-medium">{formatCurrency(newGross)}</span>
+                            </span>
+                          </div>
+                        )}
+                        {feeChanged && (
+                          <div className="flex justify-between">
+                            <span className="text-amber-600">Deducted fee:</span>
+                            <span>
+                              <span className="text-slate-400 line-through mr-2">{formatCurrency(oldFee)}</span>
+                              <span className="text-emerald-600 font-medium">{formatCurrency(newFee)}</span>
+                            </span>
+                          </div>
+                        )}
+                        {interestChanged && (
+                          <div className="flex justify-between">
+                            <span className="text-amber-600">Deducted interest:</span>
+                            <span>
+                              <span className="text-slate-400 line-through mr-2">{formatCurrency(oldInterest)}</span>
+                              <span className="text-emerald-600 font-medium">{formatCurrency(newInterest)}</span>
+                            </span>
+                          </div>
+                        )}
+                        {(grossChanged || feeChanged || interestChanged) && (
+                          <div className="flex justify-between pt-1 border-t border-amber-200 mt-1">
+                            <span className="text-amber-700 font-medium">Net disbursement:</span>
+                            <span>
+                              <span className="text-slate-400 line-through mr-2">{formatCurrency(oldNet)}</span>
+                              <span className="text-emerald-600 font-medium">{formatCurrency(newNet)}</span>
+                            </span>
+                          </div>
+                        )}
+                        {dateChanged && (
+                          <div className="text-amber-600">Date will be updated</div>
+                        )}
+                      </div>
                     </div>
                   ) : (
                     <div className="p-3 rounded-lg border bg-slate-50 border-slate-200">
@@ -2362,40 +2545,111 @@ export default function LoanDetails() {
                 onClick={async () => {
                   if (!editDisbursementTarget) return;
 
-                  const newAmount = parseFloat(editDisbursementValues.amount) || 0;
-                  if (newAmount <= 0) {
-                    toast.error('Amount must be greater than 0');
+                  const newGross = parseFloat(editDisbursementValues.gross_amount) || 0;
+                  const newFee = parseFloat(editDisbursementValues.deducted_fee) || 0;
+                  const newInterest = parseFloat(editDisbursementValues.deducted_interest) || 0;
+                  const newNet = newGross - newFee - newInterest;
+
+                  if (newGross <= 0) {
+                    toast.error('Gross amount must be greater than 0');
+                    return;
+                  }
+                  if (newNet < 0) {
+                    toast.error('Deductions cannot exceed gross amount');
                     return;
                   }
 
                   setIsSavingDisbursement(true);
 
                   try {
-                    const oldAmount = editDisbursementTarget.amount || 0;
+                    const oldGross = editDisbursementTarget.gross_amount ?? editDisbursementTarget.amount ?? 0;
+                    const oldFee = editDisbursementTarget.deducted_fee ?? 0;
+                    const oldInterest = editDisbursementTarget.deducted_interest ?? 0;
+                    const oldNet = oldGross - oldFee - oldInterest;
                     const oldDate = editDisbursementTarget.date;
                     const oldNotes = editDisbursementTarget.notes || '';
 
-                    // Update the transaction
+                    // Build notes with deduction info
+                    let finalNotes = editDisbursementValues.notes || '';
+                    if (newInterest > 0 && !finalNotes.includes('advance interest')) {
+                      const autoNote = `Includes ${formatCurrency(newInterest)} advance interest deducted`;
+                      finalNotes = finalNotes ? `${finalNotes}. ${autoNote}` : autoNote;
+                    }
+
+                    // Update the disbursement transaction
                     await api.entities.Transaction.update(editDisbursementTarget.id, {
                       date: editDisbursementValues.date,
-                      amount: newAmount,
-                      principal_applied: newAmount, // Disbursements apply fully to principal
-                      notes: editDisbursementValues.notes || null
+                      gross_amount: newGross,
+                      deducted_fee: newFee,
+                      deducted_interest: newInterest,
+                      amount: newNet,  // Net amount (cash paid out)
+                      principal_applied: newGross,  // Full gross amount added to principal
+                      interest_applied: 0,  // Interest is handled by linked repayment
+                      fees_applied: newFee,
+                      notes: finalNotes || null
                     });
+
+                    // Handle linked repayment for deducted interest
+                    // Find any existing linked repayment for this disbursement
+                    const allTx = await api.entities.Transaction.filter(
+                      { loan_id: loan.id, is_deleted: false },
+                      'date'
+                    );
+                    const existingLinkedRepayment = allTx.find(
+                      tx => tx.linked_disbursement_id === editDisbursementTarget.id
+                    );
+
+                    if (newInterest > 0) {
+                      // Need a linked repayment
+                      if (existingLinkedRepayment) {
+                        // Update existing linked repayment
+                        await api.entities.Transaction.update(existingLinkedRepayment.id, {
+                          date: editDisbursementValues.date,
+                          amount: newInterest,
+                          interest_applied: newInterest,
+                          notes: 'Advance interest deducted from disbursement'
+                        });
+                      } else {
+                        // Create new linked repayment
+                        await api.entities.Transaction.create({
+                          loan_id: loan.id,
+                          borrower_id: loan.borrower_id,
+                          date: editDisbursementValues.date,
+                          type: 'Repayment',
+                          amount: newInterest,
+                          principal_applied: 0,
+                          interest_applied: newInterest,
+                          fees_applied: 0,
+                          linked_disbursement_id: editDisbursementTarget.id,
+                          notes: 'Advance interest deducted from disbursement'
+                        });
+                      }
+                    } else if (existingLinkedRepayment) {
+                      // No deducted interest but linked repayment exists - delete it
+                      await api.entities.Transaction.update(existingLinkedRepayment.id, {
+                        is_deleted: true
+                      });
+                    }
 
                     // Log the change with full details
                     await logTransactionEvent(
                       AuditAction.TRANSACTION_UPDATE,
-                      { id: editDisbursementTarget.id, type: 'Disbursement', amount: newAmount, loan_id: loan.id },
+                      { id: editDisbursementTarget.id, type: 'Disbursement', amount: newNet, loan_id: loan.id },
                       { loan_number: loan.loan_number },
                       {
                         action: 'edit_disbursement',
-                        previous_amount: oldAmount,
-                        new_amount: newAmount,
+                        previous_gross: oldGross,
+                        new_gross: newGross,
+                        previous_deducted_fee: oldFee,
+                        new_deducted_fee: newFee,
+                        previous_deducted_interest: oldInterest,
+                        new_deducted_interest: newInterest,
+                        previous_net: oldNet,
+                        new_net: newNet,
                         previous_date: oldDate,
                         new_date: editDisbursementValues.date,
                         previous_notes: oldNotes,
-                        new_notes: editDisbursementValues.notes || ''
+                        new_notes: finalNotes || ''
                       }
                     );
 
@@ -2403,6 +2657,7 @@ export default function LoanDetails() {
                     await Promise.all([
                       queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
                       queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
+                      queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
                       queryClient.invalidateQueries({ queryKey: ['loans'] })
                     ]);
 
@@ -2416,7 +2671,7 @@ export default function LoanDetails() {
                     setIsSavingDisbursement(false);
                   }
                 }}
-                disabled={isSavingDisbursement || !editDisbursementValues.amount || parseFloat(editDisbursementValues.amount) <= 0}
+                disabled={isSavingDisbursement || !editDisbursementValues.gross_amount || parseFloat(editDisbursementValues.gross_amount) <= 0}
               >
                 {isSavingDisbursement ? (
                   <>
