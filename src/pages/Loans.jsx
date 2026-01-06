@@ -7,18 +7,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Upload, Link2 } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Upload, Link2, Shield } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
-import { formatCurrency } from '@/components/loan/LoanCalculator';
+import { formatCurrency, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
 import EmptyState from '@/components/ui/EmptyState';
 import { getOrgJSON, setOrgJSON } from '@/lib/orgStorage';
 
 // Product name abbreviations
 const getProductAbbreviation = (productName) => {
   if (!productName) return '-';
-  // Common abbreviations
-  const abbreviations = {
+
+  const lower = productName.toLowerCase();
+
+  // Exact matches (highest priority) - check these first
+  const exactMatches = {
+    'fixed charge': 'FC',
+    'fixed charge facility': 'FC',
+    'irregular income': 'IRR',
+    'standard': 'STD',
     'bridging': 'BRG',
     'bridge': 'BRG',
     'development': 'DEV',
@@ -26,35 +33,65 @@ const getProductAbbreviation = (productName) => {
     'residential': 'RES',
     'buy to let': 'BTL',
     'buy-to-let': 'BTL',
-    'refurbishment': 'REF',
-    'refurb': 'REF',
-    'light refurbishment': 'LRF',
-    'heavy refurbishment': 'HRF',
-    'ground up': 'GUD',
     'mezzanine': 'MEZ',
-    'senior': 'SNR',
-    'junior': 'JNR',
-    'second charge': '2ND',
-    'first charge': '1ST',
-    'standard': 'STD',
-    'interest only': 'IO',
-    'rolled up': 'RU',
-    'rolled-up': 'RU',
-    'serviced': 'SVC',
-    'retained': 'RET',
   };
 
-  const lower = productName.toLowerCase();
+  if (exactMatches[lower]) return exactMatches[lower];
 
-  // Check for exact matches first
-  if (abbreviations[lower]) return abbreviations[lower];
+  // Multi-word patterns (check longer patterns first to avoid partial matches)
+  // Order matters: longer/more specific patterns should come first
+  const patterns = [
+    ['fixed charge', 'FC'],
+    ['irregular income', 'IRR'],
+    ['light refurbishment', 'LRF'],
+    ['heavy refurbishment', 'HRF'],
+    ['second charge', '2ND'],
+    ['first charge', '1ST'],
+    ['buy to let', 'BTL'],
+    ['buy-to-let', 'BTL'],
+    ['ground up', 'GUD'],
+    ['rolled up', 'RU'],
+    ['rolled-up', 'RU'],
+    ['interest only', 'IO'],
+    ['bridging', 'BRG'],
+    ['bridge', 'BRG'],
+    ['development', 'DEV'],
+    ['commercial', 'COM'],
+    ['residential', 'RES'],
+    ['refurbishment', 'REF'],
+    ['refurb', 'REF'],
+    ['mezzanine', 'MEZ'],
+    ['senior', 'SNR'],
+    ['junior', 'JNR'],
+    ['serviced', 'SVC'],
+    ['retained', 'RET'],
+    ['standard', 'STD'],
+  ];
 
-  // Build abbreviation from matching keywords
+  // Build abbreviation from matching patterns (longer patterns checked first)
   let abbr = '';
-  for (const [key, val] of Object.entries(abbreviations)) {
-    if (lower.includes(key)) {
-      abbr += val;
+  let usedPatterns = new Set();
+
+  for (const [pattern, code] of patterns) {
+    if (lower.includes(pattern) && !usedPatterns.has(code)) {
+      abbr += code;
+      usedPatterns.add(code);
       if (abbr.length >= 6) break; // Max 6 chars
+    }
+  }
+
+  // Check for parenthetical qualifiers like "(1st Month)" and add a suffix
+  const parenMatch = productName.match(/\(([^)]+)\)/);
+  if (parenMatch) {
+    const qualifier = parenMatch[1].toLowerCase();
+    // Extract a short suffix from the qualifier
+    if (qualifier.includes('1st')) abbr += '¹';
+    else if (qualifier.includes('2nd')) abbr += '²';
+    else if (qualifier.includes('3rd')) abbr += '³';
+    else if (qualifier.match(/\d/)) {
+      // Get first number found
+      const num = qualifier.match(/\d+/)[0];
+      abbr += num.length === 1 ? num : num.slice(0, 1);
     }
   }
 
@@ -89,17 +126,17 @@ export default function Loans() {
   });
 
   // Column configuration - order and widths
-  const defaultColumnOrder = ['loan_number', 'description', 'date', 'borrower', 'product', 'principal', 'arr_fee', 'exit_fee', 'outstanding', 'last_payment', 'next_due', 'status'];
+  const defaultColumnOrder = ['loan_number', 'description', 'date', 'borrower', 'product', 'principal_bal', 'interest_os', 'arr_fee', 'exit_fee', 'last_payment', 'next_due', 'status'];
   const defaultColumnWidths = {
     loan_number: 80,
     description: 150,
     date: 75,
     borrower: 140,
     product: 55,
-    principal: 90,
+    principal_bal: 95,
+    interest_os: 85,
     arr_fee: 75,
     exit_fee: 75,
-    outstanding: 90,
     last_payment: 80,
     next_due: 80,
     status: 70,
@@ -107,7 +144,33 @@ export default function Loans() {
 
   const [columnOrder, setColumnOrder] = useState(() => {
     const saved = getOrgJSON('loans_column_order', null);
-    return saved || defaultColumnOrder;
+    if (!saved) return defaultColumnOrder;
+
+    // Migrate saved columns: remove old columns, add new ones
+    // Map old column names to new ones
+    const columnMigrations = {
+      'principal': 'principal_bal',
+      'outstanding': 'interest_os'
+    };
+
+    let migrated = saved.map(col => columnMigrations[col] || col);
+
+    // Remove columns that no longer exist
+    const validColumns = new Set(defaultColumnOrder);
+    migrated = migrated.filter(col => validColumns.has(col));
+
+    // Add any new columns that aren't in saved (insert after 'product' or at end)
+    const missingColumns = defaultColumnOrder.filter(col => !migrated.includes(col));
+    if (missingColumns.length > 0) {
+      const productIndex = migrated.indexOf('product');
+      if (productIndex >= 0) {
+        migrated.splice(productIndex + 1, 0, ...missingColumns);
+      } else {
+        migrated.push(...missingColumns);
+      }
+    }
+
+    return migrated;
   });
   const [columnWidths, setColumnWidths] = useState(() => {
     const saved = getOrgJSON('loans_column_widths', null);
@@ -178,13 +241,14 @@ export default function Loans() {
 
   // Calculate further advances per loan (disbursements beyond the first one)
   // The first disbursement represents the initial principal, so we skip it
+  // Uses gross_amount for accurate principal tracking (falls back to amount for legacy data)
   const getDisbursementsForLoan = (loanId) => {
     const disbursements = allTransactions
       .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Disbursement')
       .sort((a, b) => new Date(a.date) - new Date(b.date));
     // Skip the first disbursement (initial principal) and sum only further advances
     const furtherAdvances = disbursements.slice(1);
-    return furtherAdvances.reduce((sum, t) => sum + (t.amount || 0), 0);
+    return furtherAdvances.reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
   };
 
   const getActualPaymentsForLoan = (loanId) => {
@@ -299,8 +363,14 @@ export default function Loans() {
           bVal = b.product_name || '';
           break;
         case 'principal_amount':
-          aVal = (a.principal_amount || 0) + getDisbursementsForLoan(a.id);
-          bVal = (b.principal_amount || 0) + getDisbursementsForLoan(b.id);
+        case 'principal_bal':
+          // Sort by principal remaining (using live calculation)
+          const aPrinTransactions = allTransactions.filter(t => t.loan_id === a.id);
+          const bPrinTransactions = allTransactions.filter(t => t.loan_id === b.id);
+          const aPrinCalc = calculateAccruedInterestWithTransactions(a, aPrinTransactions);
+          const bPrinCalc = calculateAccruedInterestWithTransactions(b, bPrinTransactions);
+          aVal = aPrinCalc.principalRemaining;
+          bVal = bPrinCalc.principalRemaining;
           break;
         case 'start_date':
           aVal = new Date(a.start_date);
@@ -321,6 +391,37 @@ export default function Loans() {
         case 'status':
           aVal = a.status || '';
           bVal = b.status || '';
+          break;
+        case 'interest_os':
+          const aIntTransactions = allTransactions.filter(t => t.loan_id === a.id);
+          const bIntTransactions = allTransactions.filter(t => t.loan_id === b.id);
+
+          // For Fixed Charge loans, use chargesOutstanding; for others use interestRemaining
+          if (a.product_type === 'Fixed Charge') {
+            const aTotalCharges = (a.monthly_charge || 0) * (a.duration || 0);
+            const aChargesPaid = aIntTransactions
+              .filter(t => !t.is_deleted && t.type === 'Repayment')
+              .reduce((sum, t) => sum + (t.amount || 0), 0);
+            aVal = Math.max(0, aTotalCharges - aChargesPaid);
+          } else if (a.product_type === 'Irregular Income') {
+            aVal = -Infinity; // Sort to end
+          } else {
+            const aInterestCalc = calculateAccruedInterestWithTransactions(a, aIntTransactions);
+            aVal = aInterestCalc.interestRemaining;
+          }
+
+          if (b.product_type === 'Fixed Charge') {
+            const bTotalCharges = (b.monthly_charge || 0) * (b.duration || 0);
+            const bChargesPaid = bIntTransactions
+              .filter(t => !t.is_deleted && t.type === 'Repayment')
+              .reduce((sum, t) => sum + (t.amount || 0), 0);
+            bVal = Math.max(0, bTotalCharges - bChargesPaid);
+          } else if (b.product_type === 'Irregular Income') {
+            bVal = -Infinity; // Sort to end
+          } else {
+            const bInterestCalc = calculateAccruedInterestWithTransactions(b, bIntTransactions);
+            bVal = bInterestCalc.interestRemaining;
+          }
           break;
         case 'created_date':
         default:
@@ -518,15 +619,88 @@ export default function Loans() {
         </TooltipProvider>
       )
     },
-    principal: {
-      header: 'Principal',
-      sortKey: 'principal_amount',
+    principal_bal: {
+      header: 'Prin Bal',
+      sortKey: 'principal_bal',
       align: 'right',
-      render: (loan, { totalPrincipal }) => (
-        <span className="font-mono text-sm font-semibold text-slate-700">
-          {formatCurrency(totalPrincipal)}
-        </span>
-      )
+      render: (loan, { principalRemaining }) => {
+        const isFixedCharge = loan.product_type === 'Fixed Charge';
+        const isIrregularIncome = loan.product_type === 'Irregular Income';
+        if (isFixedCharge || isIrregularIncome) {
+          return (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex items-center justify-end">
+                    <Shield className="w-4 h-4 text-purple-500" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{isFixedCharge ? 'Fixed Charge Facility' : 'Irregular Income'}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          );
+        }
+        return (
+          <span className={`font-mono text-sm font-semibold ${
+            principalRemaining <= 0 ? 'text-emerald-600' : 'text-slate-700'
+          }`}>
+            {principalRemaining <= 0 ? '£0' : formatCurrency(principalRemaining)}
+          </span>
+        );
+      }
+    },
+    interest_os: {
+      header: 'Int O/S',
+      sortKey: 'interest_os',
+      align: 'right',
+      render: (loan, { interestRemaining, chargesOutstanding }) => {
+        const isFixedCharge = loan.product_type === 'Fixed Charge';
+        const isIrregularIncome = loan.product_type === 'Irregular Income';
+        if (isFixedCharge) {
+          // Show charges outstanding for fixed charge facilities
+          return (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className={`font-mono text-sm font-semibold ${
+                    chargesOutstanding > 0 ? 'text-red-600' : 'text-emerald-600'
+                  }`}>
+                    {chargesOutstanding > 0 ? formatCurrency(chargesOutstanding) : '£0'}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>{chargesOutstanding > 0 ? 'Charges Outstanding' : 'All Charges Paid'}</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          );
+        }
+        if (isIrregularIncome) {
+          return (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="flex items-center justify-end">
+                    <Shield className="w-4 h-4 text-purple-500" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Irregular Income</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          );
+        }
+        return (
+          <span className={`font-mono text-sm font-semibold ${
+            interestRemaining < 0 ? 'text-emerald-600' : interestRemaining > 0 ? 'text-red-600' : 'text-slate-400'
+          }`}>
+            {interestRemaining === 0 ? '-' : interestRemaining < 0 ? `+${formatCurrency(Math.abs(interestRemaining))}` : formatCurrency(interestRemaining)}
+          </span>
+        );
+      }
     },
     arr_fee: {
       header: 'Arr Fee',
@@ -545,18 +719,6 @@ export default function Loans() {
       render: (loan) => (
         <span className="font-mono text-sm text-slate-600">
           {loan.exit_fee > 0 ? formatCurrency(loan.exit_fee) : '-'}
-        </span>
-      )
-    },
-    outstanding: {
-      header: 'Outstanding',
-      sortKey: null,
-      align: 'right',
-      render: (loan, { totalOutstanding }) => (
-        <span className={`font-mono text-sm font-semibold ${
-          totalOutstanding <= 0 ? 'text-emerald-600' : 'text-red-600'
-        } ${loan.status === 'Closed' && totalOutstanding > 0 ? 'line-through opacity-60' : ''}`}>
-          {totalOutstanding <= 0 ? '£0' : formatCurrency(totalOutstanding)}
         </span>
       )
     },
@@ -809,18 +971,32 @@ export default function Loans() {
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {sortedLoans.map((loan) => {
+                        const loanTransactions = allTransactions.filter(t => t.loan_id === loan.id);
                         const loanDisbursements = getDisbursementsForLoan(loan.id);
-                        const actualPayments = getActualPaymentsForLoan(loan.id);
                         const totalPrincipal = loan.principal_amount + loanDisbursements;
-                        const principalRemaining = totalPrincipal - actualPayments.principalPaid;
-                        const interestRemaining = (loan.total_interest || 0) - actualPayments.interestPaid;
-                        const totalOutstanding = principalRemaining + interestRemaining;
+
+                        // Use live interest calculation for accurate interest outstanding
+                        const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, loanTransactions);
+                        const principalRemaining = liveInterestCalc.principalRemaining;
+                        const interestRemaining = liveInterestCalc.interestRemaining;
+
+                        // Calculate charges outstanding for Fixed Charge facilities
+                        const isFixedCharge = loan.product_type === 'Fixed Charge';
+                        let chargesOutstanding = 0;
+                        if (isFixedCharge) {
+                          const totalCharges = (loan.monthly_charge || 0) * (loan.duration || 0);
+                          const chargesPaid = loanTransactions
+                            .filter(t => !t.is_deleted && t.type === 'Repayment')
+                            .reduce((sum, t) => sum + (t.amount || 0), 0);
+                          chargesOutstanding = Math.max(0, totalCharges - chargesPaid);
+                        }
+
                         const lastPayment = getLastPaymentForLoan(loan.id);
                         const nextDue = getNextDueForLoan(loan.id);
                         const isOverdue = nextDue && new Date(nextDue.due_date) < new Date();
                         const productAbbr = getProductAbbreviation(loan.product_name);
 
-                        const cellContext = { columnWidths, totalPrincipal, totalOutstanding, lastPayment, nextDue, isOverdue, productAbbr };
+                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, nextDue, isOverdue, productAbbr };
 
                         return (
                           <tr
