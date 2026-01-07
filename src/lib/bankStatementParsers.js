@@ -8,15 +8,39 @@
 import { parse, format } from 'date-fns';
 
 /**
- * Parse a date string in DD/MM/YYYY format
+ * Parse a date string in various formats (DD/MM/YYYY, YYYY-MM-DD)
+ * Returns normalized YYYY-MM-DD format
  */
 function parseUKDate(dateStr) {
   if (!dateStr) return null;
+  const trimmed = dateStr.trim();
+
   try {
-    // Handle DD/MM/YYYY format
-    const parsed = parse(dateStr.trim(), 'dd/MM/yyyy', new Date());
-    if (isNaN(parsed.getTime())) return null;
-    return format(parsed, 'yyyy-MM-dd');
+    // Try YYYY-MM-DD format first (ISO format)
+    if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+      const parsed = parse(trimmed, 'yyyy-MM-dd', new Date());
+      if (!isNaN(parsed.getTime())) {
+        return format(parsed, 'yyyy-MM-dd');
+      }
+    }
+
+    // Try DD/MM/YYYY format (UK format)
+    if (/^\d{1,2}\/\d{1,2}\/\d{4}$/.test(trimmed)) {
+      const parsed = parse(trimmed, 'dd/MM/yyyy', new Date());
+      if (!isNaN(parsed.getTime())) {
+        return format(parsed, 'yyyy-MM-dd');
+      }
+    }
+
+    // Try DD-MM-YYYY format
+    if (/^\d{1,2}-\d{1,2}-\d{4}$/.test(trimmed)) {
+      const parsed = parse(trimmed, 'dd-MM-yyyy', new Date());
+      if (!isNaN(parsed.getTime())) {
+        return format(parsed, 'yyyy-MM-dd');
+      }
+    }
+
+    return null;
   } catch {
     return null;
   }
@@ -25,12 +49,42 @@ function parseUKDate(dateStr) {
 /**
  * Generate a unique reference from row data
  * Used when bank doesn't provide a transaction ID
+ * Normalizes inputs to ensure consistent references across imports
+ *
+ * IMPORTANT: Format must match historical data for duplicate detection:
+ * - Date: DDMMYYYY (no separators)
+ * - Amount: Integer (no decimals) for whole numbers, otherwise with decimals but no dot
+ * - Description: lowercase, no spaces/special chars
  */
 function generateReference(date, amount, description) {
-  const dateStr = date || '';
-  const amountStr = String(amount || 0);
-  const descStr = (description || '').slice(0, 50);
-  // Create a simple hash-like reference
+  // Normalize date to DDMMYYYY format (backward compatible with existing data)
+  let dateStr = '';
+  if (date) {
+    const parsed = parseUKDate(date); // Returns YYYY-MM-DD
+    if (parsed) {
+      // Convert YYYY-MM-DD to DDMMYYYY
+      const [year, month, day] = parsed.split('-');
+      dateStr = `${day}${month}${year}`;
+    } else {
+      // Fallback: remove all non-alphanumeric chars from raw date
+      dateStr = date.replace(/[^0-9]/g, '');
+    }
+  }
+
+  // Normalize amount - remove decimal point only (no zero padding)
+  // e.g., 4050 -> "4050", 96.6 -> "966", 2065.65 -> "206565", -36388.9 -> "-363889"
+  // This matches the historical format where the decimal was simply removed
+  const numAmount = typeof amount === 'number' ? amount : parseFloat(amount || 0);
+  const amountStr = String(numAmount).replace('.', '');
+
+  // Normalize description (lowercase, remove excess whitespace)
+  const descStr = (description || '')
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 50);
+
+  // Create reference - remove all non-alphanumeric except dash and minus signs
   return `${dateStr}-${amountStr}-${descStr}`.replace(/[^a-zA-Z0-9-]/g, '').toLowerCase();
 }
 

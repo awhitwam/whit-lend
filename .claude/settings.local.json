@@ -27,7 +27,8 @@
       "Bash(ren:*)",
       "Bash(ren \"supabase\\\\migrations\\\\043_borrower_keywords.sql\" \"047_borrower_keywords.sql\")",
       "Bash(timeout 60 npx vite build:*)",
-      "Bash(node:*)"
+      "Bash(node:*)",
+      "Bash(git checkout:*)"
     ]
   }
 }

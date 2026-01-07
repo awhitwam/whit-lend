@@ -67,14 +67,14 @@ export default function Dashboard() {
   });
 
   const { data: schedules = [], isLoading: schedulesLoading } = useQuery({
-    queryKey: ['schedules', currentOrganization?.id],
-    queryFn: () => api.entities.RepaymentSchedule.list('-due_date', 1000),
+    queryKey: ['all-schedules', currentOrganization?.id],
+    queryFn: () => api.entities.RepaymentSchedule.list(),
     enabled: !!currentOrganization
   });
 
   const { data: transactions = [] } = useQuery({
-    queryKey: ['transactions', currentOrganization?.id],
-    queryFn: () => api.entities.Transaction.list('-date', 500),
+    queryKey: ['all-transactions', currentOrganization?.id],
+    queryFn: () => api.entities.Transaction.list(),
     enabled: !!currentOrganization
   });
 
@@ -142,10 +142,26 @@ export default function Dashboard() {
         isFixedCharge: true
       };
     } else if (loan.product_type === 'Irregular Income') {
-      // Irregular Income: no interest calculation
+      // Irregular Income: no interest calculation, but calculate live principal from transactions
+      const principalPaid = loanTransactions
+        .filter(t => !t.is_deleted && t.type === 'Repayment')
+        .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
+      // Get further advances (disbursements after start date)
+      const startDate = new Date(loan.start_date);
+      startDate.setHours(0, 0, 0, 0);
+      const furtherAdvances = loanTransactions
+        .filter(t => !t.is_deleted && t.type === 'Disbursement')
+        .filter(t => {
+          const txDate = new Date(t.date);
+          txDate.setHours(0, 0, 0, 0);
+          return txDate > startDate;
+        })
+        .reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
+      const principalRemaining = (loan.principal_amount || 0) + furtherAdvances - principalPaid;
+
       return {
         loan,
-        principalRemaining: loan.principal_amount || 0,
+        principalRemaining: Math.max(0, principalRemaining),
         interestRemaining: 0,
         interestAccrued: 0,
         interestPaid: 0,
@@ -153,9 +169,10 @@ export default function Dashboard() {
       };
     }
 
-    // Standard loans: use cached principal_remaining if available, otherwise calculate
+    // Standard loans: calculate live values
     // Pass schedule to use schedule-based interest (handles rate changes correctly)
     const calc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule);
+    // Use cached principal_remaining from database if available (matches Loans page behavior)
     const principalRemaining = loan.principal_remaining !== null && loan.principal_remaining !== undefined
       ? loan.principal_remaining
       : calc.principalRemaining;

@@ -88,7 +88,7 @@ function amountsMatch(amount1, amount2, tolerancePercent = 1) {
  * Check if a matchMode indicates matching to an existing transaction (vs creating new)
  */
 function isMatchType(matchMode) {
-  return matchMode === 'match' || matchMode === 'match_group' || matchMode === 'grouped_disbursement';
+  return matchMode === 'match' || matchMode === 'match_group' || matchMode === 'grouped_disbursement' || matchMode === 'grouped_investor';
 }
 
 /**
@@ -1385,6 +1385,90 @@ export default function BankReconciliation() {
         }
       }
 
+      // 2e. GROUPED INVESTOR MATCH: Multiple bank entries → single investor transaction
+      // This handles cases where an investor deposit is received in multiple tranches
+      if (bestScore < 0.9) {
+        // Find all unreconciled bank entries within 3 days of this entry (same direction)
+        const nearbyEntries = sortedEntries.filter(other => {
+          // Must be same direction (both credits or both debits)
+          if ((other.amount > 0) !== isCredit) return false;
+          if (other.id !== entry.id && claimedTxIds.has(other.id)) return false;
+          return datesWithinDays(entry.statement_date, other.statement_date, 3);
+        });
+
+        // For each unreconciled investor transaction, check if subset of bank entries sums to it
+        for (const invTx of investorTransactions) {
+          // Check direction matches: credits → capital_in, debits → capital_out
+          const txIsCredit = invTx.type === 'capital_in';
+          if (txIsCredit !== isCredit) continue;
+
+          if (reconciledTxIds.has(invTx.id) || claimedTxIds.has(invTx.id)) continue;
+
+          const txAmount = Math.abs(invTx.amount);
+
+          // Skip if single entry already matches (handled earlier)
+          if (amountsMatch(entryAmount, txAmount, 1)) continue;
+
+          // Skip if this entry is larger than the transaction
+          if (entryAmount > txAmount * 1.01) continue;
+
+          // Find subset of bank entries that sum to transaction (must include current entry)
+          const matchingSubset = findSubsetSum(nearbyEntries, txAmount, entry.id);
+
+          if (matchingSubset && matchingSubset.length >= 2) {
+            const investor = investors.find(i => i.id === invTx.investor_id);
+
+            // Validate: bank entries must be within 14 days of the investor transaction
+            const maxDaysFromTransaction = 14;
+            const allEntriesNearTransaction = matchingSubset.every(e =>
+              datesWithinDays(e.statement_date, invTx.date, maxDaysFromTransaction)
+            );
+            if (!allEntriesNearTransaction) continue;
+
+            // Validate: entries should be related (similar descriptions or investor name appears)
+            const entriesAreRelated = groupHasRelatedDescriptions(matchingSubset);
+            const investorName = investor?.business_name || investor?.name || '';
+            const hasInvestorName = investorName && matchingSubset.some(e =>
+              descriptionContainsName(e.description, investorName, null) > 0.5
+            );
+            if (!entriesAreRelated && !hasInvestorName) continue;
+
+            const allSameDay = matchingSubset.every(e =>
+              datesWithinDays(e.statement_date, entry.statement_date, 0)
+            );
+            const allNearTransaction = matchingSubset.every(e =>
+              datesWithinDays(e.statement_date, invTx.date, 3)
+            );
+
+            let score;
+            if (allSameDay && allNearTransaction) {
+              score = 0.92;
+            } else if (allSameDay) {
+              score = 0.75;
+            } else if (allNearTransaction) {
+              score = 0.80;
+            } else {
+              score = 0.60;
+            }
+
+            if (score > bestScore) {
+              bestScore = score;
+              const investorDisplayName = investor?.business_name || investor?.name || 'Unknown';
+              bestMatch = {
+                type: isCredit ? 'investor_credit' : 'investor_withdrawal',
+                matchMode: 'grouped_investor',
+                existingTransaction: invTx,
+                groupedEntries: matchingSubset,
+                investor,
+                confidence: score,
+                reason: `Split deposit: ${matchingSubset.length} payments → ${investorDisplayName} (${formatCurrency(txAmount)})`
+              };
+              break; // Stop at first match
+            }
+          }
+        }
+      }
+
       // 3. Match against existing UNRECONCILED expenses by date/amount (debits only)
       if (!isCredit) {
         for (const exp of expenses) {
@@ -1633,6 +1717,17 @@ export default function BankReconciliation() {
             primaryEntryId,
             suggestion,
             groupType: 'disbursement'
+          });
+        }
+      }
+      // Check grouped_investor (multiple bank entries → single investor transaction)
+      if (suggestion.matchMode === 'grouped_investor' && suggestion.groupedEntries) {
+        for (const groupedEntry of suggestion.groupedEntries) {
+          // Mark all entries in the group (including the primary)
+          grouped.set(groupedEntry.id, {
+            primaryEntryId,
+            suggestion,
+            groupType: 'investor'
           });
         }
       }
@@ -2555,6 +2650,67 @@ export default function BankReconciliation() {
         queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
         queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
         queryClient.invalidateQueries({ queryKey: ['transactions'] });
+
+        // Clean up dismissed state for all reconciled entries
+        setDismissedSuggestions(prev => {
+          const next = new Set(prev);
+          for (const bankEntry of groupedEntries) {
+            next.delete(bankEntry.id);
+          }
+          return next;
+        });
+
+        setSelectedEntry(null);
+        setReviewingSuggestion(null);
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+      } finally {
+        setIsReconciling(false);
+      }
+      return;
+    }
+
+    // Handle grouped investor match (multiple bank entries → single investor transaction)
+    if (reviewingSuggestion?.matchMode === 'grouped_investor' && reviewingSuggestion.existingTransaction) {
+      setIsReconciling(true);
+      try {
+        const invTx = reviewingSuggestion.existingTransaction;
+        const groupedEntries = reviewingSuggestion.groupedEntries;
+        const recType = reviewingSuggestion.type; // 'investor_credit' or 'investor_withdrawal'
+
+        // Create reconciliation entry for each bank entry, linking to same investor transaction
+        for (const bankEntry of groupedEntries) {
+          await api.entities.ReconciliationEntry.create({
+            bank_statement_id: bankEntry.id,
+            loan_transaction_id: null,
+            investor_transaction_id: invTx.id,
+            expense_id: null,
+            amount: Math.abs(bankEntry.amount),
+            reconciliation_type: recType,
+            notes: `Grouped investor: ${groupedEntries.length} payments`,
+            was_created: false
+          });
+
+          // Mark each bank statement as reconciled
+          await api.entities.BankStatement.update(bankEntry.id, {
+            is_reconciled: true,
+            reconciled_at: new Date().toISOString()
+          });
+        }
+
+        // Log the grouped investor reconciliation
+        logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
+          bank_statement_id: selectedEntry.id,
+          description: selectedEntry.description,
+          amount: Math.abs(invTx.amount),
+          bank_entry_count: groupedEntries.length,
+          match_type: 'grouped_investor'
+        });
+
+        // Refresh data
+        queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+        queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+        queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
 
         // Clean up dismissed state for all reconciled entries
         setDismissedSuggestions(prev => {
@@ -5133,8 +5289,8 @@ export default function BankReconciliation() {
                                   const matchTx = suggestion.existingTransaction || suggestion.existingExpense || suggestion.existingInterest;
                                   let matchExplanation = null;
                                   if (matchTx) {
-                                    // For grouped_disbursement, use combined amount from all grouped entries
-                                    if (suggestion.matchMode === 'grouped_disbursement' && suggestion.groupedEntries) {
+                                    // For grouped matches, use combined amount from all grouped entries
+                                    if ((suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor') && suggestion.groupedEntries) {
                                       const groupedTotal = suggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
                                       const syntheticEntry = { amount: groupedTotal, statement_date: entry.statement_date };
                                       matchExplanation = getMatchExplanation(syntheticEntry, matchTx, matchTx.date ? 'date' : 'statement_date');
@@ -5143,8 +5299,8 @@ export default function BankReconciliation() {
                                     }
                                   }
 
-                                  // For grouped_disbursement, show the other bank entries in the group
-                                  const otherGroupedEntries = suggestion.matchMode === 'grouped_disbursement' && suggestion.groupedEntries
+                                  // For grouped matches, show the other bank entries in the group
+                                  const otherGroupedEntries = (suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor') && suggestion.groupedEntries
                                     ? suggestion.groupedEntries.filter(e => e.id !== entry.id)
                                     : [];
 
@@ -5745,6 +5901,25 @@ export default function BankReconciliation() {
                           </div>
                         </div>
                       )}
+                      {/* For grouped investor matches, show all bank entries in the group */}
+                      {reviewingSuggestion.matchMode === 'grouped_investor' && reviewingSuggestion.groupedEntries && (
+                        <div className="text-xs text-amber-600 border-t border-slate-200 pt-2">
+                          <div className="font-medium mb-1">Bank entries matching investor transaction:</div>
+                          {reviewingSuggestion.groupedEntries.map((e, idx) => (
+                            <div key={e.id} className="flex justify-between text-slate-600">
+                              <span>{format(parseISO(e.statement_date), 'dd/MM/yyyy')}: {e.description?.substring(0, 30)}...</span>
+                              <span className="font-medium">{formatCurrency(Math.abs(e.amount))}</span>
+                            </div>
+                          ))}
+                          <div className="flex justify-between font-medium text-amber-700 border-t border-slate-300 pt-1 mt-1">
+                            <span>Total:</span>
+                            <span>{formatCurrency(reviewingSuggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0))}</span>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1">
+                            → Matches investor: {reviewingSuggestion.investor?.business_name || reviewingSuggestion.investor?.name || 'Unknown'}
+                          </div>
+                        </div>
+                      )}
                       {/* Match explanation breakdown - for existing transaction matches */}
                       {explanation && isMatchType(reviewingSuggestion.matchMode) && (
                         <div className="flex items-center gap-4 text-xs pt-1 border-t border-slate-200">
@@ -5798,6 +5973,30 @@ export default function BankReconciliation() {
                                 </div>
                                 <div className="text-red-600 mt-1">
                                   {groupedSuggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → {groupedSuggestion.loan?.borrower_name || 'Unknown'}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {/* Warning if this entry is part of a grouped investor suggestion elsewhere */}
+                      {(() => {
+                        const groupedInfoDialog = entriesInGroupedSuggestions.get(selectedEntry?.id);
+                        const isPartOfGroup = groupedInfoDialog && groupedInfoDialog.primaryEntryId !== selectedEntry?.id;
+                        if (!isPartOfGroup || groupedInfoDialog?.groupType !== 'investor') return null;
+
+                        const groupedSuggestion = groupedInfoDialog.suggestion;
+                        return (
+                          <div className="pt-2 border-t border-amber-200 mt-2 bg-amber-50 rounded-lg p-2">
+                            <div className="flex items-start gap-2 text-amber-700">
+                              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                              <div className="text-xs">
+                                <div className="font-medium mb-1">Part of combined investor deposit</div>
+                                <div className="text-amber-600">
+                                  This entry is suggested as part of a grouped investor transaction:
+                                </div>
+                                <div className="text-amber-600 mt-1">
+                                  {groupedSuggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → {groupedSuggestion.investor?.business_name || groupedSuggestion.investor?.name || 'Unknown'}
                                 </div>
                               </div>
                             </div>

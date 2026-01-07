@@ -119,9 +119,8 @@ export default function Loans() {
   const [searchTerm, setSearchTerm] = useState('');
   const borrowerFilter = searchParams.get('borrower') || null;
   const contactEmailFilter = searchParams.get('contact_email') || null;
-  const hasFilter = borrowerFilter || contactEmailFilter;
   const [statusFilter, setStatusFilter] = useState(
-    searchParams.get('status') || (hasFilter ? 'all' : 'Live')
+    searchParams.get('status') || 'Live'
   );
   const [activeTab, setActiveTab] = useState(searchParams.get('tab') || 'active');
   const [sortField, setSortField] = useState(() => {
@@ -202,11 +201,6 @@ export default function Loans() {
     }
   }, [searchParams]);
 
-  useEffect(() => {
-    if (hasFilter && statusFilter === 'Live') {
-      setStatusFilter('all');
-    }
-  }, [hasFilter]);
 
   const { data: allLoans = [], isLoading } = useQuery({
     queryKey: ['loans', currentOrganization?.id],
@@ -279,16 +273,6 @@ export default function Loans() {
     return furtherAdvances.reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
   };
 
-  const getActualPaymentsForLoan = (loanId) => {
-    const repayments = allTransactions.filter(t =>
-      t.loan_id === loanId && !t.is_deleted && t.type === 'Repayment'
-    );
-    return {
-      principalPaid: repayments.reduce((sum, t) => sum + (t.principal_applied || 0), 0),
-      interestPaid: repayments.reduce((sum, t) => sum + (t.interest_applied || 0), 0)
-    };
-  };
-
   const getLastPaymentForLoan = (loanId) => {
     const repayments = allTransactions
       .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Repayment')
@@ -338,40 +322,56 @@ export default function Loans() {
     setStatusFilter('all');
   };
 
-  const borrowerTotals = useMemo(() => {
-    if (!borrowerFilter) return null;
+  // Calculate totals for filtered views (borrower or contact filter)
+  const filterTotals = useMemo(() => {
+    if (!borrowerFilter && !contactEmailFilter) return null;
 
-    const activeLoans = loans.filter(l =>
-      l.status === 'Live' || l.status === 'Active' || l.status === 'Defaulted'
-    );
+    // Calculate totals based on filtered loans that match the current status filter
+    const loansToSum = filteredLoans;
 
-    let totalPrincipal = 0;
-    let totalInterest = 0;
-    let principalPaid = 0;
-    let interestPaid = 0;
-    let disbursements = 0;
+    let totalPrincipalBalance = 0;
+    let totalInterestOutstanding = 0;
+    let totalArrFees = 0;
+    let totalExitFees = 0;
 
-    activeLoans.forEach(loan => {
-      totalPrincipal += loan.principal_amount || 0;
-      totalInterest += loan.total_interest || 0;
-      disbursements += getDisbursementsForLoan(loan.id);
-      const payments = getActualPaymentsForLoan(loan.id);
-      principalPaid += payments.principalPaid;
-      interestPaid += payments.interestPaid;
+    loansToSum.forEach(loan => {
+      const loanTransactions = allTransactions.filter(t => t.loan_id === loan.id);
+      const loanSchedule = allSchedules.filter(s => s.loan_id === loan.id);
+
+      // Calculate principal remaining (same logic as table rows)
+      const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule);
+      const principalRemaining = loan.principal_remaining !== null && loan.principal_remaining !== undefined
+        ? loan.principal_remaining
+        : liveInterestCalc.principalRemaining;
+      const interestRemaining = liveInterestCalc.interestRemaining;
+
+      // Handle Fixed Charge differently
+      if (loan.product_type === 'Fixed Charge') {
+        const totalCharges = (loan.monthly_charge || 0) * (loan.duration || 0);
+        const chargesPaid = loanTransactions
+          .filter(t => !t.is_deleted && t.type === 'Repayment')
+          .reduce((sum, t) => sum + (t.amount || 0), 0);
+        totalInterestOutstanding += Math.max(0, totalCharges - chargesPaid);
+      } else if (loan.product_type !== 'Irregular Income') {
+        totalInterestOutstanding += Math.max(0, interestRemaining);
+      }
+
+      totalPrincipalBalance += Math.max(0, principalRemaining);
+      totalArrFees += loan.arrangement_fee || 0;
+      totalExitFees += loan.exit_fee || 0;
     });
 
-    const totalPrincipalWithDisbursements = totalPrincipal + disbursements;
-    const principalOutstanding = Math.max(0, totalPrincipalWithDisbursements - principalPaid);
-    const interestOutstanding = Math.max(0, totalInterest - interestPaid);
-    const totalOutstanding = principalOutstanding + interestOutstanding;
+    const totalOutstanding = totalPrincipalBalance + totalInterestOutstanding + totalExitFees;
 
     return {
-      liveCount: activeLoans.length,
+      loanCount: loansToSum.length,
       totalOutstanding,
-      principalOutstanding,
-      interestOutstanding
+      totalPrincipalBalance,
+      totalInterestOutstanding,
+      totalArrFees,
+      totalExitFees
     };
-  }, [borrowerFilter, loans, allTransactions]);
+  }, [borrowerFilter, contactEmailFilter, filteredLoans, allTransactions, allSchedules]);
 
   const sortedLoans = useMemo(() => {
     return [...filteredLoans].sort((a, b) => {
@@ -661,8 +661,7 @@ export default function Loans() {
       align: 'right',
       render: (loan, { principalRemaining }) => {
         const isFixedCharge = loan.product_type === 'Fixed Charge';
-        const isIrregularIncome = loan.product_type === 'Irregular Income';
-        if (isFixedCharge || isIrregularIncome) {
+        if (isFixedCharge) {
           return (
             <TooltipProvider>
               <Tooltip>
@@ -672,7 +671,7 @@ export default function Loans() {
                   </span>
                 </TooltipTrigger>
                 <TooltipContent>
-                  <p>{isFixedCharge ? 'Fixed Charge Facility' : 'Irregular Income'}</p>
+                  <p>Fixed Charge Facility</p>
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
@@ -839,16 +838,37 @@ export default function Loans() {
                     {filterBorrower.business || `${filterBorrower.first_name} ${filterBorrower.last_name}`}
                   </p>
                 </div>
-                {borrowerTotals && borrowerTotals.totalOutstanding > 0 && (
+                {filterTotals && (
                   <div className="hidden md:flex items-center gap-4 ml-4 pl-4 border-l border-blue-200">
                     <div>
-                      <p className="text-xs text-blue-600">Live</p>
-                      <p className="font-bold text-blue-900">{borrowerTotals.liveCount}</p>
+                      <p className="text-xs text-blue-600">Loans</p>
+                      <p className="font-bold text-blue-900">{filterTotals.loanCount}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-blue-600">Outstanding</p>
-                      <p className="font-bold text-blue-900">{formatCurrency(borrowerTotals.totalOutstanding)}</p>
+                      <p className="text-xs text-blue-600">Principal</p>
+                      <p className="font-bold text-blue-900">{formatCurrency(filterTotals.totalPrincipalBalance)}</p>
                     </div>
+                    <div>
+                      <p className="text-xs text-blue-600">Interest</p>
+                      <p className="font-bold text-blue-900">{formatCurrency(filterTotals.totalInterestOutstanding)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-blue-600">Exit Fees</p>
+                      <p className="font-bold text-blue-900">{formatCurrency(filterTotals.totalExitFees)}</p>
+                    </div>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="cursor-help">
+                            <p className="text-xs text-blue-600">Total Outstanding</p>
+                            <p className="font-bold text-blue-900">{formatCurrency(filterTotals.totalOutstanding)}</p>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Principal + Interest + Exit Fees</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
                   </div>
                 )}
               </div>
@@ -886,6 +906,39 @@ export default function Loans() {
                 <Badge variant="outline" className="text-purple-600 border-purple-300 text-xs">
                   {contactBorrowerIds.length} borrower{contactBorrowerIds.length !== 1 ? 's' : ''}
                 </Badge>
+                {filterTotals && (
+                  <div className="hidden md:flex items-center gap-4 ml-4 pl-4 border-l border-purple-200">
+                    <div>
+                      <p className="text-xs text-purple-600">Loans</p>
+                      <p className="font-bold text-purple-900">{filterTotals.loanCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-purple-600">Principal</p>
+                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalPrincipalBalance)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-purple-600">Interest</p>
+                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalInterestOutstanding)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-purple-600">Exit Fees</p>
+                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalExitFees)}</p>
+                    </div>
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div className="cursor-help">
+                            <p className="text-xs text-purple-600">Total Outstanding</p>
+                            <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalOutstanding)}</p>
+                          </div>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>Principal + Interest + Exit Fees</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  </div>
+                )}
               </div>
               <Button
                 variant="ghost"
@@ -1022,28 +1075,6 @@ export default function Loans() {
                         const principalRemaining = liveInterestCalc.principalRemaining;
                         const interestRemaining = liveInterestCalc.interestRemaining;
 
-                        // Debug logging for specific loans - after calculation
-                        if (loan.loan_number === '1000025' || loan.loan_number === '1000001') {
-                          // Check schedule data details
-                          const sortedSched = [...loanSchedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
-                          // Check if there's a mismatch in loan_id types
-                          const scheduleWithMatchingLoanId = allSchedules.filter(s => s.loan_id === loan.id);
-                          const scheduleWithStringMatch = allSchedules.filter(s => String(s.loan_id) === String(loan.id));
-                          console.log(`[Loans.jsx FINAL] Loan ${loan.loan_number}:`, {
-                            loanId: loan.id,
-                            loanIdType: typeof loan.id,
-                            scheduleLength: loanSchedule.length,
-                            scheduleWithExactMatch: scheduleWithMatchingLoanId.length,
-                            scheduleWithStringMatch: scheduleWithStringMatch.length,
-                            transactionsLength: loanTransactions.length,
-                            interestRemaining,
-                            interestAccrued: liveInterestCalc.interestAccrued,
-                            interestPaid: liveInterestCalc.interestPaid,
-                            allSchedulesTotal: allSchedules.length,
-                            isLoadingSchedules,
-                            sampleScheduleLoanIds: allSchedules.slice(0, 3).map(s => ({ loan_id: s.loan_id, type: typeof s.loan_id }))
-                          });
-                        }
 
                         // Calculate charges outstanding for Fixed Charge facilities
                         const isFixedCharge = loan.product_type === 'Fixed Charge';
@@ -1090,6 +1121,42 @@ export default function Loans() {
                         );
                       })}
                     </tbody>
+                    {/* Totals row for filtered views */}
+                    {filterTotals && (
+                      <tfoot>
+                        <tr className="bg-slate-100 border-t-2 border-slate-300 font-semibold">
+                          {columnOrder.map((colKey) => {
+                            const col = columnDefs[colKey];
+                            if (!col) return null;
+                            const width = columnWidths[colKey] || defaultColumnWidths[colKey] || 100;
+
+                            let content = null;
+                            if (colKey === 'loan_number') {
+                              content = <span className="text-slate-600 text-xs">Totals</span>;
+                            } else if (colKey === 'principal_bal') {
+                              content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalPrincipalBalance)}</span>;
+                            } else if (colKey === 'interest_os') {
+                              content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalInterestOutstanding)}</span>;
+                            } else if (colKey === 'arr_fee') {
+                              content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalArrFees)}</span>;
+                            } else if (colKey === 'exit_fee') {
+                              content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalExitFees)}</span>;
+                            }
+
+                            return (
+                              <td
+                                key={colKey}
+                                className={`px-2 py-2 ${col.align === 'right' ? 'text-right' : col.align === 'center' ? 'text-center' : 'text-left'}`}
+                                style={{ width: `${width}px`, minWidth: `${width}px` }}
+                              >
+                                {content}
+                              </td>
+                            );
+                          })}
+                          <td className="w-6 px-1"></td>
+                        </tr>
+                      </tfoot>
+                    )}
                   </table>
                 </div>
               </div>
