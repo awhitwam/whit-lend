@@ -1,12 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { format, differenceInDays } from 'date-fns';
+import { format, differenceInDays, addDays } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { ChevronLeft, ChevronRight, ChevronDown, Split, List, Download, Layers, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
-import { formatCurrency } from './LoanCalculator';
+import { formatCurrency, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from './LoanCalculator';
 import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 
 // Helper to check if penalty rate applies for a given date
@@ -1056,19 +1056,20 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               </TableRow>
               {/* Summary totals row - fixed below header */}
               {!isLoading && (() => {
-                // Calculate summary totals for nested view
-                // Use GROSS principal (what borrower owes) for schedule display
+                // Calculate summary totals using the accurate calculateLoanInterestBalance function
+                // This matches the calculation used in Loans list and Dashboard
                 const totalDisbursed = loan.principal_amount;
                 const totalPrincipalReceived = transactions
                   .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
                   .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-                const totalInterestReceived = transactions
-                  .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
-                  .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-                const totalExpectedInterest = effectiveSchedule.reduce((sum, row) => sum + (row.interest_amount || 0), 0);
+
+                // Use calculateLoanInterestBalance for accurate interest calculation
+                const interestCalc = calculateLoanInterestBalance(loan, effectiveSchedule, transactions);
+                const totalInterestReceived = interestCalc.totalInterestPaid;
+                const totalExpectedInterest = interestCalc.totalInterestDue;
 
                 const principalBalance = totalDisbursed - totalPrincipalReceived;
-                const interestBalance = totalExpectedInterest - totalInterestReceived;
+                const interestBalance = interestCalc.interestBalance;
 
                 return (
                   <TableRow className="bg-slate-100 border-b-2 border-slate-300">
@@ -1082,7 +1083,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       {formatCurrency(totalInterestReceived)}
                     </TableCell>
                     <TableCell className="py-1.5 text-right font-mono text-sm text-slate-500 bg-slate-100">
-                      ({formatCurrency(totalExpectedInterest)})
+                      {formatCurrency(totalExpectedInterest)}
                     </TableCell>
                     <TableCell className={`py-1.5 text-right font-mono text-sm font-bold bg-slate-100 ${interestBalance < 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                       {interestBalance < 0 ? '-' : ''}{formatCurrency(Math.abs(interestBalance))}
@@ -1403,6 +1404,27 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   // Build rows WITHOUT running balances first, then sort, then calculate balances
                   const rows = [];
 
+                  // Detect if this is an "interest paid in advance" loan EARLY
+                  // For advance loans, the first due date equals the loan start date
+                  // For arrears loans, the first due date is after the loan start date
+                  const loanStartDateForAdvanceCheckEarly = new Date(loan.start_date);
+                  loanStartDateForAdvanceCheckEarly.setHours(0, 0, 0, 0);
+                  const firstDueDateForAdvanceCheckEarly = sortedSchedule.length > 0 ? new Date(sortedSchedule[0].due_date) : null;
+                  if (firstDueDateForAdvanceCheckEarly) firstDueDateForAdvanceCheckEarly.setHours(0, 0, 0, 0);
+                  const isInterestPaidInAdvanceEarly = firstDueDateForAdvanceCheckEarly &&
+                    firstDueDateForAdvanceCheckEarly.getTime() === loanStartDateForAdvanceCheckEarly.getTime();
+
+                  // Find the first schedule period that matches the first disbursement date (for stacking under disbursement)
+                  const firstDisbDateEarly = disbursementTransactions.length > 0 ? new Date(disbursementTransactions[0].date) : null;
+                  if (firstDisbDateEarly) firstDisbDateEarly.setHours(0, 0, 0, 0);
+                  const firstScheduleOnDisbursementDateEarly = isInterestPaidInAdvanceEarly && sortedSchedule.length > 0
+                    ? sortedSchedule.find(s => {
+                        const dueDate = new Date(s.due_date);
+                        dueDate.setHours(0, 0, 0, 0);
+                        return firstDisbDateEarly && dueDate.getTime() === firstDisbDateEarly.getTime();
+                      })
+                    : null;
+
                   // First disbursement transaction is the initial "Loan Disbursement"
                   // Subsequent disbursement transactions are "Further Advances"
                   // Also find any linked repayments (for deducted interest)
@@ -1444,6 +1466,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       netNote = ` (${formatCurrency(loan.net_disbursed)} net, ${formatCurrency(loan.arrangement_fee)} fee deducted)`;
                     }
 
+                    // For initial disbursement on advance loans, attach the first schedule period
+                    // so it can be shown as a child row (stacked behind the disbursement)
+                    const linkedSchedulePeriod = isInitial && firstScheduleOnDisbursementDateEarly ? {
+                      scheduleRow: firstScheduleOnDisbursementDateEarly,
+                      expectedInterest: isFixedCharge ? monthlyCharge : (firstScheduleOnDisbursementDateEarly.interest_amount || 0),
+                      periodTransactions: txAssignments.get(firstScheduleOnDisbursementDateEarly.id) || []
+                    } : null;
+
                     rows.push({
                       type: isInitial ? 'disbursement' : 'further_advance',
                       date: new Date(tx.date),
@@ -1459,13 +1489,23 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       netAmount,
                       hasDeductions,
                       linkedRepayment,
-                      linkedInterestPaid
+                      linkedInterestPaid,
+                      linkedSchedulePeriod
                     });
                   });
 
+                  // Use the early-detected values for isInterestPaidInAdvance
+                  const isInterestPaidInAdvance = isInterestPaidInAdvanceEarly;
+
                   // Process each schedule period
                   sortedSchedule.forEach((scheduleRow, idx) => {
+                    // Skip first period if it will be shown as disbursement child (for advance loans)
+                    if (firstScheduleOnDisbursementDateEarly && scheduleRow.id === firstScheduleOnDisbursementDateEarly.id) {
+                      return; // Will be handled as disbursement child row instead
+                    }
+
                     const dueDate = new Date(scheduleRow.due_date);
+                    dueDate.setHours(0, 0, 0, 0);
                     // For Fixed Charge loans, use monthly charge; otherwise use interest amount
                     const expectedInterest = isFixedCharge ? monthlyCharge : (scheduleRow.interest_amount || 0);
                     const periodTransactions = txAssignments.get(scheduleRow.id) || [];
@@ -1509,10 +1549,31 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       ? (scheduleRow.installment_number === 1 ? 'Roll-up Interest' : `Interest ${scheduleRow.installment_number - 1}`)
                       : `Instalment ${scheduleRow.installment_number}`;
 
-                    // Calculate period start date (previous period's due date or loan start date)
-                    const periodStartDate = idx > 0
-                      ? new Date(sortedSchedule[idx - 1].due_date)
-                      : new Date(loan.start_date);
+                    // Calculate period boundaries based on payment timing
+                    let periodStartDate, periodEndDate;
+
+                    if (isInterestPaidInAdvance) {
+                      // For ADVANCE loans: due date is at START of period
+                      // Period covers: current due date → next due date
+                      periodStartDate = dueDate;
+
+                      if (idx < sortedSchedule.length - 1) {
+                        periodEndDate = new Date(sortedSchedule[idx + 1].due_date);
+                        periodEndDate.setHours(0, 0, 0, 0);
+                      } else {
+                        // Last period: use schedule's calculation_days to estimate end
+                        const calcDays = scheduleRow.calculation_days || 30;
+                        periodEndDate = addDays(dueDate, calcDays);
+                      }
+                    } else {
+                      // For ARREARS loans: due date is at END of period
+                      // Period covers: previous due date → current due date
+                      periodStartDate = idx > 0
+                        ? new Date(sortedSchedule[idx - 1].due_date)
+                        : new Date(loan.start_date);
+                      periodStartDate.setHours(0, 0, 0, 0);
+                      periodEndDate = dueDate;
+                    }
 
                     rows.push({
                       type: 'schedule_header',
@@ -1530,7 +1591,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       isPastDue,
                       sortOrder: 2, // Schedule headers after disbursements/advances on same date
                       periodTransactions, // Store for adding child rows after sorting
-                      periodStartDate // Store for interest split calculation
+                      periodStartDate, // Store for interest split calculation
+                      periodEndDate, // Store period end for advance payment loans
+                      isAdvancePayment: isInterestPaidInAdvance
                     });
                   });
 
@@ -1548,6 +1611,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   let prevPrincipalBalance = 0;
                   let runningInterestAccrued = 0;
                   let runningInterestPaid = 0;
+
+                  // Build capital events ledger once for interest calculations
+                  const capitalEvents = buildCapitalEvents(loan, transactions);
+
+                  // Get loan start date for period boundary calculations
+                  const loanStartDate = new Date(loan.start_date);
+                  loanStartDate.setHours(0, 0, 0, 0);
 
                   // Track principal balance at each period boundary for interest calculations
                   // Key: period start date as ISO string, Value: principal balance at that date
@@ -1580,6 +1650,31 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           principalBalance: runningPrincipalBalance,
                           transaction: row.linkedRepayment
                         });
+                      }
+
+                      // For advance loans, add first schedule period interest to the disbursement row (not as child)
+                      if (row.linkedSchedulePeriod) {
+                        const sp = row.linkedSchedulePeriod;
+                        runningInterestAccrued += sp.expectedInterest;
+
+                        // Calculate period payments for this schedule period
+                        const periodInterestPaid = sp.periodTransactions.reduce((sum, tx) =>
+                          sum + (isFixedCharge ? (tx.fees_applied || tx.amount || 0) : (tx.interest_applied || 0)), 0);
+                        runningInterestPaid += periodInterestPaid;
+
+                        // Store interest amounts on the disbursement row for display
+                        row.linkedScheduleInterestDue = sp.expectedInterest;
+                        row.linkedScheduleInterestPaid = periodInterestPaid;
+
+                        // Calculate period days and daily rate for description
+                        const scheduleRow = sp.scheduleRow;
+                        row.linkedSchedulePeriodDays = scheduleRow?.calculation_days || 30;
+                        const dailyRate = loan.interest_rate / 100 / 365;
+                        row.linkedScheduleDailyInterest = runningPrincipalBalance * dailyRate;
+                        row.linkedScheduleInterestRate = loan.interest_rate;
+
+                        // Update the interest balance on the disbursement row
+                        row.balance = runningInterestAccrued - runningInterestPaid;
                       }
                     } else if (row.type === 'further_advance') {
                       prevPrincipalBalance = runningPrincipalBalance;
@@ -1627,70 +1722,50 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         row.principalAtPeriodStart = loan.principal_amount;
                       }
 
-                      // Recalculate expectedInterest based on actual principal during period (for non-Fixed Charge loans)
-                      if (!isFixedCharge && row.periodStartDate && row.principalAtPeriodStart > 0) {
-                        const periodStart = row.periodStartDate;
-                        const periodEnd = row.date;
-                        // Use penalty rate if applicable, otherwise use regular interest rate
-                        const rateToUse = (loan.penalty_rate && loan.penalty_rate_from && new Date(loan.penalty_rate_from) <= periodEnd)
-                          ? loan.penalty_rate
-                          : loan.interest_rate;
-                        const dailyRate = rateToUse / 100 / 365;
+                      // Recalculate expectedInterest using capital events ledger (for non-Fixed Charge loans)
+                      if (!isFixedCharge) {
+                        // Determine period boundaries based on payment timing
+                        const scheduleIdx = sortedSchedule.findIndex(s => s.id === row.scheduleRow.id);
 
-                        // Find further advances and capital repayments during this period
-                        const capitalChangesInPeriod = [];
+                        // Detect if this is an "interest paid in advance" loan
+                        // (first due date equals loan start date)
+                        const firstDueDate = sortedSchedule.length > 0 ? new Date(sortedSchedule[0].due_date) : null;
+                        if (firstDueDate) firstDueDate.setHours(0, 0, 0, 0);
+                        const isAdvancePayment = firstDueDate && firstDueDate.getTime() === loanStartDate.getTime();
 
-                        // Find further advances from rows array
-                        rows.filter(r => r.type === 'further_advance' && r.date > periodStart && r.date <= periodEnd)
-                          .forEach(r => capitalChangesInPeriod.push({ type: 'advance', date: r.date, amount: r.principal }));
+                        let periodStart, periodEnd;
 
-                        // Find capital repayments from period transactions
-                        (row.periodTransactions || [])
-                          .filter(tx => tx.principal_applied > 0)
-                          .forEach(tx => capitalChangesInPeriod.push({ type: 'repayment', date: new Date(tx.date), amount: tx.principal_applied }));
-
-                        // Sort by date
-                        capitalChangesInPeriod.sort((a, b) => a.date - b.date);
-
-                        if (capitalChangesInPeriod.length > 0) {
-                          // Calculate segmented interest
-                          let segmentPrincipal = row.principalAtPeriodStart;
-                          let segmentStart = periodStart;
-                          let totalInterest = 0;
-
-                          capitalChangesInPeriod.forEach(change => {
-                            const daysInSegment = differenceInDays(change.date, segmentStart);
-                            if (daysInSegment > 0) {
-                              totalInterest += segmentPrincipal * dailyRate * daysInSegment;
-                            }
-                            // Update principal
-                            if (change.type === 'advance') {
-                              segmentPrincipal += change.amount;
-                            } else {
-                              segmentPrincipal = Math.max(0, segmentPrincipal - change.amount);
-                            }
-                            segmentStart = change.date;
-                          });
-
-                          // Final segment
-                          const finalDays = differenceInDays(periodEnd, segmentStart);
-                          if (finalDays > 0 && segmentPrincipal > 0) {
-                            totalInterest += segmentPrincipal * dailyRate * finalDays;
+                        if (isAdvancePayment) {
+                          // For ADVANCE payment: due date is at START of period
+                          // Period covers: current due date → next due date
+                          periodStart = row.date;
+                          if (scheduleIdx < sortedSchedule.length - 1) {
+                            periodEnd = new Date(sortedSchedule[scheduleIdx + 1].due_date);
+                            periodEnd.setHours(0, 0, 0, 0);
+                          } else {
+                            // Last period - use calculation_days or default 30 days
+                            const calcDays = row.scheduleRow?.calculation_days || 30;
+                            periodEnd = addDays(row.date, calcDays);
                           }
-
-                          row.expectedInterest = totalInterest;
-                          row.interest = totalInterest;
                         } else {
-                          // No capital changes - simple calculation based on principalAtPeriodStart
-                          const days = differenceInDays(periodEnd, periodStart);
-                          // Only recalculate if we have valid days; otherwise keep the database value
-                          // (handles stub periods where periodStart = periodEnd = disbursement date)
-                          if (days > 0) {
-                            row.expectedInterest = row.principalAtPeriodStart * dailyRate * days;
-                            row.interest = row.expectedInterest;
-                          }
-                          // else: keep row.interest as set from scheduleRow.interest_amount
+                          // For ARREARS payment: due date is at END of period
+                          // Period covers: previous due date (or loan start) → current due date
+                          periodStart = scheduleIdx === 0
+                            ? loanStartDate
+                            : new Date(sortedSchedule[scheduleIdx - 1].due_date);
+                          periodStart.setHours(0, 0, 0, 0);
+                          periodEnd = row.date;
                         }
+
+                        // Calculate interest using the capital events ledger
+                        const ledgerResult = calculateInterestFromLedger(loan, capitalEvents, periodStart, periodEnd);
+
+                        // Store results
+                        row.expectedInterestRaw = ledgerResult.totalInterest;
+                        row.expectedInterest = ledgerResult.totalInterest;
+                        row.interest = ledgerResult.totalInterest;
+                        row.ledgerSegments = ledgerResult.segments;
+                        row.periodDays = ledgerResult.days;
 
                         // Recalculate status based on new expectedInterest
                         const periodInterestPaid = row.periodInterestPaid || 0;
@@ -1712,8 +1787,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       }
 
                       // Accrue interest for this period (after recalculation)
-                      runningInterestAccrued += row.expectedInterest;
-                      row.balance = runningInterestAccrued - runningInterestPaid;
+                      // Use raw (unrounded) value for accumulation to match CSV calculation
+                      runningInterestAccrued += row.expectedInterestRaw ?? row.expectedInterest;
+                      row.balance = Math.round((runningInterestAccrued - runningInterestPaid) * 100) / 100;
 
                       // Record balance at this period end date
                       principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
@@ -1800,7 +1876,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                       // Store the balances after all period transactions for collapsed view
                       row.principalBalanceAfterPeriod = runningPrincipalBalance;
-                      row.interestBalanceAfterPeriod = runningInterestAccrued - runningInterestPaid;
+                      row.interestBalanceAfterPeriod = Math.round((runningInterestAccrued - runningInterestPaid) * 100) / 100;
                     }
                   });
 
@@ -1818,9 +1894,30 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       return null;
                     }
 
+
                     if (row.type === 'disbursement') {
                       const hasLinkedRepayment = !!row.linkedRepayment;
                       const isExpanded = isDisbursementExpanded(row.transaction.id);
+
+                      // Calculate Interest Rcvd - show linkedInterestPaid (deducted from disbursement) or linkedScheduleInterestPaid (from schedule period)
+                      const interestReceived = row.linkedInterestPaid > 0
+                        ? row.linkedInterestPaid
+                        : (row.linkedScheduleInterestPaid || 0);
+
+                      // Build description with interest calculation for advance loans
+                      let fullDescription = row.description;
+                      if (row.linkedSchedulePeriod && row.linkedScheduleInterestDue > 0) {
+                        const interestCalcDetail = isFixedCharge
+                          ? `Fixed charge due @ ${formatCurrency(monthlyCharge)}`
+                          : `Interest due at ${row.linkedScheduleInterestRate}% pa, ${row.linkedSchedulePeriodDays}d × ${formatCurrency(row.linkedScheduleDailyInterest)}/day`;
+                        fullDescription = (
+                          <span>
+                            <span className="font-semibold text-red-700">{row.description}</span>
+                            <span className="text-slate-500 font-normal ml-2">{interestCalcDetail}</span>
+                          </span>
+                        );
+                      }
+
                       return (
                         <TableRow
                           key={`disbursement-${idx}`}
@@ -1837,8 +1934,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="py-0.5 font-semibold text-red-700 text-sm">
-                            {row.description}
+                          <TableCell className="py-0.5 text-sm">
+                            {fullDescription}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-red-600 font-semibold text-sm">
                             {formatCurrency(row.principal)}
@@ -1847,11 +1944,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             {formatCurrency(row.principalBalance)}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">
-                            {row.linkedInterestPaid > 0 ? (
-                              <span className="text-emerald-600">{formatCurrency(row.linkedInterestPaid)}</span>
+                            {interestReceived > 0 ? (
+                              <span className="text-emerald-600">{formatCurrency(interestReceived)}</span>
                             ) : '—'}
                           </TableCell>
-                          <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
+                          <TableCell className="py-0.5 text-right font-mono text-sm">
+                            {row.linkedScheduleInterestDue > 0
+                              ? formatCurrency(row.linkedScheduleInterestDue)
+                              : '—'}
+                          </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">—</TableCell>
                           <TableCell className="py-0.5">—</TableCell>
                         </TableRow>
@@ -1975,7 +2076,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               const dailyRate = effectiveRate / 100 / 365;
                               // Use principalAtPeriodStart for accurate segment calculations (accounts for previous advances)
                               const principalStart = row.principalAtPeriodStart || scheduleRow?.calculation_principal_start || row.principalBalance || loan.principal_amount;
-                              const days = scheduleRow?.calculation_days || (loan.period === 'Monthly' ? 30 : 7);
+                              // Use actual calculated days from period boundaries (not stale database value)
+                              const days = (row.periodStartDate && row.periodEndDate)
+                                ? differenceInDays(row.periodEndDate, row.periodStartDate)
+                                : (scheduleRow?.calculation_days || (loan.period === 'Monthly' ? 30 : 7));
                               const dailyInterestAmount = principalStart * dailyRate;
 
                               // Special case for Rolled-Up loans: first installment is rolled-up interest for entire loan duration
@@ -2022,7 +2126,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
 
                               // Also find further advances (disbursements) within this period
                               const periodStart = row.periodStartDate ? new Date(row.periodStartDate) : null;
-                              const periodEnd = row.date;
+                              const periodEnd = row.periodEndDate || row.date; // Use periodEndDate for advance loans
                               const furtherAdvancesInPeriod = periodStart ? sortedRows
                                 .filter(r => r.type === 'further_advance' && r.date > periodStart && r.date <= periodEnd)
                                 .map(r => ({ type: 'advance', date: r.date, amount: r.principal })) : [];
@@ -2117,7 +2221,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               : <span className="text-slate-500">—</span>}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono font-semibold text-slate-700 text-sm">
-                            ({formatCurrency(row.interest)})
+                            {formatCurrency(row.interest)}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">
                             {(() => {

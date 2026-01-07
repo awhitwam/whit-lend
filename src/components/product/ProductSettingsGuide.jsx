@@ -1,7 +1,7 @@
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, TrendingDown, Clock, Calendar, Banknote, Calculator, ArrowRight } from 'lucide-react';
+import { TrendingUp, TrendingDown, Clock, Banknote, Calculator, ArrowRight } from 'lucide-react';
 
 export default function ProductSettingsGuide() {
   return (
@@ -145,102 +145,67 @@ export default function ProductSettingsGuide() {
           </AccordionContent>
         </AccordionItem>
 
-        {/* Interest Alignment */}
-        <AccordionItem value="interest-alignment" className="border rounded-lg px-4">
+        {/* Interest Timing */}
+        <AccordionItem value="interest-timing" className="border rounded-lg px-4">
           <AccordionTrigger className="hover:no-underline">
             <div className="flex items-center gap-2">
-              <Calendar className="w-4 h-4 text-green-600" />
-              <span className="font-semibold">Interest Alignment</span>
+              <Clock className="w-4 h-4 text-green-600" />
+              <span className="font-semibold">Interest Timing</span>
               <Badge variant="secondary" className="text-xs">Monthly only</Badge>
             </div>
           </AccordionTrigger>
           <AccordionContent>
             <div className="space-y-4 pt-2">
-              {/* Period-based */}
+              {/* Advance */}
               <div className="p-3 bg-slate-50 rounded-lg">
                 <div className="flex items-center gap-2 mb-2">
-                  <Badge variant="outline">Period-based from start date</Badge>
+                  <Badge variant="outline" className="bg-orange-50 text-orange-700 border-orange-200">Advance</Badge>
                 </div>
                 <p className="text-sm text-slate-600 mb-2">
-                  Due dates fall on the <strong>anniversary of the loan start date</strong> each month.
-                </p>
-                <div className="bg-white p-3 rounded border text-sm">
-                  <p className="font-medium text-slate-700 mb-1">Example: Loan starts January 15</p>
-                  <div className="flex items-center gap-2 text-slate-600">
-                    <span>Jan 15</span>
-                    <ArrowRight className="w-3 h-3" />
-                    <span>Feb 15</span>
-                    <ArrowRight className="w-3 h-3" />
-                    <span>Mar 15</span>
-                    <ArrowRight className="w-3 h-3" />
-                    <span>Apr 15...</span>
-                  </div>
-                </div>
-              </div>
-
-              {/* Align to 1st */}
-              <div className="p-3 bg-slate-50 rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <Badge variant="outline">Align to 1st of month</Badge>
-                </div>
-                <p className="text-sm text-slate-600 mb-2">
-                  First payment covers a <strong>partial month</strong> (from start to month-end),
-                  then all subsequent payments fall on the <strong>1st of each month</strong>.
+                  Interest is due at the <strong>start of each period</strong>. First payment on disbursement date.
                 </p>
                 <div className="bg-white p-3 rounded border text-sm">
                   <p className="font-medium text-slate-700 mb-1">Example: Loan starts January 15</p>
                   <ul className="text-slate-600 space-y-1">
-                    <li>• Feb 1: Interest for Jan 15-31 (17 days, pro-rated)</li>
-                    <li>• Mar 1: Interest for full February</li>
-                    <li>• Apr 1: Interest for full March...</li>
-                  </ul>
-                </div>
-              </div>
-            </div>
-          </AccordionContent>
-        </AccordionItem>
-
-        {/* Interest Paid in Advance */}
-        <AccordionItem value="paid-in-advance" className="border rounded-lg px-4">
-          <AccordionTrigger className="hover:no-underline">
-            <div className="flex items-center gap-2">
-              <Clock className="w-4 h-4 text-orange-600" />
-              <span className="font-semibold">Interest Paid in Advance</span>
-            </div>
-          </AccordionTrigger>
-          <AccordionContent>
-            <div className="space-y-4 pt-2">
-              {/* Off */}
-              <div className="p-3 bg-slate-50 rounded-lg">
-                <div className="flex items-center gap-2 mb-2">
-                  <Badge variant="outline">Off (default)</Badge>
-                </div>
-                <p className="text-sm text-slate-600 mb-2">
-                  Interest is due at the <strong>end of the period</strong> (after it accrues).
-                </p>
-                <div className="bg-white p-3 rounded border text-sm">
-                  <p className="font-medium text-slate-700 mb-1">Example: Monthly loan starts January 1</p>
-                  <ul className="text-slate-600 space-y-1">
-                    <li>• January interest is due: <strong>February 1</strong></li>
-                    <li>• February interest is due: <strong>March 1</strong></li>
+                    <li>• Jan 15: First interest payment (disbursement day)</li>
+                    <li>• Feb 15: Second interest payment</li>
+                    <li>• Mar 15: Third interest payment...</li>
                   </ul>
                 </div>
               </div>
 
-              {/* On */}
+              {/* Advance, aligned to 1st */}
               <div className="p-3 bg-slate-50 rounded-lg">
                 <div className="flex items-center gap-2 mb-2">
-                  <Badge variant="outline">On</Badge>
+                  <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">Advance, aligned to 1st of Month</Badge>
                 </div>
                 <p className="text-sm text-slate-600 mb-2">
-                  Interest is due at the <strong>start of the period</strong> (before it accrues).
-                  First payment is due on the loan release date.
+                  First payment on <strong>disbursement date</strong> (pro-rated), then all subsequent payments on the <strong>1st of each month</strong>.
                 </p>
                 <div className="bg-white p-3 rounded border text-sm">
-                  <p className="font-medium text-slate-700 mb-1">Example: Monthly loan starts January 1</p>
+                  <p className="font-medium text-slate-700 mb-1">Example: Loan starts January 15</p>
                   <ul className="text-slate-600 space-y-1">
-                    <li>• January interest is due: <strong>January 1</strong> (loan release date)</li>
-                    <li>• February interest is due: <strong>February 1</strong></li>
+                    <li>• Jan 15: Interest for Jan 15-31 (17 days, pro-rated)</li>
+                    <li>• Feb 1: Interest for full February</li>
+                    <li>• Mar 1: Interest for full March...</li>
+                  </ul>
+                </div>
+              </div>
+
+              {/* Arrears */}
+              <div className="p-3 bg-slate-50 rounded-lg">
+                <div className="flex items-center gap-2 mb-2">
+                  <Badge variant="outline" className="bg-blue-50 text-blue-700 border-blue-200">Arrears</Badge>
+                </div>
+                <p className="text-sm text-slate-600 mb-2">
+                  Interest is due at the <strong>end of each period</strong> (after it accrues). First payment 1 month after disbursement.
+                </p>
+                <div className="bg-white p-3 rounded border text-sm">
+                  <p className="font-medium text-slate-700 mb-1">Example: Loan starts January 15</p>
+                  <ul className="text-slate-600 space-y-1">
+                    <li>• Feb 15: First interest payment (covers January)</li>
+                    <li>• Mar 15: Second interest payment (covers February)</li>
+                    <li>• Apr 15: Third interest payment...</li>
                   </ul>
                 </div>
               </div>

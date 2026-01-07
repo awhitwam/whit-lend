@@ -65,7 +65,7 @@ import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanPanel from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
-import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions, exportScheduleCalculationData, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
@@ -590,6 +590,326 @@ export default function LoanDetails() {
     generateLoanStatementPDF(loan, schedule, transactions);
   };
 
+  const handleExportScheduleCSV = () => {
+    // Use exact same timestamp for both calculations to ensure consistency
+    const asOfDate = new Date();
+
+    // DEBUG: Log inputs to verify they're identical
+    console.log('[CSV Export DEBUG] Inputs:', {
+      loanNumber: loan.loan_number,
+      loanId: loan.id,
+      scheduleLength: schedule.length,
+      transactionsLength: transactions.length,
+      asOfDate: asOfDate.toISOString(),
+      loanInterestRate: loan.interest_rate,
+      loanPenaltyRate: loan.penalty_rate,
+      loanPenaltyRateFrom: loan.penalty_rate_from,
+      loanStartDate: loan.start_date,
+      loanPrincipal: loan.principal_amount
+    });
+
+    // Get CSV export calculation
+    const data = exportScheduleCalculationData(loan, schedule, transactions, asOfDate);
+
+    // Get UI header calculation (for comparison) - this is what the LoanDetails header shows
+    const uiCalc = calculateLoanInterestBalance(loan, schedule, transactions, asOfDate);
+
+    // DEBUG: Log results
+    console.log('[CSV Export DEBUG] Results:', {
+      csvInterestDue: data.summary.totalInterestDue,
+      uiInterestDue: uiCalc.totalInterestDue,
+      difference: Math.abs(data.summary.totalInterestDue - uiCalc.totalInterestDue),
+      csvInterestPaid: data.summary.totalInterestReceived,
+      uiInterestPaid: uiCalc.totalInterestPaid
+    });
+
+    // Simplified CSV with clear field names
+    // Key fields:
+    // - Principal O/S: Principal balance at start of this period (what the interest is calculated on)
+    // - Interest Due (Calculated): The recalculated interest based on actual principal and rate
+    // - Interest Received: Sum of interest_applied from transactions assigned to this period
+    // - Interest O/S (Running): Cumulative interest due - cumulative interest received
+
+    const headers = [
+      'Period',
+      'Due Date',
+      'Period Start',
+      'Period End',
+      'Days in Period',
+      'Principal O/S (at period start)',
+      'Rate % (annual)',
+      'Penalty Rate?',
+      'Daily Interest (£/day)',
+      'Interest Due (Period)',
+      'How Calculated',
+      'Interest Due (Ledger)',
+      'Interest Received',
+      'Interest Bal (Period)',
+      'Interest Bal (Ledger)'
+    ];
+
+    // Build CSV rows
+    const rows = data.periods.map(p => {
+      // Calculate daily interest amount (principal × annual rate / 365)
+      const dailyInterestAmount = p.principalAtPeriodStart * (p.rateUsed / 100) / 365;
+
+      // Build calculation explanation showing the actual formula
+      let howCalculated = '';
+      if (p.calculationMethod === 'simple') {
+        howCalculated = `${dailyInterestAmount.toFixed(2)} x ${p.days} days`;
+      } else if (p.calculationMethod === 'segmented') {
+        const segmentCount = p.calculationDetails?.segments?.length || 0;
+        howCalculated = `${segmentCount} segments (capital changed mid-period)`;
+      } else {
+        howCalculated = 'Used database value';
+      }
+
+      return [
+        p.periodNumber,
+        p.dueDate,
+        p.periodStart,
+        p.periodEnd,
+        p.days,
+        p.principalAtPeriodStart,
+        p.rateUsed,
+        p.isPenaltyRate ? 'YES' : '',
+        Math.round(dailyInterestAmount * 100) / 100,
+        p.interestDueThisPeriod,
+        howCalculated,
+        p.ledgerInterestDue,
+        p.interestReceivedThisPeriod,
+        p.runningInterestBalance,
+        p.runningLedgerInterestBalance
+      ];
+    });
+
+    // Add summary section with comparison
+    rows.push([]);
+    rows.push(['=== SUMMARY ===']);
+    rows.push(['Loan', data.summary.loanNumber]);
+    rows.push(['Borrower', data.summary.borrower]);
+    rows.push(['Calculated As Of', format(asOfDate, 'yyyy-MM-dd HH:mm:ss')]);
+    rows.push([]);
+    rows.push(['Original Principal', data.summary.originalPrincipal]);
+    rows.push(['Standard Rate', `${data.summary.interestRate}%`]);
+    if (data.summary.penaltyRate) {
+      rows.push(['Penalty Rate', `${data.summary.penaltyRate}%`]);
+      rows.push(['Penalty From', data.summary.penaltyRateFrom]);
+    }
+    rows.push(['Interest Paid In Advance?', data.summary.isInterestPaidInAdvance ? 'YES' : 'NO']);
+    rows.push([]);
+    rows.push(['--- CSV Export Calculation (Period-Based) ---']);
+    rows.push(['Interest Due (Period)', data.summary.totalInterestDue]);
+    rows.push(['Interest Received', data.summary.totalInterestReceived]);
+    rows.push(['Interest O/S (Period)', data.summary.interestBalance]);
+    rows.push([]);
+    rows.push(['--- Ledger-Based Calculation (Same as UI Schedule Table) ---']);
+    rows.push(['Interest Due (Ledger)', data.summary.totalLedgerInterestDue]);
+    rows.push(['Interest Received', data.summary.totalInterestReceived]);
+    rows.push(['Interest O/S (Ledger)', data.summary.ledgerInterestBalance]);
+    rows.push([]);
+    rows.push(['--- UI Header Calculation (calculateLoanInterestBalance) ---']);
+    rows.push(['Interest Due (UI Header)', uiCalc.totalInterestDue]);
+    rows.push(['Interest Paid (UI Header)', uiCalc.totalInterestPaid]);
+    rows.push(['Interest O/S (UI Header)', uiCalc.interestBalance]);
+    rows.push([]);
+    rows.push(['--- Comparison ---']);
+    const ledgerDiff = Math.abs(data.summary.ledgerInterestBalance - uiCalc.interestBalance);
+    rows.push(['Ledger vs UI Header Match?', ledgerDiff < 0.01 ? 'YES' : 'NO']);
+    if (ledgerDiff >= 0.01) {
+      rows.push(['Ledger vs UI Header Difference', ledgerDiff.toFixed(2)]);
+    }
+    const diff = Math.abs(data.summary.interestBalance - uiCalc.interestBalance);
+    rows.push(['Period vs UI Header Match?', diff < 0.01 ? 'YES' : 'NO']);
+    if (diff >= 0.01) {
+      rows.push(['Period vs UI Header Difference', diff.toFixed(2)]);
+    }
+    rows.push([]);
+    rows.push(['Principal Balance', data.summary.finalPrincipalBalance]);
+    rows.push([]);
+    rows.push(['--- Input Counts ---']);
+    rows.push(['Schedule Periods (Total)', schedule.length]);
+    rows.push(['Schedule Periods (Processed)', data.summary.periodsProcessed]);
+    rows.push(['UI Periods Processed', uiCalc.periods?.length || 'N/A']);
+    rows.push(['Transactions (Total)', transactions.length]);
+    rows.push(['Repayment Transactions', data.summary.totalRepaymentTransactions]);
+    rows.push(['Disbursements', data.summary.totalDisbursements]);
+
+    // Calculate total days from schedule periods vs continuous day-count
+    const scheduleTotalDays = data.periods.reduce((sum, p) => sum + (p.days || 0), 0);
+    const loanStartForDays = new Date(loan.start_date);
+    loanStartForDays.setHours(0, 0, 0, 0);
+    const asOfForDays = new Date(asOfDate);
+    asOfForDays.setHours(0, 0, 0, 0);
+    const continuousDays = Math.floor((asOfForDays - loanStartForDays) / (1000 * 60 * 60 * 24));
+
+    // Find last schedule period date to show what the schedule covers
+    const lastScheduleDate = data.periods.length > 0 ? data.periods[data.periods.length - 1].dueDate : 'N/A';
+
+    rows.push([]);
+    rows.push(['--- Days Analysis (Key to Understanding Discrepancy) ---']);
+    rows.push(['Schedule Total Days (sum of period days)', scheduleTotalDays]);
+    rows.push(['Continuous Days (start to asOfDate)', continuousDays]);
+    rows.push(['Days Difference', continuousDays - scheduleTotalDays]);
+    rows.push(['Schedule Covers Up To', lastScheduleDate]);
+    rows.push(['asOfDate', format(asOfDate, 'yyyy-MM-dd')]);
+    rows.push([]);
+    rows.push(['Explanation: Schedule-based interest uses period boundaries (month-to-month).']);
+    rows.push(['Settlement-style uses continuous day-count from loan start to settlement date.']);
+    rows.push(['The difference in days x daily rate = difference in interest.']);
+
+    // Per-period comparison to find discrepancy
+    if (uiCalc.periods && uiCalc.periods.length > 0) {
+      rows.push([]);
+      rows.push(['=== PER-PERIOD COMPARISON ===']);
+      rows.push(['Period', 'Due Date', 'Days', 'CSV Principal', 'UI Principal', 'CSV Interest', 'UI Interest', 'Diff', 'CSV Method', 'UI Cap Chg?']);
+
+      const csvPeriods = data.periods || [];
+      const uiPeriods = uiCalc.periods || [];
+
+      // Create a map of UI periods by period number for lookup
+      const uiPeriodMap = new Map(uiPeriods.map(p => [p.periodNumber, p]));
+
+      let totalDifference = 0;
+      csvPeriods.forEach(csvP => {
+        const uiP = uiPeriodMap.get(csvP.periodNumber);
+        const csvInterest = csvP.interestDueThisPeriod || 0;
+        const uiInterest = uiP?.expectedInterest || 0;
+        const periodDiff = Math.abs(csvInterest - uiInterest);
+        totalDifference += periodDiff;
+
+        // Show ALL periods with differences OR with capital changes (to debug)
+        if (periodDiff >= 0.01 || csvP.calculationMethod === 'segmented' || uiP?.hadCapitalChanges) {
+          rows.push([
+            csvP.periodNumber,
+            csvP.dueDate,
+            csvP.days,
+            csvP.principalAtPeriodStart,
+            uiP?.principalAtPeriodStart || 'N/A',
+            csvInterest,
+            uiInterest,
+            periodDiff >= 0.01 ? periodDiff.toFixed(2) : '',
+            csvP.calculationMethod,
+            uiP?.hadCapitalChanges ? 'YES' : 'no'
+          ]);
+        }
+      });
+
+      if (totalDifference < 0.01) {
+        rows.push(['All periods match!']);
+      } else {
+        rows.push([]);
+        rows.push(['Total Period Differences', '', '', '', '', '', '', totalDifference.toFixed(2)]);
+      }
+    }
+
+    // Add SETTLEMENT-STYLE calculation for comparison
+    // This uses simple day-count from loan start to asOfDate, splitting only at capital changes
+    rows.push([]);
+    rows.push(['=== SETTLEMENT-STYLE CALCULATION (Day-Count Method) ===']);
+    rows.push(['This is how the Settlement Calculator computes interest - simple day count, not schedule-based']);
+    rows.push([]);
+
+    // Use shared capital events ledger functions
+    const loanStartDate = new Date(loan.start_date);
+    loanStartDate.setHours(0, 0, 0, 0);
+    const settlementEndDate = new Date(asOfDate);
+    settlementEndDate.setHours(0, 0, 0, 0);
+
+    // Build capital events using the shared function
+    const capitalEvents = buildCapitalEvents(loan, transactions);
+
+    // Calculate interest using the shared ledger function
+    const ledgerResult = calculateInterestFromLedger(loan, capitalEvents, loanStartDate, settlementEndDate);
+    const settlementTotalInterest = ledgerResult.totalInterest;
+
+    // Output the segment breakdown for CSV
+    rows.push(['Period', 'Start Date', 'End Date', 'Days', 'Principal', 'Daily Rate', 'Interest', 'Event']);
+
+    ledgerResult.segments.forEach((segment, idx) => {
+      // Find if this segment ends at a capital event
+      const event = capitalEvents.find(e => e.date.getTime() === segment.endDate.getTime());
+      const eventDescription = event ? event.description : '';
+
+      rows.push([
+        idx + 1,
+        format(segment.startDate, 'dd/MM/yyyy'),
+        format(segment.endDate, 'dd/MM/yyyy'),
+        segment.days,
+        segment.principal.toFixed(2),
+        (segment.dailyRate * 100).toFixed(6) + '%',
+        segment.interest.toFixed(2),
+        eventDescription
+      ]);
+    });
+
+    // Sum up interest paid
+    const totalInterestPaid = transactions
+      .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+      .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+
+    rows.push([]);
+    rows.push(['Settlement Method Totals:']);
+    rows.push(['Total Days', Math.floor((settlementEndDate - loanStartDate) / (1000 * 60 * 60 * 24))]);
+    rows.push(['Interest Accrued (Settlement)', settlementTotalInterest.toFixed(2)]);
+    rows.push(['Interest Paid', totalInterestPaid.toFixed(2)]);
+    rows.push(['Interest O/S (Settlement)', (settlementTotalInterest - totalInterestPaid).toFixed(2)]);
+    rows.push([]);
+    rows.push(['=== COMPARISON: Schedule vs Settlement ===']);
+    rows.push(['Interest Due (Schedule)', data.summary.totalInterestDue]);
+    rows.push(['Interest Due (Settlement)', settlementTotalInterest.toFixed(2)]);
+    rows.push(['Difference', Math.abs(data.summary.totalInterestDue - settlementTotalInterest).toFixed(2)]);
+    rows.push(['Schedule includes periods up to', data.periods.length > 0 ? data.periods[data.periods.length - 1].dueDate : 'N/A']);
+    rows.push(['Settlement calculates to', format(settlementEndDate, 'dd/MM/yyyy')]);
+
+    // Calculate expected interest difference based on day difference
+    const scheduleDaysTotal = data.periods.reduce((sum, p) => sum + (p.days || 0), 0);
+    const settlementDaysTotal = Math.floor((settlementEndDate - new Date(loan.start_date)) / (1000 * 60 * 60 * 24));
+    const dayDifference = settlementDaysTotal - scheduleDaysTotal;
+    const avgDailyRate = (loan.interest_rate / 100) / 365;
+    const avgPrincipal = loan.principal_amount; // simplified - actual varies
+    const expectedInterestDiff = dayDifference * avgPrincipal * avgDailyRate;
+
+    rows.push([]);
+    rows.push(['--- Why The Difference? ---']);
+    rows.push(['Schedule Total Days', scheduleDaysTotal]);
+    rows.push(['Settlement Total Days', settlementDaysTotal]);
+    rows.push(['Day Difference', dayDifference]);
+    rows.push(['At avg daily rate', (avgDailyRate * 100).toFixed(6) + '% (£' + (avgPrincipal * avgDailyRate).toFixed(2) + '/day at full principal)']);
+    rows.push(['Expected Interest Diff (simplified)', expectedInterestDiff.toFixed(2)]);
+    rows.push(['Actual Interest Diff', Math.abs(data.summary.totalInterestDue - settlementTotalInterest).toFixed(2)]);
+    rows.push([]);
+    rows.push(['NOTE: Schedule calculates to the last period DUE DATE (01/01/2026 in this case).']);
+    rows.push(['Settlement calculates to TODAY. The extra days after Jan 1 contribute to the difference.']);
+    rows.push(['Also, monthly periods may have slightly different day counts than continuous day-counting.']);
+
+    // Convert to CSV string
+    const csvContent = [
+      headers.join(','),
+      ...rows.map(row => row.map(cell => {
+        // Escape commas and quotes in cell values
+        const str = String(cell ?? '');
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      }).join(','))
+    ].join('\n');
+
+    // Download file
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `schedule-calc-${loan.loan_number}-${format(asOfDate, 'yyyy-MM-dd-HHmmss')}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+
+    toast.success('Schedule calculation exported to CSV');
+  };
+
   const generateAISummary = async () => {
     setIsLoadingSummary(true);
     try {
@@ -855,15 +1175,32 @@ export default function LoanDetails() {
 
   const principalRemaining = totalPrincipal - actualPrincipalPaid;
 
-  // Calculate live interest using day-by-day method with actual principal tracking
-  // This properly accounts for further advances (disbursements) affecting the principal
-  const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, transactions);
+  // Calculate live interest using schedule-based method
+  // Pass schedule to use schedule-based interest (handles rate changes correctly)
+  const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, transactions, new Date(), schedule);
   const interestRemaining = liveInterestCalc.interestRemaining;
   const totalOutstanding = principalRemaining + interestRemaining;
   const progressPercent = (actualPrincipalPaid / totalPrincipal) * 100;
 
   const liveInterestOutstanding = liveInterestCalc.interestRemaining;
   const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
+
+  // Calculate settlement interest (ledger-based, to today)
+  const capitalEvents = buildCapitalEvents(loan, transactions);
+  const loanStartDate = new Date(loan.start_date);
+  loanStartDate.setHours(0, 0, 0, 0);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const ledgerResult = calculateInterestFromLedger(loan, capitalEvents, loanStartDate, today);
+  const settlementInterestAccrued = ledgerResult.totalInterest;
+
+  // Interest paid from all repayments
+  const totalInterestPaid = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+    .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+
+  const settlementInterestOwed = settlementInterestAccrued - totalInterestPaid;
 
     return (
       <div className="absolute inset-0 bg-gradient-to-br from-slate-50 to-slate-100 flex overflow-hidden">
@@ -905,8 +1242,6 @@ export default function LoanDetails() {
                   {loan.description && <span className="font-normal text-slate-300"> - {loan.description}</span>}
                   <span className="font-normal text-slate-400">, </span>
                   <span className="font-normal">{loan.borrower_name}</span>
-                  <span className="font-normal text-slate-400">, </span>
-                  <span className="font-normal text-slate-300">{loan.product_name}</span>
                 </h1>
               </div>
               <div className="flex items-center gap-2">
@@ -964,6 +1299,10 @@ export default function LoanDetails() {
                     <DropdownMenuItem onClick={handleGenerateLoanStatement}>
                       <Download className="w-4 h-4 mr-2" />
                       Download Statement
+                    </DropdownMenuItem>
+                    <DropdownMenuItem onClick={handleExportScheduleCSV}>
+                      <Download className="w-4 h-4 mr-2" />
+                      Export Schedule CSV
                     </DropdownMenuItem>
                     {loan.status !== 'Closed' && (
                       <>
@@ -1084,8 +1423,13 @@ export default function LoanDetails() {
                     )}
                     {product && (
                       <div className="w-full lg:w-auto text-xs text-slate-500 pt-1">
-                        {product.interest_calculation_method === 'daily' ? 'Daily calc' : 'Monthly fixed'} • {product.interest_alignment === 'period_based' ? 'From start' : '1st of month'}
-                        {product.interest_paid_in_advance && ' • Paid in advance'}
+                        <span className="font-medium text-slate-700">{product.name}</span>
+                        {' • '}
+                        {product.interest_calculation_method === 'daily' ? 'Daily calc' : 'Monthly fixed'}
+                        {' • '}
+                        {product.interest_paid_in_advance
+                          ? (product.interest_alignment === 'monthly_first' ? 'In advance (1st of month)' : 'In advance')
+                          : 'In arrears'}
                         {loan.arrangement_fee > 0 && ` • Arr: ${formatCurrency(loan.arrangement_fee)}`}
                         {loan.exit_fee > 0 && ` • Exit: ${formatCurrency(loan.exit_fee)}`}
                       </div>
@@ -1144,11 +1488,16 @@ export default function LoanDetails() {
                     {isLoanActive && (() => {
                       // Only include exit fee in settlement - arrangement fee was already deducted from disbursement
                       const outstandingFees = loan.exit_fee || 0;
-                      const settlementTotal = principalRemaining + Math.max(0, liveInterestOutstanding) + outstandingFees;
+                      const settlementTotal = principalRemaining + Math.max(0, settlementInterestOwed) + outstandingFees;
                       return (
-                        <div className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 min-w-[120px]">
+                        <div className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 min-w-[140px]">
                           <p className="text-xs text-slate-600 font-medium">Settlement</p>
                           <p className="text-xl font-bold text-slate-900">{formatCurrency(settlementTotal)}</p>
+                          <p className={`text-xs ${settlementInterestOwed <= 0 ? 'text-emerald-600' : 'text-orange-600'}`}>
+                            {settlementInterestOwed <= 0
+                              ? `Int overpaid ${formatCurrency(Math.abs(settlementInterestOwed))}`
+                              : `Inc. ${formatCurrency(settlementInterestOwed)} int`}
+                          </p>
                         </div>
                       );
                     })()}

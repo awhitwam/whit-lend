@@ -122,6 +122,7 @@ export default function Dashboard() {
   // Uses cached principal_remaining from database when available for performance
   const loanMetrics = liveLoans.map(loan => {
     const loanTransactions = transactions.filter(t => t.loan_id === loan.id);
+    const loanSchedule = schedules.filter(s => s.loan_id === loan.id);
 
     // Handle different product types
     if (loan.product_type === 'Fixed Charge') {
@@ -153,7 +154,8 @@ export default function Dashboard() {
     }
 
     // Standard loans: use cached principal_remaining if available, otherwise calculate
-    const calc = calculateAccruedInterestWithTransactions(loan, loanTransactions);
+    // Pass schedule to use schedule-based interest (handles rate changes correctly)
+    const calc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule);
     const principalRemaining = loan.principal_remaining !== null && loan.principal_remaining !== undefined
       ? loan.principal_remaining
       : calc.principalRemaining;

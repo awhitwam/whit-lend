@@ -12,6 +12,7 @@ import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
 import { supabase } from '@/lib/supabaseClient';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
+import { applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
 import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
@@ -153,15 +154,69 @@ export default function OrgAdmin() {
         try {
           console.log(`[RegenerateSchedules] Regenerating loan ${loan.loan_number} (status: ${loan.status})...`);
 
-          // For closed/settled loans, pass the settlement date so the schedule
-          // is generated only up to the actual settlement date
-          const options = {};
-          if (loan.status === 'Closed' && loan.settlement_date) {
-            options.endDate = loan.settlement_date;
-            console.log(`[RegenerateSchedules]   → Using settlement date: ${loan.settlement_date}`);
+          // Determine effective end date based on loan status
+          let effectiveEndDate = null;
+          if (loan.status === 'Closed') {
+            // For closed loans, find the settlement date from the last principal payment (like LoanDetails does)
+            const txs = await api.entities.Transaction.filter({ loan_id: loan.id, is_deleted: false });
+            const principalPayments = txs
+              .filter(t => t.type === 'Repayment' && t.principal_applied > 0)
+              .sort((a, b) => new Date(b.date) - new Date(a.date));
+            if (principalPayments.length > 0) {
+              effectiveEndDate = principalPayments[0].date;
+            } else if (loan.settlement_date) {
+              effectiveEndDate = loan.settlement_date;
+            }
+          } else if (loan.auto_extend) {
+            // For live auto-extend loans, use today's date (like LoanDetails does)
+            effectiveEndDate = format(new Date(), 'yyyy-MM-dd');
+          }
+          if (effectiveEndDate) {
+            console.log(`[RegenerateSchedules]   → Using end date: ${effectiveEndDate}`);
           }
 
+          // Build options matching LoanDetails behavior
+          const options = (loan.auto_extend || loan.status === 'Closed')
+            ? { endDate: effectiveEndDate, duration: loan.duration }
+            : { duration: loan.duration };
+
           await regenerateLoanSchedule(loan.id, options);
+
+          // REAPPLY PAYMENTS - this was the missing step!
+          // Fetch all active repayment transactions for this loan
+          const allTxs = await api.entities.Transaction.filter({ loan_id: loan.id, is_deleted: false });
+          const activeTransactions = allTxs
+            .filter(t => t.type === 'Repayment')
+            .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+          if (activeTransactions.length > 0) {
+            console.log(`[RegenerateSchedules]   → Reapplying ${activeTransactions.length} payments...`);
+
+            // Fetch fresh schedule rows
+            const newScheduleRows = await api.entities.RepaymentSchedule.filter({ loan_id: loan.id }, 'installment_number');
+
+            // Reapply each payment using the waterfall
+            for (const tx of activeTransactions) {
+              const { updates, totalPrincipal, totalInterest } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
+
+              // Update schedule rows with payment allocations
+              for (const update of updates) {
+                await api.entities.RepaymentSchedule.update(update.id, {
+                  interest_paid: update.interest_paid,
+                  principal_paid: update.principal_paid,
+                  status: update.status
+                });
+              }
+
+              // Update transaction with allocation breakdown
+              await api.entities.Transaction.update(tx.id, {
+                principal_applied: totalPrincipal,
+                interest_applied: totalInterest,
+                fees_applied: Math.max(0, tx.amount - totalPrincipal - totalInterest)
+              });
+            }
+          }
+
           results.succeeded++;
         } catch (error) {
           console.error(`[RegenerateSchedules] Failed for loan ${loan.loan_number}:`, error);

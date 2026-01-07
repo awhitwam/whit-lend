@@ -116,16 +116,27 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     scheduleDuration = Math.max(1, scheduleDuration);
     console.log('Settled loan: truncating schedule at settlement date');
   } else if (options.endDate && loan.auto_extend) {
-    // Auto-extend: generate schedule up to end date (typically today)
-    // This creates schedule on-demand up to the current date, extending one period at a time
+    // Auto-extend: generate schedule up to end date AND ensure at least one future period
     const daysToEndDate = Math.max(0, differenceInDays(scheduleEndDate, loanStartDate));
-    const calculatedDuration = product.period === 'Monthly'
+    let calculatedDuration = product.period === 'Monthly'
       ? Math.ceil(daysToEndDate / 30.44)
       : Math.ceil(daysToEndDate / 7);
 
     // Ensure at least 1 period
-    scheduleDuration = Math.max(1, calculatedDuration);
-    console.log('Auto-extend: generating schedule up to today');
+    calculatedDuration = Math.max(1, calculatedDuration);
+
+    // ALWAYS include the next upcoming period so there's a future due date
+    // Calculate what the last period's due date would be, and if it's <= today, add one more
+    const lastPeriodDate = product.interest_alignment === 'monthly_first'
+      ? startOfMonth(addMonths(loanStartDate, calculatedDuration))
+      : addMonths(loanStartDate, calculatedDuration);
+
+    if (lastPeriodDate <= scheduleEndDate) {
+      calculatedDuration += 1;
+    }
+
+    scheduleDuration = calculatedDuration;
+    console.log('Auto-extend: generating schedule with future period');
   } else if (options.endDate && currentPrincipalOutstanding > 0.01) {
     // Non-auto-extend but has principal outstanding: use full loan duration
     scheduleDuration = baseDuration || 6;
@@ -561,16 +572,17 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
 
   let installmentNum = 1;
 
-  // First period: pro-rated from start date to end of month (if not already 1st)
+  // First period: pro-rated from start date to 1st of next month (if not already 1st)
   if (startDate.getDate() !== 1) {
-    const endOfFirstMonth = new Date(startDate.getFullYear(), startDate.getMonth() + 1, 0);
+    // First period covers from start date to the 1st of next month (not end of current month)
+    const firstOfNextMonth = startOfMonth(addMonths(startDate, 1));
     const principalAtStart = calculatePrincipalAtDate(originalPrincipal, transactions, startDate);
-    
+
     // Calculate pro-rated interest for first partial month with event-driven approach
-    const capitalEventsInPeriod = transactions.filter(t => 
+    const capitalEventsInPeriod = transactions.filter(t =>
       (t.type === 'Repayment' && t.principal_applied > 0) &&
-      new Date(t.date) >= startDate && 
-      new Date(t.date) <= endOfFirstMonth
+      new Date(t.date) >= startDate &&
+      new Date(t.date) < firstOfNextMonth
     );
 
     let totalInterest = 0;
@@ -589,16 +601,18 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
       segmentStart = eventDate;
     }
 
-    const finalDays = Math.max(0, differenceInDays(endOfFirstMonth, segmentStart) + 1);
+    // Final segment from last event (or start) to 1st of next month
+    const finalDays = Math.max(0, differenceInDays(firstOfNextMonth, segmentStart));
     if (finalDays > 0 && segmentPrincipal > 0) {
       totalInterest += calculateInterestForDays(segmentPrincipal, dailyRate, finalDays, product.interest_type, originalPrincipal);
     }
 
-    const daysInFirstPeriod = differenceInDays(endOfFirstMonth, startDate) + 1;
+    // Days from start date to 1st of next month
+    const daysInFirstPeriod = differenceInDays(firstOfNextMonth, startDate);
 
     // Determine due date based on interest_paid_in_advance setting
-    // If paid in advance, interest is due at START of period; otherwise at END
-    const firstPeriodDueDate = product.interest_paid_in_advance ? startDate : endOfFirstMonth;
+    // If paid in advance, interest is due at START of period (start date); otherwise at END (1st of next month)
+    const firstPeriodDueDate = product.interest_paid_in_advance ? startDate : firstOfNextMonth;
 
     schedule.push({
       installment_number: installmentNum++,

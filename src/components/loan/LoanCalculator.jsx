@@ -1062,7 +1062,7 @@ export function calculateLiveInterestOutstanding(loan, actualInterestPaid = null
  * @param {Date} asOfDate - Date to calculate as of (defaults to today)
  * @returns {Object} { interestAccrued, interestPaid, interestRemaining, principalRemaining }
  */
-export function calculateAccruedInterestWithTransactions(loan, transactions = [], asOfDate = new Date()) {
+export function calculateAccruedInterestWithTransactions(loan, transactions = [], asOfDate = new Date(), schedule = []) {
   if (!loan || loan.status === 'Pending') {
     return {
       interestAccrued: 0,
@@ -1078,11 +1078,7 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
   startDate.setHours(0, 0, 0, 0);
   const startDateKey = startDate.toISOString().split('T')[0];
 
-  // Add 1 to include today's interest (interest accrues up to and including today)
-  const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)) + 1);
   const principal = loan.principal_amount;
-  const annualRate = loan.interest_rate / 100;
-  const dailyRate = annualRate / 365;
 
   // Get repayment transactions sorted by date
   const repayments = transactions
@@ -1105,6 +1101,39 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
   // Use gross_amount for disbursements (what borrower owes), fallback to amount for legacy data
   const totalDisbursed = disbursements.reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
   const principalRemaining = principal + totalDisbursed - totalPrincipalPaid;
+
+  // If schedule is provided, use the accurate calculateLoanInterestBalance function
+  // This recalculates interest dynamically, handling penalty rates, mid-period capital changes, etc.
+  if (schedule && schedule.length > 0) {
+    // Debug logging for specific loans
+    if (loan.loan_number === '1000025' || loan.loan_number === '1000001') {
+      console.log(`[AccruedInterestWithTx] Loan ${loan.loan_number} - USING schedule-based calc:`, {
+        scheduleLength: schedule.length,
+        transactionsLength: transactions.length
+      });
+    }
+    const interestCalc = calculateLoanInterestBalance(loan, schedule, transactions, asOfDate);
+
+    return {
+      interestAccrued: interestCalc.totalInterestDue,
+      interestPaid: interestCalc.totalInterestPaid,
+      interestRemaining: interestCalc.interestBalance,
+      principalRemaining: Math.round(principalRemaining * 100) / 100
+    };
+  }
+
+  // Fall back to day-by-day calculation for loans without schedules
+  // Note: This uses a single rate and won't handle rate changes correctly
+  // Debug logging for specific loans
+  if (loan.loan_number === '1000025' || loan.loan_number === '1000001') {
+    console.log(`[AccruedInterestWithTx] Loan ${loan.loan_number} - FALLBACK day-by-day calc:`, {
+      scheduleProvided: !!schedule,
+      scheduleLength: schedule?.length || 0
+    });
+  }
+  const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)) + 1);
+  const annualRate = loan.interest_rate / 100;
+  const dailyRate = annualRate / 365;
 
   // Create a map of principal payments by date
   const principalPaymentsByDate = {};
@@ -1162,6 +1191,572 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
 }
 
 /**
+ * Calculate the accurate interest balance for a loan
+ * This matches the RepaymentScheduleTable's calculation exactly, handling:
+ * - Penalty rates
+ * - Mid-period capital changes (further advances, principal repayments)
+ * - Transaction assignment to schedule periods
+ *
+ * @param {Object} loan - Loan object with interest_rate, penalty_rate, penalty_rate_from, start_date, principal_amount
+ * @param {Array} schedule - Repayment schedule rows
+ * @param {Array} transactions - All transactions for the loan
+ * @param {Date} asOfDate - Calculate interest due up to this date (default: today)
+ * @returns {Object} { totalInterestDue, totalInterestPaid, interestBalance }
+ */
+export function calculateLoanInterestBalance(loan, schedule = [], transactions = [], asOfDate = new Date()) {
+  if (!loan || !schedule || schedule.length === 0) {
+    return {
+      totalInterestDue: 0,
+      totalInterestPaid: 0,
+      interestBalance: 0
+    };
+  }
+
+  const today = new Date(asOfDate);
+  today.setHours(0, 0, 0, 0);
+
+  // Debug logging for specific loans
+  const isDebugLoan = loan.loan_number === '1000025' || loan.loan_number === '1000001';
+  if (isDebugLoan) {
+    // Get first and last schedule entries
+    const scheduleByDate = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+    const firstSchedule = scheduleByDate[0];
+    const lastSchedule = scheduleByDate[scheduleByDate.length - 1];
+
+    console.log(`[InterestCalc DEBUG] Loan ${loan.loan_number}:`, {
+      scheduleLength: schedule.length,
+      transactionsLength: transactions.length,
+      asOfDate: today.toISOString(),
+      loanRate: loan.interest_rate,
+      penaltyRate: loan.penalty_rate,
+      penaltyRateFrom: loan.penalty_rate_from,
+      firstScheduleDueDate: firstSchedule?.due_date,
+      lastScheduleDueDate: lastSchedule?.due_date,
+      repaymentTxCount: transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment').length,
+      disbursementTxCount: transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement').length
+    });
+  }
+
+  // Sort schedule by due_date ascending
+  const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+
+  // Separate transactions
+  const repaymentTransactions = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const disbursementTransactions = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // PASS 1: Assign each repayment transaction to its closest schedule period
+  const txAssignments = new Map();
+
+  repaymentTransactions.forEach(tx => {
+    const txDate = new Date(tx.date);
+    let closestSchedule = null;
+    let closestDiff = Infinity;
+
+    sortedSchedule.forEach(scheduleRow => {
+      const dueDate = new Date(scheduleRow.due_date);
+      const diff = Math.abs(txDate - dueDate);
+      if (diff < closestDiff) {
+        closestDiff = diff;
+        closestSchedule = scheduleRow;
+      }
+    });
+
+    if (closestSchedule) {
+      if (!txAssignments.has(closestSchedule.id)) {
+        txAssignments.set(closestSchedule.id, []);
+      }
+      txAssignments.get(closestSchedule.id).push(tx);
+    }
+  });
+
+  // PASS 2: Redistribute excess transactions from crowded periods to empty adjacent periods
+  const RANGE_DAYS = 60;
+  const rangeMsec = RANGE_DAYS * 24 * 60 * 60 * 1000;
+
+  const scheduleIndexById = new Map();
+  sortedSchedule.forEach((s, idx) => scheduleIndexById.set(s.id, idx));
+
+  const emptyPeriodIds = new Set(
+    sortedSchedule
+      .filter(s => !txAssignments.has(s.id) || txAssignments.get(s.id).length === 0)
+      .map(s => s.id)
+  );
+
+  for (const [periodId, periodTxs] of txAssignments.entries()) {
+    while (periodTxs.length > 1 && emptyPeriodIds.size > 0) {
+      const periodIdx = scheduleIndexById.get(periodId);
+      const periodDueDate = new Date(sortedSchedule[periodIdx].due_date);
+
+      let furthestTx = null;
+      let furthestDiff = -1;
+      periodTxs.forEach(tx => {
+        const diff = Math.abs(new Date(tx.date) - periodDueDate);
+        if (diff > furthestDiff) {
+          furthestDiff = diff;
+          furthestTx = tx;
+        }
+      });
+
+      let bestEmptyId = null;
+      let bestDistance = Infinity;
+
+      for (const emptyId of emptyPeriodIds) {
+        const emptyIdx = scheduleIndexById.get(emptyId);
+        const emptyDueDate = new Date(sortedSchedule[emptyIdx].due_date);
+        const txDate = new Date(furthestTx.date);
+
+        const txToEmptyDiff = Math.abs(txDate - emptyDueDate);
+        if (txToEmptyDiff <= rangeMsec) {
+          const indexDistance = Math.abs(emptyIdx - periodIdx);
+          if (indexDistance < bestDistance) {
+            bestDistance = indexDistance;
+            bestEmptyId = emptyId;
+          }
+        }
+      }
+
+      if (bestEmptyId) {
+        const txIndex = periodTxs.indexOf(furthestTx);
+        periodTxs.splice(txIndex, 1);
+
+        if (!txAssignments.has(bestEmptyId)) {
+          txAssignments.set(bestEmptyId, []);
+        }
+        txAssignments.get(bestEmptyId).push(furthestTx);
+        emptyPeriodIds.delete(bestEmptyId);
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Build capital events ledger for consistent interest calculation (same as UI schedule table)
+  const capitalEvents = buildCapitalEvents(loan, transactions);
+
+  // Build rows array for tracking principal and calculating interest
+  const rows = [];
+
+  // Add disbursement rows
+  disbursementTransactions.forEach((tx, index) => {
+    const isInitial = index === 0;
+    const grossAmount = tx.gross_amount ?? tx.amount;
+
+    rows.push({
+      type: isInitial ? 'disbursement' : 'further_advance',
+      date: new Date(tx.date),
+      principal: grossAmount,
+      sortOrder: isInitial ? 0 : 1
+    });
+  });
+
+  // Detect if this is an "interest paid in advance" loan
+  // For advance loans, the first due date equals the loan start date
+  // For arrears loans, the first due date is after the loan start date
+  const loanStartDate = new Date(loan.start_date);
+  loanStartDate.setHours(0, 0, 0, 0);
+  const firstDueDate = sortedSchedule.length > 0 ? new Date(sortedSchedule[0].due_date) : null;
+  if (firstDueDate) firstDueDate.setHours(0, 0, 0, 0);
+
+  const isInterestPaidInAdvance = firstDueDate && firstDueDate.getTime() === loanStartDate.getTime();
+
+  if (isDebugLoan) {
+    console.log(`[InterestCalc DEBUG] isInterestPaidInAdvance: ${isInterestPaidInAdvance}`, {
+      loanStartDate: loanStartDate.toISOString(),
+      firstDueDate: firstDueDate?.toISOString(),
+      match: firstDueDate?.getTime() === loanStartDate.getTime()
+    });
+  }
+
+  // Add schedule header rows (only for periods up to asOfDate)
+  sortedSchedule.forEach((scheduleRow, idx) => {
+    const dueDate = new Date(scheduleRow.due_date);
+    dueDate.setHours(0, 0, 0, 0);
+
+    // Only include periods where due_date <= asOfDate
+    if (dueDate > today) return;
+
+    // Calculate period boundaries based on payment timing
+    let periodStartDate, periodEndDate;
+
+    if (isInterestPaidInAdvance) {
+      // For ADVANCE loans: due date is at START of period
+      // Period covers: current due date → next due date
+      periodStartDate = dueDate;
+
+      if (idx < sortedSchedule.length - 1) {
+        // Use next period's due date as end
+        periodEndDate = new Date(sortedSchedule[idx + 1].due_date);
+        periodEndDate.setHours(0, 0, 0, 0);
+      } else {
+        // Last period: use schedule's calculation_days to estimate end
+        // Or default to 30 days after start
+        const calcDays = scheduleRow.calculation_days || 30;
+        periodEndDate = addDays(dueDate, calcDays);
+      }
+    } else {
+      // For ARREARS loans: due date is at END of period
+      // Period covers: previous due date → current due date
+      periodStartDate = idx > 0
+        ? new Date(sortedSchedule[idx - 1].due_date)
+        : new Date(loan.start_date);
+      periodEndDate = dueDate;
+    }
+
+    const periodTransactions = txAssignments.get(scheduleRow.id) || [];
+
+    rows.push({
+      type: 'schedule_header',
+      scheduleRow,
+      date: dueDate,
+      expectedInterest: scheduleRow.interest_amount || 0,
+      sortOrder: 2,
+      periodStartDate,
+      periodEndDate,
+      periodTransactions,
+      isAdvancePayment: isInterestPaidInAdvance
+    });
+  });
+
+  // Sort all rows by date, then by sortOrder
+  rows.sort((a, b) => {
+    const dateDiff = a.date - b.date;
+    if (dateDiff !== 0) return dateDiff;
+    return (a.sortOrder || 0) - (b.sortOrder || 0);
+  });
+
+  // Calculate running balances
+  let runningPrincipalBalance = 0;
+  let runningInterestAccrued = 0;
+  let runningInterestPaid = 0;
+
+  // Track principal balance at each period boundary
+  const principalAtDate = new Map();
+  const startDateKey = new Date(loan.start_date).toISOString().split('T')[0];
+  principalAtDate.set(startDateKey, loan.principal_amount);
+
+  rows.forEach(row => {
+    if (row.type === 'disbursement') {
+      runningPrincipalBalance = row.principal;
+      principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
+    } else if (row.type === 'further_advance') {
+      runningPrincipalBalance += row.principal;
+      principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
+    } else if (row.type === 'schedule_header') {
+      // Calculate principalAtPeriodStart
+      let principalAtPeriodStart = loan.principal_amount;
+      if (row.periodStartDate) {
+        const periodStartKey = row.periodStartDate.toISOString().split('T')[0];
+        let bestDate = null;
+        let bestBalance = loan.principal_amount;
+        for (const [dateKey, balance] of principalAtDate.entries()) {
+          if (dateKey <= periodStartKey && (!bestDate || dateKey > bestDate)) {
+            bestDate = dateKey;
+            bestBalance = balance;
+          }
+        }
+        principalAtPeriodStart = bestBalance;
+      }
+
+      // Recalculate expectedInterest using the capital events ledger (same as UI schedule table)
+      if (row.periodStartDate) {
+        const periodStart = row.periodStartDate;
+        const periodEnd = row.periodEndDate || row.date;
+
+        // Use the shared ledger-based calculation for consistency
+        const ledgerResult = calculateInterestFromLedger(loan, capitalEvents, periodStart, periodEnd);
+        row.expectedInterest = ledgerResult.totalInterest;
+        row._hadCapitalChanges = ledgerResult.segments.length > 1;
+        row._ledgerSegments = ledgerResult.segments;
+      }
+
+      // Accrue interest for this period
+      runningInterestAccrued += row.expectedInterest;
+
+      // Track interest paid from transactions in this period
+      const periodInterestPaid = (row.periodTransactions || [])
+        .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+      runningInterestPaid += periodInterestPaid;
+
+      // Track principal paid to update running balance
+      const periodPrincipalPaid = (row.periodTransactions || [])
+        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+      runningPrincipalBalance = Math.max(0, runningPrincipalBalance - periodPrincipalPaid);
+
+      // Record balance at this period end date (AFTER principal reduction)
+      // This ensures next period's lookup finds the correct reduced principal
+      principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
+    }
+  });
+
+  // Build periods array for comparison/debugging
+  const scheduleRows = rows.filter(r => r.type === 'schedule_header');
+  const periods = scheduleRows.map((row, idx) => {
+    const periodStart = row.periodStartDate;
+    const periodEnd = row.date;
+    const days = periodStart && periodEnd ? differenceInDays(periodEnd, periodStart) : 0;
+
+    // Recalculate principalAtPeriodStart for logging (same logic as above)
+    let principalAtPeriodStart = loan.principal_amount;
+    if (periodStart) {
+      const periodStartKey = periodStart.toISOString().split('T')[0];
+      let bestDate = null;
+      let bestBalance = loan.principal_amount;
+      for (const [dateKey, balance] of principalAtDate.entries()) {
+        if (dateKey <= periodStartKey && (!bestDate || dateKey > bestDate)) {
+          bestDate = dateKey;
+          bestBalance = balance;
+        }
+      }
+      principalAtPeriodStart = bestBalance;
+    }
+
+    return {
+      periodNumber: row.scheduleRow?.installment_number || (idx + 1),
+      dueDate: row.date ? format(row.date, 'yyyy-MM-dd') : null,
+      days: days,
+      principalAtPeriodStart: Math.round(principalAtPeriodStart * 100) / 100,
+      expectedInterest: Math.round((row.expectedInterest || 0) * 100) / 100,
+      periodInterestPaid: (row.periodTransactions || []).reduce((sum, tx) => sum + (tx.interest_applied || 0), 0),
+      hadCapitalChanges: row._hadCapitalChanges || false
+    };
+  });
+
+  const result = {
+    totalInterestDue: Math.round(runningInterestAccrued * 100) / 100,
+    totalInterestPaid: Math.round(runningInterestPaid * 100) / 100,
+    interestBalance: Math.round((runningInterestAccrued - runningInterestPaid) * 100) / 100,
+    periods: periods // Include per-period data for comparison
+  };
+
+  // Debug logging for specific loans
+  if (loan.loan_number === '1000025' || loan.loan_number === '1000001') {
+    // Count how many schedule rows were processed (had due_date <= today)
+    const processedScheduleCount = scheduleRows.length;
+    console.log(`[InterestCalc RESULT] Loan ${loan.loan_number}:`, {
+      totalInterestDue: result.totalInterestDue,
+      totalInterestPaid: result.totalInterestPaid,
+      interestBalance: result.interestBalance,
+      processedScheduleCount,
+      totalScheduleCount: sortedSchedule.length,
+      rowsBuilt: rows.length
+    });
+  }
+
+  return result;
+}
+
+/**
+ * Build a chronological list of capital events (principal changes) from transactions
+ * Used for ledger-based interest calculation
+ *
+ * @param {Object} loan - Loan object with start_date and principal_amount
+ * @param {Array} transactions - All transactions for the loan
+ * @returns {Array} Sorted array of { date, principalChange, description, txId }
+ */
+export function buildCapitalEvents(loan, transactions) {
+  const loanStartDate = new Date(loan.start_date);
+  loanStartDate.setHours(0, 0, 0, 0);
+  const startDateKey = loanStartDate.toISOString().split('T')[0];
+
+  // Principal repayments (reduce principal)
+  const repayments = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Repayment' && tx.principal_applied > 0)
+    .map(tx => ({
+      date: new Date(tx.date),
+      principalChange: -(tx.principal_applied || 0),
+      description: `Repayment: -£${(tx.principal_applied || 0).toFixed(2)} principal`,
+      txId: tx.id
+    }));
+
+  // Further advances (increase principal) - exclude initial disbursement on start date
+  const advances = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+    .filter(tx => {
+      const txDate = new Date(tx.date);
+      txDate.setHours(0, 0, 0, 0);
+      return txDate.toISOString().split('T')[0] !== startDateKey;
+    })
+    .map(tx => ({
+      date: new Date(tx.date),
+      principalChange: tx.gross_amount ?? tx.amount,
+      description: `Further Advance: +£${(tx.gross_amount ?? tx.amount).toFixed(2)}`,
+      txId: tx.id
+    }));
+
+  // Sort by date
+  const events = [...repayments, ...advances].sort((a, b) => a.date - b.date);
+
+  // Normalize all dates
+  events.forEach(e => e.date.setHours(0, 0, 0, 0));
+
+  return events;
+}
+
+/**
+ * Calculate interest accrued between two dates using capital events ledger
+ * This is the core ledger-based calculation that handles mid-period capital changes correctly
+ *
+ * @param {Object} loan - Loan object with principal_amount, interest_rate, penalty_rate, penalty_rate_from
+ * @param {Array} capitalEvents - Sorted array from buildCapitalEvents()
+ * @param {Date} fromDate - Start date (exclusive for interest, but events on this date apply)
+ * @param {Date} toDate - End date (inclusive)
+ * @returns {Object} { totalInterest, segments[] } with detailed breakdown
+ */
+export function calculateInterestFromLedger(loan, capitalEvents, fromDate, toDate) {
+  let periodStart = new Date(fromDate);
+  periodStart.setHours(0, 0, 0, 0);
+
+  const endDate = new Date(toDate);
+  endDate.setHours(0, 0, 0, 0);
+
+  // If dates are same or invalid range, return 0
+  if (periodStart >= endDate) {
+    return { totalInterest: 0, segments: [], days: 0 };
+  }
+
+  // Determine starting principal by applying all events up to and including fromDate
+  let runningPrincipal = loan.principal_amount;
+  let eventIndex = 0;
+
+  // Apply all capital events that occurred on or before fromDate
+  while (eventIndex < capitalEvents.length) {
+    const event = capitalEvents[eventIndex];
+    if (event.date <= periodStart) {
+      runningPrincipal = Math.max(0, runningPrincipal + event.principalChange);
+      eventIndex++;
+    } else {
+      break;
+    }
+  }
+
+  let totalInterest = 0;
+  const segments = [];
+
+  while (periodStart < endDate) {
+    // Determine the rate for this segment
+    let rate = loan.interest_rate;
+    if (loan.penalty_rate && loan.penalty_rate_from) {
+      const penaltyDate = new Date(loan.penalty_rate_from);
+      penaltyDate.setHours(0, 0, 0, 0);
+      if (periodStart >= penaltyDate) {
+        rate = loan.penalty_rate;
+      }
+    }
+    const dailyRate = rate / 100 / 365;
+
+    // Find the end of this segment (next capital event or endDate)
+    let segmentEnd;
+    if (eventIndex < capitalEvents.length && capitalEvents[eventIndex].date < endDate) {
+      segmentEnd = capitalEvents[eventIndex].date;
+    } else {
+      segmentEnd = endDate;
+    }
+
+    // Calculate days and interest for this segment
+    const days = differenceInDays(segmentEnd, periodStart);
+    if (days > 0 && runningPrincipal > 0) {
+      const segmentInterest = runningPrincipal * dailyRate * days;
+      totalInterest += segmentInterest;
+
+      segments.push({
+        startDate: new Date(periodStart),
+        endDate: new Date(segmentEnd),
+        days,
+        principal: runningPrincipal,
+        rate,
+        dailyRate,
+        interest: segmentInterest
+      });
+    }
+
+    // Move to next segment
+    periodStart = segmentEnd;
+
+    // Apply capital event if we stopped at one
+    if (eventIndex < capitalEvents.length && capitalEvents[eventIndex].date.getTime() === segmentEnd.getTime()) {
+      runningPrincipal = Math.max(0, runningPrincipal + capitalEvents[eventIndex].principalChange);
+      eventIndex++;
+    }
+  }
+
+  const totalDays = segments.reduce((sum, s) => sum + s.days, 0);
+
+  return {
+    totalInterest: Math.round(totalInterest * 100) / 100,
+    segments,
+    days: totalDays
+  };
+}
+
+/**
+ * Calculate interest for each schedule period using the capital events ledger
+ * Returns per-period breakdown that can be used for display
+ *
+ * @param {Object} loan - Loan object
+ * @param {Array} schedule - Repayment schedule (sorted by due_date ascending)
+ * @param {Array} transactions - All transactions
+ * @param {Date} asOfDate - Calculate up to this date
+ * @returns {Object} { periods[], totalInterestDue, capitalEvents }
+ */
+export function calculateInterestByPeriod(loan, schedule, transactions, asOfDate = new Date()) {
+  const capitalEvents = buildCapitalEvents(loan, transactions);
+
+  const today = new Date(asOfDate);
+  today.setHours(0, 0, 0, 0);
+
+  const loanStartDate = new Date(loan.start_date);
+  loanStartDate.setHours(0, 0, 0, 0);
+
+  // Sort schedule by due date
+  const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+
+  const periods = [];
+  let runningInterestAccrued = 0;
+
+  sortedSchedule.forEach((scheduleRow, idx) => {
+    const dueDate = new Date(scheduleRow.due_date);
+    dueDate.setHours(0, 0, 0, 0);
+
+    // Only process periods up to asOfDate
+    if (dueDate > today) return;
+
+    // Period boundaries: previous due date (or loan start) to current due date
+    const periodStart = idx === 0 ? loanStartDate : new Date(sortedSchedule[idx - 1].due_date);
+    periodStart.setHours(0, 0, 0, 0);
+    const periodEnd = dueDate;
+
+    // Calculate interest for this period using the ledger
+    const result = calculateInterestFromLedger(loan, capitalEvents, periodStart, periodEnd);
+
+    runningInterestAccrued += result.totalInterest;
+
+    periods.push({
+      installmentNumber: scheduleRow.installment_number,
+      scheduleId: scheduleRow.id,
+      dueDate: dueDate,
+      periodStart: periodStart,
+      periodEnd: periodEnd,
+      days: result.days,
+      interestDue: result.totalInterest,
+      segments: result.segments,
+      runningInterestAccrued: Math.round(runningInterestAccrued * 100) / 100,
+      // Keep reference to original schedule row
+      scheduleRow
+    });
+  });
+
+  return {
+    periods,
+    totalInterestDue: Math.round(runningInterestAccrued * 100) / 100,
+    capitalEvents
+  };
+}
+
+/**
  * Format currency
  */
 export function formatCurrency(amount, currency = 'GBP') {
@@ -1170,4 +1765,433 @@ export function formatCurrency(amount, currency = 'GBP') {
     currency: currency,
     minimumFractionDigits: 2
   }).format(amount || 0);
+}
+
+/**
+ * Export detailed schedule calculation data for debugging/analysis
+ * Returns raw data showing how each period's interest was calculated
+ *
+ * @param {Object} loan - Loan object
+ * @param {Array} schedule - Repayment schedule rows
+ * @param {Array} transactions - All transactions for the loan
+ * @param {Date} asOfDate - Calculate up to this date (default: today)
+ * @returns {Object} { summary, periods[] }
+ */
+export function exportScheduleCalculationData(loan, schedule = [], transactions = [], asOfDate = new Date()) {
+  if (!loan || !schedule || schedule.length === 0) {
+    return {
+      summary: {
+        loanNumber: loan?.loan_number,
+        error: 'No schedule data available',
+        scheduleLength: schedule?.length || 0
+      },
+      periods: []
+    };
+  }
+
+  const today = new Date(asOfDate);
+  today.setHours(0, 0, 0, 0);
+
+  // Sort schedule by due_date ascending
+  const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+
+  // Build capital events ledger for consistent interest calculation (same as UI)
+  const capitalEvents = buildCapitalEvents(loan, transactions);
+  const loanStartDateForLedger = new Date(loan.start_date);
+  loanStartDateForLedger.setHours(0, 0, 0, 0);
+
+  // Separate transactions
+  const repaymentTransactions = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+  const disbursementTransactions = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  // PASS 1: Assign each repayment transaction to its closest schedule period
+  const txAssignments = new Map();
+
+  repaymentTransactions.forEach(tx => {
+    const txDate = new Date(tx.date);
+    let closestSchedule = null;
+    let closestDiff = Infinity;
+
+    sortedSchedule.forEach(scheduleRow => {
+      const dueDate = new Date(scheduleRow.due_date);
+      const diff = Math.abs(txDate - dueDate);
+      if (diff < closestDiff) {
+        closestDiff = diff;
+        closestSchedule = scheduleRow;
+      }
+    });
+
+    if (closestSchedule) {
+      if (!txAssignments.has(closestSchedule.id)) {
+        txAssignments.set(closestSchedule.id, []);
+      }
+      txAssignments.get(closestSchedule.id).push(tx);
+    }
+  });
+
+  // PASS 2: Redistribute excess transactions from crowded periods to empty adjacent periods
+  const RANGE_DAYS = 60;
+  const rangeMsec = RANGE_DAYS * 24 * 60 * 60 * 1000;
+
+  const scheduleIndexById = new Map();
+  sortedSchedule.forEach((s, idx) => scheduleIndexById.set(s.id, idx));
+
+  const emptyPeriodIds = new Set(
+    sortedSchedule
+      .filter(s => !txAssignments.has(s.id) || txAssignments.get(s.id).length === 0)
+      .map(s => s.id)
+  );
+
+  for (const [periodId, periodTxs] of txAssignments.entries()) {
+    while (periodTxs.length > 1 && emptyPeriodIds.size > 0) {
+      const periodIdx = scheduleIndexById.get(periodId);
+      const periodDueDate = new Date(sortedSchedule[periodIdx].due_date);
+
+      let furthestTx = null;
+      let furthestDiff = -1;
+      periodTxs.forEach(tx => {
+        const diff = Math.abs(new Date(tx.date) - periodDueDate);
+        if (diff > furthestDiff) {
+          furthestDiff = diff;
+          furthestTx = tx;
+        }
+      });
+
+      let bestEmptyId = null;
+      let bestDistance = Infinity;
+
+      for (const emptyId of emptyPeriodIds) {
+        const emptyIdx = scheduleIndexById.get(emptyId);
+        const emptyDueDate = new Date(sortedSchedule[emptyIdx].due_date);
+        const txDate = new Date(furthestTx.date);
+
+        const txToEmptyDiff = Math.abs(txDate - emptyDueDate);
+        if (txToEmptyDiff <= rangeMsec) {
+          const indexDistance = Math.abs(emptyIdx - periodIdx);
+          if (indexDistance < bestDistance) {
+            bestDistance = indexDistance;
+            bestEmptyId = emptyId;
+          }
+        }
+      }
+
+      if (bestEmptyId) {
+        const txIndex = periodTxs.indexOf(furthestTx);
+        periodTxs.splice(txIndex, 1);
+
+        if (!txAssignments.has(bestEmptyId)) {
+          txAssignments.set(bestEmptyId, []);
+        }
+        txAssignments.get(bestEmptyId).push(furthestTx);
+        emptyPeriodIds.delete(bestEmptyId);
+      } else {
+        break;
+      }
+    }
+  }
+
+  // Build detailed period data
+  const periods = [];
+  let runningPrincipalBalance = 0;
+  let runningInterestAccrued = 0;
+  let runningInterestPaid = 0;
+  let runningLedgerInterestAccrued = 0; // Ledger-based running total (matches UI)
+
+  // Track principal balance at each date
+  const principalAtDate = new Map();
+  const startDateKey = new Date(loan.start_date).toISOString().split('T')[0];
+  principalAtDate.set(startDateKey, loan.principal_amount);
+
+  // Process disbursements first to track principal
+  disbursementTransactions.forEach((tx, index) => {
+    const isInitial = index === 0;
+    const grossAmount = tx.gross_amount ?? tx.amount;
+    const txDateKey = new Date(tx.date).toISOString().split('T')[0];
+
+    if (isInitial) {
+      runningPrincipalBalance = grossAmount;
+    } else {
+      runningPrincipalBalance += grossAmount;
+    }
+    principalAtDate.set(txDateKey, runningPrincipalBalance);
+  });
+
+  // Detect if this is an "interest paid in advance" loan
+  const loanStartDate = new Date(loan.start_date);
+  loanStartDate.setHours(0, 0, 0, 0);
+  const firstDueDate = sortedSchedule.length > 0 ? new Date(sortedSchedule[0].due_date) : null;
+  if (firstDueDate) firstDueDate.setHours(0, 0, 0, 0);
+  const isInterestPaidInAdvance = firstDueDate && firstDueDate.getTime() === loanStartDate.getTime();
+
+  // Process each schedule period
+  sortedSchedule.forEach((scheduleRow, idx) => {
+    const dueDate = new Date(scheduleRow.due_date);
+    dueDate.setHours(0, 0, 0, 0);
+
+    // Only include periods where due_date <= asOfDate
+    if (dueDate > today) return;
+
+    // Calculate period boundaries based on payment timing
+    let periodStartDate, periodEndDate;
+
+    if (isInterestPaidInAdvance) {
+      // For ADVANCE loans: due date is at START of period
+      // Period covers: current due date → next due date
+      periodStartDate = dueDate;
+
+      if (idx < sortedSchedule.length - 1) {
+        periodEndDate = new Date(sortedSchedule[idx + 1].due_date);
+        periodEndDate.setHours(0, 0, 0, 0);
+      } else {
+        const calcDays = scheduleRow.calculation_days || 30;
+        periodEndDate = addDays(dueDate, calcDays);
+      }
+    } else {
+      // For ARREARS loans: due date is at END of period
+      periodStartDate = idx > 0
+        ? new Date(sortedSchedule[idx - 1].due_date)
+        : new Date(loan.start_date);
+      periodEndDate = dueDate;
+    }
+
+    const periodTransactions = txAssignments.get(scheduleRow.id) || [];
+
+    // Find principalAtPeriodStart
+    const periodStartKey = periodStartDate.toISOString().split('T')[0];
+    let bestDate = null;
+    let principalAtPeriodStart = loan.principal_amount;
+    for (const [dateKey, balance] of principalAtDate.entries()) {
+      if (dateKey <= periodStartKey && (!bestDate || dateKey > bestDate)) {
+        bestDate = dateKey;
+        principalAtPeriodStart = balance;
+      }
+    }
+
+    // Calculate expected interest for this period
+    const rateToUse = (loan.penalty_rate && loan.penalty_rate_from && new Date(loan.penalty_rate_from) <= periodEndDate)
+      ? loan.penalty_rate
+      : loan.interest_rate;
+    const dailyRate = rateToUse / 100 / 365;
+    const days = differenceInDays(periodEndDate, periodStartDate);
+
+    let expectedInterest = scheduleRow.interest_amount || 0;
+    let calculationMethod = 'database_value';
+    let calculationDetails = {};
+
+    // Recalculate interest if we have valid data
+    if (principalAtPeriodStart > 0 && days > 0) {
+      // Find capital changes during this period
+      const capitalChanges = [];
+
+      // Further advances
+      disbursementTransactions
+        .filter(tx => {
+          const txDate = new Date(tx.date);
+          return txDate > periodStartDate && txDate <= periodEndDate;
+        })
+        .forEach((tx, i) => {
+          if (i > 0 || disbursementTransactions.indexOf(tx) > 0) { // Skip first disbursement
+            capitalChanges.push({
+              type: 'advance',
+              date: new Date(tx.date),
+              amount: tx.gross_amount ?? tx.amount
+            });
+          }
+        });
+
+      // Principal repayments (only those within period boundaries)
+      periodTransactions
+        .filter(tx => {
+          if (tx.principal_applied <= 0) return false;
+          const txDate = new Date(tx.date);
+          txDate.setHours(0, 0, 0, 0);
+          return txDate > periodStartDate && txDate <= periodEndDate;
+        })
+        .forEach(tx => {
+          capitalChanges.push({
+            type: 'repayment',
+            date: new Date(tx.date),
+            amount: tx.principal_applied
+          });
+        });
+
+      capitalChanges.sort((a, b) => a.date - b.date);
+
+      if (capitalChanges.length > 0) {
+        // Segmented calculation
+        let segmentPrincipal = principalAtPeriodStart;
+        let segmentStart = periodStartDate;
+        let totalInterest = 0;
+        const segments = [];
+
+        capitalChanges.forEach(change => {
+          const daysInSegment = differenceInDays(change.date, segmentStart);
+          if (daysInSegment > 0) {
+            const segmentInterest = segmentPrincipal * dailyRate * daysInSegment;
+            totalInterest += segmentInterest;
+            segments.push({
+              from: format(segmentStart, 'yyyy-MM-dd'),
+              to: format(change.date, 'yyyy-MM-dd'),
+              days: daysInSegment,
+              principal: Math.round(segmentPrincipal * 100) / 100,
+              interest: Math.round(segmentInterest * 100) / 100
+            });
+          }
+          if (change.type === 'advance') {
+            segmentPrincipal += change.amount;
+          } else {
+            segmentPrincipal = Math.max(0, segmentPrincipal - change.amount);
+          }
+          segmentStart = change.date;
+        });
+
+        // Final segment
+        const finalDays = differenceInDays(periodEndDate, segmentStart);
+        if (finalDays > 0 && segmentPrincipal > 0) {
+          const segmentInterest = segmentPrincipal * dailyRate * finalDays;
+          totalInterest += segmentInterest;
+          segments.push({
+            from: format(segmentStart, 'yyyy-MM-dd'),
+            to: format(periodEndDate, 'yyyy-MM-dd'),
+            days: finalDays,
+            principal: Math.round(segmentPrincipal * 100) / 100,
+            interest: Math.round(segmentInterest * 100) / 100
+          });
+        }
+
+        expectedInterest = totalInterest;
+        calculationMethod = 'segmented';
+        calculationDetails = { segments, capitalChanges: capitalChanges.map(c => ({ ...c, date: format(c.date, 'yyyy-MM-dd') })) };
+      } else {
+        // Simple calculation
+        expectedInterest = principalAtPeriodStart * dailyRate * days;
+        calculationMethod = 'simple';
+        calculationDetails = {
+          principal: principalAtPeriodStart,
+          dailyRate: dailyRate,
+          days: days,
+          formula: `${principalAtPeriodStart} × ${dailyRate.toFixed(8)} × ${days} = ${expectedInterest.toFixed(2)}`
+        };
+      }
+    }
+
+    // Calculate interest received for this period
+    const periodInterestPaid = periodTransactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+    const periodPrincipalPaid = periodTransactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+
+    // Calculate ledger-based interest (same method as UI RepaymentScheduleTable)
+    // Period boundaries depend on payment timing (advance vs arrears)
+    let ledgerPeriodStart, ledgerPeriodEnd;
+
+    if (isInterestPaidInAdvance) {
+      // For ADVANCE payment: due date is at START of period
+      // Period covers: current due date → next due date
+      ledgerPeriodStart = new Date(scheduleRow.due_date);
+      ledgerPeriodStart.setHours(0, 0, 0, 0);
+
+      if (idx < sortedSchedule.length - 1) {
+        ledgerPeriodEnd = new Date(sortedSchedule[idx + 1].due_date);
+        ledgerPeriodEnd.setHours(0, 0, 0, 0);
+      } else {
+        // Last period - use calculation_days or default 30 days
+        const calcDays = scheduleRow.calculation_days || 30;
+        ledgerPeriodEnd = addDays(ledgerPeriodStart, calcDays);
+      }
+    } else {
+      // For ARREARS payment: due date is at END of period
+      // Period covers: previous due date (or loan start) → current due date
+      ledgerPeriodStart = idx === 0
+        ? loanStartDateForLedger
+        : new Date(sortedSchedule[idx - 1].due_date);
+      ledgerPeriodStart.setHours(0, 0, 0, 0);
+      ledgerPeriodEnd = new Date(scheduleRow.due_date);
+      ledgerPeriodEnd.setHours(0, 0, 0, 0);
+    }
+
+    const ledgerResult = calculateInterestFromLedger(loan, capitalEvents, ledgerPeriodStart, ledgerPeriodEnd);
+    const ledgerInterest = ledgerResult.totalInterest;
+
+    runningInterestAccrued += expectedInterest;
+    runningInterestPaid += periodInterestPaid;
+    runningLedgerInterestAccrued += ledgerInterest;
+
+    // Update principal balance for repayments
+    runningPrincipalBalance = Math.max(0, runningPrincipalBalance - periodPrincipalPaid);
+    principalAtDate.set(dueDate.toISOString().split('T')[0], runningPrincipalBalance);
+
+    periods.push({
+      periodNumber: scheduleRow.installment_number,
+      dueDate: format(dueDate, 'yyyy-MM-dd'),
+      periodStart: format(periodStartDate, 'yyyy-MM-dd'),
+      periodEnd: format(periodEndDate, 'yyyy-MM-dd'),
+      days: days,
+      isAdvancePayment: isInterestPaidInAdvance,
+      // Principal tracking
+      principalAtPeriodStart: Math.round(principalAtPeriodStart * 100) / 100,
+      principalBalanceAfter: Math.round(runningPrincipalBalance * 100) / 100,
+      principalPaidThisPeriod: Math.round(periodPrincipalPaid * 100) / 100,
+      // Interest calculation
+      interestRate: loan.interest_rate,
+      penaltyRate: loan.penalty_rate || null,
+      rateUsed: rateToUse,
+      isPenaltyRate: rateToUse !== loan.interest_rate,
+      calculationMethod: calculationMethod,
+      calculationDetails: calculationDetails,
+      // Interest values
+      interestDueThisPeriod: Math.round(expectedInterest * 100) / 100,
+      interestReceivedThisPeriod: Math.round(periodInterestPaid * 100) / 100,
+      databaseInterestAmount: scheduleRow.interest_amount,
+      // Ledger-based interest (same as UI)
+      ledgerInterestDue: Math.round(ledgerInterest * 100) / 100,
+      ledgerSegments: ledgerResult.segments,
+      // Running totals
+      runningInterestAccrued: Math.round(runningInterestAccrued * 100) / 100,
+      runningInterestPaid: Math.round(runningInterestPaid * 100) / 100,
+      runningInterestBalance: Math.round((runningInterestAccrued - runningInterestPaid) * 100) / 100,
+      // Ledger-based running totals (matches UI)
+      runningLedgerInterestAccrued: Math.round(runningLedgerInterestAccrued * 100) / 100,
+      runningLedgerInterestBalance: Math.round((runningLedgerInterestAccrued - runningInterestPaid) * 100) / 100,
+      // Transactions assigned to this period
+      transactionsInPeriod: periodTransactions.map(tx => ({
+        id: tx.id,
+        date: tx.date,
+        amount: tx.amount,
+        principalApplied: tx.principal_applied,
+        interestApplied: tx.interest_applied,
+        feesApplied: tx.fees_applied
+      }))
+    });
+  });
+
+  return {
+    summary: {
+      loanNumber: loan.loan_number,
+      loanId: loan.id,
+      borrower: loan.borrower_name,
+      asOfDate: format(today, 'yyyy-MM-dd'),
+      loanStartDate: loan.start_date,
+      originalPrincipal: loan.principal_amount,
+      interestRate: loan.interest_rate,
+      penaltyRate: loan.penalty_rate,
+      penaltyRateFrom: loan.penalty_rate_from,
+      isInterestPaidInAdvance: isInterestPaidInAdvance,
+      totalSchedulePeriods: sortedSchedule.length,
+      periodsProcessed: periods.length,
+      totalRepaymentTransactions: repaymentTransactions.length,
+      totalDisbursements: disbursementTransactions.length,
+      // Final totals (period-based calculation)
+      totalInterestDue: Math.round(runningInterestAccrued * 100) / 100,
+      totalInterestReceived: Math.round(runningInterestPaid * 100) / 100,
+      interestBalance: Math.round((runningInterestAccrued - runningInterestPaid) * 100) / 100,
+      // Final totals (ledger-based calculation - matches UI)
+      totalLedgerInterestDue: Math.round(runningLedgerInterestAccrued * 100) / 100,
+      ledgerInterestBalance: Math.round((runningLedgerInterestAccrued - runningInterestPaid) * 100) / 100,
+      finalPrincipalBalance: Math.round(runningPrincipalBalance * 100) / 100
+    },
+    periods: periods
+  };
 }

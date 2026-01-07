@@ -6,9 +6,18 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, Info } from 'lucide-react';
 
+// Helper to derive interest timing from the two underlying fields
+const getInterestTiming = (data) => {
+  if (data.interest_paid_in_advance) {
+    return data.interest_alignment === 'monthly_first' ? 'advance_monthly' : 'advance';
+  }
+  return 'arrears';
+};
+
 export default function ProductForm({ product, onSubmit, onCancel, isLoading }) {
   const [formData, setFormData] = useState({
     name: product?.name || '',
+    abbreviation: product?.abbreviation || '',
     product_type: product?.product_type || 'Standard',
     interest_rate: product?.interest_rate || '',
     interest_type: product?.interest_type || 'Reducing',
@@ -40,15 +49,29 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div className="space-y-2">
-          <Label htmlFor="name">Product Name *</Label>
-          <Input
-            id="name"
-            value={formData.name}
-            onChange={(e) => handleChange('name', e.target.value)}
-            placeholder="e.g. Personal Loan, Business Loan"
-            required
-          />
+        <div className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="name">Product Name *</Label>
+            <Input
+              id="name"
+              value={formData.name}
+              onChange={(e) => handleChange('name', e.target.value)}
+              placeholder="e.g. Personal Loan, Business Loan"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="abbreviation">Abbreviation</Label>
+            <Input
+              id="abbreviation"
+              value={formData.abbreviation}
+              onChange={(e) => handleChange('abbreviation', e.target.value.toUpperCase().slice(0, 10))}
+              placeholder="e.g. BRG, DEV"
+              maxLength={10}
+              className="font-mono uppercase"
+            />
+            <p className="text-xs text-slate-500">Max 10 chars, shown on Loans page</p>
+          </div>
         </div>
         <div className="space-y-2">
           <Label htmlFor="product_type">Product Type *</Label>
@@ -165,55 +188,52 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
             </div>
           </div>
 
+          {/* Interest Timing - Simplified dropdown (Monthly only, non-Rolled-Up) */}
           {formData.interest_type !== 'Rolled-Up' && formData.period === 'Monthly' && (
             <div className="space-y-2">
-              <Label htmlFor="interest_alignment">Interest Payment Schedule</Label>
+              <Label htmlFor="interest_timing">Interest Timing</Label>
               <Select
-                value={formData.interest_alignment}
-                onValueChange={(value) => handleChange('interest_alignment', value)}
+                value={getInterestTiming(formData)}
+                onValueChange={(value) => {
+                  const mapping = {
+                    'advance': { interest_alignment: 'period_based', interest_paid_in_advance: true },
+                    'advance_monthly': { interest_alignment: 'monthly_first', interest_paid_in_advance: true },
+                    'arrears': { interest_alignment: 'period_based', interest_paid_in_advance: false }
+                  };
+                  setFormData(prev => ({ ...prev, ...mapping[value] }));
+                }}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select alignment" />
+                  <SelectValue placeholder="Select timing" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="period_based">Period-Based (from start date)</SelectItem>
-                  <SelectItem value="monthly_first">Align to 1st of Month</SelectItem>
+                  <SelectItem value="advance">Advance (interest due at start of period)</SelectItem>
+                  <SelectItem value="advance_monthly">Advance, aligned to 1st of Month</SelectItem>
+                  <SelectItem value="arrears">Arrears (interest due at end of period)</SelectItem>
                 </SelectContent>
               </Select>
-              {formData.interest_alignment === 'monthly_first' && (
-                <p className="text-xs text-slate-500 mt-1">
-                  First payment: partial interest to month-end. Subsequent payments on 1st of each month.
-                </p>
-              )}
+              <p className="text-xs text-slate-500">
+                {formData.interest_paid_in_advance
+                  ? formData.interest_alignment === 'monthly_first'
+                    ? 'First payment on disbursement date, then 1st of each month'
+                    : 'Interest payment due on disbursement date and each subsequent period'
+                  : 'Interest payment due at the end of each period'}
+              </p>
             </div>
           )}
 
           {formData.interest_type !== 'Rolled-Up' && (
-            <div className="space-y-3">
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="extend_for_full_period"
-                  checked={formData.extend_for_full_period}
-                  onChange={(e) => handleChange('extend_for_full_period', e.target.checked)}
-                  className="rounded border-slate-300"
-                />
-                <Label htmlFor="extend_for_full_period" className="font-normal cursor-pointer">
-                  Extend loan to complete full final period (no partial final payment)
-                </Label>
-              </div>
-              <div className="flex items-center space-x-2">
-                <input
-                  type="checkbox"
-                  id="interest_paid_in_advance"
-                  checked={formData.interest_paid_in_advance}
-                  onChange={(e) => handleChange('interest_paid_in_advance', e.target.checked)}
-                  className="rounded border-slate-300"
-                />
-                <Label htmlFor="interest_paid_in_advance" className="font-normal cursor-pointer">
-                  Interest paid in advance (interest due at START of each period)
-                </Label>
-              </div>
+            <div className="flex items-center space-x-2">
+              <input
+                type="checkbox"
+                id="extend_for_full_period"
+                checked={formData.extend_for_full_period}
+                onChange={(e) => handleChange('extend_for_full_period', e.target.checked)}
+                className="rounded border-slate-300"
+              />
+              <Label htmlFor="extend_for_full_period" className="font-normal cursor-pointer">
+                Extend loan to complete full final period (no partial final payment)
+              </Label>
             </div>
           )}
 

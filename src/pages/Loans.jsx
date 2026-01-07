@@ -54,6 +54,10 @@ const getProductAbbreviation = (productName) => {
     ['rolled up', 'RU'],
     ['rolled-up', 'RU'],
     ['interest only', 'IO'],
+    ['in advance', 'ADV'],
+    ['advance', 'ADV'],
+    ['in arrears', 'ARR'],
+    ['arrears', 'ARR'],
     ['bridging', 'BRG'],
     ['bridge', 'BRG'],
     ['development', 'DEV'],
@@ -134,7 +138,7 @@ export default function Loans() {
     description: 150,
     date: 75,
     borrower: 140,
-    product: 55,
+    product: 85,
     principal_bal: 95,
     interest_os: 85,
     arr_fee: 75,
@@ -240,11 +244,28 @@ export default function Loans() {
     enabled: !!currentOrganization
   });
 
-  const { data: allSchedules = [] } = useQuery({
+  const { data: allSchedules = [], isLoading: isLoadingSchedules } = useQuery({
     queryKey: ['all-schedules', currentOrganization?.id],
     queryFn: () => api.entities.RepaymentSchedule.list(),
     enabled: !!currentOrganization
   });
+
+  const { data: allProducts = [] } = useQuery({
+    queryKey: ['products', currentOrganization?.id],
+    queryFn: () => api.entities.LoanProduct.list(),
+    enabled: !!currentOrganization
+  });
+
+  // Create a map of product_id -> abbreviation for quick lookup
+  const productAbbreviations = useMemo(() => {
+    const map = new Map();
+    allProducts.forEach(p => {
+      if (p.abbreviation) {
+        map.set(p.id, p.abbreviation);
+      }
+    });
+    return map;
+  }, [allProducts]);
 
   // Calculate further advances per loan (disbursements beyond the first one)
   // The first disbursement represents the initial principal, so we skip it
@@ -618,7 +639,7 @@ export default function Loans() {
     product: {
       header: 'Prod',
       sortKey: 'product_name',
-      align: 'center',
+      align: 'left',
       render: (loan, { productAbbr }) => (
         <TooltipProvider>
           <Tooltip>
@@ -925,7 +946,7 @@ export default function Loans() {
             </div>
 
             {/* Content */}
-            {isLoading || isLoadingTransactions ? (
+            {isLoading || isLoadingTransactions || isLoadingSchedules ? (
               <div className="bg-white rounded-lg border border-slate-200">
                 <div className="p-4 space-y-2">
                   {Array(8).fill(0).map((_, i) => (
@@ -991,13 +1012,38 @@ export default function Loans() {
                     <tbody className="divide-y divide-slate-100">
                       {sortedLoans.map((loan) => {
                         const loanTransactions = allTransactions.filter(t => t.loan_id === loan.id);
+                        const loanSchedule = allSchedules.filter(s => s.loan_id === loan.id);
                         const loanDisbursements = getDisbursementsForLoan(loan.id);
                         const totalPrincipal = loan.principal_amount + loanDisbursements;
 
                         // Use live interest calculation for accurate interest outstanding
-                        const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, loanTransactions);
+                        // Pass schedule to use schedule-based interest (handles rate changes correctly)
+                        const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule);
                         const principalRemaining = liveInterestCalc.principalRemaining;
                         const interestRemaining = liveInterestCalc.interestRemaining;
+
+                        // Debug logging for specific loans - after calculation
+                        if (loan.loan_number === '1000025' || loan.loan_number === '1000001') {
+                          // Check schedule data details
+                          const sortedSched = [...loanSchedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+                          // Check if there's a mismatch in loan_id types
+                          const scheduleWithMatchingLoanId = allSchedules.filter(s => s.loan_id === loan.id);
+                          const scheduleWithStringMatch = allSchedules.filter(s => String(s.loan_id) === String(loan.id));
+                          console.log(`[Loans.jsx FINAL] Loan ${loan.loan_number}:`, {
+                            loanId: loan.id,
+                            loanIdType: typeof loan.id,
+                            scheduleLength: loanSchedule.length,
+                            scheduleWithExactMatch: scheduleWithMatchingLoanId.length,
+                            scheduleWithStringMatch: scheduleWithStringMatch.length,
+                            transactionsLength: loanTransactions.length,
+                            interestRemaining,
+                            interestAccrued: liveInterestCalc.interestAccrued,
+                            interestPaid: liveInterestCalc.interestPaid,
+                            allSchedulesTotal: allSchedules.length,
+                            isLoadingSchedules,
+                            sampleScheduleLoanIds: allSchedules.slice(0, 3).map(s => ({ loan_id: s.loan_id, type: typeof s.loan_id }))
+                          });
+                        }
 
                         // Calculate charges outstanding for Fixed Charge facilities
                         const isFixedCharge = loan.product_type === 'Fixed Charge';
@@ -1013,7 +1059,8 @@ export default function Loans() {
                         const lastPayment = getLastPaymentForLoan(loan.id);
                         const nextDue = getNextDueForLoan(loan.id);
                         const isOverdue = nextDue && new Date(nextDue.due_date) < new Date();
-                        const productAbbr = getProductAbbreviation(loan.product_name);
+                        // Use product abbreviation from join, otherwise generate from product name
+                        const productAbbr = productAbbreviations.get(loan.product_id) || getProductAbbreviation(loan.product_name);
 
                         const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, nextDue, isOverdue, productAbbr };
 
