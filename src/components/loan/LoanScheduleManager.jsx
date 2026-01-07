@@ -122,21 +122,40 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
       ? Math.ceil(daysToEndDate / 30.44)
       : Math.ceil(daysToEndDate / 7);
 
+    console.log('Auto-extend DEBUG:', {
+      loanStartDate: format(loanStartDate, 'yyyy-MM-dd'),
+      scheduleEndDate: format(scheduleEndDate, 'yyyy-MM-dd'),
+      daysToEndDate,
+      calculatedDuration,
+      interestAlignment: product.interest_alignment
+    });
+
     // Ensure at least 1 period
     calculatedDuration = Math.max(1, calculatedDuration);
 
     // ALWAYS include the next upcoming period so there's a future due date
     // Calculate what the last period's due date would be, and if it's <= today, add one more
-    const lastPeriodDate = product.interest_alignment === 'monthly_first'
-      ? startOfMonth(addMonths(loanStartDate, calculatedDuration))
-      : addMonths(loanStartDate, calculatedDuration);
+    // For "in advance" loans, due date is at START of period (i-1), not END (i)
+    let lastPeriodDate;
+    if (product.interest_alignment === 'monthly_first') {
+      lastPeriodDate = startOfMonth(addMonths(loanStartDate, calculatedDuration));
+    } else if (product.interest_paid_in_advance) {
+      // In advance: due date for period N is addMonths(start, N-1)
+      // So last due date for calculatedDuration periods is addMonths(start, calculatedDuration - 1)
+      lastPeriodDate = addMonths(loanStartDate, calculatedDuration - 1);
+    } else {
+      // Arrears: due date for period N is addMonths(start, N)
+      lastPeriodDate = addMonths(loanStartDate, calculatedDuration);
+    }
+
+    console.log('Auto-extend DEBUG lastPeriodDate:', format(lastPeriodDate, 'yyyy-MM-dd'), 'vs scheduleEndDate:', format(scheduleEndDate, 'yyyy-MM-dd'), 'add more?', lastPeriodDate <= scheduleEndDate, 'inAdvance:', product.interest_paid_in_advance);
 
     if (lastPeriodDate <= scheduleEndDate) {
       calculatedDuration += 1;
     }
 
     scheduleDuration = calculatedDuration;
-    console.log('Auto-extend: generating schedule with future period');
+    console.log('Auto-extend: generating schedule with', calculatedDuration, 'periods');
   } else if (options.endDate && currentPrincipalOutstanding > 0.01) {
     // Non-auto-extend but has principal outstanding: use full loan duration
     scheduleDuration = baseDuration || 6;
