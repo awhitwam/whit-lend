@@ -84,6 +84,7 @@ const navigation = [
       { name: 'Ledger', href: 'Ledger', icon: Building2 },
       { name: 'Receipts', href: 'Receipts', icon: Receipt },
       { name: 'Bank Reconciliation', href: 'BankReconciliation', icon: FileCheck },
+      { name: 'Reconciliation V2', href: 'BankReconciliationV2', icon: FileCheck },
       { name: 'Orphaned Entries', href: 'OrphanedEntries', icon: AlertCircle },
       { name: 'Expenses', href: 'Expenses', icon: Banknote },
       { name: 'Other Income', href: 'OtherIncome', icon: Coins },
@@ -165,7 +166,7 @@ export default function Layout({ children, currentPageName }) {
   const filteredNavigation = getFilteredNavigation(canAdmin(), isSuperAdmin);
 
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'OrphanedEntries', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'BankReconciliationV2', 'OrphanedEntries', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {

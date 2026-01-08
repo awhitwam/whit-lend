@@ -14,6 +14,30 @@ const getInterestTiming = (data) => {
   return 'arrears';
 };
 
+// Helper to derive scheduler_type from product settings
+const deriveSchedulerType = (data) => {
+  if (data.product_type === 'Fixed Charge') return 'fixed_charge';
+  if (data.product_type === 'Irregular Income') return 'irregular_income';
+  if (data.product_type === 'Rent') return 'rent';
+  switch (data.interest_type) {
+    case 'Rolled-Up': return 'rolled_up';
+    case 'Interest-Only': return 'interest_only';
+    case 'Flat': return 'flat_rate';
+    case 'Reducing':
+    default: return 'reducing_balance';
+  }
+};
+
+// Build scheduler_config from form fields
+const buildSchedulerConfig = (data) => ({
+  period: data.period || 'Monthly',
+  interest_calculation_method: data.interest_calculation_method || 'daily',
+  interest_alignment: data.interest_alignment || 'period_based',
+  interest_paid_in_advance: data.interest_paid_in_advance || false,
+  extend_for_full_period: data.extend_for_full_period || false,
+  interest_only_period: data.interest_only_period || null
+});
+
 export default function ProductForm({ product, onSubmit, onCancel, isLoading }) {
   const [formData, setFormData] = useState({
     name: product?.name || '',
@@ -31,14 +55,18 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
 
   const isFixedCharge = formData.product_type === 'Fixed Charge';
   const isIrregularIncome = formData.product_type === 'Irregular Income';
-  const isSpecialType = isFixedCharge || isIrregularIncome;
+  const isRent = formData.product_type === 'Rent';
+  const isSpecialType = isFixedCharge || isIrregularIncome || isRent;
 
   const handleSubmit = (e) => {
     e.preventDefault();
     onSubmit({
       ...formData,
       interest_rate: formData.interest_rate ? parseFloat(formData.interest_rate) : 0,
-      interest_only_period: formData.interest_only_period ? parseInt(formData.interest_only_period) : null
+      interest_only_period: formData.interest_only_period ? parseInt(formData.interest_only_period) : null,
+      // Auto-derive scheduler_type and scheduler_config from form fields
+      scheduler_type: deriveSchedulerType(formData),
+      scheduler_config: buildSchedulerConfig(formData)
     });
   };
 
@@ -86,6 +114,7 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
               <SelectItem value="Standard">Standard Loan</SelectItem>
               <SelectItem value="Fixed Charge">Fixed Charge Facility</SelectItem>
               <SelectItem value="Irregular Income">Irregular Income</SelectItem>
+              <SelectItem value="Rent">Rent (Quarterly)</SelectItem>
             </SelectContent>
           </Select>
         </div>
@@ -107,6 +136,16 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
           <AlertDescription className="text-amber-800">
             <strong>Irregular Income:</strong> A loan with no fixed repayment schedule.
             Record income as and when the borrower makes payments. Interest is not calculated - just track principal advanced and repaid.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {isRent && (
+        <Alert className="border-emerald-200 bg-emerald-50">
+          <Info className="w-4 h-4 text-emerald-600" />
+          <AlertDescription className="text-emerald-800">
+            <strong>Rent (Quarterly):</strong> For properties generating periodic rent income.
+            The system analyzes payment history to detect patterns (typically quarterly), shows rent by quarter, and predicts the next expected rent payment date and amount.
           </AlertDescription>
         </Alert>
       )}

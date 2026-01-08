@@ -37,6 +37,41 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   const product = products[0];
   if (!product) throw new Error('Loan product not found');
 
+  console.log('Product from DB:', {
+    id: product.id,
+    name: product.name,
+    product_type: product.product_type,
+    scheduler_type: product.scheduler_type
+  });
+
+  // NEW SCHEDULER SYSTEM: If product has scheduler_type, use the new scheduler-based system
+  // This provides a clean migration path - products with scheduler_type use new code,
+  // products without it continue using the legacy code below
+  if (product.scheduler_type) {
+    console.log('=== SCHEDULE ENGINE: Using New Scheduler System ===');
+    console.log('Scheduler type:', product.scheduler_type);
+
+    try {
+      const { getScheduler, createScheduler } = await import('@/lib/schedule');
+      const SchedulerClass = getScheduler(product.scheduler_type);
+
+      if (SchedulerClass) {
+        const scheduler = createScheduler(product.scheduler_type, product.scheduler_config || {});
+        const result = await scheduler.generateSchedule({ loan, product, options });
+        console.log('=== SCHEDULE ENGINE: New Scheduler Complete ===');
+        return result;
+      } else {
+        console.warn(`Scheduler not found: ${product.scheduler_type}, falling back to legacy`);
+      }
+    } catch (err) {
+      console.error('Error using new scheduler system, falling back to legacy:', err);
+    }
+  }
+
+  // ============ LEGACY CODE BELOW ============
+  // This code path handles products without scheduler_type set
+  // Once all products are migrated, this can be removed
+
   // Check if this is an Irregular Income loan - no schedule should be generated
   if (product.product_type === 'Irregular Income') {
     console.log('=== SCHEDULE ENGINE: Irregular Income - Clearing Schedule ===');

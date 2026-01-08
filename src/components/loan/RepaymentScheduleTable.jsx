@@ -5,9 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, ChevronDown, Split, List, Download, Layers, ArrowUp, ArrowDown, AlertTriangle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, Home, FileText } from 'lucide-react';
 import { formatCurrency, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from './LoanCalculator';
 import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
+import RentScheduleView from './RentScheduleView';
 
 // Helper to check if penalty rate applies for a given date
 const isPenaltyRateActive = (loan, date) => {
@@ -32,12 +33,14 @@ const getDisplayRate = (loan, date) => {
 export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  const [viewMode, setViewMode] = useState('nested'); // 'nested', 'smartview2', 'separate', 'detailed'
+  const [viewMode, setViewMode] = useState('nested'); // 'nested', 'ledger'
 
   // Check if this is a Fixed Charge loan
   const isFixedCharge = loan?.product_type === 'Fixed Charge' || product?.product_type === 'Fixed Charge';
   // Check if this is an Irregular Income loan (no schedule should be shown)
   const isIrregularIncome = loan?.product_type === 'Irregular Income' || product?.product_type === 'Irregular Income';
+  // Check if this is a Rent loan (special quarterly view)
+  const isRent = loan?.product_type === 'Rent' || product?.product_type === 'Rent';
   // Use nullish coalescing to handle 0 correctly (0 is a valid monthly_charge value, but || would skip it)
   const monthlyCharge = loan?.monthly_charge ?? product?.monthly_charge ?? 0;
 
@@ -162,7 +165,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   // Create combined or separate rows based on view mode
   let combinedRows;
 
-  if (viewMode === 'separate') {
+  if (viewMode === '_removed_separate') {
     // SEPARATE VIEW: Show all schedule entries and all transactions separately
     // Every transaction gets its own row, every schedule entry gets its own row
     const allRows = [];
@@ -420,38 +423,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 className="gap-1 h-6 text-xs px-2"
               >
                 <Layers className="w-3 h-3" />
-                Nested
+                Schedule
               </Button>
               <Button
-                variant={viewMode === 'smartview2' ? "default" : "ghost"}
+                variant={viewMode === 'ledger' ? "default" : "ghost"}
                 size="sm"
-                onClick={() => setViewMode('smartview2')}
+                onClick={() => setViewMode('ledger')}
                 className="gap-1 h-6 text-xs px-2"
               >
-                <List className="w-3 h-3" />
-                Smart
-              </Button>
-              <Button
-                variant={viewMode === 'separate' ? "default" : "ghost"}
-                size="sm"
-                onClick={() => setViewMode('separate')}
-                className="gap-1 h-6 text-xs px-2"
-              >
-                <Split className="w-3 h-3" />
-                Journal
+                <FileText className="w-3 h-3" />
+                Ledger
               </Button>
             </div>
-            {viewMode === 'separate' && (
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={exportToCSV}
-                className="gap-1 h-6 text-xs px-2"
-              >
-                <Download className="w-3 h-3" />
-                CSV
-              </Button>
-            )}
             {viewMode === 'nested' && (
               <Button
                 variant="ghost"
@@ -508,41 +491,123 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           </div>
         </div>
         <div className="flex-1 min-h-0 relative">
-        {(viewMode === 'detailed' || viewMode === 'smartview2') ? (
+        {/* Ledger view - shows only actual transactions (reality) */}
+        {viewMode === 'ledger' ? (
+          (() => {
+            // Calculate running balance for ledger view
+            const sortedTx = transactions
+              .filter(tx => !tx.is_deleted)
+              .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+            let runningPrincipal = 0;
+            const txWithBalance = sortedTx.map(tx => {
+              if (tx.type === 'Disbursement') {
+                runningPrincipal += tx.amount || 0;
+              } else if (tx.type === 'Repayment') {
+                runningPrincipal -= tx.principal_applied || 0;
+              }
+              return { ...tx, runningBalance: runningPrincipal };
+            });
+
+            // Calculate totals
+            const totalDisbursed = sortedTx
+              .filter(tx => tx.type === 'Disbursement')
+              .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+            const totalPrincipalRepaid = sortedTx
+              .filter(tx => tx.type === 'Repayment')
+              .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+            const totalInterestPaid = sortedTx
+              .filter(tx => tx.type === 'Repayment')
+              .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+            const totalFeesPaid = sortedTx
+              .filter(tx => tx.type === 'Repayment')
+              .reduce((sum, tx) => sum + (tx.fees_applied || 0), 0);
+
+            return (
+              <div className="absolute inset-0 overflow-auto">
+                <Table>
+                  <TableHeader className="[&_tr]:sticky [&_tr]:top-0 [&_tr]:z-20 [&_tr]:bg-slate-50">
+                    <TableRow className="bg-slate-50">
+                      <TableHead className="font-semibold text-xs w-28">Date</TableHead>
+                      <TableHead className="font-semibold text-xs w-28">Type</TableHead>
+                      <TableHead className="font-semibold text-xs text-right">Amount</TableHead>
+                      <TableHead className="font-semibold text-xs text-right">Principal</TableHead>
+                      <TableHead className="font-semibold text-xs text-right">Interest</TableHead>
+                      <TableHead className="font-semibold text-xs text-right">Fees</TableHead>
+                      <TableHead className="font-semibold text-xs text-right">Balance</TableHead>
+                      <TableHead className="font-semibold text-xs">Reference</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {txWithBalance.map((tx) => (
+                      <TableRow key={tx.id} className={tx.type === 'Disbursement' ? 'bg-red-50/30' : 'bg-emerald-50/30'}>
+                        <TableCell className="text-xs font-mono">{format(new Date(tx.date), 'dd MMM yyyy')}</TableCell>
+                        <TableCell className="text-xs">
+                          <Badge variant="outline" className={tx.type === 'Disbursement' ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}>
+                            {tx.type}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono font-semibold">
+                          {formatCurrency(tx.amount)}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {tx.type === 'Disbursement'
+                            ? <span className="text-red-600">+{formatCurrency(tx.amount)}</span>
+                            : tx.principal_applied
+                              ? <span className="text-emerald-600">-{formatCurrency(tx.principal_applied)}</span>
+                              : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {tx.interest_applied ? formatCurrency(tx.interest_applied) : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono">
+                          {tx.fees_applied ? formatCurrency(tx.fees_applied) : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono font-semibold">
+                          {formatCurrency(tx.runningBalance)}
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-500">{tx.reference || '—'}</TableCell>
+                      </TableRow>
+                    ))}
+                    {txWithBalance.length === 0 && (
+                      <TableRow>
+                        <TableCell colSpan={8} className="text-center text-slate-500 py-8">
+                          No transactions recorded
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    {/* Totals row */}
+                    {txWithBalance.length > 0 && (
+                      <TableRow className="bg-slate-100 border-t-2 border-slate-300">
+                        <TableCell className="text-xs font-semibold" colSpan={2}>Totals</TableCell>
+                        <TableCell className="text-xs text-right font-mono">—</TableCell>
+                        <TableCell className="text-xs text-right font-mono font-semibold">
+                          <div className="text-red-600">+{formatCurrency(totalDisbursed)}</div>
+                          <div className="text-emerald-600">-{formatCurrency(totalPrincipalRepaid)}</div>
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono font-semibold text-emerald-600">
+                          {formatCurrency(totalInterestPaid)}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono font-semibold">
+                          {totalFeesPaid > 0 ? formatCurrency(totalFeesPaid) : '—'}
+                        </TableCell>
+                        <TableCell className="text-xs text-right font-mono font-bold">
+                          {formatCurrency(totalDisbursed - totalPrincipalRepaid)}
+                        </TableCell>
+                        <TableCell></TableCell>
+                      </TableRow>
+                    )}
+                  </TableBody>
+                </Table>
+              </div>
+            );
+          })()
+        ) : viewMode === '_removed_smartview2' ? (
           <Table wrapperClassName="absolute inset-0 overflow-auto">
             <TableHeader className="[&_tr]:sticky [&_tr]:top-0 [&_tr]:z-20 [&_tr]:bg-slate-50">
               <TableRow className="bg-slate-50">
                 <TableHead className="font-semibold bg-slate-50 w-12 py-1.5 whitespace-nowrap">#</TableHead>
-                <TableHead className="font-semibold bg-slate-50 py-1.5">
-                  {viewMode === 'smartview2' ? (
-                    <div className="flex items-center gap-1">
-                      Due Date
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="sm"
-                              onClick={toggleSmartViewSortOrder}
-                              className="h-5 w-5 p-0 hover:bg-slate-200"
-                            >
-                              {smartViewSortOrder === 'asc' ? (
-                                <ArrowUp className="w-3 h-3" />
-                              ) : (
-                                <ArrowDown className="w-3 h-3" />
-                              )}
-                            </Button>
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            <p>{smartViewSortOrder === 'asc' ? 'Oldest first (click for newest first)' : 'Newest first (click for oldest first)'}</p>
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </div>
-                  ) : (
-                    'Due Date'
-                  )}
-                </TableHead>
+                <TableHead className="font-semibold bg-slate-50 py-1.5">Due Date</TableHead>
                 <TableHead className="font-semibold bg-slate-50 text-right py-1.5">Expected</TableHead>
                 <TableHead className="font-semibold bg-slate-50 py-1.5">Status</TableHead>
                 {viewMode === 'detailed' && (
@@ -1016,6 +1081,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               })()}
             </TableBody>
           </Table>
+        ) : isRent ? (
+          <div className="absolute inset-0 overflow-auto p-4">
+            <RentScheduleView
+              schedule={schedule}
+              transactions={transactions}
+              loan={loan}
+              product={product}
+            />
+          </div>
         ) : viewMode === 'nested' ? (
           <Table wrapperClassName="absolute inset-0 overflow-auto">
             <TableHeader className="[&_tr]:sticky [&_tr]:z-20 [&_tr]:bg-slate-50 [&_tr:first-child]:top-0 [&_tr:last-child]:top-[33px]">

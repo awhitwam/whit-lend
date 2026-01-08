@@ -28,6 +28,7 @@ import SuperAdmin from './pages/SuperAdmin';
 import OrgAdmin from './pages/OrgAdmin';
 import BankReconciliation from './pages/BankReconciliation';
 import BankReconciliation2 from './pages/BankReconciliation2';
+import BankReconciliationV2 from './pages/BankReconciliationV2';
 import OtherIncome from './pages/OtherIncome';
 import OrphanedEntries from './pages/OrphanedEntries';
 import Receipts from './pages/Receipts';
@@ -66,6 +67,7 @@ export const PAGES = {
     "OrgAdmin": OrgAdmin,
     "BankReconciliation": BankReconciliation,
     "BankReconciliation2": BankReconciliation2,
+    "BankReconciliationV2": BankReconciliationV2,
     "OtherIncome": OtherIncome,
     "OrphanedEntries": OrphanedEntries,
     "Receipts": Receipts,

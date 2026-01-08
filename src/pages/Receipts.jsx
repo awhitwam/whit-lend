@@ -1,9 +1,11 @@
 import { Receipt } from 'lucide-react';
 import ReceiptEntryContent from '@/components/receipts/ReceiptEntryContent';
+import ReceiptHistory from '@/components/receipts/ReceiptHistory';
 
 /**
  * Standalone Receipts page
  * Uses ReceiptEntryContent in standalone mode for full functionality
+ * Includes receipt history panel at the bottom
  */
 export default function Receipts() {
   return (
@@ -21,6 +23,9 @@ export default function Receipts() {
 
       {/* Receipt Entry Content */}
       <ReceiptEntryContent mode="standalone" />
+
+      {/* Receipt History */}
+      <ReceiptHistory />
     </div>
   );
 }

@@ -7,7 +7,18 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Plus, Package, MoreHorizontal, Edit, Trash2, TrendingUp, Clock, Copy, Zap, Coins } from 'lucide-react';
+import { Plus, Package, MoreHorizontal, Edit, Trash2, TrendingUp, Clock, Copy, Zap, Coins, Calculator, Home } from 'lucide-react';
+
+// Map scheduler_type to display names
+const schedulerDisplayNames = {
+  'reducing_balance': 'Reducing Balance',
+  'flat_rate': 'Flat Rate',
+  'interest_only': 'Interest-Only',
+  'rolled_up': 'Rolled-Up',
+  'fixed_charge': 'Fixed Charge',
+  'irregular_income': 'Irregular Income',
+  'rent': 'Rent (Quarterly)'
+};
 import ProductForm from '@/components/product/ProductForm';
 import EmptyState from '@/components/ui/EmptyState';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -151,7 +162,8 @@ export default function Products() {
             {products.map((product) => {
               const isFixedCharge = product.product_type === 'Fixed Charge';
               const isIrregularIncome = product.product_type === 'Irregular Income';
-              const isSpecialType = isFixedCharge || isIrregularIncome;
+              const isRent = product.product_type === 'Rent';
+              const isSpecialType = isFixedCharge || isIrregularIncome || isRent;
 
               return (
                 <Card key={product.id} className="hover:shadow-md transition-shadow">
@@ -173,6 +185,14 @@ export default function Products() {
                         >
                           <Coins className="w-3 h-3 mr-1" />
                           Irregular Income
+                        </Badge>
+                      ) : isRent ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-emerald-50 text-emerald-700 border-emerald-200 mt-2"
+                        >
+                          <Home className="w-3 h-3 mr-1" />
+                          Rent (Quarterly)
                         </Badge>
                       ) : (
                         <Badge
@@ -216,11 +236,34 @@ export default function Products() {
                       <div className="text-sm text-slate-600">
                         <p>Regular monthly fee for loan facility access.</p>
                         <p className="mt-2 text-xs text-slate-500">Supports arrangement and exit fees.</p>
+                        {product.scheduler_type && (
+                          <div className="flex items-center gap-1.5 mt-3 pt-2 border-t text-xs text-slate-500">
+                            <Calculator className="w-3 h-3" />
+                            <span>Scheduler: {schedulerDisplayNames[product.scheduler_type] || product.scheduler_type}</span>
+                          </div>
+                        )}
                       </div>
                     ) : isIrregularIncome ? (
                       <div className="text-sm text-slate-600">
                         <p>No fixed schedule - record payments as received.</p>
                         <p className="mt-2 text-xs text-slate-500">Principal tracking only.</p>
+                        {product.scheduler_type && (
+                          <div className="flex items-center gap-1.5 mt-3 pt-2 border-t text-xs text-slate-500">
+                            <Calculator className="w-3 h-3" />
+                            <span>Scheduler: {schedulerDisplayNames[product.scheduler_type] || product.scheduler_type}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : isRent ? (
+                      <div className="text-sm text-slate-600">
+                        <p>Periodic rent income with pattern detection.</p>
+                        <p className="mt-2 text-xs text-slate-500">Analyzes payment history to predict next rent due.</p>
+                        {product.scheduler_type && (
+                          <div className="flex items-center gap-1.5 mt-3 pt-2 border-t text-xs text-slate-500">
+                            <Calculator className="w-3 h-3" />
+                            <span>Scheduler: {schedulerDisplayNames[product.scheduler_type] || product.scheduler_type}</span>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <>
@@ -257,6 +300,14 @@ export default function Products() {
                               <span className="text-slate-500">Alignment:</span>
                               <span className="font-medium text-slate-700">
                                 {product.interest_alignment === 'period_based' ? 'From start date' : '1st of month'}
+                              </span>
+                            </div>
+                          )}
+                          {product.scheduler_type && (
+                            <div className="flex justify-between text-sm">
+                              <span className="text-slate-500">Scheduler:</span>
+                              <span className="font-medium text-slate-700">
+                                {schedulerDisplayNames[product.scheduler_type] || product.scheduler_type}
                               </span>
                             </div>
                           )}
