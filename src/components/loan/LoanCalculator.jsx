@@ -895,6 +895,11 @@ export function calculateAccruedInterest(loan, asOfDate = new Date()) {
     return 0;
   }
 
+  // Rent and Irregular Income loans don't accrue interest
+  if (loan.product_type === 'Rent' || loan.product_type === 'Irregular Income') {
+    return 0;
+  }
+
   const startDate = new Date(loan.start_date);
   const today = new Date(asOfDate);
   today.setHours(0, 0, 0, 0);
@@ -1072,6 +1077,20 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
     };
   }
 
+  // Rent and Irregular Income loans don't accrue interest
+  if (loan.product_type === 'Rent' || loan.product_type === 'Irregular Income') {
+    const principalRemaining = (loan?.principal_amount || 0) -
+      transactions
+        .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+    return {
+      interestAccrued: 0,
+      interestPaid: 0,
+      interestRemaining: 0,
+      principalRemaining
+    };
+  }
+
   const startDate = new Date(loan.start_date);
   const today = new Date(asOfDate);
   today.setHours(0, 0, 0, 0);
@@ -1205,6 +1224,15 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
  */
 export function calculateLoanInterestBalance(loan, schedule = [], transactions = [], asOfDate = new Date()) {
   if (!loan || !schedule || schedule.length === 0) {
+    return {
+      totalInterestDue: 0,
+      totalInterestPaid: 0,
+      interestBalance: 0
+    };
+  }
+
+  // Rent and Irregular Income loans don't accrue interest
+  if (loan.product_type === 'Rent' || loan.product_type === 'Irregular Income') {
     return {
       totalInterestDue: 0,
       totalInterestPaid: 0,
@@ -1607,6 +1635,11 @@ export function buildCapitalEvents(loan, transactions) {
  * @returns {Object} { totalInterest, segments[] } with detailed breakdown
  */
 export function calculateInterestFromLedger(loan, capitalEvents, fromDate, toDate) {
+  // Rent and Irregular Income loans don't accrue interest - they have fixed rent/income amounts
+  if (loan.product_type === 'Rent' || loan.product_type === 'Irregular Income') {
+    return { totalInterest: 0, segments: [], days: 0 };
+  }
+
   let periodStart = new Date(fromDate);
   periodStart.setHours(0, 0, 0, 0);
 

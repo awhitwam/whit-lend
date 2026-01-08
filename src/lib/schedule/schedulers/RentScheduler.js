@@ -81,8 +81,12 @@ export class RentScheduler extends BaseScheduler {
     const totalRent = schedule.reduce((sum, row) => sum + row.interest_amount, 0);
     const totalRepayable = principalState.currentOutstanding + totalRent + (loan.exit_fee || 0);
 
-    // Update loan totals only - don't change loan type fields (those come from product)
+    // Update loan totals and clear interest-related fields (Rent loans don't accrue interest)
+    // Also set product_type to 'Rent' so LoanCalculator skips interest calculations
     await api.entities.Loan.update(loan.id, {
+      product_type: 'Rent',
+      interest_rate: 0,
+      interest_type: null,
       total_interest: this.utils.roundCurrency(totalRent),
       total_repayable: this.utils.roundCurrency(totalRepayable)
     });

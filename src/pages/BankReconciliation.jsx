@@ -9,6 +9,17 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetDescription } from "@/components/ui/sheet";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -18,7 +29,7 @@ import {
   Upload, CheckCircle2, AlertCircle, Loader2, Search, FileCheck,
   ArrowUpRight, ArrowDownLeft, Check, Link2, Unlink,
   Sparkles, Wand2, Zap, CheckSquare, Receipt, Coins, Tag, Plus, X, Undo2,
-  ChevronUp, ChevronDown, ChevronRight
+  ChevronUp, ChevronDown, ChevronRight, Trash2
 } from 'lucide-react';
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -569,6 +580,10 @@ export default function BankReconciliation() {
   const [entryExpenseTypes, setEntryExpenseTypes] = useState(new Map()); // Map of entryId -> expenseTypeId
   const [isBulkCreatingExpenses, setIsBulkCreatingExpenses] = useState(false);
   const [bulkExpenseProgress, setBulkExpenseProgress] = useState({ current: 0, total: 0 });
+
+  // Delete unreconciled entries state
+  const [showDeleteUnreconciledDialog, setShowDeleteUnreconciledDialog] = useState(false);
+  const [isDeletingUnreconciled, setIsDeletingUnreconciled] = useState(false);
 
   // Simple setter - the propagation logic will be in a separate function defined after data is loaded
   const setEntryExpenseTypeSimple = (entryId, expenseTypeId) => {
@@ -2398,7 +2413,14 @@ export default function BankReconciliation() {
 
       if (suggestion.loan_id) {
         const loan = loans.find(l => l.id === suggestion.loan_id);
-        if (loan) setSelectedLoan(loan);
+        if (loan) {
+          setSelectedLoan(loan);
+          // Pre-fill entity search with borrower name to filter loan list
+          const borrowerName = getBorrowerName(loan.borrower_id);
+          if (borrowerName) {
+            setEntitySearch(borrowerName);
+          }
+        }
       }
       if (suggestion.investor_id) {
         const investor = investors.find(i => i.id === suggestion.investor_id);
@@ -4276,6 +4298,39 @@ export default function BankReconciliation() {
     }
   };
 
+  // Delete all unreconciled bank statement entries
+  const handleDeleteAllUnreconciled = async () => {
+    setIsDeletingUnreconciled(true);
+    try {
+      const unreconciledEntries = bankStatements.filter(s => !s.is_reconciled);
+      let deleted = 0;
+
+      for (const entry of unreconciledEntries) {
+        // Delete any reconciliation entries just in case
+        await api.entities.ReconciliationEntry.deleteWhere({ bank_statement_id: entry.id });
+        // Delete the bank statement entry
+        await api.entities.BankStatement.delete(entry.id);
+        deleted++;
+      }
+
+      // Clear selections and refresh data
+      setSelectedEntries(new Set());
+      setEntryExpenseTypes(new Map());
+      setEntryOtherIncome(new Map());
+      setDismissedSuggestions(new Set());
+
+      queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+
+      setShowDeleteUnreconciledDialog(false);
+      alert(`Deleted ${deleted} unreconciled entries`);
+    } catch (error) {
+      alert(`Error deleting entries: ${error.message}`);
+    } finally {
+      setIsDeletingUnreconciled(false);
+    }
+  };
+
   // Toggle entry selection (auto-deselects conflicting entries)
   const toggleEntrySelection = (entryId) => {
     setSelectedEntries(prev => {
@@ -4416,7 +4471,7 @@ export default function BankReconciliation() {
           </div>
 
           {/* Stats */}
-          <div className="flex gap-3">
+          <div className="flex gap-3 items-center">
             <div className="bg-white rounded-lg px-4 py-2 border border-slate-200">
               <p className="text-xs text-slate-500">Unreconciled</p>
               <p className="text-xl font-bold text-amber-600">{totals.unreconciled}</p>
@@ -4431,6 +4486,17 @@ export default function BankReconciliation() {
               <p className="text-xs text-slate-500">Reconciled</p>
               <p className="text-xl font-bold text-emerald-600">{totals.reconciled}</p>
             </div>
+            {totals.unreconciled > 0 && (
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => setShowDeleteUnreconciledDialog(true)}
+                className="text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300"
+              >
+                <Trash2 className="w-4 h-4 mr-1" />
+                Delete All Unreconciled
+              </Button>
+            )}
           </div>
         </div>
 
@@ -5614,19 +5680,19 @@ export default function BankReconciliation() {
           </div>
         )}
 
-        {/* Reconciliation Modal */}
-        <Dialog open={!!selectedEntry} onOpenChange={(open) => { if (!open) { setSelectedEntry(null); setReviewingSuggestion(null); setSelectedOffsetEntries([]); setOffsetNotes(''); } }}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
-            <DialogHeader>
-              <DialogTitle>
+        {/* Reconciliation Panel */}
+        <Sheet open={!!selectedEntry} onOpenChange={(open) => { if (!open) { setSelectedEntry(null); setReviewingSuggestion(null); setSelectedOffsetEntries([]); setOffsetNotes(''); } }}>
+          <SheetContent side="right" className="w-full sm:max-w-2xl overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>
                 {selectedEntry?.is_reconciled ? 'View Reconciled Entry' : 'Reconcile Bank Entry'}
-              </DialogTitle>
-              <DialogDescription>
+              </SheetTitle>
+              <SheetDescription>
                 {selectedEntry?.is_reconciled
                   ? 'This bank entry has been reconciled to the following transaction(s)'
                   : 'Match this bank entry to a system transaction or create a new one'}
-              </DialogDescription>
-            </DialogHeader>
+              </SheetDescription>
+            </SheetHeader>
 
             {/* VIEW RECONCILED ENTRY */}
             {selectedEntry && selectedEntry.is_reconciled && !reviewingSuggestion && (() => {
@@ -6818,8 +6884,49 @@ export default function BankReconciliation() {
                 </div>
               </div>
             )}
-          </DialogContent>
-        </Dialog>
+          </SheetContent>
+        </Sheet>
+
+        {/* Delete All Unreconciled Confirmation Dialog */}
+        <AlertDialog open={showDeleteUnreconciledDialog} onOpenChange={setShowDeleteUnreconciledDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                <Trash2 className="w-5 h-5" />
+                Delete All Unreconciled Entries?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete {totals.unreconciled} unreconciled bank statement entries.
+                This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="py-2">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                <strong>Note:</strong> Only unreconciled entries will be deleted. Reconciled entries will be preserved.
+              </div>
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeletingUnreconciled}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteAllUnreconciled}
+                disabled={isDeletingUnreconciled}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isDeletingUnreconciled ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete {totals.unreconciled} Entries
+                  </>
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </div>
   );

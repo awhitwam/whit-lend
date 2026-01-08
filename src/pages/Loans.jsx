@@ -280,10 +280,10 @@ export default function Loans() {
     return repayments.length > 0 ? repayments[0] : null;
   };
 
-  const getNextDueForLoan = (loanId) => {
+  const getLastScheduleEntryForLoan = (loanId) => {
     const loanSchedule = allSchedules
-      .filter(s => s.loan_id === loanId && s.status === 'Pending')
-      .sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
+      .filter(s => s.loan_id === loanId)
+      .sort((a, b) => new Date(b.due_date) - new Date(a.due_date)); // Sort descending to get last entry
     return loanSchedule.length > 0 ? loanSchedule[0] : null;
   };
 
@@ -419,8 +419,8 @@ export default function Loans() {
           bVal = bLastPay ? new Date(bLastPay.date) : new Date(0);
           break;
         case 'next_due':
-          const aNextDue = getNextDueForLoan(a.id);
-          const bNextDue = getNextDueForLoan(b.id);
+          const aNextDue = getLastScheduleEntryForLoan(a.id);
+          const bNextDue = getLastScheduleEntryForLoan(b.id);
           aVal = aNextDue ? new Date(aNextDue.due_date) : new Date('9999-12-31');
           bVal = bNextDue ? new Date(bNextDue.due_date) : new Date('9999-12-31');
           break;
@@ -774,13 +774,13 @@ export default function Loans() {
       )
     },
     next_due: {
-      header: 'Next Due',
+      header: 'End Date',
       sortKey: 'next_due',
       align: 'left',
-      render: (loan, { nextDue, isOverdue }) => (
-        nextDue ? (
-          <span className={isOverdue ? 'text-sm text-red-600 font-medium' : 'text-sm text-slate-600'}>
-            {format(new Date(nextDue.due_date), 'dd/MM/yy')}
+      render: (loan, { lastScheduleEntry }) => (
+        lastScheduleEntry ? (
+          <span className="text-sm text-slate-600">
+            {format(new Date(lastScheduleEntry.due_date), 'dd/MM/yy')}
           </span>
         ) : (
           <span className="text-sm text-slate-400">-</span>
@@ -1088,12 +1088,11 @@ export default function Loans() {
                         }
 
                         const lastPayment = getLastPaymentForLoan(loan.id);
-                        const nextDue = getNextDueForLoan(loan.id);
-                        const isOverdue = nextDue && new Date(nextDue.due_date) < new Date();
+                        const lastScheduleEntry = getLastScheduleEntryForLoan(loan.id);
                         // Use product abbreviation from join, otherwise generate from product name
                         const productAbbr = productAbbreviations.get(loan.product_id) || getProductAbbreviation(loan.product_name);
 
-                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, nextDue, isOverdue, productAbbr };
+                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr };
 
                         return (
                           <tr

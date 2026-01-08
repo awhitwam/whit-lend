@@ -56,7 +56,8 @@ export default function EditLoanPanel({
   const selectedProduct = products.find(p => p.id === formData.product_id);
   const isFixedCharge = selectedProduct?.product_type === 'Fixed Charge' || formData.product_type === 'Fixed Charge';
   const isIrregularIncome = selectedProduct?.product_type === 'Irregular Income' || formData.product_type === 'Irregular Income';
-  const isSpecialType = isFixedCharge || isIrregularIncome;
+  const isRent = selectedProduct?.product_type === 'Rent' || formData.product_type === 'Rent';
+  const isSpecialType = isFixedCharge || isIrregularIncome || isRent;
 
   // Detect changes between current loan and form data
   const changes = useMemo(() => {
@@ -240,7 +241,7 @@ export default function EditLoanPanel({
       };
     }
 
-    // Handle Irregular Income
+    // Handle Irregular Income - no interest calculation
     if (isIrregularIncome) {
       return {
         product_id: formData.product_id,
@@ -253,16 +254,40 @@ export default function EditLoanPanel({
         duration: 0,
         start_date: formData.start_date,
         description: formData.description,
-        interest_rate: product?.interest_rate || 0,
-        interest_type: product?.interest_type || 'Simple',
-        period: product?.period || 'Monthly',
-        // Interest rate override
-        override_interest_rate: formData.override_interest_rate,
-        overridden_rate: formData.override_interest_rate ? parseFloat(formData.overridden_rate) || null : null,
-        // Penalty rate fields
-        has_penalty_rate: formData.has_penalty_rate,
-        penalty_rate: formData.has_penalty_rate ? parseFloat(formData.penalty_rate) || null : null,
-        penalty_rate_from: formData.has_penalty_rate ? formData.penalty_rate_from || null : null
+        // Clear interest-related fields
+        interest_rate: 0,
+        interest_type: null,
+        period: 'Monthly',
+        override_interest_rate: false,
+        overridden_rate: null,
+        has_penalty_rate: false,
+        penalty_rate: null,
+        penalty_rate_from: null
+      };
+    }
+
+    // Handle Rent - no interest calculation, rent is tracked via transactions
+    if (isRent) {
+      return {
+        product_id: formData.product_id,
+        product_name: product?.name || loan.product_name,
+        product_type: 'Rent',
+        principal_amount: parseFloat(formData.principal_amount) || 0,
+        arrangement_fee: parseFloat(formData.arrangement_fee) || 0,
+        exit_fee: parseFloat(formData.exit_fee) || 0,
+        net_disbursed: parseFloat(formData.principal_amount) - (parseFloat(formData.arrangement_fee) || 0),
+        duration: 0,
+        start_date: formData.start_date,
+        description: formData.description,
+        // Clear interest-related fields
+        interest_rate: 0,
+        interest_type: null,
+        period: 'Monthly',
+        override_interest_rate: false,
+        overridden_rate: null,
+        has_penalty_rate: false,
+        penalty_rate: null,
+        penalty_rate_from: null
       };
     }
 
@@ -332,14 +357,19 @@ export default function EditLoanPanel({
   const handleProductChange = (productId) => {
     const product = products.find(p => p.id === productId);
     if (product) {
+      const isSpecialType = product.product_type === 'Fixed Charge' ||
+                            product.product_type === 'Irregular Income' ||
+                            product.product_type === 'Rent';
+
       setFormData(prev => ({
         ...prev,
         product_id: productId,
         product_type: product.product_type || 'Standard',
-        interest_rate: product.interest_rate || 0,
-        interest_type: product.interest_type || 'Simple',
+        // Clear interest-related fields for special product types
+        interest_rate: isSpecialType ? 0 : (product.interest_rate || 0),
+        interest_type: isSpecialType ? null : (product.interest_type || 'Simple'),
         period: product.period || 'Monthly',
-        interest_only_period: product.interest_only_period || 0,
+        interest_only_period: isSpecialType ? 0 : (product.interest_only_period || 0),
         // For Fixed Charge, use product's monthly_charge if available
         monthly_charge: product.product_type === 'Fixed Charge' ? (product.monthly_charge || prev.monthly_charge) : prev.monthly_charge
       }));
@@ -460,7 +490,9 @@ export default function EditLoanPanel({
                       ? '(Fixed Charge)'
                       : product.product_type === 'Irregular Income'
                         ? '(Irregular Income)'
-                        : `- ${product.interest_rate}% (${product.interest_type})`}
+                        : product.product_type === 'Rent'
+                          ? '(Rent)'
+                          : `- ${product.interest_rate}% (${product.interest_type})`}
                   </SelectItem>
                 ))}
               </SelectContent>

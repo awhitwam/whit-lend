@@ -1213,6 +1213,29 @@ export default function ImportLoandisc() {
         // Log the CSV headers for debugging
         addLog(`  CSV columns: ${repaymentsData.headers.join(', ')}`);
 
+        // Log repayment mappings for debugging
+        const feesMapping = repaymentMappings['Fees Paid Amount'];
+        addLog(`  Repayment mapping for 'Fees Paid Amount': ${feesMapping || '(NOT MAPPED)'}`);
+
+        // Auto-fix: Ensure critical repayment columns are correctly mapped
+        const autoFixMappings = [
+          { pattern: /fees paid/i, target: 'fees_applied' },
+          { pattern: /penalty paid/i, target: 'penalty_applied' },
+          { pattern: /principal paid/i, target: 'principal_applied' },
+          { pattern: /interest paid/i, target: 'interest_applied' },
+        ];
+
+        for (const { pattern, target } of autoFixMappings) {
+          const columnName = repaymentsData.headers.find(h => pattern.test(h));
+          if (columnName) {
+            const currentMapping = repaymentMappings[columnName];
+            if (currentMapping !== target) {
+              addLog(`  AUTO-FIX: Setting '${columnName}' -> '${target}' (was: ${currentMapping || 'unmapped'})`);
+              repaymentMappings[columnName] = target;
+            }
+          }
+        }
+
         // Log first few repayment loan numbers for debugging
         const firstFewRepayments = repaymentsData.data.slice(0, 5).map(r => {
           const transformed = transformRepayment(r);
@@ -1304,8 +1327,12 @@ export default function ImportLoandisc() {
             // Debug logging for specific loan repayments
             if (isDebugLoan) {
               addLog(`[DEBUG REPAYMENT ${loanNumber}] Row ${i + 1}: ${repaymentData.date}`);
-              addLog(`  Raw CSV: Date="${row['Collection Date'] || row['Date']}", Principal="${row['Principal Paid Amount']}", Interest="${row['Interest Paid Amount']}"`);
+              addLog(`  Raw CSV columns: ${Object.keys(row).join(', ')}`);
+              addLog(`  Raw CSV: Date="${row['Collection Date'] || row['Date']}", Principal="${row['Principal Paid Amount']}", Interest="${row['Interest Paid Amount']}", Fees="${row['Fees Paid Amount']}"`);
+              addLog(`  Mapping for 'Fees Paid Amount': ${repaymentMappings['Fees Paid Amount'] || '(not mapped)'}`);
+              addLog(`  repaymentData.fees_applied: ${repaymentData.fees_applied}`);
               addLog(`  Parsed: Principal=${principal}, Interest=${interest}, Penalty=${penalty}, Fees=${fees}, Total=${totalAmount}`);
+              addLog(`  transactionData.fees_applied: ${transactionData.fees_applied}`);
               addLog(`  Target loan: id=${targetLoan.id}, borrower_id=${targetLoan.borrower_id}`);
             }
 

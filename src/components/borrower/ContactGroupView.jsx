@@ -34,6 +34,7 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
       if (!groups[groupKey]) {
         groups[groupKey] = {
           contactEmail: groupKey === '__no_contact__' ? null : groupKey,
+          contactNames: {}, // Track frequency of contact names
           borrowers: [],
           totalLoans: 0,
           liveLoans: 0,
@@ -43,10 +44,29 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
 
       groups[groupKey].borrowers.push(borrower);
 
+      // Track contact name frequency
+      const contactName = borrower.contact_name?.trim();
+      if (contactName) {
+        groups[groupKey].contactNames[contactName] = (groups[groupKey].contactNames[contactName] || 0) + 1;
+      }
+
       // Aggregate loan counts
       const counts = loanCounts[borrower.id] || { total: 0, live: 0 };
       groups[groupKey].totalLoans += counts.total;
       groups[groupKey].liveLoans += counts.live;
+    });
+
+    // Determine the most common contact name for each group
+    Object.values(groups).forEach(group => {
+      const names = Object.entries(group.contactNames);
+      if (names.length > 0) {
+        // Sort by frequency (descending) and pick the most common
+        names.sort((a, b) => b[1] - a[1]);
+        group.contactName = names[0][0];
+      } else {
+        group.contactName = null;
+      }
+      delete group.contactNames; // Clean up temporary tracking object
     });
 
     // Calculate total outstanding per group from loans
@@ -75,8 +95,9 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
 
     const filtered = {};
     Object.entries(groupedBorrowers).forEach(([key, group]) => {
-      // Check if contact email matches
-      const contactMatches = group.contactEmail?.toLowerCase().includes(search);
+      // Check if contact email or contact name matches
+      const contactMatches = group.contactEmail?.toLowerCase().includes(search) ||
+                            group.contactName?.toLowerCase().includes(search);
 
       // Check if any borrower in group matches
       const matchingBorrowers = group.borrowers.filter(b => {
@@ -87,6 +108,7 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
                b.phone?.includes(search) ||
                b.unique_number?.includes(search) ||
                b.email?.toLowerCase().includes(search) ||
+               b.contact_name?.toLowerCase().includes(search) ||
                keywordMatch;
       });
 
@@ -163,65 +185,62 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
         {sortedGroups.map(([key, group]) => {
           const isExpanded = expandedGroups.has(key);
           const hasMultipleBorrowers = group.borrowers.length > 1;
+          // Build display: "Name - email" or just "email" or "No Contact"
+          const displayTitle = group.contactName
+            ? `${group.contactName} - ${group.contactEmail || 'No Email'}`
+            : group.contactEmail || 'No Contact';
 
           return (
             <Card key={key} className="overflow-hidden">
               <Collapsible open={isExpanded} onOpenChange={() => toggleGroup(key)}>
-                <CollapsibleTrigger asChild>
-                  <CardHeader className="cursor-pointer hover:bg-slate-50 transition-colors py-4">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-3">
+                <CardHeader className="py-4">
+                  <div className="flex items-center justify-between">
+                    <Link
+                      to={createPageUrl(`Loans?contact_email=${encodeURIComponent(group.contactEmail || '')}`)}
+                      className="flex items-center gap-3 flex-1 hover:bg-slate-50 -m-2 p-2 rounded-lg transition-colors"
+                    >
+                      <div className={`p-2 rounded-lg ${hasMultipleBorrowers ? 'bg-blue-100' : 'bg-slate-100'}`}>
+                        {hasMultipleBorrowers ? (
+                          <Users className={`w-5 h-5 ${hasMultipleBorrowers ? 'text-blue-600' : 'text-slate-500'}`} />
+                        ) : (
+                          <User className="w-5 h-5 text-slate-500" />
+                        )}
+                      </div>
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <CardTitle className="text-base font-semibold">
+                            {displayTitle}
+                          </CardTitle>
+                          {hasMultipleBorrowers && (
+                            <Badge variant="secondary" className="bg-blue-50 text-blue-700">
+                              {group.borrowers.length} borrowers
+                            </Badge>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-4 mt-1 text-sm text-slate-500">
+                          <span className="flex items-center gap-1">
+                            <FileText className="w-3.5 h-3.5" />
+                            {group.liveLoans} live loan{group.liveLoans !== 1 ? 's' : ''}
+                          </span>
+                          {group.totalOutstanding > 0 && (
+                            <span className="font-medium text-slate-700">
+                              {formatCurrency(group.totalOutstanding)} outstanding
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    </Link>
+                    <CollapsibleTrigger asChild>
+                      <Button variant="ghost" size="sm" className="ml-2">
                         {isExpanded ? (
                           <ChevronDown className="w-5 h-5 text-slate-400" />
                         ) : (
                           <ChevronRight className="w-5 h-5 text-slate-400" />
                         )}
-                        <div className={`p-2 rounded-lg ${hasMultipleBorrowers ? 'bg-blue-100' : 'bg-slate-100'}`}>
-                          {hasMultipleBorrowers ? (
-                            <Users className={`w-5 h-5 ${hasMultipleBorrowers ? 'text-blue-600' : 'text-slate-500'}`} />
-                          ) : (
-                            <User className="w-5 h-5 text-slate-500" />
-                          )}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <CardTitle className="text-base font-semibold">
-                              {group.contactEmail || 'No Contact Email'}
-                            </CardTitle>
-                            {hasMultipleBorrowers && (
-                              <Badge variant="secondary" className="bg-blue-50 text-blue-700">
-                                {group.borrowers.length} borrowers
-                              </Badge>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-4 mt-1 text-sm text-slate-500">
-                            <span className="flex items-center gap-1">
-                              <FileText className="w-3.5 h-3.5" />
-                              {group.liveLoans} live loan{group.liveLoans !== 1 ? 's' : ''}
-                            </span>
-                            {group.totalOutstanding > 0 && (
-                              <span className="font-medium text-slate-700">
-                                {formatCurrency(group.totalOutstanding)} outstanding
-                              </span>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {group.liveLoans > 0 && (
-                          <Link
-                            to={createPageUrl(`Loans?contact_email=${encodeURIComponent(group.contactEmail || '')}`)}
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            <Button variant="outline" size="sm">
-                              View All Loans
-                            </Button>
-                          </Link>
-                        )}
-                      </div>
-                    </div>
-                  </CardHeader>
-                </CollapsibleTrigger>
+                      </Button>
+                    </CollapsibleTrigger>
+                  </div>
+                </CardHeader>
 
                 <CollapsibleContent>
                   <CardContent className="pt-0 pb-4">

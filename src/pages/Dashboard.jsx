@@ -51,55 +51,66 @@ export default function Dashboard() {
   const [searchTerm, setSearchTerm] = useState('');
   const [isBackingUp, setIsBackingUp] = useState(false);
 
+  // Dashboard queries use 2-minute stale time to reduce unnecessary refetches
+  const DASHBOARD_STALE_TIME = 2 * 60 * 1000; // 2 minutes
+
   const { data: loans = [], isLoading: loansLoading } = useQuery({
     queryKey: ['loans', currentOrganization?.id],
     queryFn: async () => {
       const allLoans = await api.entities.Loan.list('-created_date');
       return allLoans.filter(loan => !loan.is_deleted);
     },
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   const { data: borrowers = [], isLoading: borrowersLoading } = useQuery({
     queryKey: ['borrowers', currentOrganization?.id],
     queryFn: () => api.entities.Borrower.list(),
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   const { data: schedules = [], isLoading: schedulesLoading } = useQuery({
     queryKey: ['all-schedules', currentOrganization?.id],
     queryFn: () => api.entities.RepaymentSchedule.list(),
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   const { data: transactions = [] } = useQuery({
     queryKey: ['all-transactions', currentOrganization?.id],
-    queryFn: () => api.entities.Transaction.list(),
-    enabled: !!currentOrganization
+    queryFn: () => api.entities.Transaction.list('-date', 10000),
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   const { data: loanProperties = [] } = useQuery({
     queryKey: ['loan-properties-dashboard', currentOrganization?.id],
     queryFn: () => api.entities.LoanProperty.filter({ status: 'Active' }),
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   const { data: properties = [] } = useQuery({
     queryKey: ['properties-dashboard', currentOrganization?.id],
     queryFn: () => api.entities.Property.list(),
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   const { data: investors = [] } = useQuery({
     queryKey: ['investors-dashboard', currentOrganization?.id],
     queryFn: () => api.entities.Investor.list(),
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   const { data: investorTransactions = [] } = useQuery({
     queryKey: ['investor-transactions-dashboard', currentOrganization?.id],
     queryFn: () => api.entities.InvestorTransaction.list('-date', 100),
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   // Query for last backup date from audit logs
@@ -109,7 +120,8 @@ export default function Dashboard() {
       const logs = await api.entities.AuditLog.filter({ action: 'org_backup_export' }, '-created_at');
       return logs.length > 0 ? logs[0] : null;
     },
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
   });
 
   // Calculate metrics
@@ -218,6 +230,38 @@ export default function Dashboard() {
   // Fees due = arrangement fees from live loans
   const feesDue = liveLoans.reduce((sum, loan) => sum + (loan.arrangement_fee || 0), 0);
 
+  // Exit fees due = exit fees from live loans minus fees already received
+  // Calculate fees received per loan from transactions
+  const feesReceivedByLoan = transactions.reduce((acc, t) => {
+    const feesApplied = parseFloat(t.fees_applied) || 0;
+    if (t.type === 'Repayment' && feesApplied > 0) {
+      acc[t.loan_id] = (acc[t.loan_id] || 0) + feesApplied;
+    }
+    return acc;
+  }, {});
+
+  const exitFeesDue = liveLoans.reduce((sum, loan) => {
+    const exitFee = loan.exit_fee || 0;
+    const feesReceived = feesReceivedByLoan[loan.id] || 0;
+    const remaining = Math.max(0, exitFee - feesReceived);
+    return sum + remaining;
+  }, 0);
+
+  // Total outstanding investor capital (what we owe investors)
+  const totalInvestorOutstanding = investors
+    .filter(inv => inv.status === 'Active')
+    .reduce((sum, inv) => sum + (inv.current_capital_balance || 0), 0);
+
+  // Organization health metrics
+  const healthMetrics = {
+    netDisbursed: livePortfolioMetrics.netDisbursed,
+    investorOutstanding: totalInvestorOutstanding,
+    difference: livePortfolioMetrics.netDisbursed - totalInvestorOutstanding,
+    ratio: totalInvestorOutstanding > 0
+      ? (livePortfolioMetrics.netDisbursed / totalInvestorOutstanding) * 100
+      : 0
+  };
+
   // Expected profit = gross disbursed + fees + interest outstanding - net disbursed
   // This shows: what borrowers owe (gross + fees + interest) minus what we actually paid out (net)
   const expectedProfit = livePortfolioMetrics.grossDisbursed + feesDue + interestOutstanding - livePortfolioMetrics.netDisbursed;
@@ -244,6 +288,15 @@ export default function Dashboard() {
       .map(loan => ({ loan, value: loan.arrangement_fee || 0 }))
       .sort((a, b) => b.value - a.value),
 
+    exitFeesDue: liveLoans
+      .map(loan => {
+        const exitFee = loan.exit_fee || 0;
+        const feesReceived = feesReceivedByLoan[loan.id] || 0;
+        return { loan, value: Math.max(0, exitFee - feesReceived) };
+      })
+      .filter(d => d.value > 0)
+      .sort((a, b) => b.value - a.value),
+
     interestDue: loanMetrics
       .filter(m => m.interestRemaining > 0)
       .map(m => ({ loan: m.loan, value: Math.max(0, m.interestRemaining) }))
@@ -260,7 +313,8 @@ export default function Dashboard() {
   const breakdownTitles = {
     grossDisbursed: 'Gross Disbursed Breakdown',
     netDisbursed: 'Net Disbursed Breakdown',
-    feesDue: 'Fees Due Breakdown',
+    feesDue: 'Arrangement Fees Breakdown',
+    exitFeesDue: 'Exit Fees Breakdown',
     interestDue: 'Interest Due Breakdown',
     principalOS: 'Principal Outstanding Breakdown',
     borrowers: 'Active Loans'
@@ -270,6 +324,7 @@ export default function Dashboard() {
     grossDisbursed: 'Principal amounts owed by each borrower',
     netDisbursed: 'Cash paid out to each borrower',
     feesDue: 'Arrangement fees for each loan',
+    exitFeesDue: 'Exit fees for each loan',
     interestDue: 'Accrued interest outstanding per loan',
     principalOS: 'Remaining principal balance per loan',
     borrowers: 'All live loans in the portfolio'
@@ -632,47 +687,73 @@ export default function Dashboard() {
                 <p className="text-3xl font-bold tracking-tight">{formatCurrency(livePortfolioMetrics.grossDisbursed)}</p>
                 <p className="text-slate-400 text-xs mt-1">Gross Disbursed (click for breakdown)</p>
               </div>
-              <div className="text-right">
-                <p className="text-slate-400 text-xs mb-1">Income on Accrual</p>
-                <p className={`text-2xl font-bold ${expectedProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
-                  {expectedProfit >= 0 ? '+' : ''}{formatCurrency(expectedProfit)}
-                </p>
-                <p className="text-slate-500 text-xs mt-1">Gross + Fees + Interest - Net</p>
+              <div
+                className="cursor-pointer hover:opacity-80 transition-opacity text-right"
+                onClick={() => setActiveBreakdown('borrowers')}
+              >
+                <p className="text-slate-400 text-xs mb-1">Live Loans</p>
+                <p className="text-2xl font-bold">{liveLoans.length}</p>
+                <p className="text-slate-500 text-xs mt-1">Active loans</p>
               </div>
             </div>
 
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mt-4">
-              <div
-                className="bg-white/10 rounded-xl p-3 cursor-pointer hover:bg-white/20 transition-colors"
-                onClick={() => setActiveBreakdown('netDisbursed')}
-              >
-                <p className="text-slate-300 text-xs font-medium mb-0.5">Net Disbursed</p>
-                <p className="text-lg font-semibold">{formatCurrency(livePortfolioMetrics.netDisbursed)}</p>
-                <p className="text-slate-400 text-xs">Cash paid out</p>
+            {/* Organization Health Card */}
+            <div className="bg-white/10 rounded-xl p-4 mt-4 backdrop-blur-sm">
+              <p className="text-slate-300 text-sm font-medium mb-3">Organization Health</p>
+
+              {/* Net vs Investor comparison */}
+              <div className="grid grid-cols-3 gap-4 mb-4">
+                <div
+                  className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
+                  onClick={() => setActiveBreakdown('netDisbursed')}
+                >
+                  <p className="text-slate-400 text-xs">Net Disbursed</p>
+                  <p className="text-lg font-semibold">{formatCurrency(healthMetrics.netDisbursed)}</p>
+                </div>
+                <div>
+                  <p className="text-slate-400 text-xs">Investor Outstanding</p>
+                  <p className="text-lg font-semibold">{formatCurrency(healthMetrics.investorOutstanding)}</p>
+                </div>
+                <div>
+                  <p className="text-slate-400 text-xs">Difference</p>
+                  <p className={`text-lg font-semibold ${healthMetrics.difference >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {healthMetrics.difference >= 0 ? '+' : ''}{formatCurrency(healthMetrics.difference)}
+                  </p>
+                  <p className="text-slate-500 text-xs">
+                    {healthMetrics.ratio.toFixed(1)}% coverage
+                  </p>
+                </div>
               </div>
-              <div
-                className="bg-white/10 rounded-xl p-3 cursor-pointer hover:bg-white/20 transition-colors"
-                onClick={() => setActiveBreakdown('feesDue')}
-              >
-                <p className="text-slate-300 text-xs font-medium mb-0.5">Fees Due</p>
-                <p className="text-lg font-semibold">{formatCurrency(feesDue)}</p>
-                <p className="text-slate-400 text-xs">Arrangement fees</p>
-              </div>
-              <div
-                className="bg-white/10 rounded-xl p-3 cursor-pointer hover:bg-white/20 transition-colors"
-                onClick={() => setActiveBreakdown('interestDue')}
-              >
-                <p className="text-slate-300 text-xs font-medium mb-0.5">Interest Due</p>
-                <p className="text-lg font-semibold">{formatCurrency(interestOutstanding)}</p>
-                <p className="text-slate-400 text-xs">Accrued to date</p>
-              </div>
-              <div
-                className="bg-white/10 rounded-xl p-3 cursor-pointer hover:bg-white/20 transition-colors"
-                onClick={() => setActiveBreakdown('borrowers')}
-              >
-                <p className="text-slate-300 text-xs font-medium mb-0.5">Live Loans</p>
-                <p className="text-lg font-semibold">{liveLoans.length}</p>
-                <p className="text-slate-400 text-xs">Active loans</p>
+
+              {/* Fees and Interest row */}
+              <div className="grid grid-cols-4 gap-3 pt-3 border-t border-white/10">
+                <div
+                  className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
+                  onClick={() => setActiveBreakdown('feesDue')}
+                >
+                  <p className="text-slate-400 text-xs">Arrangement Fees</p>
+                  <p className="text-base font-semibold">{formatCurrency(feesDue)}</p>
+                </div>
+                <div
+                  className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
+                  onClick={() => setActiveBreakdown('exitFeesDue')}
+                >
+                  <p className="text-slate-400 text-xs">Exit Fees</p>
+                  <p className="text-base font-semibold">{formatCurrency(exitFeesDue)}</p>
+                </div>
+                <div
+                  className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
+                  onClick={() => setActiveBreakdown('interestDue')}
+                >
+                  <p className="text-slate-400 text-xs">Interest Due</p>
+                  <p className="text-base font-semibold">{formatCurrency(interestOutstanding)}</p>
+                </div>
+                <div>
+                  <p className="text-slate-400 text-xs">Income on Accrual</p>
+                  <p className={`text-base font-semibold ${expectedProfit >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                    {expectedProfit >= 0 ? '+' : ''}{formatCurrency(expectedProfit)}
+                  </p>
+                </div>
               </div>
             </div>
           </CardContent>

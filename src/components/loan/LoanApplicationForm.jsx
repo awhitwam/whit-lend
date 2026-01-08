@@ -269,7 +269,9 @@ export default function LoanApplicationForm({
                       ? '(Fixed Charge)'
                       : product.product_type === 'Irregular Income'
                         ? '(Irregular Income)'
-                        : `- ${product.interest_rate}% (${product.interest_type})`}
+                        : product.product_type === 'Rent'
+                          ? '(Rent)'
+                          : `- ${product.interest_rate}% (${product.interest_type})`}
                   </SelectItem>
                 ))}
               </SelectContent>

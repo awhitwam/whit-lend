@@ -47,21 +47,36 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   // NEW SCHEDULER SYSTEM: If product has scheduler_type, use the new scheduler-based system
   // This provides a clean migration path - products with scheduler_type use new code,
   // products without it continue using the legacy code below
-  if (product.scheduler_type) {
+  // Also check product_type as a fallback for products that haven't been re-saved
+  let effectiveSchedulerType = product.scheduler_type;
+  if (!effectiveSchedulerType && product.product_type) {
+    // Derive scheduler_type from product_type for unmigrated products
+    const typeMap = {
+      'Fixed Charge': 'fixed_charge',
+      'Irregular Income': 'irregular_income',
+      'Rent': 'rent'
+    };
+    effectiveSchedulerType = typeMap[product.product_type];
+    if (effectiveSchedulerType) {
+      console.log(`Derived scheduler_type '${effectiveSchedulerType}' from product_type '${product.product_type}'`);
+    }
+  }
+
+  if (effectiveSchedulerType) {
     console.log('=== SCHEDULE ENGINE: Using New Scheduler System ===');
-    console.log('Scheduler type:', product.scheduler_type);
+    console.log('Scheduler type:', effectiveSchedulerType);
 
     try {
       const { getScheduler, createScheduler } = await import('@/lib/schedule');
-      const SchedulerClass = getScheduler(product.scheduler_type);
+      const SchedulerClass = getScheduler(effectiveSchedulerType);
 
       if (SchedulerClass) {
-        const scheduler = createScheduler(product.scheduler_type, product.scheduler_config || {});
+        const scheduler = createScheduler(effectiveSchedulerType, product.scheduler_config || {});
         const result = await scheduler.generateSchedule({ loan, product, options });
         console.log('=== SCHEDULE ENGINE: New Scheduler Complete ===');
         return result;
       } else {
-        console.warn(`Scheduler not found: ${product.scheduler_type}, falling back to legacy`);
+        console.warn(`Scheduler not found: ${effectiveSchedulerType}, falling back to legacy`);
       }
     } catch (err) {
       console.error('Error using new scheduler system, falling back to legacy:', err);

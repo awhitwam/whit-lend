@@ -71,7 +71,26 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
   };
 
   const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const updated = { ...prev, [field]: value };
+
+      // When changing to a special product type, clear incompatible fields
+      if (field === 'product_type') {
+        const isSpecial = value === 'Fixed Charge' || value === 'Irregular Income' || value === 'Rent';
+        if (isSpecial) {
+          // Clear interest-related fields that don't apply to special types
+          updated.interest_rate = '';
+          updated.interest_type = 'Reducing'; // Reset to default
+          updated.interest_calculation_method = 'daily';
+          updated.interest_alignment = 'period_based';
+          updated.interest_paid_in_advance = false;
+          updated.extend_for_full_period = false;
+          updated.interest_only_period = '';
+        }
+      }
+
+      return updated;
+    });
   };
 
   return (
