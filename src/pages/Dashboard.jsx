@@ -16,7 +16,7 @@ import {
   DialogDescription,
 } from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { formatCurrency, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
+import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 import { toast } from 'sonner';
 import {
@@ -71,16 +71,18 @@ export default function Dashboard() {
     staleTime: DASHBOARD_STALE_TIME
   });
 
-  const { data: schedules = [], isLoading: schedulesLoading } = useQuery({
-    queryKey: ['all-schedules', currentOrganization?.id],
-    queryFn: () => api.entities.RepaymentSchedule.list(),
+  // Transactions still needed for Fixed Charge and Irregular Income product types
+  const { data: transactions = [] } = useQuery({
+    queryKey: ['all-transactions', currentOrganization?.id],
+    queryFn: () => api.entities.Transaction.listAll('-date'),
     enabled: !!currentOrganization,
     staleTime: DASHBOARD_STALE_TIME
   });
 
-  const { data: transactions = [] } = useQuery({
-    queryKey: ['all-transactions', currentOrganization?.id],
-    queryFn: () => api.entities.Transaction.listAll('-date'),
+  // Schedules needed for arrears calculation
+  const { data: schedules = [] } = useQuery({
+    queryKey: ['all-schedules', currentOrganization?.id],
+    queryFn: () => api.entities.RepaymentSchedule.listAll('due_date'),
     enabled: !!currentOrganization,
     staleTime: DASHBOARD_STALE_TIME
   });
@@ -141,8 +143,8 @@ export default function Dashboard() {
   // Calculate live metrics for each loan using daily accrual
   // Uses cached principal_remaining from database when available for performance
   const loanMetrics = liveLoans.map(loan => {
+    // Transactions only needed for Fixed Charge and Irregular Income product types
     const loanTransactions = transactions.filter(t => t.loan_id === loan.id);
-    const loanSchedule = schedules.filter(s => s.loan_id === loan.id);
 
     // Handle different product types
     if (loan.product_type === 'Fixed Charge') {
@@ -189,20 +191,21 @@ export default function Dashboard() {
       };
     }
 
-    // Standard loans: calculate live values
-    // Pass schedule to use schedule-based interest (handles rate changes correctly)
-    const calc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule);
-    // Use cached principal_remaining from database if available (matches Loans page behavior)
+    // Standard loans: use cached values (updated by queueBalanceCacheUpdate after transactions)
+    const interestRemaining = loan.interest_remaining !== null && loan.interest_remaining !== undefined
+      ? loan.interest_remaining
+      : 0; // Fallback - cache should always exist for live loans
+
     const principalRemaining = loan.principal_remaining !== null && loan.principal_remaining !== undefined
       ? loan.principal_remaining
-      : calc.principalRemaining;
+      : (loan.principal_amount || 0);
 
     return {
       loan,
       principalRemaining,
-      interestRemaining: calc.interestRemaining,
-      interestAccrued: calc.interestAccrued,
-      interestPaid: calc.interestPaid
+      interestRemaining,
+      interestAccrued: 0,
+      interestPaid: 0
     };
   });
 
@@ -211,9 +214,9 @@ export default function Dashboard() {
   const calculatedPrincipalOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.principalRemaining), 0);
   const calculatedInterestOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.interestRemaining), 0);
 
-  // Prefer cached values from organization_summary if available
-  const principalOutstanding = orgSummary?.total_principal_outstanding ?? calculatedPrincipalOutstanding;
-  const interestOutstanding = orgSummary?.total_interest_outstanding ?? calculatedInterestOutstanding;
+  // Use per-loan cached values summed up (not orgSummary - it's calculated differently by nightly job)
+  const principalOutstanding = calculatedPrincipalOutstanding;
+  const interestOutstanding = calculatedInterestOutstanding;
   const totalOutstanding = principalOutstanding + interestOutstanding;
 
   // Calculate live portfolio financial metrics

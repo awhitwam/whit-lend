@@ -31,7 +31,7 @@ export default function Investors() {
   // Fetch all interest entries to calculate due/accruing amounts
   const { data: allInterestEntries = [] } = useQuery({
     queryKey: ['allInvestorInterest', currentOrganization?.id],
-    queryFn: () => api.entities.InvestorInterest.list(),
+    queryFn: () => api.entities.InvestorInterest.listAll(),
     enabled: !!currentOrganization
   });
 

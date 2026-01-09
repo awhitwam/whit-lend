@@ -42,7 +42,7 @@ export default function Expenses() {
 
   const { data: expenses = [], isLoading: expensesLoading } = useQuery({
     queryKey: ['expenses', currentOrganization?.id],
-    queryFn: () => api.entities.Expense.list('-date'),
+    queryFn: () => api.entities.Expense.listAll('-date'),
     enabled: !!currentOrganization
   });
 

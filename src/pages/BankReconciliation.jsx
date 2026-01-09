@@ -763,7 +763,7 @@ export default function BankReconciliation() {
   // Fetch loan transactions for matching
   const { data: loanTransactions = [] } = useQuery({
     queryKey: ['transactions'],
-    queryFn: () => api.entities.Transaction.list('-date')
+    queryFn: () => api.entities.Transaction.listAll('-date')
   });
 
   // Fetch investor transactions for matching
@@ -781,13 +781,13 @@ export default function BankReconciliation() {
   // Fetch repayment schedules for expected payment info
   const { data: repaymentSchedules = [] } = useQuery({
     queryKey: ['repayment-schedules'],
-    queryFn: () => api.entities.RepaymentSchedule.list('due_date')
+    queryFn: () => api.entities.RepaymentSchedule.listAll('due_date')
   });
 
   // Fetch reconciliation entries
   const { data: reconciliationEntries = [] } = useQuery({
     queryKey: ['reconciliation-entries'],
-    queryFn: () => api.entities.ReconciliationEntry.list()
+    queryFn: () => api.entities.ReconciliationEntry.listAll()
   });
 
   // Get borrower name for loan

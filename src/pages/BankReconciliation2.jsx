@@ -93,7 +93,7 @@ export default function BankReconciliation2() {
   // Fetch reconciliation entries to know which transactions are already reconciled
   const { data: reconciliationEntries = [] } = useQuery({
     queryKey: ['reconciliationEntries'],
-    queryFn: () => api.entities.ReconciliationEntry.list()
+    queryFn: () => api.entities.ReconciliationEntry.listAll()
   });
 
   // Build set of already-reconciled transaction IDs for quick lookup

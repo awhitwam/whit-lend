@@ -49,7 +49,7 @@ export function useReconciliation() {
   // Loan transactions
   const { data: loanTransactions = [] } = useQuery({
     queryKey: ['transactions'],
-    queryFn: () => api.entities.Transaction.list('-date')
+    queryFn: () => api.entities.Transaction.listAll('-date')
   });
 
   // Investors
@@ -97,7 +97,7 @@ export function useReconciliation() {
   // Reconciliation entries
   const { data: reconciliationEntries = [] } = useQuery({
     queryKey: ['reconciliation-entries'],
-    queryFn: () => api.entities.ReconciliationEntry.list('-id')
+    queryFn: () => api.entities.ReconciliationEntry.listAll('-id')
   });
 
   // ==================== Local State ====================

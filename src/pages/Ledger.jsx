@@ -25,7 +25,7 @@ export default function Ledger() {
 
   const { data: transactions = [], isLoading: transactionsLoading } = useQuery({
     queryKey: ['transactions', currentOrganization?.id],
-    queryFn: () => api.entities.Transaction.list('-date'),
+    queryFn: () => api.entities.Transaction.listAll('-date'),
     enabled: !!currentOrganization
   });
 
@@ -55,7 +55,7 @@ export default function Ledger() {
 
   const { data: reconciliationEntries = [], isLoading: reconcilingLoading } = useQuery({
     queryKey: ['reconciliation-entries', currentOrganization?.id],
-    queryFn: () => api.entities.ReconciliationEntry.list('-created_at'),
+    queryFn: () => api.entities.ReconciliationEntry.listAll('-created_at'),
     enabled: !!currentOrganization
   });
 

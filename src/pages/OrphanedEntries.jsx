@@ -46,7 +46,7 @@ export default function OrphanedEntries() {
   // Loan transactions (repayments & disbursements)
   const { data: loanTransactions = [], isLoading: loadingLoans } = useQuery({
     queryKey: ['loan-transactions-all'],
-    queryFn: () => api.entities.Transaction.list('-date')
+    queryFn: () => api.entities.Transaction.listAll('-date')
   });
 
   // Investor transactions (capital in/out)

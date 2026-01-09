@@ -1,11 +1,17 @@
 
 import jsPDF from 'jspdf';
 import { format, differenceInDays } from 'date-fns';
-import { formatCurrency, buildCapitalEvents, getEffectiveRate } from './LoanCalculator';
+import { formatCurrency } from './LoanCalculator';
 
 /**
  * Build a comprehensive interest ledger showing all capital events, rate changes,
  * and running interest balance that the borrower can trace through
+ *
+ * This builds the ledger directly from transactions to ensure we capture:
+ * - Initial disbursement on start date
+ * - All further advances
+ * - All repayments (with interest and principal breakdown)
+ * - Penalty rate changes
  */
 function buildInterestLedger(loan, transactions, product) {
   const today = new Date();
@@ -18,9 +24,6 @@ function buildInterestLedger(loan, transactions, product) {
   const activeTransactions = (transactions || [])
     .filter(t => !t.is_deleted)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-  // Build capital events from transactions
-  const capitalEvents = buildCapitalEvents(loan, activeTransactions);
 
   // Prepare penalty rate info
   const hasPenaltyRate = loan.has_penalty_rate && loan.penalty_rate && loan.penalty_rate_from;
@@ -35,22 +38,40 @@ function buildInterestLedger(loan, transactions, product) {
   let runningPrincipal = 0;
   let runningInterestAccrued = 0;
   let runningInterestPaid = 0;
-  let periodStart = loanStartDate;
-  let eventIndex = 0;
 
-  // Create a timeline of all events that change state
+  // Create a timeline of all events that change state directly from transactions
   const stateChangeEvents = [];
 
-  // Add capital events (disbursements and principal repayments)
-  capitalEvents.forEach(event => {
-    stateChangeEvents.push({
-      date: event.date,
-      type: event.type,
-      principalChange: event.principalChange,
-      description: event.description || event.type,
-      transaction: event.transaction
+  // Add ALL disbursements (including initial on start date)
+  activeTransactions
+    .filter(tx => tx.type === 'Disbursement')
+    .forEach(tx => {
+      const txDate = new Date(tx.date);
+      txDate.setHours(0, 0, 0, 0);
+      stateChangeEvents.push({
+        date: txDate,
+        type: 'Disbursement',
+        principalChange: tx.gross_amount ?? tx.amount,
+        description: tx.reference || 'Funds advanced',
+        transaction: tx
+      });
     });
-  });
+
+  // Add ALL repayments
+  activeTransactions
+    .filter(tx => tx.type === 'Repayment')
+    .forEach(tx => {
+      const txDate = new Date(tx.date);
+      txDate.setHours(0, 0, 0, 0);
+      stateChangeEvents.push({
+        date: txDate,
+        type: 'Repayment',
+        principalChange: -(tx.principal_applied || 0),
+        interestApplied: tx.interest_applied || 0,
+        description: tx.reference || 'Payment received',
+        transaction: tx
+      });
+    });
 
   // Add penalty rate change as a state event
   if (hasPenaltyRate && penaltyDate >= loanStartDate && penaltyDate <= today) {
@@ -62,8 +83,14 @@ function buildInterestLedger(loan, transactions, product) {
     });
   }
 
-  // Sort events by date
-  stateChangeEvents.sort((a, b) => a.date - b.date);
+  // Sort events by date, then by type (disbursements before repayments on same day)
+  stateChangeEvents.sort((a, b) => {
+    const dateDiff = a.date - b.date;
+    if (dateDiff !== 0) return dateDiff;
+    // On same day: Disbursements first, then rate changes, then repayments
+    const typeOrder = { Disbursement: 0, RateChange: 1, Repayment: 2 };
+    return (typeOrder[a.type] || 99) - (typeOrder[b.type] || 99);
+  });
 
   // Process timeline
   let currentPrincipal = 0;
@@ -73,7 +100,7 @@ function buildInterestLedger(loan, transactions, product) {
   stateChangeEvents.forEach((event, idx) => {
     const eventDate = event.date;
 
-    // Calculate interest for period before this event
+    // Calculate interest for period before this event (if principal > 0)
     if (eventDate > lastEventDate && currentPrincipal > 0) {
       const days = differenceInDays(eventDate, lastEventDate);
       if (days > 0) {
@@ -83,8 +110,8 @@ function buildInterestLedger(loan, transactions, product) {
 
         ledgerEntries.push({
           type: 'InterestAccrual',
-          fromDate: lastEventDate,
-          toDate: eventDate,
+          fromDate: new Date(lastEventDate),
+          toDate: new Date(eventDate),
           days,
           principal: currentPrincipal,
           rate: currentRate,
@@ -103,47 +130,44 @@ function buildInterestLedger(loan, transactions, product) {
       currentPrincipal += event.principalChange;
       ledgerEntries.push({
         type: 'Disbursement',
-        date: eventDate,
+        date: new Date(eventDate),
         amount: event.principalChange,
         principalAfter: currentPrincipal,
         runningInterestAccrued,
         runningInterestPaid,
         interestBalance: runningInterestAccrued - runningInterestPaid,
-        description: event.description || 'Funds advanced',
+        description: event.description,
         reference: event.transaction?.reference
       });
-    } else if (event.type === 'PrincipalRepayment' || event.type === 'Repayment') {
-      // Handle repayment - split into interest and principal portions
+    } else if (event.type === 'Repayment') {
       const tx = event.transaction;
-      if (tx) {
-        const interestApplied = tx.interest_applied || 0;
-        const principalApplied = tx.principal_applied || 0;
+      const interestApplied = event.interestApplied || 0;
+      const principalApplied = tx?.principal_applied || 0;
 
-        if (interestApplied > 0) {
-          runningInterestPaid += interestApplied;
-        }
-
-        currentPrincipal = Math.max(0, currentPrincipal - principalApplied);
-
-        ledgerEntries.push({
-          type: 'Repayment',
-          date: eventDate,
-          amount: tx.amount,
-          interestApplied,
-          principalApplied,
-          principalAfter: currentPrincipal,
-          runningInterestAccrued,
-          runningInterestPaid,
-          interestBalance: runningInterestAccrued - runningInterestPaid,
-          description: tx.reference || 'Payment received',
-          reference: tx.reference
-        });
+      if (interestApplied > 0) {
+        runningInterestPaid += interestApplied;
       }
+
+      currentPrincipal = Math.max(0, currentPrincipal - principalApplied);
+
+      ledgerEntries.push({
+        type: 'Repayment',
+        date: new Date(eventDate),
+        amount: tx?.amount || 0,
+        interestApplied,
+        principalApplied,
+        principalAfter: currentPrincipal,
+        runningInterestAccrued,
+        runningInterestPaid,
+        interestBalance: runningInterestAccrued - runningInterestPaid,
+        description: event.description,
+        reference: tx?.reference
+      });
     } else if (event.type === 'RateChange') {
       currentRate = event.rateChange.to;
       ledgerEntries.push({
         type: 'RateChange',
-        date: eventDate,
+        date: new Date(eventDate),
         fromRate: event.rateChange.from,
         toRate: event.rateChange.to,
         principalBalance: currentPrincipal,
@@ -167,8 +191,8 @@ function buildInterestLedger(loan, transactions, product) {
 
       ledgerEntries.push({
         type: 'InterestAccrual',
-        fromDate: lastEventDate,
-        toDate: today,
+        fromDate: new Date(lastEventDate),
+        toDate: new Date(today),
         days,
         principal: currentPrincipal,
         rate: currentRate,
@@ -196,7 +220,7 @@ function buildInterestLedger(loan, transactions, product) {
   };
 }
 
-export function generateLoanStatementPDF(loan, schedule, transactions, product = null) {
+export function generateLoanStatementPDF(loan, schedule, transactions, product = null, interestCalc = null) {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
   let y = 20;
@@ -267,8 +291,22 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
     doc.text(`Fees: ${fees.join(' | ')}`, 15, y);
   }
 
-  // Build and display interest ledger
+  // Build interest ledger for detailed transaction history
   const ledger = buildInterestLedger(loan, transactions, product);
+
+  // Use pre-calculated schedule-based values if provided (these match the UI)
+  // Otherwise fall back to ledger summary (day-by-day calculation)
+  const summaryValues = interestCalc ? {
+    principalOutstanding: interestCalc.principalRemaining,
+    interestAccrued: interestCalc.interestAccrued,
+    interestPaid: interestCalc.interestPaid,
+    interestOutstanding: interestCalc.interestRemaining
+  } : {
+    principalOutstanding: ledger.summary.principalOutstanding,
+    interestAccrued: ledger.summary.totalInterestAccrued,
+    interestPaid: ledger.summary.totalInterestPaid,
+    interestOutstanding: ledger.summary.interestOutstanding
+  };
 
   // Current Position Summary
   y += 12;
@@ -279,17 +317,17 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
   y += 7;
   doc.setFontSize(10);
   doc.setFont(undefined, 'normal');
-  doc.text(`Principal Outstanding: ${formatCurrency(ledger.summary.principalOutstanding)}`, 15, y);
+  doc.text(`Principal Outstanding: ${formatCurrency(summaryValues.principalOutstanding)}`, 15, y);
   y += 5;
-  doc.text(`Total Interest Accrued: ${formatCurrency(ledger.summary.totalInterestAccrued)}`, 15, y);
+  doc.text(`Total Interest Due: ${formatCurrency(summaryValues.interestAccrued)}`, 15, y);
   y += 5;
-  doc.text(`Total Interest Paid: ${formatCurrency(ledger.summary.totalInterestPaid)}`, 15, y);
+  doc.text(`Total Interest Paid: ${formatCurrency(summaryValues.interestPaid)}`, 15, y);
   y += 5;
   doc.setFont(undefined, 'bold');
-  doc.text(`Interest Outstanding: ${formatCurrency(ledger.summary.interestOutstanding)}`, 15, y);
+  doc.text(`Interest Outstanding: ${formatCurrency(summaryValues.interestOutstanding)}`, 15, y);
   doc.setFont(undefined, 'normal');
   y += 5;
-  const totalOutstanding = ledger.summary.principalOutstanding + ledger.summary.interestOutstanding + (loan.exit_fee || 0);
+  const totalOutstanding = summaryValues.principalOutstanding + summaryValues.interestOutstanding + (loan.exit_fee || 0);
   doc.setFont(undefined, 'bold');
   doc.text(`Total Outstanding: ${formatCurrency(totalOutstanding)}`, 15, y);
   if (loan.exit_fee > 0) {
@@ -316,16 +354,20 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
   y += 10;
   doc.setFontSize(9);
   doc.setFont(undefined, 'bold');
-  doc.text('Calculation Method:', 15, y);
+  doc.text('About this Ledger:', 15, y);
   y += 5;
   doc.setFont(undefined, 'normal');
-  doc.text(`Daily Interest = Principal Balance × (Annual Rate / 365)`, 15, y);
+  doc.text(`This ledger shows day-by-day interest accrual for audit purposes.`, 15, y);
   y += 4;
-  doc.text(`Interest accrues daily on the outstanding principal balance.`, 15, y);
+  doc.text(`Formula: Daily Interest = Principal Balance × (Annual Rate / 365)`, 15, y);
   y += 4;
-  doc.text(`Rate changes and capital movements are reflected immediately from their effective date.`, 15, y);
+  doc.setFont(undefined, 'italic');
+  doc.text(`Note: The summary on page 1 uses schedule-aligned calculations which may differ from this ledger.`, 15, y);
+  y += 4;
+  doc.text(`For "interest paid in advance" products, interest is due at the start of each period.`, 15, y);
+  doc.setFont(undefined, 'normal');
 
-  y += 10;
+  y += 8;
 
   // Ledger entries table
   const drawLedgerHeader = (yPos) => {
@@ -458,11 +500,28 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
   doc.rect(10, y - 4, 190, 7, 'F');
   doc.setFont(undefined, 'bold');
   doc.setFontSize(8);
-  doc.text('TOTALS', 12, y);
+  doc.text('LEDGER TOTALS', 12, y);
   doc.text(formatCurrency(ledger.summary.totalInterestAccrued), 140, y, { align: 'right' });
   doc.text(formatCurrency(ledger.summary.totalInterestPaid), 160, y, { align: 'right' });
   doc.text(formatCurrency(ledger.summary.interestOutstanding), 180, y, { align: 'right' });
   doc.text(formatCurrency(ledger.summary.principalOutstanding), 198, y, { align: 'right' });
+
+  // Show schedule-aligned position if different
+  if (interestCalc && Math.abs(summaryValues.interestOutstanding - ledger.summary.interestOutstanding) > 0.01) {
+    y += 6;
+    doc.setFillColor(240, 253, 244);
+    doc.rect(10, y - 4, 190, 7, 'F');
+    doc.setFont(undefined, 'bold');
+    doc.text('SCHEDULE POSITION*', 12, y);
+    doc.text(formatCurrency(summaryValues.interestAccrued), 140, y, { align: 'right' });
+    doc.text(formatCurrency(summaryValues.interestPaid), 160, y, { align: 'right' });
+    doc.text(formatCurrency(summaryValues.interestOutstanding), 180, y, { align: 'right' });
+    doc.text(formatCurrency(summaryValues.principalOutstanding), 198, y, { align: 'right' });
+    y += 5;
+    doc.setFont(undefined, 'italic');
+    doc.setFontSize(7);
+    doc.text('* Official position per repayment schedule (matches page 1 summary)', 12, y);
+  }
 
   // ============================================
   // PAGE 3+: REPAYMENT SCHEDULE

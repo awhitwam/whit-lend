@@ -96,7 +96,7 @@ export default function ReceiptEntryContent({
   // Load repayment schedules
   const { data: schedules = [] } = useQuery({
     queryKey: ['repayment-schedules'],
-    queryFn: () => api.entities.RepaymentSchedule.list('due_date')
+    queryFn: () => api.entities.RepaymentSchedule.listAll('due_date')
   });
 
   // Load bank statements

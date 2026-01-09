@@ -244,7 +244,7 @@ export default function Loans() {
 
   const { data: allSchedules = [], isLoading: isLoadingSchedules } = useQuery({
     queryKey: ['all-schedules', currentOrganization?.id],
-    queryFn: () => api.entities.RepaymentSchedule.list(),
+    queryFn: () => api.entities.RepaymentSchedule.listAll(),
     enabled: !!currentOrganization
   });
 

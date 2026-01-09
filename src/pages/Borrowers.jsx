@@ -34,7 +34,7 @@ export default function Borrowers() {
   // Fetch all transactions to calculate outstanding amounts
   const { data: allTransactions = [] } = useQuery({
     queryKey: ['all-transactions', currentOrganization?.id],
-    queryFn: () => api.entities.Transaction.list(),
+    queryFn: () => api.entities.Transaction.listAll(),
     enabled: !!currentOrganization
   });
 

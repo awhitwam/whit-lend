@@ -592,7 +592,9 @@ export default function LoanDetails() {
   });
 
   const handleGenerateLoanStatement = () => {
-    generateLoanStatementPDF(loan, schedule, transactions, product);
+    // Calculate schedule-based interest at the time of generation
+    const interestCalc = calculateAccruedInterestWithTransactions(loan, transactions, new Date(), schedule, product);
+    generateLoanStatementPDF(loan, schedule, transactions, product, interestCalc);
   };
 
   const handleExportScheduleCSV = () => {

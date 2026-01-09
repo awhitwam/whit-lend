@@ -92,7 +92,7 @@ export default function BankReconciliationV2() {
   // Fetch additional data for transactions
   const { data: loanTransactions = [] } = useQuery({
     queryKey: ['transactions'],
-    queryFn: () => api.entities.Transaction.list('-date')
+    queryFn: () => api.entities.Transaction.listAll('-date')
   });
 
   const { data: investorTransactions = [] } = useQuery({
