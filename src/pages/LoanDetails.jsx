@@ -1528,7 +1528,7 @@ export default function LoanDetails() {
                     </div>
                     <div className={`border rounded-lg px-3 py-2 min-w-[110px] ${interestRemaining < 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                       <p className={`text-xs font-medium ${interestRemaining < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                        {interestRemaining < 0 ? 'Int Overpaid' : 'Interest O/S'}
+                        {interestRemaining < 0 ? 'Int Overpaid' : `Interest O/S${product?.interest_paid_in_advance ? ' (in Advance)' : ''}`}
                       </p>
                       <p className={`text-xl font-bold ${interestRemaining < 0 ? 'text-emerald-900' : 'text-amber-900'}`}>{formatCurrency(Math.abs(interestRemaining))}</p>
                     </div>

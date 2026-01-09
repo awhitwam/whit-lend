@@ -206,12 +206,16 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       }
     }
 
+    // For interest-in-advance loans, don't accrue additional interest
+    // because the full period's interest was already charged at the due date
+    const isInterestInAdvance = product?.interest_paid_in_advance;
+
     const daysSinceLastDue = lastDueDateRow
       ? differenceInDays(today, new Date(lastDueDateRow.date))
       : 0;
 
     const dailyRate = previousRow.principalBalance * (rate / 100 / 365);
-    const accruedSinceLastDue = dailyRate * daysSinceLastDue;
+    const accruedSinceLastDue = isInterestInAdvance ? 0 : dailyRate * daysSinceLastDue;
     const todayInterestBalance = previousRow.interestBalance + accruedSinceLastDue;
 
     const todayRow = {
@@ -225,7 +229,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       expectedInterest: 0,
       isDueDate: false,
       scheduleEntry: null,
-      calculationBreakdown: daysSinceLastDue > 0 ? {
+      calculationBreakdown: accruedSinceLastDue > 0 ? {
         days: daysSinceLastDue,
         dailyRate,
         principal: previousRow.principalBalance,
