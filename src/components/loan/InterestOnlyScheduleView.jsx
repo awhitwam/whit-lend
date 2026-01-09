@@ -282,7 +282,8 @@ function groupRowsByMonth(rows) {
         // Type counts for icons (excluding standard due dates)
         typeCounts: {
           disbursements: 0,
-          repayments: 0,
+          interestRepayments: 0,
+          capitalRepayments: 0,
           adjustments: 0
         }
       });
@@ -294,7 +295,12 @@ function groupRowsByMonth(rows) {
     if (row.primaryType === 'disbursement') {
       group.typeCounts.disbursements++;
     } else if (row.primaryType === 'repayment') {
-      group.typeCounts.repayments++;
+      // Distinguish capital vs interest repayments
+      if (row.transaction?.principal_applied > 0) {
+        group.typeCounts.capitalRepayments++;
+      } else {
+        group.typeCounts.interestRepayments++;
+      }
     } else if (row.primaryType === 'adjustment') {
       group.typeCounts.adjustments++;
     }
@@ -424,8 +430,10 @@ function TypeIcon({ row }) {
       break;
     case 'repayment':
       icon = <ArrowDownCircle className="w-4 h-4" />;
-      tooltip = 'Repayment received';
-      colorClass = 'text-blue-600';
+      // Blue for capital receipts (principal applied), green for interest receipts
+      const hasPrincipal = row.transaction?.principal_applied > 0;
+      tooltip = hasPrincipal ? 'Capital repayment received' : 'Interest payment received';
+      colorClass = hasPrincipal ? 'text-blue-600' : 'text-emerald-600';
       break;
     default:
       icon = <CircleDot className="w-4 h-4" />;
@@ -462,10 +470,17 @@ function GroupTypeIcons({ typeCounts }) {
     );
   }
 
-  // Repayments (blue down arrows - capital received)
-  for (let i = 0; i < typeCounts.repayments; i++) {
+  // Capital repayments (blue down arrows - principal returned)
+  for (let i = 0; i < typeCounts.capitalRepayments; i++) {
     icons.push(
-      <ArrowDownCircle key={`rep-${i}`} className="w-4 h-4 text-blue-600" />
+      <ArrowDownCircle key={`cap-${i}`} className="w-4 h-4 text-blue-600" />
+    );
+  }
+
+  // Interest repayments (green down arrows - interest received)
+  for (let i = 0; i < typeCounts.interestRepayments; i++) {
+    icons.push(
+      <ArrowDownCircle key={`int-${i}`} className="w-4 h-4 text-emerald-600" />
     );
   }
 

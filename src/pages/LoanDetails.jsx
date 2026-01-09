@@ -1444,30 +1444,35 @@ export default function LoanDetails() {
                       </div>
                     )}
                     {product && (
-                      <div className="w-full lg:w-auto text-xs text-slate-500 pt-1">
-                        <span className="font-medium text-slate-700">{product.name}</span>
-                        {' • '}
-                        {product.interest_calculation_method === 'daily' ? 'Daily calc' : 'Monthly fixed'}
-                        {' • '}
-                        {product.interest_paid_in_advance
-                          ? (product.interest_alignment === 'monthly_first' ? 'In advance (1st of month)' : 'In advance')
-                          : 'In arrears'}
-                        {loan.arrangement_fee > 0 && ` • Arr: ${formatCurrency(loan.arrangement_fee)}`}
-                        {loan.exit_fee > 0 && ` • Exit: ${formatCurrency(loan.exit_fee)}`}
-                        {/* Scheduler debug indicator */}
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs">
+                        <p className="font-medium text-slate-700">{product.name}</p>
+                        <p className="text-slate-500">
+                          {product.interest_calculation_method === 'daily' ? 'Daily calc' : 'Monthly fixed'}
+                          {' • '}
+                          {product.interest_paid_in_advance
+                            ? (product.interest_alignment === 'monthly_first' ? 'In advance (1st)' : 'In advance')
+                            : 'In arrears'}
+                        </p>
+                        {(loan.arrangement_fee > 0 || loan.exit_fee > 0) && (
+                          <p className="text-slate-400 mt-0.5">
+                            {loan.arrangement_fee > 0 && `Arr: ${formatCurrency(loan.arrangement_fee)}`}
+                            {loan.arrangement_fee > 0 && loan.exit_fee > 0 && ' • '}
+                            {loan.exit_fee > 0 && `Exit: ${formatCurrency(loan.exit_fee)}`}
+                          </p>
+                        )}
                         {product.scheduler_type && (
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-mono cursor-help">
+                                <p className="text-slate-400 text-[10px] font-mono mt-1 cursor-help">
                                   {product.scheduler_type} → {getScheduler(product.scheduler_type)?.ViewComponent ? 'Custom' : 'Table'}
-                                </span>
+                                </p>
                               </TooltipTrigger>
                               <TooltipContent side="bottom" className="max-w-xs">
                                 <div className="text-xs">
                                   <p className="font-semibold mb-1">Scheduler: {getScheduler(product.scheduler_type)?.displayName || product.scheduler_type}</p>
                                   <p className="text-slate-400">
-                                    View: {getScheduler(product.scheduler_type)?.ViewComponent ? 'Custom (RentScheduleView)' : 'Standard Table (RepaymentScheduleTable)'}
+                                    View: {getScheduler(product.scheduler_type)?.ViewComponent ? 'Custom view component' : 'Standard Table'}
                                   </p>
                                 </div>
                               </TooltipContent>

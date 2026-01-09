@@ -236,47 +236,65 @@ export class InterestOnlyScheduler extends BaseScheduler {
     const schedule = [];
     let installmentNum = 1;
 
-    // First period: pro-rated from start date to 1st of next month (if not already 1st)
-    if (startDate.getDate() !== 1) {
-      const firstOfNextMonth = startOfMonth(addMonths(startDate, 1));
-      const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, startDate);
+    console.log('[MonthlyFirst] === FIRST PERIOD DEBUG ===');
+    console.log('[MonthlyFirst] startDate:', format(startDate, 'yyyy-MM-dd'));
+    console.log('[MonthlyFirst] startDate.getDate():', startDate.getDate());
+    console.log('[MonthlyFirst] originalPrincipal:', originalPrincipal);
+    console.log('[MonthlyFirst] dailyRate:', dailyRate);
+    console.log('[MonthlyFirst] effectiveRate:', effectiveRate);
+    console.log('[MonthlyFirst] duration:', duration);
 
-      // Calculate pro-rated interest for first partial month
-      const capitalEventsInPeriod = transactions.filter(t =>
-        (t.type === 'Repayment' && t.principal_applied > 0) &&
-        new Date(t.date) >= startDate &&
-        new Date(t.date) < firstOfNextMonth
-      );
+    // First period: from start date to 1st of next month
+    // Always generate (whether pro-rated partial month or full month starting on 1st)
+    const firstOfNextMonth = startOfMonth(addMonths(startDate, 1));
+    console.log('[MonthlyFirst] firstOfNextMonth:', format(firstOfNextMonth, 'yyyy-MM-dd'));
 
-      const totalInterest = this.calculateInterestWithSegments({
-        principalAtStart,
-        originalPrincipal,
-        dailyRate,
-        periodStart: startDate,
-        periodEnd: firstOfNextMonth,
-        capitalEvents: capitalEventsInPeriod
-      });
+    const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, startDate);
+    console.log('[MonthlyFirst] principalAtStart:', principalAtStart);
+    console.log('[MonthlyFirst] transactions count:', transactions?.length);
 
-      const daysInFirstPeriod = differenceInDays(firstOfNextMonth, startDate);
-      const firstPeriodDueDate = product.interest_paid_in_advance ? startDate : firstOfNextMonth;
+    // Calculate interest for first period
+    const capitalEventsInFirstPeriod = transactions.filter(t =>
+      (t.type === 'Repayment' && t.principal_applied > 0) &&
+      new Date(t.date) >= startDate &&
+      new Date(t.date) < firstOfNextMonth
+    );
+    console.log('[MonthlyFirst] capitalEventsInFirstPeriod:', capitalEventsInFirstPeriod.length);
 
-      schedule.push(this.createScheduleEntry({
-        installmentNumber: installmentNum++,
-        dueDate: firstPeriodDueDate,
-        principalAmount: 0,
-        interestAmount: totalInterest,
-        balance: principalAtStart,
-        calculationDays: daysInFirstPeriod,
-        calculationPrincipalStart: principalAtStart,
-        isExtensionPeriod: false
-      }));
-    }
+    const firstPeriodInterest = this.calculateInterestWithSegments({
+      principalAtStart,
+      originalPrincipal,
+      dailyRate,
+      periodStart: startDate,
+      periodEnd: firstOfNextMonth,
+      capitalEvents: capitalEventsInFirstPeriod
+    });
+    console.log('[MonthlyFirst] firstPeriodInterest:', firstPeriodInterest);
 
-    // Subsequent periods: aligned to 1st of each month
-    for (let monthOffset = 1; monthOffset <= duration; monthOffset++) {
-      const periodStart = monthOffset === 1
-        ? startOfMonth(addMonths(startDate, 1))
-        : addMonths(startOfMonth(startDate), monthOffset);
+    const daysInFirstPeriod = differenceInDays(firstOfNextMonth, startDate);
+    console.log('[MonthlyFirst] daysInFirstPeriod:', daysInFirstPeriod);
+
+    const firstPeriodDueDate = product.interest_paid_in_advance ? startDate : firstOfNextMonth;
+    console.log('[MonthlyFirst] firstPeriodDueDate:', format(firstPeriodDueDate, 'yyyy-MM-dd'));
+    console.log('[MonthlyFirst] interest_paid_in_advance:', product.interest_paid_in_advance);
+
+    const firstEntry = this.createScheduleEntry({
+      installmentNumber: installmentNum++,
+      dueDate: firstPeriodDueDate,
+      principalAmount: 0,
+      interestAmount: firstPeriodInterest,
+      balance: principalAtStart,
+      calculationDays: daysInFirstPeriod,
+      calculationPrincipalStart: principalAtStart,
+      isExtensionPeriod: false
+    });
+    console.log('[MonthlyFirst] First entry created:', JSON.stringify(firstEntry, null, 2));
+    schedule.push(firstEntry);
+    console.log('[MonthlyFirst] === END FIRST PERIOD DEBUG ===');
+
+    // Subsequent periods: aligned to 1st of each month (starting from month 2)
+    for (let monthOffset = 2; monthOffset <= duration + 1; monthOffset++) {
+      const periodStart = addMonths(startOfMonth(startDate), monthOffset - 1);
       const periodEnd = addMonths(periodStart, 1);
 
       const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodStart);
@@ -300,7 +318,7 @@ export class InterestOnlyScheduler extends BaseScheduler {
 
       // Balloon payment on last period
       let principalForPeriod = 0;
-      if (monthOffset === duration) {
+      if (monthOffset === duration + 1) {
         principalForPeriod = principalAtEnd;
       }
 
@@ -358,6 +376,15 @@ export class InterestOnlyScheduler extends BaseScheduler {
     }
 
     // Save schedule
+    console.log('[MonthlyFirst] === FINAL SCHEDULE DEBUG ===');
+    console.log('[MonthlyFirst] finalSchedule length:', finalSchedule.length);
+    console.log('[MonthlyFirst] First 3 entries:', finalSchedule.slice(0, 3).map(e => ({
+      installment: e.installment_number,
+      due_date: e.due_date,
+      interest: e.interest_amount,
+      days: e.calculation_days
+    })));
+
     await this.saveSchedule(loan.id, finalSchedule);
 
     const summary = this.calculateSummary(
@@ -373,6 +400,7 @@ export class InterestOnlyScheduler extends BaseScheduler {
       product
     });
 
+    console.log('[MonthlyFirst] Returning schedule with', finalSchedule.length, 'entries');
     return { loan, schedule: finalSchedule, summary };
   }
 
