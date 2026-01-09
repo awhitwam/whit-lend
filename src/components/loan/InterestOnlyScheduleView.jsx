@@ -420,12 +420,12 @@ function TypeIcon({ row }) {
     case 'disbursement':
       icon = <ArrowUpCircle className="w-4 h-4" />;
       tooltip = 'Disbursement (capital advanced)';
-      colorClass = 'text-blue-600';
+      colorClass = 'text-red-600';
       break;
     case 'repayment':
       icon = <ArrowDownCircle className="w-4 h-4" />;
       tooltip = 'Repayment received';
-      colorClass = 'text-emerald-600';
+      colorClass = 'text-blue-600';
       break;
     default:
       icon = <CircleDot className="w-4 h-4" />;
@@ -455,24 +455,24 @@ function TypeIcon({ row }) {
 function GroupTypeIcons({ typeCounts }) {
   const icons = [];
 
-  // Disbursements (blue up arrows - capital out)
+  // Disbursements (red up arrows - capital out)
   for (let i = 0; i < typeCounts.disbursements; i++) {
     icons.push(
-      <ArrowUpCircle key={`disb-${i}`} className="w-3.5 h-3.5 text-blue-600" />
+      <ArrowUpCircle key={`disb-${i}`} className="w-4 h-4 text-red-600" />
     );
   }
 
-  // Repayments (emerald down arrows - money received)
+  // Repayments (blue down arrows - capital received)
   for (let i = 0; i < typeCounts.repayments; i++) {
     icons.push(
-      <ArrowDownCircle key={`rep-${i}`} className="w-3.5 h-3.5 text-emerald-600" />
+      <ArrowDownCircle key={`rep-${i}`} className="w-4 h-4 text-blue-600" />
     );
   }
 
   // Adjustments (amber dots)
   for (let i = 0; i < typeCounts.adjustments; i++) {
     icons.push(
-      <CircleDot key={`adj-${i}`} className="w-3.5 h-3.5 text-amber-600" />
+      <CircleDot key={`adj-${i}`} className="w-4 h-4 text-amber-600" />
     );
   }
 
@@ -504,12 +504,12 @@ function MonthGroupRow({ group, isExpanded, onToggle, maxInterestBalance }) {
       onClick={onToggle}
     >
       {/* Month name with expand/collapse chevron and type icons */}
-      <TableCell className="font-medium text-sm py-1" colSpan={2}>
+      <TableCell className="font-medium text-base py-1" colSpan={2}>
         <div className="flex items-center gap-1">
           {isExpanded ? (
-            <ChevronDown className="w-4 h-4 text-slate-500" />
+            <ChevronDown className="w-5 h-5 text-slate-500" />
           ) : (
-            <ChevronRight className="w-4 h-4 text-slate-500" />
+            <ChevronRight className="w-5 h-5 text-slate-500" />
           )}
           <span>{group.monthLabel}</span>
           {group.typeCounts && <GroupTypeIcons typeCounts={group.typeCounts} />}
@@ -517,12 +517,12 @@ function MonthGroupRow({ group, isExpanded, onToggle, maxInterestBalance }) {
       </TableCell>
 
       {/* Interest Received total */}
-      <TableCell className="text-right font-mono text-sm text-emerald-600 py-1">
+      <TableCell className="text-right font-mono text-base text-emerald-600 py-1">
         {group.totalInterestPaid > 0 && `-${formatCurrency(group.totalInterestPaid)}`}
       </TableCell>
 
       {/* Interest Balance (ending) */}
-      <TableCell className={cn('text-right font-mono text-sm py-1', balanceColorClass)}>
+      <TableCell className={cn('text-right font-mono text-base py-1', balanceColorClass)}>
         <div className="flex items-center justify-end">
           <span>
             {Math.abs(group.endingInterestBalance) < 0.01 ? (
@@ -538,7 +538,7 @@ function MonthGroupRow({ group, isExpanded, onToggle, maxInterestBalance }) {
       </TableCell>
 
       {/* Principal Change total */}
-      <TableCell className="text-right font-mono text-sm py-1 border-r">
+      <TableCell className="text-right font-mono text-base py-1 border-r">
         {group.totalPrincipalChange !== 0 && (
           <span className={group.totalPrincipalChange > 0 ? 'text-emerald-600' : ''}>
             {group.totalPrincipalChange > 0 ? '+' : ''}{formatCurrency(group.totalPrincipalChange)}
@@ -547,15 +547,15 @@ function MonthGroupRow({ group, isExpanded, onToggle, maxInterestBalance }) {
       </TableCell>
 
       {/* Expected Interest total */}
-      <TableCell className="text-right font-mono text-sm py-1">
+      <TableCell className="text-right font-mono text-base py-1">
         {group.totalExpectedInterest > 0 && formatCurrency(group.totalExpectedInterest)}
       </TableCell>
 
       {/* Calculation - empty for month summary */}
-      <TableCell className="text-sm py-1"></TableCell>
+      <TableCell className="text-base py-1"></TableCell>
 
       {/* Principal Balance (ending) */}
-      <TableCell className="text-right font-mono text-sm font-medium py-1">
+      <TableCell className="text-right font-mono text-base font-medium py-1">
         {formatCurrency(group.endingPrincipalBalance)}
       </TableCell>
     </TableRow>
