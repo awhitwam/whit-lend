@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { format, differenceInDays } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from './LoanCalculator';
-import { CalendarClock, ArrowUpCircle, ArrowDownCircle, CircleDot, ChevronRight, ChevronDown, Clock } from 'lucide-react';
+import { CalendarClock, ArrowUpCircle, ArrowDownCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 /**
  * Build a unified timeline from transactions and schedule entries
@@ -97,12 +97,17 @@ function buildTimeline({ loan, product, schedule, transactions }) {
     });
   });
 
-  // 4. Sort all rows by date, then by type order (disbursements first, then repayments, then schedule)
-  const typeOrder = { disbursement: 0, repayment: 1, adjustment: 2, due_date: 3 };
+  // 4. Sort all rows by date, then by type order:
+  // Capital first (disbursements), then schedule (adjustments, due dates), then interest payments (repayments)
+  const typeOrder = { disbursement: 0, adjustment: 1, due_date: 2, repayment: 3 };
+
   rows.sort((a, b) => {
     const dateCompare = a.date.localeCompare(b.date);
     if (dateCompare !== 0) return dateCompare;
-    return (typeOrder[a.primaryType] || 99) - (typeOrder[b.primaryType] || 99);
+    // Use nullish coalescing (??) instead of || because 0 is a valid value
+    const aOrder = typeOrder[a.primaryType] ?? 99;
+    const bOrder = typeOrder[b.primaryType] ?? 99;
+    return aOrder - bOrder;
   });
 
   // 5. Calculate running balances
@@ -141,14 +146,22 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         // Use stored adjustment amount
         row.expectedInterest = scheduleEntry.interest_amount;
       } else {
+        // Use schedule entry's stored interest amount if available
+        const storedInterest = scheduleEntry.interest_amount || 0;
+        // For display, use the stored calculation values if available
+        const displayPrincipal = scheduleEntry.calculation_principal_start || principalForCalc;
+        const displayDailyRate = displayPrincipal * (rate / 100 / 365);
+
         row.calculationBreakdown = {
           days,
-          dailyRate,
-          principal: principalForCalc,
-          breakdown: `${days}d × ${formatCurrency(dailyRate)}/day`
+          dailyRate: displayDailyRate,
+          principal: displayPrincipal,
+          breakdown: days > 0 && displayDailyRate > 0
+            ? `${days}d × ${formatCurrency(displayDailyRate)}/day`
+            : storedInterest === 0 ? 'Prepaid' : `${days}d`
         };
-        // Recalculate based on actual principal
-        row.expectedInterest = dailyRate * days;
+        // Use stored interest amount from schedule
+        row.expectedInterest = storedInterest;
       }
       totalExpectedToDate += row.expectedInterest;
     }
@@ -920,6 +933,22 @@ export default function InterestOnlyScheduleView({
   // Flat view mode - shows all rows without month grouping
   const [flatView, setFlatView] = useState(false);
 
+  // Sort order - 'asc' (oldest first) or 'desc' (newest first), default to ascending
+  const [sortOrder, setSortOrder] = useState(() => {
+    if (typeof window !== 'undefined') {
+      return localStorage.getItem('schedule-sort-order') || 'asc';
+    }
+    return 'asc';
+  });
+
+  const toggleSortOrder = () => {
+    const newOrder = sortOrder === 'asc' ? 'desc' : 'asc';
+    setSortOrder(newOrder);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('schedule-sort-order', newOrder);
+    }
+  };
+
   const toggleMonth = (monthKey) => {
     setExpandedMonths(prev => {
       const next = new Set(prev);
@@ -937,10 +966,50 @@ export default function InterestOnlyScheduleView({
     return buildTimeline({ loan, product, schedule, transactions });
   }, [loan, product, schedule, transactions]);
 
-  // Group rows by month
+  // Sort rows based on current sort order (for flat view)
+  // When descending, sort by date DESC but maintain within-day order (typeOrder)
+  const sortedTimelineRows = useMemo(() => {
+    if (sortOrder === 'desc') {
+      const typeOrder = { disbursement: 0, adjustment: 1, due_date: 2, repayment: 3 };
+      return [...timelineRows].sort((a, b) => {
+        // Sort dates descending (b before a)
+        const dateCompare = b.date.localeCompare(a.date);
+        if (dateCompare !== 0) return dateCompare;
+        // Within same day, keep original type order (ascending)
+        // Use ?? instead of || because 0 is a valid typeOrder value
+        const aOrder = typeOrder[a.primaryType] ?? 99;
+        const bOrder = typeOrder[b.primaryType] ?? 99;
+        return aOrder - bOrder;
+      });
+    }
+    return timelineRows;
+  }, [timelineRows, sortOrder]);
+
+  // Group rows by month (always use original order, we'll sort groups separately)
   const monthGroups = useMemo(() => {
-    return groupRowsByMonth(timelineRows);
-  }, [timelineRows]);
+    const groups = groupRowsByMonth(timelineRows);
+    if (sortOrder === 'desc') {
+      // Reverse the groups order, and re-sort rows within each group
+      // to have dates descending but within-day order preserved
+      const typeOrder = { disbursement: 0, adjustment: 1, due_date: 2, repayment: 3 };
+      const result = groups.map(group => {
+        if (group.isMonthGroup) {
+          const sortedRows = [...group.rows].sort((a, b) => {
+            const dateCompare = b.date.localeCompare(a.date);
+            if (dateCompare !== 0) return dateCompare;
+            // Use ?? instead of || because 0 is a valid typeOrder value
+            const aOrder = typeOrder[a.primaryType] ?? 99;
+            const bOrder = typeOrder[b.primaryType] ?? 99;
+            return aOrder - bOrder;
+          });
+          return { ...group, rows: sortedRows };
+        }
+        return group;
+      }).reverse();
+      return result;
+    }
+    return groups;
+  }, [timelineRows, sortOrder]);
 
   // Get only the actual month groups (not standalone TODAY)
   const actualMonthGroups = useMemo(() => {
@@ -975,52 +1044,85 @@ export default function InterestOnlyScheduleView({
 
   return (
     <TooltipProvider>
-    <div className="space-y-4">
-      {/* View controls */}
-      <div className="flex justify-end gap-2">
-        <Button
-          variant={flatView ? "default" : "outline"}
-          size="sm"
-          onClick={() => setFlatView(!flatView)}
-          className="gap-1 h-6 text-xs px-2"
-        >
-          {flatView ? 'Grouped View' : 'Flat View'}
-        </Button>
-        {!flatView && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={allExpanded ? collapseAll : expandAll}
-            className="gap-1 h-6 text-xs px-2"
-          >
-            {allExpanded ? <ChevronDown className="w-3 h-3" /> : <ChevronRight className="w-3 h-3" />}
-            {allExpanded ? 'Collapse All' : 'Expand All'}
-          </Button>
-        )}
-      </div>
+    <div>
       <Table>
         <TableHeader>
           <TableRow>
-            <TableHead className="text-xs w-20 py-1">Date</TableHead>
+            <TableHead className="text-xs w-20 py-1">
+              <div className="flex items-center gap-1">
+                <span>Date</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={toggleSortOrder}
+                      className="h-5 w-5"
+                    >
+                      {sortOrder === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {sortOrder === 'asc' ? 'Oldest first (click for newest first)' : 'Newest first (click for oldest first)'}
+                  </TooltipContent>
+                </Tooltip>
+              </div>
+            </TableHead>
             <TableHead className="text-xs w-8 py-1"></TableHead>
             <TableHead className="text-xs text-right w-24 py-1">Int Received</TableHead>
             <TableHead className="text-xs text-right w-28 py-1">Int Bal</TableHead>
             <TableHead className="text-xs text-right w-24 border-r py-1">Principal</TableHead>
             <TableHead className="text-xs text-right w-24 py-1">Expected</TableHead>
             <TableHead className="text-xs w-32 py-1">Calculation</TableHead>
-            <TableHead className="text-xs text-right w-24 py-1">Prin Bal</TableHead>
+            <TableHead className="text-xs text-right w-24 py-1">
+              <div className="flex items-center justify-end gap-1">
+                <span>Prin Bal</span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={flatView ? "default" : "ghost"}
+                      size="icon"
+                      onClick={() => setFlatView(!flatView)}
+                      className="h-5 w-5"
+                    >
+                      {flatView ? <Layers className="w-3 h-3" /> : <List className="w-3 h-3" />}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    {flatView ? 'Switch to Grouped View' : 'Switch to Flat View'}
+                  </TooltipContent>
+                </Tooltip>
+                {!flatView && (
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="ghost"
+                        size="icon"
+                        onClick={allExpanded ? collapseAll : expandAll}
+                        className="h-5 w-5"
+                      >
+                        <ChevronsUpDown className="w-3 h-3" />
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      {allExpanded ? 'Collapse All' : 'Expand All'}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+            </TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
           {flatView ? (
             /* Flat view - show all rows without month grouping */
-            timelineRows.map((row, idx) => (
+            sortedTimelineRows.map((row, idx) => (
               <TimelineRow
                 key={row.id}
                 row={row}
                 product={product}
                 isFirst={idx === 0}
-                isLast={idx === timelineRows.length - 1}
+                isLast={idx === sortedTimelineRows.length - 1}
                 maxInterestBalance={maxInterestBalance}
                 isNested={false}
               />
