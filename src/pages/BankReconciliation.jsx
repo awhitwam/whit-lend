@@ -3607,8 +3607,8 @@ export default function BankReconciliation() {
       let expenseId = null;
       let interestId = null;
 
-      if ((suggestion.matchMode === 'match' || suggestion.matchMode === 'grouped_disbursement') && (suggestion.existingTransaction || suggestion.existingExpense || suggestion.existingInterest)) {
-        // Link to existing single transaction
+      if (suggestion.matchMode === 'match' && (suggestion.existingTransaction || suggestion.existingExpense || suggestion.existingInterest)) {
+        // Link to existing single transaction (1:1 match)
         if (suggestion.existingTransaction) {
           const tx = suggestion.existingTransaction;
           // Skip if transaction has been deleted
@@ -3633,6 +3633,103 @@ export default function BankReconciliation() {
         } else if (suggestion.existingInterest) {
           interestId = suggestion.existingInterest.id;
         }
+      } else if (suggestion.matchMode === 'grouped_disbursement' && suggestion.existingTransaction && suggestion.groupedEntries) {
+        // Grouped disbursement: multiple bank debits → single disbursement transaction
+        // Process ALL entries in the group, not just the one passed in
+        const tx = suggestion.existingTransaction;
+        if (tx.is_deleted) {
+          return { success: false, error: 'Transaction has been deleted' };
+        }
+        const txExists = loanTransactions.some(lt => lt.id === tx.id && !lt.is_deleted);
+        if (!txExists) {
+          return { success: false, error: 'Transaction no longer exists' };
+        }
+
+        // Create reconciliation entry for each bank debit in the group
+        for (const bankEntry of suggestion.groupedEntries) {
+          await api.entities.ReconciliationEntry.create({
+            bank_statement_id: bankEntry.id,
+            loan_transaction_id: tx.id,
+            investor_transaction_id: null,
+            expense_id: null,
+            amount: Math.abs(bankEntry.amount),
+            reconciliation_type: 'loan_disbursement',
+            notes: `Grouped disbursement: ${suggestion.groupedEntries.length} payments`,
+            was_created: false
+          });
+
+          // Mark each bank statement as reconciled
+          await api.entities.BankStatement.update(bankEntry.id, {
+            is_reconciled: true,
+            reconciled_at: new Date().toISOString()
+          });
+        }
+
+        // Refresh data (skip if bulk operation will do it at the end)
+        if (!skipInvalidation) {
+          queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+          queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+          queryClient.invalidateQueries({ queryKey: ['transactions'] });
+
+          // Clean up dismissed state for all reconciled entries
+          setDismissedSuggestions(prev => {
+            const next = new Set(prev);
+            for (const bankEntry of suggestion.groupedEntries) {
+              next.delete(bankEntry.id);
+            }
+            return next;
+          });
+        }
+
+        return { success: true, groupedCount: suggestion.groupedEntries.length }; // Early return - we handled everything
+      } else if (suggestion.matchMode === 'grouped_investor' && suggestion.existingTransaction && suggestion.groupedEntries) {
+        // Grouped investor: multiple bank entries → single investor transaction
+        // Process ALL entries in the group
+        const invTx = suggestion.existingTransaction;
+        const txExists = investorTransactions.some(it => it.id === invTx.id);
+        if (!txExists) {
+          return { success: false, error: 'Transaction no longer exists' };
+        }
+
+        const recType = suggestion.type; // 'investor_credit' or 'investor_withdrawal'
+
+        // Create reconciliation entry for each bank entry in the group
+        for (const bankEntry of suggestion.groupedEntries) {
+          await api.entities.ReconciliationEntry.create({
+            bank_statement_id: bankEntry.id,
+            loan_transaction_id: null,
+            investor_transaction_id: invTx.id,
+            expense_id: null,
+            amount: Math.abs(bankEntry.amount),
+            reconciliation_type: recType,
+            notes: `Grouped investor: ${suggestion.groupedEntries.length} payments`,
+            was_created: false
+          });
+
+          // Mark each bank statement as reconciled
+          await api.entities.BankStatement.update(bankEntry.id, {
+            is_reconciled: true,
+            reconciled_at: new Date().toISOString()
+          });
+        }
+
+        // Refresh data (skip if bulk operation will do it at the end)
+        if (!skipInvalidation) {
+          queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+          queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+          queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+
+          // Clean up dismissed state for all reconciled entries
+          setDismissedSuggestions(prev => {
+            const next = new Set(prev);
+            for (const bankEntry of suggestion.groupedEntries) {
+              next.delete(bankEntry.id);
+            }
+            return next;
+          });
+        }
+
+        return { success: true, groupedCount: suggestion.groupedEntries.length }; // Early return - we handled everything
       } else if (suggestion.matchMode === 'match_group' && (suggestion.existingTransactions || suggestion.existingInterestEntries)) {
         // Link to multiple existing transactions (grouped payments)
         // NOTE: For cross-table matches, BOTH existingTransactions AND existingInterestEntries may be present
@@ -3888,8 +3985,18 @@ export default function BankReconciliation() {
     // to prevent duplicate matching to the same existing record
     const usedTransactionIds = new Set();
     const usedExpenseIds = new Set();
+    // Track which bank entries have been processed as part of a grouped match
+    // so we don't try to process them again when their individual entry comes up
+    const processedGroupedEntryIds = new Set();
 
     for (const entryId of entriesToProcess) {
+      // Skip if this entry was already processed as part of a grouped match
+      if (processedGroupedEntryIds.has(entryId)) {
+        skipped++;
+        setBulkMatchProgress({ current: succeeded + failed + skipped, total: entriesToProcess.length });
+        continue;
+      }
+
       const entry = bankStatements.find(s => s.id === entryId);
       const suggestion = suggestedMatches.get(entryId);
 
@@ -3952,6 +4059,16 @@ export default function BankReconciliation() {
           }
           if (suggestion.existingTransactions) {
             suggestion.existingTransactions.forEach(tx => usedTransactionIds.add(tx.id));
+          }
+        }
+        // For grouped matches, mark all entries in the group as processed
+        // so we don't try to process them again individually
+        if ((suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor') && suggestion.groupedEntries) {
+          for (const groupedEntry of suggestion.groupedEntries) {
+            processedGroupedEntryIds.add(groupedEntry.id);
+          }
+          if (suggestion.existingTransaction) {
+            usedTransactionIds.add(suggestion.existingTransaction.id);
           }
         }
       } catch (error) {
