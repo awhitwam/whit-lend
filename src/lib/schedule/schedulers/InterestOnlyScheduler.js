@@ -12,8 +12,9 @@ import { BaseScheduler } from '../BaseScheduler.js';
 import { registerScheduler } from '../registry.js';
 import { format, differenceInDays, addMonths, startOfMonth, addWeeks } from 'date-fns';
 
-// ViewComponent is set by InterestOnlyScheduleView.jsx when it loads (avoids circular import)
-let InterestOnlyScheduleViewComponent = null;
+console.log('[InterestOnlyScheduler] About to import InterestOnlyScheduleView');
+import InterestOnlyScheduleView from '@/components/loan/InterestOnlyScheduleView';
+console.log('[InterestOnlyScheduler] Imported InterestOnlyScheduleView:', InterestOnlyScheduleView?.name || 'undefined');
 
 export class InterestOnlyScheduler extends BaseScheduler {
   static id = 'interest_only';
@@ -24,15 +25,8 @@ export class InterestOnlyScheduler extends BaseScheduler {
 
   /**
    * Custom view component - InterestOnlyScheduleView provides reality vs expectations view
-   * Set by InterestOnlyScheduleView.jsx via self-registration to avoid circular imports
    */
-  static get ViewComponent() {
-    return InterestOnlyScheduleViewComponent;
-  }
-
-  static set ViewComponent(component) {
-    InterestOnlyScheduleViewComponent = component;
-  }
+  static ViewComponent = InterestOnlyScheduleView;
 
   static displayConfig = {
     showInterestColumn: true,

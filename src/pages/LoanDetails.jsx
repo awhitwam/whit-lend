@@ -10,7 +10,6 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -34,7 +33,6 @@ import {
   Download,
   ChevronLeft,
   ChevronRight,
-  Sparkles,
   Loader2,
   Shield,
   Zap,
@@ -42,7 +40,8 @@ import {
   Link2,
   Receipt,
   ArrowRight,
-  Landmark
+  Landmark,
+  Layers
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -91,12 +90,10 @@ export default function LoanDetails() {
   const [deleteAuthorized, setDeleteAuthorized] = useState(false);
   const [txPage, setTxPage] = useState(1);
   const [txPerPage, setTxPerPage] = useState(25);
-  const [aiSummary, setAiSummary] = useState('');
-  const [isLoadingSummary, setIsLoadingSummary] = useState(false);
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingMessage, setProcessingMessage] = useState('');
   const [disbursementSort, setDisbursementSort] = useState('date-desc');
-  const [activeTab, setActiveTab] = useState('overview');
+  const [activeTab, setActiveTab] = useState('schedule');
   const [isReceiptDialogOpen, setIsReceiptDialogOpen] = useState(false);
   const [deleteTransactionDialogOpen, setDeleteTransactionDialogOpen] = useState(false);
   const [deleteTransactionTarget, setDeleteTransactionTarget] = useState(null);
@@ -938,19 +935,6 @@ export default function LoanDetails() {
     toast.success('Schedule calculation exported to CSV');
   };
 
-  const generateAISummary = async () => {
-    setIsLoadingSummary(true);
-    try {
-      // AI summary feature requires external LLM integration
-      // TODO: Integrate with OpenAI or other LLM provider
-      setAiSummary("AI summary feature is currently not available. This feature requires LLM integration to be configured.");
-    } catch (error) {
-      toast.error('Failed to generate AI summary');
-    } finally {
-      setIsLoadingSummary(false);
-    }
-  };
-
   const executeExpenseConversion = async (expense) => {
     if (!expense || !loan) return;
 
@@ -1566,42 +1550,107 @@ export default function LoanDetails() {
           </CardContent>
         </Card>
 
-        {/* Tabs for different views */}
-        <Tabs value={activeTab} onValueChange={setActiveTab} className="flex-1 flex flex-col min-h-0 overflow-hidden">
-          <TabsList className="flex-shrink-0">
-            <TabsTrigger value="overview">
-              {isFixedCharge ? 'Schedule' : 'Overview'}
-            </TabsTrigger>
-            <TabsTrigger value="repayments">
-              {isFixedCharge ? 'Payments' : isIrregularIncome ? 'Income Received' : 'Receipts'}
-              <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}</Badge>
-            </TabsTrigger>
-            {!isFixedCharge && (
-              <TabsTrigger value="disbursements">
-                Disbursements
-                <Badge variant="secondary" className="ml-2">{transactions.filter(t => !t.is_deleted && t.type === 'Disbursement').length}</Badge>
-              </TabsTrigger>
-            )}
-            <TabsTrigger value="security">
-              <Shield className="w-4 h-4 mr-1" />
-              Security
-            </TabsTrigger>
-            <TabsTrigger value="expenses">
-              Expenses
-              <Badge variant="secondary" className="ml-2">{expenses.length}</Badge>
-            </TabsTrigger>
-            <TabsTrigger value="ai-analysis">
-              <Sparkles className="w-4 h-4 mr-1" />
-              AI Analysis
-            </TabsTrigger>
-          </TabsList>
+        {/* Content area with unified header */}
+        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+          {/* Schedule view - always rendered but may be hidden when other tabs active */}
+          {activeTab === 'schedule' && (
+            <RepaymentScheduleTable
+              schedule={schedule}
+              isLoading={scheduleLoading}
+              transactions={transactions}
+              loan={loan}
+              product={product}
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              expenses={expenses}
+            />
+          )}
 
-          <TabsContent value="overview" className="flex-1 flex flex-col min-h-0 mt-4">
-            {/* Combined Repayment View */}
-            <RepaymentScheduleTable schedule={schedule} isLoading={scheduleLoading} transactions={transactions} loan={loan} product={product} />
-          </TabsContent>
+          {/* Non-schedule tab content - render RepaymentScheduleTable header with tab content below */}
+          {activeTab !== 'schedule' && (
+            <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0">
+              {/* Header bar with tabs */}
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex-shrink-0">
+                <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setActiveTab('schedule')}
+                      className="gap-1 h-6 text-xs px-2"
+                    >
+                      <Layers className="w-3 h-3" />
+                      Schedule
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setActiveTab('schedule')}
+                      className="gap-1 h-6 text-xs px-2"
+                    >
+                      <FileText className="w-3 h-3" />
+                      Ledger
+                    </Button>
+                  </div>
+                  {/* Separator */}
+                  <div className="h-4 w-px bg-slate-300" />
+                  {/* Content tabs */}
+                  <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
+                    <Button
+                      variant={activeTab === 'receipts' ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab('receipts')}
+                      className="gap-1 h-6 text-xs px-2"
+                    >
+                      <Receipt className="w-3 h-3" />
+                      Receipts
+                      <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                        {transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}
+                      </Badge>
+                    </Button>
+                    {!isFixedCharge && (
+                      <Button
+                        variant={activeTab === 'disbursements' ? "default" : "ghost"}
+                        size="sm"
+                        onClick={() => setActiveTab('disbursements')}
+                        className="gap-1 h-6 text-xs px-2"
+                      >
+                        <Banknote className="w-3 h-3" />
+                        Disbursements
+                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                          {transactions.filter(t => !t.is_deleted && t.type === 'Disbursement').length}
+                        </Badge>
+                      </Button>
+                    )}
+                    <Button
+                      variant={activeTab === 'security' ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab('security')}
+                      className="gap-1 h-6 text-xs px-2"
+                    >
+                      <Shield className="w-3 h-3" />
+                      Security
+                    </Button>
+                    <Button
+                      variant={activeTab === 'expenses' ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab('expenses')}
+                      className="gap-1 h-6 text-xs px-2"
+                    >
+                      <Coins className="w-3 h-3" />
+                      Expenses
+                      <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                        {expenses.length}
+                      </Badge>
+                    </Button>
+                  </div>
+                </div>
+              </div>
 
-          <TabsContent value="repayments" className="flex-1 min-h-0 overflow-y-auto mt-4">
+              {/* Tab content */}
+              <div className="flex-1 min-h-0 overflow-y-auto">
+
+          {activeTab === 'receipts' && (
             <Card>
               <CardHeader className="py-3">
                 <div className="flex items-center justify-between">
@@ -1788,9 +1837,9 @@ export default function LoanDetails() {
                 })()}
               </CardContent>
             </Card>
-          </TabsContent>
+          )}
 
-          <TabsContent value="disbursements" className="flex-1 overflow-auto mt-4">
+          {activeTab === 'disbursements' && (
             <Card>
               <CardHeader>
                 <div className="flex items-center justify-between">
@@ -2077,13 +2126,13 @@ export default function LoanDetails() {
                 })()}
               </CardContent>
             </Card>
-          </TabsContent>
+          )}
 
-          <TabsContent value="security" className="flex-1 overflow-auto mt-4">
+          {activeTab === 'security' && (
             <SecurityTab loan={loan} />
-          </TabsContent>
+          )}
 
-          <TabsContent value="expenses" className="flex-1 overflow-auto mt-4">
+          {activeTab === 'expenses' && (
             <Card>
               <CardHeader>
                 <CardTitle>Loan Expenses</CardTitle>
@@ -2137,51 +2186,12 @@ export default function LoanDetails() {
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
+          )}
 
-          <TabsContent value="ai-analysis" className="flex-1 overflow-auto mt-4">
-            <Card className="border-2 border-purple-200 bg-gradient-to-br from-purple-50 to-white">
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <CardTitle className="flex items-center gap-2">
-                    <Sparkles className="w-5 h-5 text-purple-600" />
-                    AI Repayment Analysis
-                  </CardTitle>
-                  <Button
-                    onClick={generateAISummary}
-                    disabled={isLoadingSummary}
-                    size="sm"
-                    className="bg-purple-600 hover:bg-purple-700"
-                  >
-                    {isLoadingSummary ? (
-                      <>
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                        Analyzing...
-                      </>
-                    ) : (
-                      <>
-                        <Sparkles className="w-4 h-4 mr-2" />
-                        Generate Analysis
-                      </>
-                    )}
-                  </Button>
-                </div>
-              </CardHeader>
-              <CardContent>
-                {aiSummary ? (
-                  <div className="prose prose-sm max-w-none">
-                    <div className="whitespace-pre-wrap text-slate-700">{aiSummary}</div>
-                  </div>
-                ) : (
-                  <p className="text-slate-500 text-sm text-center py-4">
-                    Click "Generate Analysis" to get an AI-powered summary of the loan repayment status, 
-                    including payment performance and recommendations.
-                  </p>
-                )}
-              </CardContent>
-            </Card>
-          </TabsContent>
-        </Tabs>
+              </div>
+            </div>
+          )}
+        </div>
 
         {/* Payment Modal */}
         <PaymentModal

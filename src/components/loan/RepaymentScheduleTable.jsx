@@ -5,11 +5,10 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, Home, FileText } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, FileText, Shield, Receipt, Banknote, Coins } from 'lucide-react';
 import { formatCurrency, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from './LoanCalculator';
 import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 import RentScheduleView from './RentScheduleView';
-import './InterestOnlyScheduleView'; // Import to trigger self-registration with scheduler
 import { getScheduler } from '@/lib/schedule';
 
 // Helper to check if penalty rate applies for a given date
@@ -32,7 +31,7 @@ const getDisplayRate = (loan, date) => {
   return loan?.interest_rate || 0;
 };
 
-export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product }) {
+export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product, tabs = [], activeTab = 'schedule', onTabChange, expenses = [] }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('nested'); // 'nested', 'ledger'
@@ -41,6 +40,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   const schedulerType = product?.scheduler_type;
   const SchedulerClass = schedulerType ? getScheduler(schedulerType) : null;
   const CustomViewComponent = SchedulerClass?.ViewComponent;
+
+  // Wait for product data before rendering to avoid flash of wrong view
+  const isProductLoading = !product;
 
   // Check if this is a Fixed Charge loan
   const isFixedCharge = schedulerType === 'fixed_charge' || loan?.product_type === 'Fixed Charge' || product?.product_type === 'Fixed Charge';
@@ -510,41 +512,94 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       window.URL.revokeObjectURL(url);
     };
 
+    // Early return to prevent flash of wrong view while product data loads
+    // This ensures CustomViewComponent is checked only after product is available
+    if (isProductLoading) {
+      return (
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0">
+          <div className="flex items-center justify-center p-8 text-slate-400">
+            Loading schedule...
+          </div>
+        </div>
+      );
+    }
+
     return (
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0">
         <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex-shrink-0">
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
               <Button
-                variant={viewMode === 'nested' ? "default" : "ghost"}
+                variant={(activeTab === 'schedule' && viewMode === 'nested') ? "default" : "ghost"}
                 size="sm"
-                onClick={() => setViewMode('nested')}
+                onClick={() => { setViewMode('nested'); onTabChange?.('schedule'); }}
                 className="gap-1 h-6 text-xs px-2"
               >
                 <Layers className="w-3 h-3" />
                 Schedule
               </Button>
               <Button
-                variant={viewMode === 'ledger' ? "default" : "ghost"}
+                variant={(activeTab === 'schedule' && viewMode === 'ledger') ? "default" : "ghost"}
                 size="sm"
-                onClick={() => setViewMode('ledger')}
+                onClick={() => { setViewMode('ledger'); onTabChange?.('schedule'); }}
                 className="gap-1 h-6 text-xs px-2"
               >
                 <FileText className="w-3 h-3" />
                 Ledger
               </Button>
             </div>
-            {viewMode === 'nested' && (
+            {/* Separator */}
+            <div className="h-4 w-px bg-slate-300" />
+            {/* Content tabs */}
+            <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
               <Button
-                variant="ghost"
+                variant={activeTab === 'receipts' ? "default" : "ghost"}
                 size="sm"
-                onClick={handleGlobalCollapseToggle}
+                onClick={() => onTabChange?.('receipts')}
                 className="gap-1 h-6 text-xs px-2"
               >
-                {periodsCollapsed ? <ChevronRight className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                {periodsCollapsed ? 'Expand All' : 'Collapse All'}
+                <Receipt className="w-3 h-3" />
+                Receipts
+                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                  {transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}
+                </Badge>
               </Button>
-            )}
+              {!isFixedCharge && (
+                <Button
+                  variant={activeTab === 'disbursements' ? "default" : "ghost"}
+                  size="sm"
+                  onClick={() => onTabChange?.('disbursements')}
+                  className="gap-1 h-6 text-xs px-2"
+                >
+                  <Banknote className="w-3 h-3" />
+                  Disbursements
+                  <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                    {transactions.filter(t => !t.is_deleted && t.type === 'Disbursement').length}
+                  </Badge>
+                </Button>
+              )}
+              <Button
+                variant={activeTab === 'security' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => onTabChange?.('security')}
+                className="gap-1 h-6 text-xs px-2"
+              >
+                <Shield className="w-3 h-3" />
+                Security
+              </Button>
+              <Button
+                variant={activeTab === 'expenses' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => onTabChange?.('expenses')}
+                className="gap-1 h-6 text-xs px-2"
+              >
+                <Coins className="w-3 h-3" />
+                Expenses
+                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                  {expenses.length}
+                </Badge>
+              </Button>
+            </div>
           </div>
           <div className="flex items-center gap-1.5">
             <Select value={itemsPerPage.toString()} onValueChange={handleItemsPerPageChange}>

@@ -25,7 +25,6 @@ export function registerScheduler(SchedulerClass) {
   }
 
   schedulerRegistry.set(SchedulerClass.id, SchedulerClass);
-  console.log(`Registered scheduler: ${SchedulerClass.id} (${SchedulerClass.displayName})`);
 }
 
 /**

@@ -1000,15 +1000,6 @@ export default function InterestOnlyScheduleView({
       </div>
       <Table>
         <TableHeader>
-          {/* Two-level header */}
-          <TableRow className="bg-slate-50">
-            <TableHead colSpan={5} className="text-center border-r text-xs font-semibold text-slate-600 py-1">
-              REALITY (Ledger)
-            </TableHead>
-            <TableHead colSpan={3} className="text-center text-xs font-semibold text-slate-600 py-1">
-              EXPECTATIONS (Schedule)
-            </TableHead>
-          </TableRow>
           <TableRow>
             <TableHead className="text-xs w-20 py-1">Date</TableHead>
             <TableHead className="text-xs w-8 py-1"></TableHead>
@@ -1079,11 +1070,4 @@ export default function InterestOnlyScheduleView({
     </div>
     </TooltipProvider>
   );
-}
-
-// Self-register with InterestOnlyScheduler to avoid circular import issues
-import { getScheduler } from '@/lib/schedule';
-const InterestOnlySchedulerClass = getScheduler('interest_only');
-if (InterestOnlySchedulerClass) {
-  InterestOnlySchedulerClass.ViewComponent = InterestOnlyScheduleView;
 }
