@@ -10,6 +10,7 @@
 
 import { api } from '@/api/dataClient';
 import { AuditAction, logReconciliationEvent } from '@/lib/auditLog';
+import { maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 
 // Tolerance for floating point comparison (1 cent)
 const BALANCE_TOLERANCE = 0.01;
@@ -341,6 +342,15 @@ export async function createLoanRepayment({ bankEntry, loan, split }) {
     loan_number: loan.loan_number
   });
 
+  // Regenerate schedule if principal was applied (affects capital)
+  if (split.principal && split.principal > 0) {
+    await maybeRegenerateScheduleAfterCapitalChange(loan.id, {
+      type: 'Repayment',
+      principal_applied: split.principal,
+      date: bankEntry.statement_date
+    }, 'create');
+  }
+
   return created;
 }
 
@@ -386,6 +396,13 @@ export async function createLoanDisbursement({ bankEntry, loan }) {
     loan_id: loan.id,
     loan_number: loan.loan_number
   });
+
+  // Regenerate schedule for disbursement (affects capital)
+  await maybeRegenerateScheduleAfterCapitalChange(loan.id, {
+    type: 'Disbursement',
+    amount,
+    date: bankEntry.statement_date
+  }, 'create');
 
   return created;
 }

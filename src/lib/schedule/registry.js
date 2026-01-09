@@ -51,7 +51,10 @@ export function getAllSchedulers() {
     description: SchedulerClass.description,
     category: SchedulerClass.category,
     generatesSchedule: SchedulerClass.generatesSchedule,
-    configSchema: SchedulerClass.configSchema
+    configSchema: SchedulerClass.configSchema,
+    ViewComponent: SchedulerClass.ViewComponent,
+    displayConfig: SchedulerClass.displayConfig,
+    getSummaryString: SchedulerClass.getSummaryString
   }));
 }
 

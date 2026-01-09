@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
 import { toast } from 'sonner';
 import { logTransactionEvent, logLoanEvent, AuditAction } from '@/lib/auditLog';
+import { maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import {
@@ -390,6 +391,15 @@ export default function ReceiptEntryContent({
                 interest_paid: previousInterestPaid
               }
             );
+
+            // Regenerate schedule if principal was applied (affects capital)
+            if (principal > 0) {
+              await maybeRegenerateScheduleAfterCapitalChange(loanId, {
+                type: 'Repayment',
+                principal_applied: principal,
+                date: row.date
+              }, 'create');
+            }
 
             // If linked to bank statement, handle reconciliation
             if (row.bankStatementId) {

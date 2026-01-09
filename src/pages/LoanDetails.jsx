@@ -66,9 +66,10 @@ import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanPanel from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
 import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions, exportScheduleCalculationData, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from '@/components/loan/LoanCalculator';
-import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
+import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
+import { getScheduler } from '@/lib/schedule';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -449,6 +450,11 @@ export default function LoanDetails() {
           });
         }
       }
+
+      // If the deleted transaction affected capital, regenerate schedule
+      if (transaction.type === 'Disbursement' || (transaction.principal_applied && transaction.principal_applied > 0)) {
+        await maybeRegenerateScheduleAfterCapitalChange(loanId, transaction, 'delete');
+      }
     },
     onSuccess: async () => {
       await Promise.all([
@@ -608,8 +614,8 @@ export default function LoanDetails() {
       loanPrincipal: loan.principal_amount
     });
 
-    // Get CSV export calculation
-    const data = exportScheduleCalculationData(loan, schedule, transactions, asOfDate);
+    // Get CSV export calculation (pass product for scheduler decision trail)
+    const data = exportScheduleCalculationData(loan, schedule, transactions, asOfDate, product);
 
     // Get UI header calculation (for comparison) - this is what the LoanDetails header shows
     const uiCalc = calculateLoanInterestBalance(loan, schedule, transactions, asOfDate);
@@ -645,7 +651,8 @@ export default function LoanDetails() {
       'Interest Due (Ledger)',
       'Interest Received',
       'Interest Bal (Period)',
-      'Interest Bal (Ledger)'
+      'Interest Bal (Ledger)',
+      'Scheduler Decision Trail'
     ];
 
     // Build CSV rows
@@ -653,16 +660,36 @@ export default function LoanDetails() {
       // Calculate daily interest amount (principal × annual rate / 365)
       const dailyInterestAmount = p.principalAtPeriodStart * (p.rateUsed / 100) / 365;
 
-      // Build calculation explanation showing the actual formula
+      // Build detailed calculation description
       let howCalculated = '';
       if (p.calculationMethod === 'simple') {
-        howCalculated = `${dailyInterestAmount.toFixed(2)} x ${p.days} days`;
-      } else if (p.calculationMethod === 'segmented') {
-        const segmentCount = p.calculationDetails?.segments?.length || 0;
-        howCalculated = `${segmentCount} segments (capital changed mid-period)`;
+        howCalculated = `Interest due at ${p.rateUsed}% pa, ${p.days}d × £${dailyInterestAmount.toFixed(2)}/day`;
+      } else if (p.calculationMethod === 'segmented' && p.calculationDetails?.segments) {
+        // Build segmented description like "27d × £13.70/day + 4d × £8.22/day"
+        const segmentDescs = p.calculationDetails.segments.map(seg => {
+          const segDailyRate = seg.principal * (p.rateUsed / 100) / 365;
+          return `${seg.days}d × £${segDailyRate.toFixed(2)}/day`;
+        });
+        howCalculated = `Interest due at ${p.rateUsed}% pa, ${segmentDescs.join(' + ')}`;
+      } else if (p.ledgerSegments && p.ledgerSegments.length > 0) {
+        // Use ledger segments if available
+        const segmentDescs = p.ledgerSegments.map(seg =>
+          `${seg.days}d × £${(seg.dailyInterest || 0).toFixed(2)}/day`
+        );
+        howCalculated = `Interest due at ${p.rateUsed}% pa, ${segmentDescs.join(' + ')}`;
       } else {
-        howCalculated = 'Used database value';
+        howCalculated = `${dailyInterestAmount.toFixed(2)} x ${p.days} days`;
       }
+
+      // Escape CSV values that might contain commas or quotes
+      const escapeCSV = (val) => {
+        if (val === null || val === undefined) return '';
+        const str = String(val);
+        if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+          return `"${str.replace(/"/g, '""')}"`;
+        }
+        return str;
+      };
 
       return [
         p.periodNumber,
@@ -675,11 +702,12 @@ export default function LoanDetails() {
         p.isPenaltyRate ? 'YES' : '',
         Math.round(dailyInterestAmount * 100) / 100,
         p.interestDueThisPeriod,
-        howCalculated,
+        escapeCSV(howCalculated),
         p.ledgerInterestDue,
         p.interestReceivedThisPeriod,
         p.runningInterestBalance,
-        p.runningLedgerInterestBalance
+        p.runningLedgerInterestBalance,
+        escapeCSV(p.schedulerDecisionTrail || '')
       ];
     });
 
@@ -1082,8 +1110,18 @@ export default function LoanDetails() {
       
       return { totalPrincipalApplied, totalInterestApplied, principalReduction, creditAmount };
     },
-    onSuccess: async () => {
+    onSuccess: async (result, paymentData) => {
       setProcessingMessage('Refreshing data...');
+
+      // If principal was applied, regenerate the schedule to update future interest amounts
+      if (result.totalPrincipalApplied > 0) {
+        await maybeRegenerateScheduleAfterCapitalChange(loanId, {
+          type: 'Repayment',
+          principal_applied: result.totalPrincipalApplied,
+          date: paymentData.date
+        }, 'create');
+      }
+
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
         queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
@@ -1432,6 +1470,26 @@ export default function LoanDetails() {
                           : 'In arrears'}
                         {loan.arrangement_fee > 0 && ` • Arr: ${formatCurrency(loan.arrangement_fee)}`}
                         {loan.exit_fee > 0 && ` • Exit: ${formatCurrency(loan.exit_fee)}`}
+                        {/* Scheduler debug indicator */}
+                        {product.scheduler_type && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span className="ml-2 px-1.5 py-0.5 bg-slate-100 text-slate-600 rounded text-[10px] font-mono cursor-help">
+                                  {product.scheduler_type} → {getScheduler(product.scheduler_type)?.ViewComponent ? 'Custom' : 'Table'}
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom" className="max-w-xs">
+                                <div className="text-xs">
+                                  <p className="font-semibold mb-1">Scheduler: {getScheduler(product.scheduler_type)?.displayName || product.scheduler_type}</p>
+                                  <p className="text-slate-400">
+                                    View: {getScheduler(product.scheduler_type)?.ViewComponent ? 'Custom (RentScheduleView)' : 'Standard Table (RepaymentScheduleTable)'}
+                                  </p>
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
                       </div>
                     )}
                   </>
@@ -3001,6 +3059,15 @@ export default function LoanDetails() {
                         new_notes: finalNotes || ''
                       }
                     );
+
+                    // Regenerate schedule if disbursement amount changed (affects capital)
+                    if (newGross !== oldGross) {
+                      await maybeRegenerateScheduleAfterCapitalChange(loan.id, {
+                        type: 'Disbursement',
+                        amount: newGross,
+                        date: editDisbursementValues.date
+                      }, 'update');
+                    }
 
                     // Refresh data
                     await Promise.all([

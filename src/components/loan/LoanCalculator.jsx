@@ -1,4 +1,5 @@
 import { addMonths, addWeeks, format, startOfMonth, addDays, differenceInDays, endOfMonth } from 'date-fns';
+import { getScheduler, createScheduler } from '@/lib/schedule';
 
 /**
  * Generates a repayment schedule based on loan parameters
@@ -1808,9 +1809,10 @@ export function formatCurrency(amount, currency = 'GBP') {
  * @param {Array} schedule - Repayment schedule rows
  * @param {Array} transactions - All transactions for the loan
  * @param {Date} asOfDate - Calculate up to this date (default: today)
+ * @param {Object} product - Optional product configuration (for scheduler info)
  * @returns {Object} { summary, periods[] }
  */
-export function exportScheduleCalculationData(loan, schedule = [], transactions = [], asOfDate = new Date()) {
+export function exportScheduleCalculationData(loan, schedule = [], transactions = [], asOfDate = new Date(), product = null) {
   if (!loan || !schedule || schedule.length === 0) {
     return {
       summary: {
@@ -1934,6 +1936,10 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
   let runningInterestPaid = 0;
   let runningLedgerInterestAccrued = 0; // Ledger-based running total (matches UI)
 
+  // For advance payment loans: track credit adjustments between periods
+  // When capital changes mid-period, borrower "overpays" at old rate, creating credit for next period
+  let previousPeriodAdjustment = 0;
+
   // Track principal balance at each date
   const principalAtDate = new Map();
   const startDateKey = new Date(loan.start_date).toISOString().split('T')[0];
@@ -2014,11 +2020,11 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
     let expectedInterest = scheduleRow.interest_amount || 0;
     let calculationMethod = 'database_value';
     let calculationDetails = {};
+    let capitalChanges = []; // Track capital changes for scheduler decision trail
 
     // Recalculate interest if we have valid data
     if (principalAtPeriodStart > 0 && days > 0) {
       // Find capital changes during this period
-      const capitalChanges = [];
 
       // Further advances
       disbursementTransactions
@@ -2148,6 +2154,41 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
     const ledgerResult = calculateInterestFromLedger(loan, capitalEvents, ledgerPeriodStart, ledgerPeriodEnd);
     const ledgerInterest = ledgerResult.totalInterest;
 
+    // === ADJUSTMENT TRACKING FOR ADVANCE PAYMENT LOANS ===
+    // When capital changes mid-period, borrower "overpays" at old rate, creating credit for next period
+    let adjustmentFromPrior = 0;
+    let periodAdjustment = 0;
+    let adjustedInterestDue = ledgerInterest;
+    let overpaidDays = 0;
+    let overpaidDailyRate = 0;
+
+    if (isInterestPaidInAdvance && capitalChanges.length > 0) {
+      // This period had capital changes - calculate overpayment
+      // Interest was collected at START of period based on starting principal
+      // But capital changed mid-period, so borrower overpaid for remaining days
+      const advanceInterestDue = principalAtPeriodStart * dailyRate * days;
+      const actualInterest = ledgerInterest; // Ledger calculates actual interest with capital changes
+
+      // Overpayment = what was collected in advance - what was actually due
+      periodAdjustment = advanceInterestDue - actualInterest;
+
+      if (periodAdjustment > 0.01) {
+        // Calculate overpaid days (days after capital change at old rate)
+        const lastCapitalChange = capitalChanges[capitalChanges.length - 1];
+        overpaidDays = differenceInDays(periodEndDate, lastCapitalChange.date);
+        overpaidDailyRate = principalAtPeriodStart * dailyRate;
+      }
+    }
+
+    // Apply credit from prior period (if any)
+    if (previousPeriodAdjustment > 0.01) {
+      adjustmentFromPrior = previousPeriodAdjustment;
+      adjustedInterestDue = Math.max(0, ledgerInterest - adjustmentFromPrior);
+    }
+
+    // Store this period's adjustment for next period
+    previousPeriodAdjustment = periodAdjustment;
+
     runningInterestAccrued += expectedInterest;
     runningInterestPaid += periodInterestPaid;
     runningLedgerInterestAccrued += ledgerInterest;
@@ -2155,6 +2196,29 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
     // Update principal balance for repayments
     runningPrincipalBalance = Math.max(0, runningPrincipalBalance - periodPrincipalPaid);
     principalAtDate.set(dueDate.toISOString().split('T')[0], runningPrincipalBalance);
+
+    // Get scheduler decision trail if product is available
+    let schedulerDecisionTrail = null;
+    if (product?.scheduler_type) {
+      const SchedulerClass = getScheduler(product.scheduler_type);
+      if (SchedulerClass) {
+        const scheduler = createScheduler(product.scheduler_type, product.scheduler_config || {});
+        if (scheduler) {
+          // Add internal tracking fields for scheduler decision
+          const rowWithTracking = {
+            ...scheduleRow,
+            calculation_days: days,
+            calculation_principal_start: principalAtPeriodStart,
+            _capitalChanged: capitalChanges && capitalChanges.length > 0,
+            _creditFromPrior: adjustmentFromPrior,
+            _adjustedInterest: adjustedInterestDue,
+            _periodAdjustment: periodAdjustment,
+            _overpaidDays: overpaidDays
+          };
+          schedulerDecisionTrail = scheduler.explainDecision(rowWithTracking, loan, product);
+        }
+      }
+    }
 
     periods.push({
       periodNumber: scheduleRow.installment_number,
@@ -2181,6 +2245,13 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
       // Ledger-based interest (same as UI)
       ledgerInterestDue: Math.round(ledgerInterest * 100) / 100,
       ledgerSegments: ledgerResult.segments,
+      // Adjustment tracking (for advance payment loans with capital changes)
+      adjustmentFromPrior: Math.round(adjustmentFromPrior * 100) / 100,
+      periodAdjustment: Math.round(periodAdjustment * 100) / 100,
+      adjustedInterestDue: Math.round(adjustedInterestDue * 100) / 100,
+      overpaidDays: overpaidDays,
+      overpaidDailyRate: Math.round(overpaidDailyRate * 100) / 100,
+      hasCapitalChanges: capitalChanges.length > 0,
       // Running totals
       runningInterestAccrued: Math.round(runningInterestAccrued * 100) / 100,
       runningInterestPaid: Math.round(runningInterestPaid * 100) / 100,
@@ -2188,6 +2259,8 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
       // Ledger-based running totals (matches UI)
       runningLedgerInterestAccrued: Math.round(runningLedgerInterestAccrued * 100) / 100,
       runningLedgerInterestBalance: Math.round((runningLedgerInterestAccrued - runningInterestPaid) * 100) / 100,
+      // Scheduler decision trail
+      schedulerDecisionTrail: schedulerDecisionTrail,
       // Transactions assigned to this period
       transactionsInPeriod: periodTransactions.map(tx => ({
         id: tx.id,
@@ -2199,6 +2272,27 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
       }))
     });
   });
+
+  // Get scheduler info if product is available
+  let schedulerInfo = null;
+  if (product?.scheduler_type) {
+    const SchedulerClass = getScheduler(product.scheduler_type);
+    if (SchedulerClass) {
+      schedulerInfo = {
+        schedulerType: product.scheduler_type,
+        schedulerName: SchedulerClass.displayName,
+        viewComponent: SchedulerClass.ViewComponent ? 'Custom' : 'StandardTable',
+        config: {
+          period: product.period,
+          interestPaidInAdvance: product.interest_paid_in_advance,
+          calculationMethod: product.interest_calculation_method,
+          alignment: product.interest_alignment,
+          interestType: product.interest_type,
+          productType: product.product_type
+        }
+      };
+    }
+  }
 
   return {
     summary: {
@@ -2216,6 +2310,8 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
       periodsProcessed: periods.length,
       totalRepaymentTransactions: repaymentTransactions.length,
       totalDisbursements: disbursementTransactions.length,
+      // Scheduler info
+      scheduler: schedulerInfo,
       // Final totals (period-based calculation)
       totalInterestDue: Math.round(runningInterestAccrued * 100) / 100,
       totalInterestReceived: Math.round(runningInterestPaid * 100) / 100,

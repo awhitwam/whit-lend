@@ -84,8 +84,10 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   }
 
   // ============ LEGACY CODE BELOW ============
-  // This code path handles products without scheduler_type set
-  // Once all products are migrated, this can be removed
+  // DEPRECATION WARNING: This code path handles products without scheduler_type set
+  // All products should be migrated to use the new scheduler system.
+  // This legacy code will be removed in a future version.
+  console.warn(`⚠️ LEGACY SCHEDULE ENGINE: Product "${product.name}" (ID: ${product.id}) does not have scheduler_type set. Using deprecated legacy code path. Please re-save the product to migrate to the new scheduler system.`);
 
   // Check if this is an Irregular Income loan - no schedule should be generated
   if (product.product_type === 'Irregular Income') {
@@ -841,4 +843,42 @@ export function formatCurrency(amount, currency = 'GBP') {
     currency: currency,
     minimumFractionDigits: 2
   }).format(amount || 0);
+}
+
+/**
+ * Regenerate schedule if a transaction affected capital balance.
+ * Implements the "same-day adjustment" concept from interest_paid_in_advance_same_day_adjustment.pdf
+ *
+ * Call this after creating, updating, or deleting transactions that affect principal.
+ *
+ * For interest_paid_in_advance loans, this will also create a same-day adjustment entry
+ * (credit for repayments, debit for further advances) to correct the already-paid interest.
+ *
+ * @param {string} loanId - The loan ID
+ * @param {Object} transaction - The transaction that was created/modified/deleted
+ * @param {string} action - 'create', 'update', or 'delete'
+ * @returns {Promise<boolean>} True if schedule was regenerated
+ */
+export async function maybeRegenerateScheduleAfterCapitalChange(loanId, transaction, action = 'create') {
+  const affectsCapital =
+    transaction.type === 'Disbursement' ||
+    (transaction.principal_applied && transaction.principal_applied > 0);
+
+  if (!affectsCapital) {
+    return false;
+  }
+
+  console.log(`[Schedule] Capital-affecting transaction ${action}d, regenerating schedule for loan ${loanId}`);
+
+  const loans = await api.entities.Loan.filter({ id: loanId });
+  const loan = loans[0];
+  if (!loan) return false;
+
+  const today = new Date();
+  const options = loan.auto_extend
+    ? { endDate: format(today, 'yyyy-MM-dd'), duration: loan.duration }
+    : { duration: loan.duration };
+
+  await regenerateLoanSchedule(loanId, options);
+  return true;
 }

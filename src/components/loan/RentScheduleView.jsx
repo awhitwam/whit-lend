@@ -436,3 +436,11 @@ export default function RentScheduleView({ schedule, transactions = [], loan, pr
     </div>
   );
 }
+
+// Self-register with RentScheduler to avoid circular import issues
+// (RentScheduler can't import this component directly)
+import { getScheduler } from '@/lib/schedule';
+const RentSchedulerClass = getScheduler('rent');
+if (RentSchedulerClass) {
+  RentSchedulerClass.ViewComponent = RentScheduleView;
+}

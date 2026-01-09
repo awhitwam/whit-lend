@@ -9,6 +9,8 @@ import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, Ale
 import { formatCurrency, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from './LoanCalculator';
 import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 import RentScheduleView from './RentScheduleView';
+import './InterestOnlyScheduleView'; // Import to trigger self-registration with scheduler
+import { getScheduler } from '@/lib/schedule';
 
 // Helper to check if penalty rate applies for a given date
 const isPenaltyRateActive = (loan, date) => {
@@ -35,12 +37,17 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('nested'); // 'nested', 'ledger'
 
+  // Get scheduler info if available
+  const schedulerType = product?.scheduler_type;
+  const SchedulerClass = schedulerType ? getScheduler(schedulerType) : null;
+  const CustomViewComponent = SchedulerClass?.ViewComponent;
+
   // Check if this is a Fixed Charge loan
-  const isFixedCharge = loan?.product_type === 'Fixed Charge' || product?.product_type === 'Fixed Charge';
+  const isFixedCharge = schedulerType === 'fixed_charge' || loan?.product_type === 'Fixed Charge' || product?.product_type === 'Fixed Charge';
   // Check if this is an Irregular Income loan (no schedule should be shown)
-  const isIrregularIncome = loan?.product_type === 'Irregular Income' || product?.product_type === 'Irregular Income';
-  // Check if this is a Rent loan (special quarterly view)
-  const isRent = loan?.product_type === 'Rent' || product?.product_type === 'Rent';
+  const isIrregularIncome = schedulerType === 'irregular_income' || loan?.product_type === 'Irregular Income' || product?.product_type === 'Irregular Income';
+  // Check if this is a Rent loan (special quarterly view) - now handled via scheduler ViewComponent
+  const isRent = schedulerType === 'rent' || loan?.product_type === 'Rent' || product?.product_type === 'Rent';
   // Use nullish coalescing to handle 0 correctly (0 is a valid monthly_charge value, but || would skip it)
   const monthlyCharge = loan?.monthly_charge ?? product?.monthly_charge ?? 0;
 
@@ -373,8 +380,16 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     const exportToCSV = () => {
       if (viewMode !== 'separate' || combinedRows.length === 0) return;
 
-      const headers = ['Date', 'Type', 'Principal', 'Interest', 'Expected Interest', 'Principal Outstanding', 'Interest Outstanding', 'Total Outstanding'];
+      const headers = [
+        'Date', 'Type', 'Principal', 'Interest Paid', 'Expected Interest',
+        'Principal Outstanding', 'Interest Outstanding', 'Total Outstanding',
+        'Principal Start', 'Days', 'Daily Rate', 'Calculation Description', 'Adjustments', 'Decision Trail'
+      ];
       const csvRows = [headers.join(',')];
+
+      const effectiveRate = loan?.interest_rate || product?.interest_rate || 0;
+      const dailyRatePercent = effectiveRate / 365;
+      const isAdvanceLoan = product?.interest_paid_in_advance;
 
       combinedRows.forEach(row => {
         const getRowType = () => {
@@ -388,6 +403,84 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           if (row.rowType === 'further_advance') return row.amount || row.transactions[0]?.amount || 0;
           return row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0) || '';
         };
+
+        // Build calculation description for schedule rows
+        let principalStart = '';
+        let days = '';
+        let dailyRate = '';
+        let calcDescription = '';
+        let adjustments = '';
+        let decisionTrail = '';
+
+        if (row.rowType === 'schedule') {
+          const scheduleEntry = row.scheduleEntry;
+          principalStart = row.principalAtPeriodStart || scheduleEntry?.calculation_principal_start || row.principalBalance || '';
+          days = row.periodDays || scheduleEntry?.calculation_days || '';
+
+          if (principalStart && effectiveRate) {
+            dailyRate = (principalStart * effectiveRate / 100 / 365).toFixed(2);
+          }
+
+          // Build description from ledger segments if available
+          if (row.ledgerSegments && row.ledgerSegments.length > 0) {
+            calcDescription = row.ledgerSegments.map(seg =>
+              `${seg.days}d × £${seg.dailyInterest?.toFixed(2) || '0.00'}/day`
+            ).join(' + ');
+          } else if (days && dailyRate) {
+            calcDescription = `${days}d × £${dailyRate}/day`;
+          }
+
+          // Add rate info prefix
+          if (calcDescription) {
+            calcDescription = `Interest due at ${effectiveRate}% pa, ${calcDescription}`;
+          }
+
+          // Handle adjustments for advance payment loans
+          if (isAdvanceLoan) {
+            if (row.periodAdjustment && Math.abs(row.periodAdjustment) > 0.01) {
+              // This period generated an overpayment (capital changed mid-period)
+              const overpaidDays = row.overpaidDays || '';
+              const overpaidDailyRate = row.overpaidDailyRate ? row.overpaidDailyRate.toFixed(2) : '';
+              adjustments = `Overpaid ${overpaidDays}d @ £${overpaidDailyRate}/day = £${Math.abs(row.periodAdjustment).toFixed(2)} → credited next`;
+              decisionTrail = `Capital changed mid-period. Advance payment = overpaid for remaining days at old rate.`;
+            } else if (row.adjustmentFromPrior && Math.abs(row.adjustmentFromPrior) > 0.01) {
+              // This period receives credit from prior
+              adjustments = `Credit from prior: -£${Math.abs(row.adjustmentFromPrior).toFixed(2)}`;
+              decisionTrail = `No capital changes. Applied credit from prior period overpayment.`;
+            } else {
+              decisionTrail = 'Advance payment - interest due at start of period.';
+            }
+          } else {
+            decisionTrail = 'Arrears payment - interest calculated for period just ended.';
+          }
+        } else if (row.rowType === 'disbursement') {
+          decisionTrail = 'Initial disbursement';
+        } else if (row.rowType === 'further_advance') {
+          decisionTrail = 'Further advance - principal increased';
+        } else if (row.rowType === 'transaction') {
+          const principalApplied = row.transactions.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+          const interestApplied = row.transactions.reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
+          if (principalApplied > 0 && interestApplied > 0) {
+            decisionTrail = `Payment: £${principalApplied.toFixed(2)} to principal, £${interestApplied.toFixed(2)} to interest`;
+          } else if (principalApplied > 0) {
+            decisionTrail = `Capital repayment: £${principalApplied.toFixed(2)}`;
+          } else if (interestApplied > 0) {
+            decisionTrail = `Interest payment: £${interestApplied.toFixed(2)}`;
+          } else {
+            decisionTrail = 'Payment recorded';
+          }
+        }
+
+        // Escape CSV values that might contain commas or quotes
+        const escapeCSV = (val) => {
+          if (val === null || val === undefined) return '';
+          const str = String(val);
+          if (str.includes(',') || str.includes('"') || str.includes('\n')) {
+            return `"${str.replace(/"/g, '""')}"`;
+          }
+          return str;
+        };
+
         const csvRow = [
           format(row.date, 'yyyy-MM-dd'),
           getRowType(),
@@ -396,7 +489,13 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
           row.expectedInterest || '',
           row.principalOutstanding || '',
           row.interestOutstanding || '',
-          (row.principalOutstanding || 0) + (row.interestOutstanding || 0) || ''
+          (row.principalOutstanding || 0) + (row.interestOutstanding || 0) || '',
+          principalStart,
+          days,
+          dailyRate,
+          escapeCSV(calcDescription),
+          escapeCSV(adjustments),
+          escapeCSV(decisionTrail)
         ];
         csvRows.push(csvRow.join(','));
       });
@@ -406,7 +505,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement('a');
       link.href = url;
-      link.download = `loan-${loan?.loan_number || 'schedule'}-separate-view.csv`;
+      link.download = `loan-${loan?.loan_number || 'schedule'}-detailed.csv`;
       link.click();
       window.URL.revokeObjectURL(url);
     };
@@ -1081,7 +1180,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               })()}
             </TableBody>
           </Table>
+        ) : CustomViewComponent ? (
+          // Scheduler provides a custom view component
+          <div className="absolute inset-0 overflow-auto p-4">
+            <CustomViewComponent
+              schedule={schedule}
+              transactions={transactions}
+              loan={loan}
+              product={product}
+            />
+          </div>
         ) : isRent ? (
+          // Fallback for rent loans without scheduler_type set yet
           <div className="absolute inset-0 overflow-auto p-4">
             <RentScheduleView
               schedule={schedule}
@@ -1380,11 +1490,51 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   const today = new Date();
                   const dailyRate = loan.interest_rate / 100 / 365;
 
-                  // PASS 1: Assign each transaction to its closest schedule period
+                  // Detect if this is an "interest paid in advance" loan (needed for transaction assignment)
+                  // For advance loans, the first due date equals the loan start date
+                  const loanStartForAdvanceCheck = new Date(loan.start_date);
+                  loanStartForAdvanceCheck.setHours(0, 0, 0, 0);
+                  const firstDueDateForAdvanceCheck = sortedSchedule.length > 0 ? new Date(sortedSchedule[0].due_date) : null;
+                  if (firstDueDateForAdvanceCheck) firstDueDateForAdvanceCheck.setHours(0, 0, 0, 0);
+                  const isAdvancePaymentLoan = firstDueDateForAdvanceCheck &&
+                    firstDueDateForAdvanceCheck.getTime() === loanStartForAdvanceCheck.getTime();
+
+                  // PASS 1: Assign each transaction to its schedule period
+                  // - Principal payments: Assign by period boundaries (capital changes affect interest calculation)
+                  // - Interest-only payments: Assign by closest due date (for paid/missed tracking)
                   const txAssignments = new Map();
 
                   repaymentTransactions.forEach(tx => {
                     const txDate = new Date(tx.date);
+                    txDate.setHours(0, 0, 0, 0);
+                    const hasPrincipal = (tx.principal_applied || 0) > 0.01;
+
+                    // For principal payments on advance payment loans, assign by period boundaries
+                    if (hasPrincipal && isAdvancePaymentLoan) {
+                      // Find which period this transaction date falls within
+                      for (let i = 0; i < sortedSchedule.length; i++) {
+                        const periodStart = new Date(sortedSchedule[i].due_date);
+                        periodStart.setHours(0, 0, 0, 0);
+
+                        // Period end is the next period's start (or 31 days later for last period)
+                        const periodEnd = i < sortedSchedule.length - 1
+                          ? new Date(sortedSchedule[i + 1].due_date)
+                          : new Date(periodStart.getTime() + 31 * 24 * 60 * 60 * 1000);
+                        periodEnd.setHours(0, 0, 0, 0);
+
+                        // Check if transaction falls within this period's boundaries
+                        if (txDate >= periodStart && txDate < periodEnd) {
+                          if (!txAssignments.has(sortedSchedule[i].id)) {
+                            txAssignments.set(sortedSchedule[i].id, []);
+                          }
+                          txAssignments.get(sortedSchedule[i].id).push(tx);
+                          return; // Found the period, exit the loop
+                        }
+                      }
+                      // If no period found (transaction before first period), fall through to closest match
+                    }
+
+                    // For interest-only payments (or fallback), use closest due date
                     let closestSchedule = null;
                     let closestDiff = Infinity;
 
@@ -1685,6 +1835,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   let prevPrincipalBalance = 0;
                   let runningInterestAccrued = 0;
                   let runningInterestPaid = 0;
+                  let previousPeriodAdjustment = 0; // Track adjustment from prior period for advance loans
 
                   // Build capital events ledger once for interest calculations
                   const capitalEvents = buildCapitalEvents(loan, transactions);
@@ -1858,11 +2009,69 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             row.status = 'overdue';
                           }
                         }
+
+                        // For advance loans, track adjustments from mid-period capital changes
+                        // Only generate adjustment when there are capital changes (multiple ledger segments)
+                        if (isAdvancePayment && periodStart && periodEnd) {
+                          row.isAdvancePayment = true;
+
+                          // Check if this period had capital changes (multiple segments = capital changed mid-period)
+                          const hasCapitalChanges = row.ledgerSegments && row.ledgerSegments.length > 1;
+
+                          // Store any adjustment from PRIOR period (to be applied to this period)
+                          row.adjustmentFromPrior = previousPeriodAdjustment;
+
+                          // Only calculate NEW adjustment if this period had capital changes
+                          if (hasCapitalChanges) {
+                            const days = differenceInDays(periodEnd, periodStart);
+                            let effectiveRate = loan.interest_rate || 0;
+                            // Check for penalty rate
+                            if (loan.penalty_rate && loan.penalty_rate_from) {
+                              const penaltyDate = new Date(loan.penalty_rate_from);
+                              penaltyDate.setHours(0, 0, 0, 0);
+                              if (periodStart >= penaltyDate) {
+                                effectiveRate = loan.penalty_rate;
+                              }
+                            }
+                            const dailyRate = effectiveRate / 100 / 365;
+                            // Advance interest = full period on START capital (no mid-period changes)
+                            const advanceInterestDue = row.principalAtPeriodStart * dailyRate * days;
+
+                            // Adjustment = what was charged - what should have been charged
+                            // Positive = overpaid (credit to next), Negative = underpaid (debit to next)
+                            const periodAdjustment = advanceInterestDue - row.expectedInterest;
+
+                            // Store for display
+                            row.advanceInterestDue = advanceInterestDue;
+                            row.actualInterest = row.expectedInterest;
+                            row.periodAdjustment = periodAdjustment;
+
+                            // This period's adjustment carries to NEXT period
+                            previousPeriodAdjustment = periodAdjustment;
+                          } else {
+                            // No capital changes in this period - no new adjustment generated
+                            row.periodAdjustment = 0;
+
+                            // After applying prior adjustment to this period, reset to 0 (consumed)
+                            previousPeriodAdjustment = 0;
+                          }
+                        }
                       }
 
                       // Accrue interest for this period (after recalculation)
-                      // Use raw (unrounded) value for accumulation to match CSV calculation
-                      runningInterestAccrued += row.expectedInterestRaw ?? row.expectedInterest;
+                      // For advance loans, apply the prior period's adjustment (credit/debit)
+                      // But only if this period doesn't ALSO generate an adjustment (has capital changes)
+                      let effectiveInterestToAccrue = row.expectedInterestRaw ?? row.expectedInterest;
+                      const receivesCredit = row.isAdvancePayment && row.adjustmentFromPrior && Math.abs(row.adjustmentFromPrior) > 0.01;
+                      const generatesAdjustment = row.periodAdjustment && Math.abs(row.periodAdjustment) > 0.01;
+
+                      if (receivesCredit && !generatesAdjustment) {
+                        // This period RECEIVES credit from prior (and doesn't generate its own)
+                        effectiveInterestToAccrue = effectiveInterestToAccrue - row.adjustmentFromPrior;
+                        // Store adjusted interest for display (original - credit)
+                        row.adjustedInterestDue = row.interest - row.adjustmentFromPrior;
+                      }
+                      runningInterestAccrued += effectiveInterestToAccrue;
                       row.balance = Math.round((runningInterestAccrued - runningInterestPaid) * 100) / 100;
 
                       // Record balance at this period end date
@@ -1901,6 +2110,12 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         runningInterestPaid += totalInterest;
 
                         const principalChanged = totalPrincipal > 0.01;
+
+                        // Record principal balance at transaction date for future period lookups
+                        // This ensures subsequent periods see the reduced principal after capital repayments
+                        if (principalChanged) {
+                          principalAtDate.set(dateKey, runningPrincipalBalance);
+                        }
 
                         // Calculate status text for the last transaction group in this period
                         let txStatusText = null;
@@ -1951,6 +2166,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       // Store the balances after all period transactions for collapsed view
                       row.principalBalanceAfterPeriod = runningPrincipalBalance;
                       row.interestBalanceAfterPeriod = Math.round((runningInterestAccrued - runningInterestPaid) * 100) / 100;
+
+                      // Update principalAtDate AFTER processing transactions so next period sees reduced principal
+                      // This fixes Bug 2: wrong daily rate in description for periods after capital repayments
+                      principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
                     }
                   });
 
@@ -2193,71 +2412,116 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                 );
                               }
 
-                              // Check for capital payments within this period to show split interest
-                              const capitalPayments = (row.periodTransactions || [])
-                                .filter(tx => tx.principal_applied > 0)
-                                .map(tx => ({ type: 'repayment', date: new Date(tx.date), amount: tx.principal_applied }));
+                              // Use ledgerSegments from calculation if available, otherwise build from periodTransactions
+                              // This ensures display matches the calculation logic for capital changes
+                              let segments = [];
 
-                              // Also find further advances (disbursements) within this period
-                              const periodStart = row.periodStartDate ? new Date(row.periodStartDate) : null;
-                              const periodEnd = row.periodEndDate || row.date; // Use periodEndDate for advance loans
-                              const furtherAdvancesInPeriod = periodStart ? sortedRows
-                                .filter(r => r.type === 'further_advance' && r.date > periodStart && r.date <= periodEnd)
-                                .map(r => ({ type: 'advance', date: r.date, amount: r.principal })) : [];
+                              if (row.ledgerSegments && row.ledgerSegments.length > 1) {
+                                // Use pre-calculated segments from the interest calculation
+                                // Note: calculateInterestFromLedger returns dailyRate (per £1), so calculate dailyAmount
+                                segments = row.ledgerSegments.map(seg => ({
+                                  days: seg.days,
+                                  dailyAmount: seg.principal * seg.dailyRate,  // Calculate £/day from principal × rate
+                                  total: seg.interest,
+                                  principal: seg.principal
+                                }));
+                              } else {
+                                // Fallback: Check for capital payments within this period to show split interest
+                                const capitalPayments = (row.periodTransactions || [])
+                                  .filter(tx => tx.principal_applied > 0)
+                                  .map(tx => ({ type: 'repayment', date: new Date(tx.date), amount: tx.principal_applied }));
 
-                              // Combine and sort by date
-                              const capitalChanges = [...capitalPayments, ...furtherAdvancesInPeriod]
-                                .sort((a, b) => a.date - b.date);
+                                // Also find further advances (disbursements) within this period
+                                const periodStart = row.periodStartDate ? new Date(row.periodStartDate) : null;
+                                const periodEnd = row.periodEndDate || row.date;
+                                const furtherAdvancesInPeriod = periodStart ? sortedRows
+                                  .filter(r => r.type === 'further_advance' && r.date > periodStart && r.date <= periodEnd)
+                                  .map(r => ({ type: 'advance', date: r.date, amount: r.principal })) : [];
 
-                              if (capitalChanges.length > 0 && periodStart) {
-                                // Calculate interest segments split by capital changes
-                                let runningPrincipal = principalStart;
-                                const segments = [];
+                                const capitalChanges = [...capitalPayments, ...furtherAdvancesInPeriod]
+                                  .sort((a, b) => a.date - b.date);
 
-                                let segmentStart = periodStart;
+                                if (capitalChanges.length > 0 && periodStart) {
+                                  let runningPrincipal = principalStart;
+                                  let segmentStart = periodStart;
 
-                                capitalChanges.forEach((change, changeIdx) => {
-                                  const changeDate = change.date;
-                                  const daysInSegment = differenceInDays(changeDate, segmentStart);
+                                  capitalChanges.forEach((change) => {
+                                    const changeDate = change.date;
+                                    const daysInSegment = differenceInDays(changeDate, segmentStart);
 
-                                  if (daysInSegment > 0) {
-                                    const segmentDailyInterest = runningPrincipal * dailyRate;
-                                    const segmentInterest = segmentDailyInterest * daysInSegment;
+                                    if (daysInSegment > 0) {
+                                      const segmentDailyInterest = runningPrincipal * dailyRate;
+                                      segments.push({
+                                        days: daysInSegment,
+                                        dailyAmount: segmentDailyInterest,
+                                        total: segmentDailyInterest * daysInSegment,
+                                        principal: runningPrincipal
+                                      });
+                                    }
+
+                                    if (change.type === 'advance') {
+                                      runningPrincipal += change.amount;
+                                    } else {
+                                      runningPrincipal = Math.max(0, runningPrincipal - change.amount);
+                                    }
+                                    segmentStart = changeDate;
+                                  });
+
+                                  const finalDays = differenceInDays(periodEnd, segmentStart);
+                                  if (finalDays > 0 && runningPrincipal > 0) {
+                                    const finalDailyInterest = runningPrincipal * dailyRate;
                                     segments.push({
-                                      label: change.type === 'advance' ? 'before advance' : 'before repayment',
-                                      days: daysInSegment,
-                                      dailyAmount: segmentDailyInterest,
-                                      total: segmentInterest,
+                                      days: finalDays,
+                                      dailyAmount: finalDailyInterest,
+                                      total: finalDailyInterest * finalDays,
                                       principal: runningPrincipal
                                     });
                                   }
+                                }
+                              }
 
-                                  // Update principal based on change type
-                                  if (change.type === 'advance') {
-                                    runningPrincipal += change.amount;
-                                  } else {
-                                    runningPrincipal = Math.max(0, runningPrincipal - change.amount);
-                                  }
-                                  segmentStart = changeDate;
-                                });
+                              // Only show split if we have multiple segments
+                              if (segments.length > 1) {
+                                // For ADVANCE payment loans: show what was CHARGED (full period at starting rate)
+                                // The segmented calculation is only used internally to determine overpayment
+                                if (row.isAdvancePayment) {
+                                  const totalDays = segments.reduce((sum, s) => sum + s.days, 0);
+                                  const startingDailyRate = segments[0].dailyAmount; // First segment is at starting principal
 
-                                // Final segment from last change to period end
-                                const finalDays = differenceInDays(periodEnd, segmentStart);
-                                if (finalDays > 0 && runningPrincipal > 0) {
-                                  const finalDailyInterest = runningPrincipal * dailyRate;
-                                  const finalInterest = finalDailyInterest * finalDays;
-                                  segments.push({
-                                    label: 'after change',
-                                    days: finalDays,
-                                    dailyAmount: finalDailyInterest,
-                                    total: finalInterest,
-                                    principal: runningPrincipal
-                                  });
+                                  // Calculate overpaid/underpaid info from segment data
+                                  // For capital repayment: principalChange > 0 (decreased), overpaid
+                                  // For further advance: principalChange < 0 (increased), underpaid
+                                  const firstSegment = segments[0];
+                                  const lastSegment = segments[segments.length - 1];
+                                  // Use first segment principal as the starting point (what we charged at)
+                                  const startPrincipal = firstSegment?.principal || row.principalAtPeriodStart || principalStart;
+                                  const endPrincipal = lastSegment?.principal || startPrincipal;
+                                  const principalChange = startPrincipal - endPrincipal; // + for repayment, - for advance
+                                  const adjustmentDailyRate = principalChange * (effectiveRate / 100 / 365);
+                                  const adjustmentDays = Math.abs(adjustmentDailyRate) > 0.01
+                                    ? Math.round(Math.abs(row.periodAdjustment || 0) / Math.abs(adjustmentDailyRate))
+                                    : lastSegment?.days || 0;
+
+                                  return (
+                                    <span>
+                                      Interest due at {effectiveRate}% pa, <span className="text-slate-500">{totalDays}d × {formatCurrency(startingDailyRate)}/day</span>
+                                      {/* Show overpayment annotation */}
+                                      {row.periodAdjustment && row.periodAdjustment > 0.01 && (
+                                        <span className="ml-2 text-emerald-600 text-xs">
+                                          (Overpaid {adjustmentDays}d @ {formatCurrency(Math.abs(adjustmentDailyRate))}/day → credited next)
+                                        </span>
+                                      )}
+                                      {row.periodAdjustment && row.periodAdjustment < -0.01 && (
+                                        <span className="ml-2 text-amber-600 text-xs">
+                                          (Underpaid {adjustmentDays}d @ {formatCurrency(Math.abs(adjustmentDailyRate))}/day → debited next)
+                                        </span>
+                                      )}
+                                    </span>
+                                  );
                                 }
 
-                                // Only show split if we have multiple segments
-                                if (segments.length > 1) {
-                                  return (
+                                // For ARREARS loans: show segmented calculation (what actually accrued)
+                                return (
                                     <span>
                                       Interest due at {effectiveRate}% pa, {segments.map((seg, segIdx) => (
                                         <span key={segIdx}>
@@ -2268,11 +2532,25 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                     </span>
                                   );
                                 }
-                              }
 
                               return (
                                 <span>
                                   Interest due at {effectiveRate}% pa, <span className="text-slate-500">{days}d × {formatCurrency(dailyInterestAmount)}/day</span>
+                                  {/* Show credit/debit for advance loans receiving prior period adjustment */}
+                                  {/* Credit: from capital repayment (overpaid) - reduces interest due */}
+                                  {/* Debit: from further advance (underpaid) - increases interest due */}
+                                  {row.isAdvancePayment && row.adjustmentFromPrior && Math.abs(row.adjustmentFromPrior) > 0.01 &&
+                                   (!row.periodAdjustment || Math.abs(row.periodAdjustment) < 0.01) && (
+                                    row.adjustmentFromPrior > 0 ? (
+                                      <span className="ml-1 text-blue-600">
+                                        - {formatCurrency(row.adjustmentFromPrior)} credit
+                                      </span>
+                                    ) : (
+                                      <span className="ml-1 text-amber-600">
+                                        + {formatCurrency(Math.abs(row.adjustmentFromPrior))} shortfall
+                                      </span>
+                                    )
+                                  )}
                                 </span>
                               );
                             })()}
@@ -2295,7 +2573,51 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               : <span className="text-slate-500">—</span>}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono font-semibold text-slate-700 text-sm">
-                            {formatCurrency(row.interest)}
+                            {row.isAdvancePayment && row.periodAdjustment && Math.abs(row.periodAdjustment) > 0.01 ? (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className={row.periodAdjustment > 0.01 ? 'cursor-help border-b border-dashed border-emerald-400' : 'cursor-help border-b border-dashed border-amber-400'}>
+                                      {formatCurrency(row.interest)}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="text-xs space-y-1">
+                                      <p>Charged in advance: {formatCurrency(row.advanceInterestDue)}</p>
+                                      <p>Correct (after changes): {formatCurrency(row.actualInterest)}</p>
+                                      {row.periodAdjustment > 0 ? (
+                                        <p className="text-emerald-400 font-medium">Overpaid: {formatCurrency(row.periodAdjustment)}</p>
+                                      ) : (
+                                        <p className="text-amber-400 font-medium">Underpaid: {formatCurrency(Math.abs(row.periodAdjustment))}</p>
+                                      )}
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            ) : row.adjustedInterestDue !== undefined ? (
+                              <TooltipProvider>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <span className={`cursor-help border-b border-dashed ${row.adjustmentFromPrior > 0 ? 'border-blue-400' : 'border-amber-400'}`}>
+                                      {formatCurrency(row.adjustedInterestDue)}
+                                    </span>
+                                  </TooltipTrigger>
+                                  <TooltipContent>
+                                    <div className="text-xs space-y-1">
+                                      <p>Interest due: {formatCurrency(row.interest)}</p>
+                                      {row.adjustmentFromPrior > 0 ? (
+                                        <p className="text-blue-400">Less credit: -{formatCurrency(row.adjustmentFromPrior)}</p>
+                                      ) : (
+                                        <p className="text-amber-400">Plus shortfall: +{formatCurrency(Math.abs(row.adjustmentFromPrior))}</p>
+                                      )}
+                                      <p className="font-medium">Net due: {formatCurrency(row.adjustedInterestDue)}</p>
+                                    </div>
+                                  </TooltipContent>
+                                </Tooltip>
+                              </TooltipProvider>
+                            ) : (
+                              formatCurrency(row.interest)
+                            )}
                           </TableCell>
                           <TableCell className="py-0.5 text-right font-mono text-sm">
                             {(() => {

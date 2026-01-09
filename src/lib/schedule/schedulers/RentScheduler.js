@@ -15,12 +15,35 @@ import { BaseScheduler } from '../BaseScheduler.js';
 import { registerScheduler } from '../registry.js';
 import { format, addMonths, addQuarters, differenceInDays, differenceInMonths, startOfQuarter, endOfQuarter, subQuarters } from 'date-fns';
 
+// ViewComponent is set by RentScheduleView.jsx when it loads (avoids circular import)
+let RentScheduleViewComponent = null;
+
 export class RentScheduler extends BaseScheduler {
   static id = 'rent';
   static displayName = 'Rent (Quarterly)';
   static description = 'Periodic rent income with pattern detection and forecasting';
   static category = 'special';
   static generatesSchedule = true;
+
+  /**
+   * Custom view component - RentScheduleView provides quarterly grouping and predictions
+   * Set by RentScheduleView.jsx via self-registration to avoid circular imports
+   */
+  static get ViewComponent() {
+    return RentScheduleViewComponent;
+  }
+
+  static set ViewComponent(component) {
+    RentScheduleViewComponent = component;
+  }
+
+  static displayConfig = {
+    showInterestColumn: true,
+    showPrincipalColumn: false,
+    interestColumnLabel: 'Rent',
+    principalColumnLabel: 'Principal',
+    showCalculationDetails: false
+  };
 
   static configSchema = {
     common: {
@@ -315,6 +338,42 @@ export class RentScheduler extends BaseScheduler {
    */
   calculatePrincipalPortion() {
     return 0;
+  }
+
+  // ============ Display Methods ============
+
+  /**
+   * Format period description for rent - shows quarter info
+   */
+  formatPeriodDescription({ row }) {
+    const dueDate = new Date(row.due_date);
+    const quarter = Math.ceil((dueDate.getMonth() + 1) / 3);
+    const year = dueDate.getFullYear();
+
+    return {
+      description: `Q${quarter} ${year}`,
+      annotation: row.status === 'Pending' ? 'Predicted' : null,
+      annotationType: row.status === 'Pending' ? 'info' : null
+    };
+  }
+
+  /**
+   * Explain rent scheduler decision
+   */
+  explainDecision(row) {
+    if (row.status === 'Pending') {
+      return 'Predicted rent payment based on historical pattern analysis.';
+    }
+    return `Rent received for quarter. Total: £${(row.interest_amount || 0).toFixed(2)}`;
+  }
+
+  /**
+   * Get summary string for rent scheduler
+   */
+  static getSummaryString(product) {
+    const config = product?.scheduler_config || {};
+    const frequency = config.default_frequency || 'quarterly';
+    return `rent (Rent) • ${frequency}`;
   }
 }
 
