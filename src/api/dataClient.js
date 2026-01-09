@@ -81,7 +81,9 @@ const orgScopedTables = [
   'receipt_drafts',
   'borrower_loan_preferences',
   // Accepted orphans
-  'accepted_orphans'
+  'accepted_orphans',
+  // Nightly job runs (nullable org_id, but should be filtered when present)
+  'nightly_job_runs'
 ];
 
 // Map column names that differ between code and database
@@ -326,6 +328,22 @@ function createOrganizationSummaryHandler() {
       return data || null;
     },
 
+    // List returns array for backup compatibility (single org summary)
+    async list() {
+      const orgId = getCurrentOrganizationId();
+      if (!orgId) {
+        throw new Error('Organization context not available.');
+      }
+
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('organization_id', orgId);
+
+      if (error) throw error;
+      return data || [];
+    },
+
     // Upsert (insert or update) summary for the current organization
     async upsert(summaryData) {
       const orgId = getCurrentOrganizationId();
@@ -345,6 +363,21 @@ function createOrganizationSummaryHandler() {
 
       if (error) throw error;
       return data;
+    },
+
+    // Create for restore compatibility (uses upsert internally)
+    async create(summaryData) {
+      return this.upsert(summaryData);
+    },
+
+    // CreateMany for restore compatibility
+    async createMany(records) {
+      const results = [];
+      for (const record of records) {
+        const result = await this.upsert(record);
+        results.push(result);
+      }
+      return results;
     }
   };
 }
