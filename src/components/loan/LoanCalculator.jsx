@@ -1,5 +1,6 @@
 import { addMonths, addWeeks, format, startOfMonth, addDays, differenceInDays, endOfMonth } from 'date-fns';
 import { getScheduler, createScheduler } from '@/lib/schedule';
+import { api } from '@/api/dataClient';
 
 /**
  * Generates a repayment schedule based on loan parameters
@@ -1068,7 +1069,7 @@ export function calculateLiveInterestOutstanding(loan, actualInterestPaid = null
  * @param {Date} asOfDate - Date to calculate as of (defaults to today)
  * @returns {Object} { interestAccrued, interestPaid, interestRemaining, principalRemaining }
  */
-export function calculateAccruedInterestWithTransactions(loan, transactions = [], asOfDate = new Date(), schedule = []) {
+export function calculateAccruedInterestWithTransactions(loan, transactions = [], asOfDate = new Date(), schedule = [], product = null) {
   if (!loan || loan.status === 'Pending') {
     return {
       interestAccrued: 0,
@@ -1125,14 +1126,7 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
   // If schedule is provided, use the accurate calculateLoanInterestBalance function
   // This recalculates interest dynamically, handling penalty rates, mid-period capital changes, etc.
   if (schedule && schedule.length > 0) {
-    // Debug logging for specific loans
-    if (loan.loan_number === '1000025' || loan.loan_number === '1000001') {
-      console.log(`[AccruedInterestWithTx] Loan ${loan.loan_number} - USING schedule-based calc:`, {
-        scheduleLength: schedule.length,
-        transactionsLength: transactions.length
-      });
-    }
-    const interestCalc = calculateLoanInterestBalance(loan, schedule, transactions, asOfDate);
+    const interestCalc = calculateLoanInterestBalance(loan, schedule, transactions, asOfDate, product);
 
     return {
       interestAccrued: interestCalc.totalInterestDue,
@@ -1144,13 +1138,6 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
 
   // Fall back to day-by-day calculation for loans without schedules
   // Note: This uses a single rate and won't handle rate changes correctly
-  // Debug logging for specific loans
-  if (loan.loan_number === '1000025' || loan.loan_number === '1000001') {
-    console.log(`[AccruedInterestWithTx] Loan ${loan.loan_number} - FALLBACK day-by-day calc:`, {
-      scheduleProvided: !!schedule,
-      scheduleLength: schedule?.length || 0
-    });
-  }
   const daysElapsed = Math.max(0, Math.floor((today - startDate) / (1000 * 60 * 60 * 24)) + 1);
   const annualRate = loan.interest_rate / 100;
   const dailyRate = annualRate / 365;
@@ -1223,7 +1210,7 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
  * @param {Date} asOfDate - Calculate interest due up to this date (default: today)
  * @returns {Object} { totalInterestDue, totalInterestPaid, interestBalance }
  */
-export function calculateLoanInterestBalance(loan, schedule = [], transactions = [], asOfDate = new Date()) {
+export function calculateLoanInterestBalance(loan, schedule = [], transactions = [], asOfDate = new Date(), product = null) {
   if (!loan || !schedule || schedule.length === 0) {
     return {
       totalInterestDue: 0,
@@ -1243,28 +1230,6 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
 
   const today = new Date(asOfDate);
   today.setHours(0, 0, 0, 0);
-
-  // Debug logging for specific loans
-  const isDebugLoan = loan.loan_number === '1000025' || loan.loan_number === '1000001';
-  if (isDebugLoan) {
-    // Get first and last schedule entries
-    const scheduleByDate = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
-    const firstSchedule = scheduleByDate[0];
-    const lastSchedule = scheduleByDate[scheduleByDate.length - 1];
-
-    console.log(`[InterestCalc DEBUG] Loan ${loan.loan_number}:`, {
-      scheduleLength: schedule.length,
-      transactionsLength: transactions.length,
-      asOfDate: today.toISOString(),
-      loanRate: loan.interest_rate,
-      penaltyRate: loan.penalty_rate,
-      penaltyRateFrom: loan.penalty_rate_from,
-      firstScheduleDueDate: firstSchedule?.due_date,
-      lastScheduleDueDate: lastSchedule?.due_date,
-      repaymentTxCount: transactions.filter(tx => !tx.is_deleted && tx.type === 'Repayment').length,
-      disbursementTxCount: transactions.filter(tx => !tx.is_deleted && tx.type === 'Disbursement').length
-    });
-  }
 
   // Sort schedule by due_date ascending
   const sortedSchedule = [...schedule].sort((a, b) => new Date(a.due_date) - new Date(b.due_date));
@@ -1383,22 +1348,16 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
   });
 
   // Detect if this is an "interest paid in advance" loan
-  // For advance loans, the first due date equals the loan start date
-  // For arrears loans, the first due date is after the loan start date
+  // Prefer product.interest_paid_in_advance if available (most reliable)
+  // Fall back to detecting based on schedule dates (first due date equals loan start date)
   const loanStartDate = new Date(loan.start_date);
   loanStartDate.setHours(0, 0, 0, 0);
   const firstDueDate = sortedSchedule.length > 0 ? new Date(sortedSchedule[0].due_date) : null;
   if (firstDueDate) firstDueDate.setHours(0, 0, 0, 0);
 
-  const isInterestPaidInAdvance = firstDueDate && firstDueDate.getTime() === loanStartDate.getTime();
-
-  if (isDebugLoan) {
-    console.log(`[InterestCalc DEBUG] isInterestPaidInAdvance: ${isInterestPaidInAdvance}`, {
-      loanStartDate: loanStartDate.toISOString(),
-      firstDueDate: firstDueDate?.toISOString(),
-      match: firstDueDate?.getTime() === loanStartDate.getTime()
-    });
-  }
+  // Use product setting if available, otherwise infer from schedule dates
+  const inferredFromDates = firstDueDate && firstDueDate.getTime() === loanStartDate.getTime();
+  const isInterestPaidInAdvance = product?.interest_paid_in_advance ?? inferredFromDates;
 
   // Add schedule header rows (only for periods up to asOfDate)
   sortedSchedule.forEach((scheduleRow, idx) => {
@@ -1490,17 +1449,10 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
         principalAtPeriodStart = bestBalance;
       }
 
-      // Recalculate expectedInterest using the capital events ledger (same as UI schedule table)
-      if (row.periodStartDate) {
-        const periodStart = row.periodStartDate;
-        const periodEnd = row.periodEndDate || row.date;
-
-        // Use the shared ledger-based calculation for consistency
-        const ledgerResult = calculateInterestFromLedger(loan, capitalEvents, periodStart, periodEnd);
-        row.expectedInterest = ledgerResult.totalInterest;
-        row._hadCapitalChanges = ledgerResult.segments.length > 1;
-        row._ledgerSegments = ledgerResult.segments;
-      }
+      // Use the stored interest_amount from the schedule entry directly
+      // This ensures Interest O/S matches the schedule view exactly
+      // (Previously recalculated using ledger, which could produce slight differences)
+      row.expectedInterest = row.scheduleRow.interest_amount || 0;
 
       // Accrue interest for this period
       runningInterestAccrued += row.expectedInterest;
@@ -1554,26 +1506,31 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
     };
   });
 
+  // For ARREARS loans, add accrued interest since the last due date
+  // This makes the Interest O/S match the TODAY row calculation in the schedule view
+  let accruedSinceLastDue = 0;
+  if (!isInterestPaidInAdvance && scheduleRows.length > 0) {
+    // Find the last due date that was processed (due_date <= today)
+    const lastProcessedRow = scheduleRows[scheduleRows.length - 1];
+    const lastDueDate = lastProcessedRow?.date;
+
+    if (lastDueDate && lastDueDate < today) {
+      const daysSinceLastDue = differenceInDays(today, lastDueDate);
+      if (daysSinceLastDue > 0) {
+        const rate = loan.interest_rate || 0;
+        const dailyRate = runningPrincipalBalance * (rate / 100 / 365);
+        accruedSinceLastDue = dailyRate * daysSinceLastDue;
+      }
+    }
+  }
+
   const result = {
-    totalInterestDue: Math.round(runningInterestAccrued * 100) / 100,
+    totalInterestDue: Math.round((runningInterestAccrued + accruedSinceLastDue) * 100) / 100,
     totalInterestPaid: Math.round(runningInterestPaid * 100) / 100,
-    interestBalance: Math.round((runningInterestAccrued - runningInterestPaid) * 100) / 100,
+    interestBalance: Math.round((runningInterestAccrued + accruedSinceLastDue - runningInterestPaid) * 100) / 100,
+    accruedSinceLastDue: Math.round(accruedSinceLastDue * 100) / 100,
     periods: periods // Include per-period data for comparison
   };
-
-  // Debug logging for specific loans
-  if (loan.loan_number === '1000025' || loan.loan_number === '1000001') {
-    // Count how many schedule rows were processed (had due_date <= today)
-    const processedScheduleCount = scheduleRows.length;
-    console.log(`[InterestCalc RESULT] Loan ${loan.loan_number}:`, {
-      totalInterestDue: result.totalInterestDue,
-      totalInterestPaid: result.totalInterestPaid,
-      interestBalance: result.interestBalance,
-      processedScheduleCount,
-      totalScheduleCount: sortedSchedule.length,
-      rowsBuilt: rows.length
-    });
-  }
 
   return result;
 }
@@ -2323,4 +2280,167 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
     },
     periods: periods
   };
+}
+
+// ============================================================================
+// BALANCE CACHE FUNCTIONS
+// These functions update cached balance values on loan records for performance
+// ============================================================================
+
+/**
+ * Update cached balance values on a loan record
+ * Called asynchronously after transaction/schedule changes
+ *
+ * @param {string} loanId - The loan ID to update
+ * @returns {Object|null} The calculated values, or null if loan not found
+ */
+export async function updateLoanBalanceCache(loanId) {
+  try {
+    // Fetch fresh data for this loan
+    const [loans, transactions, schedules, products] = await Promise.all([
+      api.entities.Loan.filter({ id: loanId }),
+      api.entities.Transaction.filter({ loan_id: loanId }),
+      api.entities.RepaymentSchedule.filter({ loan_id: loanId }),
+      api.entities.LoanProduct.list()
+    ]);
+
+    const loan = loans[0];
+    if (!loan) {
+      console.warn('[BalanceCache] Loan not found:', loanId);
+      return null;
+    }
+
+    const product = products.find(p => p.id === loan.product_id);
+    const calc = calculateAccruedInterestWithTransactions(loan, transactions, new Date(), schedules, product);
+
+    // Update the loan record with cached values
+    await api.entities.Loan.update(loanId, {
+      interest_remaining: Math.round(calc.interestRemaining * 100) / 100,
+      principal_remaining: Math.round(calc.principalRemaining * 100) / 100,
+      balance_updated_at: new Date().toISOString()
+    });
+
+    console.log('[BalanceCache] Updated cache for loan', loan.loan_number, {
+      interest_remaining: calc.interestRemaining,
+      principal_remaining: calc.principalRemaining
+    });
+
+    return calc;
+  } catch (err) {
+    console.error('[BalanceCache] Failed to update cache for loan', loanId, err);
+    throw err;
+  }
+}
+
+/**
+ * Queue a balance cache update (fire-and-forget)
+ * Use this after mutations to avoid blocking the UI
+ * Also triggers an org summary update after the loan cache is updated
+ *
+ * @param {string} loanId - The loan ID to update
+ * @param {boolean} skipOrgSummary - If true, don't update org summary (for bulk operations)
+ */
+export function queueBalanceCacheUpdate(loanId, skipOrgSummary = false) {
+  // Fire and forget - don't await
+  updateLoanBalanceCache(loanId)
+    .then(() => {
+      // After loan cache is updated, also update org summary
+      if (!skipOrgSummary) {
+        // Delay slightly to ensure loan update is committed
+        setTimeout(() => {
+          updateOrgSummary().catch(err => {
+            console.error('[OrgSummary] Failed to update after loan cache:', err);
+          });
+        }, 100);
+      }
+    })
+    .catch(err => {
+      console.error('[BalanceCache] Async update failed for loan', loanId, err);
+    });
+}
+
+/**
+ * Update all loan balance caches for an organization
+ * Used for bulk recalculation (e.g., "Refresh All" button, nightly job)
+ *
+ * @param {string} organizationId - The organization ID
+ * @param {function} onProgress - Optional callback with (current, total) for progress tracking
+ * @returns {Object} { processed, failed, errors }
+ */
+export async function updateAllLoanBalanceCaches(organizationId, onProgress = null) {
+  const loans = await api.entities.Loan.filter({ organization_id: organizationId });
+  const activeLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active');
+
+  let processed = 0;
+  let failed = 0;
+  const errors = [];
+
+  for (const loan of activeLoans) {
+    try {
+      await updateLoanBalanceCache(loan.id);
+      processed++;
+    } catch (err) {
+      failed++;
+      errors.push({ loanId: loan.id, loanNumber: loan.loan_number, error: err.message });
+    }
+
+    if (onProgress) {
+      onProgress(processed + failed, activeLoans.length);
+    }
+  }
+
+  // After updating all loan balances, update the organization summary
+  await updateOrgSummary().catch(err => {
+    console.error('[OrgSummary] Failed to update after bulk balance refresh:', err);
+  });
+
+  return { processed, failed, errors, total: activeLoans.length };
+}
+
+/**
+ * Update organization summary with aggregate values from loans
+ * Called after loan balance cache updates
+ *
+ * @returns {Object} The updated summary
+ */
+export async function updateOrgSummary() {
+  try {
+    // Fetch all loans for the current organization
+    const loans = await api.entities.Loan.list();
+
+    // Calculate aggregates
+    const liveLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active');
+    const settledLoans = loans.filter(l => l.status === 'Closed' || l.status === 'Fully Paid');
+
+    const totalPrincipalOutstanding = liveLoans.reduce((sum, l) => sum + (l.principal_remaining || 0), 0);
+    const totalInterestOutstanding = liveLoans.reduce((sum, l) => sum + (l.interest_remaining || 0), 0);
+    const totalDisbursed = loans.reduce((sum, l) => sum + (l.principal_amount || 0), 0);
+
+    const summary = {
+      total_principal_outstanding: Math.round(totalPrincipalOutstanding * 100) / 100,
+      total_interest_outstanding: Math.round(totalInterestOutstanding * 100) / 100,
+      total_disbursed: Math.round(totalDisbursed * 100) / 100,
+      live_loan_count: liveLoans.length,
+      settled_loan_count: settledLoans.length
+    };
+
+    // Upsert the summary
+    const result = await api.entities.OrganizationSummary.upsert(summary);
+    console.log('[OrgSummary] Updated organization summary:', summary);
+
+    return result;
+  } catch (err) {
+    console.error('[OrgSummary] Failed to update organization summary:', err);
+    throw err;
+  }
+}
+
+/**
+ * Queue an organization summary update (fire-and-forget)
+ * Use this after balance cache updates to avoid blocking the UI
+ */
+export function queueOrgSummaryUpdate() {
+  updateOrgSummary().catch(err => {
+    console.error('[OrgSummary] Async update failed:', err);
+  });
 }

@@ -596,21 +596,21 @@ function TodayStandaloneRow({ row, maxInterestBalance }) {
   return (
     <TableRow className="bg-amber-100 border-y-2 border-amber-400">
       {/* Date with TODAY label */}
-      <TableCell className="font-mono text-sm font-bold text-amber-700 py-2" colSpan={2}>
+      <TableCell className="font-mono text-base font-bold text-amber-700 py-1" colSpan={2}>
         <div className="flex items-center gap-2">
-          <Clock className="w-4 h-4 text-amber-600" />
+          <Clock className="w-5 h-5 text-amber-600" />
           <span>TODAY</span>
           <span className="font-normal text-amber-600">{format(new Date(row.date), 'dd/MM/yyyy')}</span>
         </div>
       </TableCell>
 
       {/* Interest Received - none for today */}
-      <TableCell className="text-right font-mono text-sm py-2">
+      <TableCell className="text-right font-mono text-base py-1">
         <span className="text-slate-300">—</span>
       </TableCell>
 
       {/* Interest Balance */}
-      <TableCell className={cn('text-right font-mono text-sm py-2', balanceColorClass)}>
+      <TableCell className={cn('text-right font-mono text-base py-1', balanceColorClass)}>
         <div className="flex items-center justify-end">
           <span>
             {Math.abs(row.interestBalance) < 0.01 ? (
@@ -626,17 +626,17 @@ function TodayStandaloneRow({ row, maxInterestBalance }) {
       </TableCell>
 
       {/* Principal Change - none for today */}
-      <TableCell className="text-right font-mono text-sm py-2 border-r">
+      <TableCell className="text-right font-mono text-base py-1 border-r">
         <span className="text-slate-300">—</span>
       </TableCell>
 
       {/* Expected Interest - show accrued */}
-      <TableCell className="text-right font-mono text-sm py-2 text-amber-600">
+      <TableCell className="text-right font-mono text-base py-1 text-amber-600">
         {row.accruedInterest > 0.01 && `+${formatCurrency(row.accruedInterest)}`}
       </TableCell>
 
       {/* Calculation - accrued breakdown */}
-      <TableCell className="text-sm py-2 text-amber-600">
+      <TableCell className="text-base py-1 text-amber-600">
         {row.accruedInterest > 0.01 && row.calculationBreakdown && (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -654,7 +654,7 @@ function TodayStandaloneRow({ row, maxInterestBalance }) {
       </TableCell>
 
       {/* Principal Balance */}
-      <TableCell className="text-right font-mono text-sm font-medium py-2">
+      <TableCell className="text-right font-mono text-base font-medium py-1">
         {formatCurrency(row.principalBalance)}
       </TableCell>
     </TableRow>

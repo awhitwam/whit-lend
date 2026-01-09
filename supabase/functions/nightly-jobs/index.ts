@@ -3,6 +3,7 @@
 // - Post investor interest monthly (calculates day-by-day based on balance changes)
 // - Update loan schedule statuses (mark overdue/partial)
 // - Recalculate investor balances if needed
+// - Recalculate loan balance caches (principal_remaining, interest_remaining) and org summaries
 //
 // Deployment:
 //   supabase functions deploy nightly-jobs
@@ -716,6 +717,237 @@ async function recalculateInvestorBalances(supabase: any): Promise<TaskResult> {
 }
 
 // ============================================================================
+// Task: Recalculate All Loan Balance Caches
+// ============================================================================
+
+async function recalculateLoanBalances(supabase: any): Promise<TaskResult> {
+  const result: TaskResult = {
+    task: 'recalculate_loan_balances',
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+    details: []
+  }
+
+  const today = new Date()
+  const todayStr = today.toISOString().split('T')[0]
+
+  console.log(`[RecalculateLoanBalances] ========================================`)
+  console.log(`[RecalculateLoanBalances] Starting loan balance cache reconciliation`)
+  console.log(`[RecalculateLoanBalances] Date: ${todayStr}`)
+  console.log(`[RecalculateLoanBalances] ========================================`)
+
+  // Fetch all organizations
+  const { data: orgs, error: orgsError } = await supabase
+    .from('organizations')
+    .select('id, name')
+
+  if (orgsError) {
+    console.error('[RecalculateLoanBalances] Failed to fetch organizations:', orgsError)
+    result.details.push({ error: `Failed to fetch organizations: ${orgsError.message}` })
+    return result
+  }
+
+  console.log(`[RecalculateLoanBalances] Found ${orgs?.length || 0} organizations`)
+
+  for (const org of (orgs || []) as any[]) {
+    console.log(`[RecalculateLoanBalances] Processing organization: ${org.name}`)
+
+    // Fetch all live/active loans for this organization
+    const { data: loans, error: loansError } = await supabase
+      .from('loans')
+      .select('id, loan_number, principal_amount, interest_rate, start_date, product_id, product_type, status, monthly_charge, duration, principal_remaining, interest_remaining')
+      .eq('organization_id', org.id)
+      .in('status', ['Live', 'Active'])
+      .limit(10000)
+
+    if (loansError) {
+      console.error(`[RecalculateLoanBalances] Failed to fetch loans for org ${org.name}:`, loansError)
+      result.details.push({ org: org.name, error: loansError.message })
+      continue
+    }
+
+    const loanCount = loans?.length || 0
+    console.log(`[RecalculateLoanBalances]   Found ${loanCount} live loans`)
+
+    let orgPrincipalOutstanding = 0
+    let orgInterestOutstanding = 0
+
+    for (const loan of (loans || []) as any[]) {
+      result.processed++
+
+      try {
+        // Fetch transactions for this loan
+        const { data: transactions, error: txError } = await supabase
+          .from('transactions')
+          .select('id, type, amount, gross_amount, date, principal_applied, interest_applied, is_deleted')
+          .eq('loan_id', loan.id)
+          .limit(10000)
+
+        if (txError) {
+          throw new Error(`Failed to fetch transactions: ${txError.message}`)
+        }
+
+        // Fetch repayment schedule
+        const { data: schedules, error: schedError } = await supabase
+          .from('repayment_schedules')
+          .select('id, due_date, principal_due, interest_due, status')
+          .eq('loan_id', loan.id)
+          .order('due_date', { ascending: true })
+          .limit(10000)
+
+        if (schedError) {
+          throw new Error(`Failed to fetch schedules: ${schedError.message}`)
+        }
+
+        const activeTx = (transactions || []).filter((t: any) => !t.is_deleted)
+
+        // Calculate principal remaining
+        // Start with principal amount, add further advances, subtract principal repayments
+        const principalAmount = loan.principal_amount || 0
+        const startDate = new Date(loan.start_date)
+        startDate.setHours(0, 0, 0, 0)
+
+        // Further advances = disbursements after start date
+        const furtherAdvances = activeTx
+          .filter((t: any) => t.type === 'Disbursement')
+          .filter((t: any) => {
+            const txDate = new Date(t.date)
+            txDate.setHours(0, 0, 0, 0)
+            return txDate > startDate
+          })
+          .reduce((sum: number, t: any) => sum + ((t.gross_amount ?? t.amount) || 0), 0)
+
+        const principalRepaid = activeTx
+          .filter((t: any) => t.type === 'Repayment')
+          .reduce((sum: number, t: any) => sum + (t.principal_applied || 0), 0)
+
+        const calculatedPrincipalRemaining = Math.max(0, principalAmount + furtherAdvances - principalRepaid)
+
+        // Calculate interest remaining based on product type
+        let calculatedInterestRemaining = 0
+
+        if (loan.product_type === 'Fixed Charge') {
+          // Fixed Charge: total charges - repayments
+          const totalCharges = (loan.monthly_charge || 0) * (loan.duration || 0)
+          const chargesPaid = activeTx
+            .filter((t: any) => t.type === 'Repayment')
+            .reduce((sum: number, t: any) => sum + (t.amount || 0), 0)
+          calculatedInterestRemaining = Math.max(0, totalCharges - chargesPaid)
+        } else if (loan.product_type === 'Irregular Income') {
+          // Irregular Income: no interest
+          calculatedInterestRemaining = 0
+        } else {
+          // Standard loans: sum interest from schedule minus interest paid
+          const scheduleInterestDue = (schedules || [])
+            .filter((s: any) => new Date(s.due_date) <= today)
+            .reduce((sum: number, s: any) => sum + (s.interest_due || 0), 0)
+
+          const interestPaid = activeTx
+            .filter((t: any) => t.type === 'Repayment')
+            .reduce((sum: number, t: any) => sum + (t.interest_applied || 0), 0)
+
+          calculatedInterestRemaining = scheduleInterestDue - interestPaid
+        }
+
+        // Round to 2 decimal places
+        const roundedPrincipal = Math.round(calculatedPrincipalRemaining * 100) / 100
+        const roundedInterest = Math.round(calculatedInterestRemaining * 100) / 100
+
+        // Check if update needed
+        const currentPrincipal = loan.principal_remaining ?? null
+        const currentInterest = loan.interest_remaining ?? null
+        const principalDiff = currentPrincipal !== null ? Math.abs(roundedPrincipal - currentPrincipal) : 999
+        const interestDiff = currentInterest !== null ? Math.abs(roundedInterest - currentInterest) : 999
+
+        if (principalDiff < 0.01 && interestDiff < 0.01) {
+          result.skipped++
+          orgPrincipalOutstanding += roundedPrincipal
+          orgInterestOutstanding += roundedInterest
+          continue
+        }
+
+        // Update loan record
+        const { error: updateError } = await supabase
+          .from('loans')
+          .update({
+            principal_remaining: roundedPrincipal,
+            interest_remaining: roundedInterest,
+            balance_updated_at: new Date().toISOString()
+          })
+          .eq('id', loan.id)
+
+        if (updateError) {
+          throw new Error(`Failed to update loan: ${updateError.message}`)
+        }
+
+        console.log(`[RecalculateLoanBalances]   Loan #${loan.loan_number}: Updated P:${currentPrincipal}→${roundedPrincipal}, I:${currentInterest}→${roundedInterest}`)
+
+        result.succeeded++
+        result.details.push({
+          loan: loan.loan_number,
+          org: org.name,
+          status: 'updated',
+          previous: { principal: currentPrincipal, interest: currentInterest },
+          new: { principal: roundedPrincipal, interest: roundedInterest }
+        })
+
+        orgPrincipalOutstanding += roundedPrincipal
+        orgInterestOutstanding += roundedInterest
+
+      } catch (error: any) {
+        console.error(`[RecalculateLoanBalances] Error processing loan #${loan.loan_number}:`, error)
+        result.failed++
+        result.details.push({
+          loan: loan.loan_number,
+          org: org.name,
+          status: 'failed',
+          error: error.message
+        })
+      }
+    }
+
+    // Update organization summary
+    try {
+      const { data: allLoans, error: allLoansError } = await supabase
+        .from('loans')
+        .select('status')
+        .eq('organization_id', org.id)
+
+      if (!allLoansError && allLoans) {
+        const liveLoanCount = allLoans.filter((l: any) => l.status === 'Live' || l.status === 'Active').length
+        const settledLoanCount = allLoans.filter((l: any) => l.status === 'Closed' || l.status === 'Fully Paid').length
+
+        await supabase
+          .from('organization_summary')
+          .upsert({
+            organization_id: org.id,
+            total_principal_outstanding: Math.round(orgPrincipalOutstanding * 100) / 100,
+            total_interest_outstanding: Math.round(orgInterestOutstanding * 100) / 100,
+            live_loan_count: liveLoanCount,
+            settled_loan_count: settledLoanCount,
+            updated_at: new Date().toISOString()
+          }, { onConflict: 'organization_id' })
+
+        console.log(`[RecalculateLoanBalances]   Org summary updated: P:${orgPrincipalOutstanding.toFixed(2)}, I:${orgInterestOutstanding.toFixed(2)}`)
+      }
+    } catch (summaryError) {
+      console.error(`[RecalculateLoanBalances] Failed to update org summary for ${org.name}:`, summaryError)
+    }
+  }
+
+  console.log(`[RecalculateLoanBalances] ========================================`)
+  console.log(`[RecalculateLoanBalances] Summary:`)
+  console.log(`[RecalculateLoanBalances]   - Total loans checked: ${result.processed}`)
+  console.log(`[RecalculateLoanBalances]   - Already correct: ${result.skipped}`)
+  console.log(`[RecalculateLoanBalances]   - Updated: ${result.succeeded}`)
+  console.log(`[RecalculateLoanBalances]   - Failed: ${result.failed}`)
+  console.log(`[RecalculateLoanBalances] ========================================`)
+  return result
+}
+
+// ============================================================================
 // Main Handler
 // ============================================================================
 
@@ -788,7 +1020,8 @@ Deno.serve(async (req) => {
     // ========== END AUTHORIZATION ==========
 
     // Parse request body for specific tasks (optional)
-    let tasksToRun = ['investor_interest', 'loan_schedules']
+    // Default nightly tasks: investor interest, loan schedules, loan balance cache reconciliation
+    let tasksToRun = ['investor_interest', 'loan_schedules', 'recalculate_loan_balances']
 
     try {
       const body = await req.json()
@@ -828,12 +1061,21 @@ Deno.serve(async (req) => {
       console.log(``)
     }
 
-    // Run balance recalculation (optional, can be triggered manually)
+    // Run investor balance recalculation (optional, can be triggered manually)
     if (tasksToRun.includes('recalculate_balances')) {
       console.log(`[NightlyJobs] >>> Starting task: recalculate_balances`)
       const balanceResult = await recalculateInvestorBalances(supabase)
       results.push(balanceResult)
       console.log(`[NightlyJobs] <<< Completed task: recalculate_balances`)
+      console.log(``)
+    }
+
+    // Run loan balance cache reconciliation (runs nightly)
+    if (tasksToRun.includes('recalculate_loan_balances')) {
+      console.log(`[NightlyJobs] >>> Starting task: recalculate_loan_balances`)
+      const loanBalanceResult = await recalculateLoanBalances(supabase)
+      results.push(loanBalanceResult)
+      console.log(`[NightlyJobs] <<< Completed task: recalculate_loan_balances`)
       console.log(``)
     }
 

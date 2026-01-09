@@ -2,16 +2,16 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Upload, Link2, Shield } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Upload, Link2, Shield, RefreshCw } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
-import { formatCurrency, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
+import { formatCurrency, calculateAccruedInterestWithTransactions, updateAllLoanBalanceCaches } from '@/components/loan/LoanCalculator';
 import EmptyState from '@/components/ui/EmptyState';
 import { getOrgJSON, setOrgJSON } from '@/lib/orgStorage';
 
@@ -114,8 +114,11 @@ const getProductAbbreviation = (productName) => {
 
 export default function Loans() {
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { currentOrganization } = useOrganization();
   const [searchParams, setSearchParams] = useSearchParams();
+  const [isRecalculating, setIsRecalculating] = useState(false);
+  const [recalcProgress, setRecalcProgress] = useState({ current: 0, total: 0 });
   const [searchTerm, setSearchTerm] = useState('');
   const borrowerFilter = searchParams.get('borrower') || null;
   const contactEmailFilter = searchParams.get('contact_email') || null;
@@ -232,9 +235,10 @@ export default function Loans() {
 
   // Only fetch transactions for interest calculation (principal uses cached value)
   // Still need transactions for: interest calculation, last payment, charges outstanding
+  // Use listAll() to paginate past Supabase's default 1000 row limit
   const { data: allTransactions = [], isLoading: isLoadingTransactions } = useQuery({
     queryKey: ['all-transactions', currentOrganization?.id],
-    queryFn: () => api.entities.Transaction.list('-date', 10000),
+    queryFn: () => api.entities.Transaction.listAll('-date'),
     enabled: !!currentOrganization
   });
 
@@ -327,6 +331,7 @@ export default function Loans() {
     if (!borrowerFilter && !contactEmailFilter) return null;
 
     // Calculate totals based on filtered loans that match the current status filter
+    // Uses CACHED balance values from loan records for performance
     const loansToSum = filteredLoans;
 
     let totalPrincipalBalance = 0;
@@ -335,18 +340,13 @@ export default function Loans() {
     let totalExitFees = 0;
 
     loansToSum.forEach(loan => {
-      const loanTransactions = allTransactions.filter(t => t.loan_id === loan.id);
-      const loanSchedule = allSchedules.filter(s => s.loan_id === loan.id);
+      // Use cached values from loan record
+      const principalRemaining = loan.principal_remaining ?? (loan.principal_amount || 0);
+      const interestRemaining = loan.interest_remaining ?? 0;
 
-      // Calculate principal remaining (same logic as table rows)
-      const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule);
-      const principalRemaining = loan.principal_remaining !== null && loan.principal_remaining !== undefined
-        ? loan.principal_remaining
-        : liveInterestCalc.principalRemaining;
-      const interestRemaining = liveInterestCalc.interestRemaining;
-
-      // Handle Fixed Charge differently
+      // Handle Fixed Charge differently - still need transactions for charges calculation
       if (loan.product_type === 'Fixed Charge') {
+        const loanTransactions = allTransactions.filter(t => t.loan_id === loan.id);
         const totalCharges = (loan.monthly_charge || 0) * (loan.duration || 0);
         const chargesPaid = loanTransactions
           .filter(t => !t.is_deleted && t.type === 'Repayment')
@@ -371,7 +371,7 @@ export default function Loans() {
       totalArrFees,
       totalExitFees
     };
-  }, [borrowerFilter, contactEmailFilter, filteredLoans, allTransactions, allSchedules]);
+  }, [borrowerFilter, contactEmailFilter, filteredLoans, allTransactions]);
 
   const sortedLoans = useMemo(() => {
     return [...filteredLoans].sort((a, b) => {
@@ -429,11 +429,11 @@ export default function Loans() {
           bVal = b.status || '';
           break;
         case 'interest_os':
-          const aIntTransactions = allTransactions.filter(t => t.loan_id === a.id);
-          const bIntTransactions = allTransactions.filter(t => t.loan_id === b.id);
-
-          // For Fixed Charge loans, use chargesOutstanding; for others use interestRemaining
+          // Use cached interest_remaining values for sorting
+          // For Fixed Charge loans, still need to calculate from transactions
+          // For Irregular Income, sort to end
           if (a.product_type === 'Fixed Charge') {
+            const aIntTransactions = allTransactions.filter(t => t.loan_id === a.id);
             const aTotalCharges = (a.monthly_charge || 0) * (a.duration || 0);
             const aChargesPaid = aIntTransactions
               .filter(t => !t.is_deleted && t.type === 'Repayment')
@@ -442,11 +442,12 @@ export default function Loans() {
           } else if (a.product_type === 'Irregular Income') {
             aVal = -Infinity; // Sort to end
           } else {
-            const aInterestCalc = calculateAccruedInterestWithTransactions(a, aIntTransactions);
-            aVal = aInterestCalc.interestRemaining;
+            // Use cached value if available
+            aVal = a.interest_remaining ?? 0;
           }
 
           if (b.product_type === 'Fixed Charge') {
+            const bIntTransactions = allTransactions.filter(t => t.loan_id === b.id);
             const bTotalCharges = (b.monthly_charge || 0) * (b.duration || 0);
             const bChargesPaid = bIntTransactions
               .filter(t => !t.is_deleted && t.type === 'Repayment')
@@ -455,8 +456,8 @@ export default function Loans() {
           } else if (b.product_type === 'Irregular Income') {
             bVal = -Infinity; // Sort to end
           } else {
-            const bInterestCalc = calculateAccruedInterestWithTransactions(b, bIntTransactions);
-            bVal = bInterestCalc.interestRemaining;
+            // Use cached value if available
+            bVal = b.interest_remaining ?? 0;
           }
           break;
         case 'created_date':
@@ -512,6 +513,28 @@ export default function Loans() {
     Live: loans.filter(l => l.status === 'Live' || l.status === 'Active').length,
     Settled: loans.filter(l => l.status === 'Closed' || l.status === 'Fully Paid').length,
     Defaulted: loans.filter(l => l.status === 'Defaulted' || l.status === 'Default').length,
+  };
+
+  // Handler for refreshing all balance caches
+  const handleRefreshBalances = async () => {
+    if (!currentOrganization?.id || isRecalculating) return;
+
+    setIsRecalculating(true);
+    setRecalcProgress({ current: 0, total: filteredLoans.length });
+
+    try {
+      await updateAllLoanBalanceCaches(
+        currentOrganization.id,
+        (current, total) => setRecalcProgress({ current, total })
+      );
+      // Invalidate queries to refresh the UI with new cached values
+      queryClient.invalidateQueries(['loans']);
+    } catch (err) {
+      console.error('[Loans] Failed to refresh balances:', err);
+    } finally {
+      setIsRecalculating(false);
+      setRecalcProgress({ current: 0, total: 0 });
+    }
   };
 
   // Column resize handlers
@@ -809,6 +832,26 @@ export default function Loans() {
             <p className="text-slate-500 mt-1">Manage all loan applications and active loans</p>
           </div>
           <div className="flex gap-2">
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleRefreshBalances}
+                    disabled={isRecalculating}
+                  >
+                    <RefreshCw className={`w-4 h-4 mr-2 ${isRecalculating ? 'animate-spin' : ''}`} />
+                    {isRecalculating
+                      ? `${recalcProgress.current}/${recalcProgress.total}`
+                      : 'Refresh'}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Recalculate all loan balances</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <Link to={createPageUrl('ImportTransactions')}>
               <Button variant="outline" size="sm">
                 <Upload className="w-4 h-4 mr-2" />
@@ -1065,16 +1108,13 @@ export default function Loans() {
                     <tbody className="divide-y divide-slate-100">
                       {sortedLoans.map((loan) => {
                         const loanTransactions = allTransactions.filter(t => t.loan_id === loan.id);
-                        const loanSchedule = allSchedules.filter(s => s.loan_id === loan.id);
                         const loanDisbursements = getDisbursementsForLoan(loan.id);
                         const totalPrincipal = loan.principal_amount + loanDisbursements;
 
-                        // Use live interest calculation for accurate interest outstanding
-                        // Pass schedule to use schedule-based interest (handles rate changes correctly)
-                        const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule);
-                        const principalRemaining = liveInterestCalc.principalRemaining;
-                        const interestRemaining = liveInterestCalc.interestRemaining;
-
+                        // Use CACHED balance values from loan record (updated async after mutations)
+                        // Falls back to 0 if cache not yet populated - will be populated by "Refresh Balances" or nightly job
+                        const principalRemaining = loan.principal_remaining ?? (loan.principal_amount || 0);
+                        const interestRemaining = loan.interest_remaining ?? 0;
 
                         // Calculate charges outstanding for Fixed Charge facilities
                         const isFixedCharge = loan.product_type === 'Fixed Charge';

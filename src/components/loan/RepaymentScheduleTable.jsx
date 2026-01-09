@@ -1303,7 +1303,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
 
                 // Use calculateLoanInterestBalance for accurate interest calculation
-                const interestCalc = calculateLoanInterestBalance(loan, effectiveSchedule, transactions);
+                const interestCalc = calculateLoanInterestBalance(loan, effectiveSchedule, transactions, new Date(), product);
                 const totalInterestReceived = interestCalc.totalInterestPaid;
                 const totalExpectedInterest = interestCalc.totalInterestDue;
 

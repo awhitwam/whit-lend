@@ -80,7 +80,7 @@ export default function Dashboard() {
 
   const { data: transactions = [] } = useQuery({
     queryKey: ['all-transactions', currentOrganization?.id],
-    queryFn: () => api.entities.Transaction.list('-date', 10000),
+    queryFn: () => api.entities.Transaction.listAll('-date'),
     enabled: !!currentOrganization,
     staleTime: DASHBOARD_STALE_TIME
   });
@@ -120,6 +120,14 @@ export default function Dashboard() {
       const logs = await api.entities.AuditLog.filter({ action: 'org_backup_export' }, '-created_at');
       return logs.length > 0 ? logs[0] : null;
     },
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
+  });
+
+  // Query for cached organization summary
+  const { data: orgSummary } = useQuery({
+    queryKey: ['org-summary', currentOrganization?.id],
+    queryFn: () => api.entities.OrganizationSummary.get(),
     enabled: !!currentOrganization,
     staleTime: DASHBOARD_STALE_TIME
   });
@@ -199,8 +207,13 @@ export default function Dashboard() {
   });
 
   // Calculate totals from live metrics
-  const principalOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.principalRemaining), 0);
-  const interestOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.interestRemaining), 0);
+  // Use cached org summary when available for faster rendering, otherwise calculate live
+  const calculatedPrincipalOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.principalRemaining), 0);
+  const calculatedInterestOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.interestRemaining), 0);
+
+  // Prefer cached values from organization_summary if available
+  const principalOutstanding = orgSummary?.total_principal_outstanding ?? calculatedPrincipalOutstanding;
+  const interestOutstanding = orgSummary?.total_interest_outstanding ?? calculatedInterestOutstanding;
   const totalOutstanding = principalOutstanding + interestOutstanding;
 
   // Calculate live portfolio financial metrics

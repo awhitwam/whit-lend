@@ -44,7 +44,9 @@ const tableMap = {
   ReceiptDraft: 'receipt_drafts',
   BorrowerLoanPreference: 'borrower_loan_preferences',
   // Accepted orphans (unreconciled entries marked as intentional)
-  AcceptedOrphan: 'accepted_orphans'
+  AcceptedOrphan: 'accepted_orphans',
+  // Organization summary (cached aggregates)
+  OrganizationSummary: 'organization_summary'
 };
 
 // Tables that should have organization_id filter applied
@@ -131,6 +133,7 @@ function applyOrgFilter(query, tableName) {
 function createEntityHandler(tableName) {
   return {
     // List all records with optional ordering and limit
+    // NOTE: Supabase has a default 1000 row limit. Use listAll() for large datasets.
     async list(orderBy, limit) {
       let query = supabase.from(tableName).select('*');
 
@@ -149,6 +152,41 @@ function createEntityHandler(tableName) {
       const { data, error } = await query;
       if (error) throw error;
       return data || [];
+    },
+
+    // List ALL records by paginating through Supabase's 1000 row limit
+    // Use this when you need more than 1000 records
+    async listAll(orderBy) {
+      const PAGE_SIZE = 1000;
+      let allData = [];
+      let offset = 0;
+      let hasMore = true;
+
+      const order = parseOrder(orderBy, tableName);
+
+      while (hasMore) {
+        let query = supabase.from(tableName).select('*');
+        query = applyOrgFilter(query, tableName);
+
+        if (order) {
+          query = query.order(order.column, { ascending: order.ascending });
+        }
+
+        query = query.range(offset, offset + PAGE_SIZE - 1);
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          allData = allData.concat(data);
+          offset += data.length;
+          hasMore = data.length === PAGE_SIZE;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      return allData;
     },
 
     // Filter records by conditions with optional ordering
@@ -266,11 +304,61 @@ function createEntityHandler(tableName) {
   };
 }
 
+// Special handler for OrganizationSummary (uses organization_id as primary key)
+function createOrganizationSummaryHandler() {
+  const tableName = 'organization_summary';
+
+  return {
+    // Get summary for the current organization
+    async get() {
+      const orgId = getCurrentOrganizationId();
+      if (!orgId) {
+        throw new Error('Organization context not available.');
+      }
+
+      const { data, error } = await supabase
+        .from(tableName)
+        .select('*')
+        .eq('organization_id', orgId)
+        .single();
+
+      if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows
+      return data || null;
+    },
+
+    // Upsert (insert or update) summary for the current organization
+    async upsert(summaryData) {
+      const orgId = getCurrentOrganizationId();
+      if (!orgId) {
+        throw new Error('Organization context not available.');
+      }
+
+      const { data, error } = await supabase
+        .from(tableName)
+        .upsert({
+          organization_id: orgId,
+          ...summaryData,
+          updated_at: new Date().toISOString()
+        }, { onConflict: 'organization_id' })
+        .select()
+        .single();
+
+      if (error) throw error;
+      return data;
+    }
+  };
+}
+
 // Create the data client
 const entities = {};
 for (const [entityName, tableName] of Object.entries(tableMap)) {
+  // Skip OrganizationSummary as it has a special handler
+  if (entityName === 'OrganizationSummary') continue;
   entities[entityName] = createEntityHandler(tableName);
 }
+
+// Add special handlers
+entities.OrganizationSummary = createOrganizationSummaryHandler();
 
 export const api = {
   entities

@@ -64,7 +64,7 @@ import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import EditLoanPanel from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
-import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions, exportScheduleCalculationData, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions, exportScheduleCalculationData, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger, queueBalanceCacheUpdate } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
@@ -460,6 +460,7 @@ export default function LoanDetails() {
         queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
         queryClient.invalidateQueries({ queryKey: ['loans'] })
       ]);
+      queueBalanceCacheUpdate(loanId);
       toast.success('Transaction deleted', { id: 'delete-transaction' });
     },
     onError: () => {
@@ -578,6 +579,7 @@ export default function LoanDetails() {
         queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
         queryClient.invalidateQueries({ queryKey: ['loans'] })
       ]);
+      queueBalanceCacheUpdate(loanId);
       setIsProcessing(false);
       toast.success('Schedule regenerated successfully', { id: 'regenerate-schedule' });
       setIsRegenerateDialogOpen(false);
@@ -615,7 +617,7 @@ export default function LoanDetails() {
     const data = exportScheduleCalculationData(loan, schedule, transactions, asOfDate, product);
 
     // Get UI header calculation (for comparison) - this is what the LoanDetails header shows
-    const uiCalc = calculateLoanInterestBalance(loan, schedule, transactions, asOfDate);
+    const uiCalc = calculateLoanInterestBalance(loan, schedule, transactions, asOfDate, product);
 
     // DEBUG: Log results
     console.log('[CSV Export DEBUG] Results:', {
@@ -981,6 +983,9 @@ export default function LoanDetails() {
         queryClient.invalidateQueries({ queryKey: ['loans'] })
       ]);
 
+      // Update balance cache asynchronously
+      queueBalanceCacheUpdate(loanId);
+
       toast.success('Expense converted to disbursement', { id: 'convert-expense' });
       setConvertingExpense(null);
     } catch (error) {
@@ -1112,6 +1117,7 @@ export default function LoanDetails() {
         queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
         queryClient.invalidateQueries({ queryKey: ['loans'] })
       ]);
+      queueBalanceCacheUpdate(loanId);
       setIsProcessing(false);
       toast.success('Payment recorded successfully', { id: 'payment' });
       setIsPaymentOpen(false);
@@ -1198,9 +1204,10 @@ export default function LoanDetails() {
   const principalRemaining = totalPrincipal - actualPrincipalPaid;
 
   // Calculate live interest using schedule-based method
-  // Pass schedule to use schedule-based interest (handles rate changes correctly)
-  const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, transactions, new Date(), schedule);
+  // Pass schedule and product to use schedule-based interest (handles rate changes correctly)
+  const liveInterestCalc = calculateAccruedInterestWithTransactions(loan, transactions, new Date(), schedule, product);
   const interestRemaining = liveInterestCalc.interestRemaining;
+
   const totalOutstanding = principalRemaining + interestRemaining;
   const progressPercent = (actualPrincipalPaid / totalPrincipal) * 100;
 
@@ -2225,6 +2232,7 @@ export default function LoanDetails() {
             queryClient.invalidateQueries({ queryKey: ['loan', loanId] });
             queryClient.invalidateQueries({ queryKey: ['loan-transactions', loanId] });
             queryClient.invalidateQueries({ queryKey: ['loan-schedule', loanId] });
+            queueBalanceCacheUpdate(loanId);
             setIsReceiptDialogOpen(false);
           }}
         />
