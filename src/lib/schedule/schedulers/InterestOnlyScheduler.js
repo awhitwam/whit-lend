@@ -11,6 +11,7 @@ import { api } from '@/api/dataClient';
 import { BaseScheduler } from '../BaseScheduler.js';
 import { registerScheduler } from '../registry.js';
 import { format, differenceInDays, addMonths, startOfMonth, addWeeks } from 'date-fns';
+import { getEffectiveRate } from '@/components/loan/LoanCalculator';
 
 console.log('[InterestOnlyScheduler] About to import InterestOnlyScheduleView');
 import InterestOnlyScheduleView from '@/components/loan/InterestOnlyScheduleView';
@@ -119,10 +120,10 @@ export class InterestOnlyScheduler extends BaseScheduler {
       const capitalEventsInPeriod = this.utils.getCapitalEventsInPeriod(events, periodStart, periodEnd);
 
       // Calculate principal at start and end of period
-      const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodStart);
-      const principalAtEnd = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodEnd);
+      const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodStart, startDate);
+      const principalAtEnd = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodEnd, startDate);
 
-      // Calculate interest for this period
+      // Calculate interest for this period (with penalty rate support)
       const totalInterestForPeriod = this.calculatePeriodInterestWithEvents({
         principalAtStart,
         originalPrincipal,
@@ -133,7 +134,9 @@ export class InterestOnlyScheduler extends BaseScheduler {
         capitalEventsInPeriod,
         useMonthlyFixed,
         period,
-        periodNumber: i
+        periodNumber: i,
+        loan,
+        transactions
       });
 
       // Interest-only: no principal payments except final balloon
@@ -236,12 +239,21 @@ export class InterestOnlyScheduler extends BaseScheduler {
     const schedule = [];
     let installmentNum = 1;
 
+    // Check if loan has a penalty rate
+    const hasPenaltyRate = loan.has_penalty_rate && loan.penalty_rate && loan.penalty_rate_from;
+    const penaltyRateFrom = hasPenaltyRate ? new Date(loan.penalty_rate_from) : null;
+    if (penaltyRateFrom) {
+      penaltyRateFrom.setHours(0, 0, 0, 0);
+    }
+
     console.log('[MonthlyFirst] === FIRST PERIOD DEBUG ===');
     console.log('[MonthlyFirst] startDate:', format(startDate, 'yyyy-MM-dd'));
     console.log('[MonthlyFirst] startDate.getDate():', startDate.getDate());
     console.log('[MonthlyFirst] originalPrincipal:', originalPrincipal);
-    console.log('[MonthlyFirst] dailyRate:', dailyRate);
-    console.log('[MonthlyFirst] effectiveRate:', effectiveRate);
+    console.log('[MonthlyFirst] hasPenaltyRate:', hasPenaltyRate);
+    console.log('[MonthlyFirst] penaltyRateFrom:', penaltyRateFrom ? format(penaltyRateFrom, 'yyyy-MM-dd') : 'none');
+    console.log('[MonthlyFirst] loan.penalty_rate:', loan.penalty_rate);
+    console.log('[MonthlyFirst] baseRate (effectiveRate):', effectiveRate);
     console.log('[MonthlyFirst] duration:', duration);
 
     // First period: from start date to 1st of next month
@@ -249,7 +261,7 @@ export class InterestOnlyScheduler extends BaseScheduler {
     const firstOfNextMonth = startOfMonth(addMonths(startDate, 1));
     console.log('[MonthlyFirst] firstOfNextMonth:', format(firstOfNextMonth, 'yyyy-MM-dd'));
 
-    const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, startDate);
+    const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, startDate, startDate);
     console.log('[MonthlyFirst] principalAtStart:', principalAtStart);
     console.log('[MonthlyFirst] transactions count:', transactions?.length);
 
@@ -261,13 +273,16 @@ export class InterestOnlyScheduler extends BaseScheduler {
     );
     console.log('[MonthlyFirst] capitalEventsInFirstPeriod:', capitalEventsInFirstPeriod.length);
 
-    const firstPeriodInterest = this.calculateInterestWithSegments({
+    // Calculate interest with rate changes for first period
+    const firstPeriodInterest = this.calculateInterestWithRateChanges({
       principalAtStart,
       originalPrincipal,
-      dailyRate,
+      baseRate: effectiveRate,
       periodStart: startDate,
       periodEnd: firstOfNextMonth,
-      capitalEvents: capitalEventsInFirstPeriod
+      capitalEvents: capitalEventsInFirstPeriod,
+      loan,
+      transactions
     });
     console.log('[MonthlyFirst] firstPeriodInterest:', firstPeriodInterest);
 
@@ -297,8 +312,8 @@ export class InterestOnlyScheduler extends BaseScheduler {
       const periodStart = addMonths(startOfMonth(startDate), monthOffset - 1);
       const periodEnd = addMonths(periodStart, 1);
 
-      const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodStart);
-      const principalAtEnd = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodEnd);
+      const principalAtStart = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodStart, startDate);
+      const principalAtEnd = this.utils.calculatePrincipalAtDate(originalPrincipal, transactions, periodEnd, startDate);
 
       // Calculate interest with mid-period events
       const capitalEventsInPeriod = transactions.filter(t =>
@@ -307,13 +322,16 @@ export class InterestOnlyScheduler extends BaseScheduler {
         new Date(t.date) < periodEnd
       );
 
-      const totalInterest = this.calculateInterestWithSegments({
+      // Calculate interest with rate changes support
+      const totalInterest = this.calculateInterestWithRateChanges({
         principalAtStart,
         originalPrincipal,
-        dailyRate,
+        baseRate: effectiveRate,
         periodStart,
         periodEnd,
-        capitalEvents: capitalEventsInPeriod
+        capitalEvents: capitalEventsInPeriod,
+        loan,
+        transactions
       });
 
       // Balloon payment on last period
@@ -406,6 +424,7 @@ export class InterestOnlyScheduler extends BaseScheduler {
 
   /**
    * Calculate interest for a period accounting for mid-period capital events
+   * Now supports penalty rate changes
    */
   calculatePeriodInterestWithEvents({
     principalAtStart,
@@ -417,33 +436,59 @@ export class InterestOnlyScheduler extends BaseScheduler {
     capitalEventsInPeriod,
     useMonthlyFixed,
     period,
-    periodNumber
+    periodNumber,
+    loan,
+    transactions
   }) {
+    // Check if we have loan data to check for rate changes
+    const hasPenaltyRate = loan?.has_penalty_rate && loan?.penalty_rate && loan?.penalty_rate_from;
+
     if (useMonthlyFixed && periodNumber > 1) {
-      // Monthly fixed calculation
+      // Monthly fixed calculation - for now, doesn't support mid-period rate changes
+      // TODO: Extend weighted monthly interest to support penalty rates
       if (capitalEventsInPeriod.length === 0) {
         // Interest-only uses current principal (not flat)
-        return principalAtStart * (effectiveRate / 100 / 12);
+        // Use penalty rate if applicable
+        const rateToUse = hasPenaltyRate
+          ? getEffectiveRate(loan, periodStart)
+          : effectiveRate;
+        return principalAtStart * (rateToUse / 100 / 12);
       } else {
         // Weighted average for mid-period changes
+        const rateToUse = hasPenaltyRate
+          ? getEffectiveRate(loan, periodStart)
+          : effectiveRate;
         return this.calculateWeightedMonthlyInterest({
           principalAtStart,
           periodStart,
           periodEnd,
           capitalEventsInPeriod,
-          effectiveRate
+          effectiveRate: rateToUse
         });
       }
     } else {
-      // Daily calculation
-      return this.calculateInterestWithSegments({
-        principalAtStart,
-        originalPrincipal,
-        dailyRate,
-        periodStart,
-        periodEnd,
-        capitalEvents: capitalEventsInPeriod
-      });
+      // Daily calculation with rate change support
+      if (hasPenaltyRate && loan && transactions) {
+        return this.calculateInterestWithRateChanges({
+          principalAtStart,
+          originalPrincipal,
+          baseRate: effectiveRate,
+          periodStart,
+          periodEnd,
+          capitalEvents: capitalEventsInPeriod,
+          loan,
+          transactions
+        });
+      } else {
+        return this.calculateInterestWithSegments({
+          principalAtStart,
+          originalPrincipal,
+          dailyRate,
+          periodStart,
+          periodEnd,
+          capitalEvents: capitalEventsInPeriod
+        });
+      }
     }
   }
 
@@ -488,6 +533,117 @@ export class InterestOnlyScheduler extends BaseScheduler {
     if (finalDays > 0 && segmentPrincipal > 0) {
       totalInterest += segmentPrincipal * dailyRate * finalDays;
     }
+
+    return totalInterest;
+  }
+
+  /**
+   * Calculate interest with support for rate changes (penalty rates)
+   * Handles mid-period rate changes by segmenting calculations
+   */
+  calculateInterestWithRateChanges({
+    principalAtStart,
+    originalPrincipal,
+    baseRate,
+    periodStart,
+    periodEnd,
+    capitalEvents,
+    loan,
+    transactions
+  }) {
+    // Check if loan has a penalty rate that might apply during this period
+    const hasPenaltyRate = loan.has_penalty_rate && loan.penalty_rate && loan.penalty_rate_from;
+
+    if (!hasPenaltyRate) {
+      // No penalty rate - use standard calculation
+      const dailyRate = this.utils.getDailyRate(baseRate);
+      return this.calculateInterestWithSegments({
+        principalAtStart,
+        originalPrincipal,
+        dailyRate,
+        periodStart,
+        periodEnd,
+        capitalEvents
+      });
+    }
+
+    const penaltyRateFrom = new Date(loan.penalty_rate_from);
+    penaltyRateFrom.setHours(0, 0, 0, 0);
+
+    const periodStartNorm = new Date(periodStart);
+    periodStartNorm.setHours(0, 0, 0, 0);
+    const periodEndNorm = new Date(periodEnd);
+    periodEndNorm.setHours(0, 0, 0, 0);
+
+    // Case 1: Penalty rate applies for entire period (penalty date <= period start)
+    if (penaltyRateFrom <= periodStartNorm) {
+      const penaltyDailyRate = this.utils.getDailyRate(loan.penalty_rate);
+      console.log(`[RateChange] Period ${format(periodStart, 'yyyy-MM-dd')} to ${format(periodEnd, 'yyyy-MM-dd')}: Full penalty rate ${loan.penalty_rate}%`);
+      return this.calculateInterestWithSegments({
+        principalAtStart,
+        originalPrincipal,
+        dailyRate: penaltyDailyRate,
+        periodStart,
+        periodEnd,
+        capitalEvents
+      });
+    }
+
+    // Case 2: Penalty rate doesn't apply yet (penalty date >= period end)
+    if (penaltyRateFrom >= periodEndNorm) {
+      const normalDailyRate = this.utils.getDailyRate(baseRate);
+      console.log(`[RateChange] Period ${format(periodStart, 'yyyy-MM-dd')} to ${format(periodEnd, 'yyyy-MM-dd')}: Full base rate ${baseRate}%`);
+      return this.calculateInterestWithSegments({
+        principalAtStart,
+        originalPrincipal,
+        dailyRate: normalDailyRate,
+        periodStart,
+        periodEnd,
+        capitalEvents
+      });
+    }
+
+    // Case 3: Rate changes mid-period - need to split the calculation
+    console.log(`[RateChange] Period ${format(periodStart, 'yyyy-MM-dd')} to ${format(periodEnd, 'yyyy-MM-dd')}: Split at ${format(penaltyRateFrom, 'yyyy-MM-dd')}`);
+    console.log(`[RateChange] Base rate: ${baseRate}%, Penalty rate: ${loan.penalty_rate}%`);
+
+    const normalDailyRate = this.utils.getDailyRate(baseRate);
+    const penaltyDailyRate = this.utils.getDailyRate(loan.penalty_rate);
+
+    // Split capital events between the two segments
+    const eventsBeforePenalty = capitalEvents.filter(e => new Date(e.date) < penaltyRateFrom);
+    const eventsAfterPenalty = capitalEvents.filter(e => new Date(e.date) >= penaltyRateFrom);
+
+    // Calculate principal at the penalty rate change date
+    const principalAtPenaltyDate = this.utils.calculatePrincipalAtDate(
+      originalPrincipal,
+      transactions,
+      penaltyRateFrom,
+      loan.start_date
+    );
+
+    // Calculate interest for segment before penalty rate
+    const interestBeforePenalty = this.calculateInterestWithSegments({
+      principalAtStart,
+      originalPrincipal,
+      dailyRate: normalDailyRate,
+      periodStart,
+      periodEnd: penaltyRateFrom,
+      capitalEvents: eventsBeforePenalty
+    });
+
+    // Calculate interest for segment with penalty rate
+    const interestAfterPenalty = this.calculateInterestWithSegments({
+      principalAtStart: principalAtPenaltyDate,
+      originalPrincipal,
+      dailyRate: penaltyDailyRate,
+      periodStart: penaltyRateFrom,
+      periodEnd,
+      capitalEvents: eventsAfterPenalty
+    });
+
+    const totalInterest = interestBeforePenalty + interestAfterPenalty;
+    console.log(`[RateChange] Interest before penalty: ${interestBeforePenalty.toFixed(2)}, after: ${interestAfterPenalty.toFixed(2)}, total: ${totalInterest.toFixed(2)}`);
 
     return totalInterest;
   }
@@ -710,7 +866,8 @@ export class InterestOnlyScheduler extends BaseScheduler {
       const principalBefore = this.utils.calculatePrincipalAtDate(
         originalPrincipal,
         transactionsBeforeThis,
-        txDate
+        txDate,
+        startDate
       );
 
       // Calculate the change amount
@@ -720,9 +877,13 @@ export class InterestOnlyScheduler extends BaseScheduler {
 
       const principalAfter = principalBefore + principalChange;
 
+      // Get the effective rate for this date (respecting penalty rates)
+      const effectiveRateForDate = getEffectiveRate(loan, txDate);
+      const effectiveDailyRate = this.utils.getDailyRate(effectiveRateForDate);
+
       // Calculate interest difference for remaining days
-      const oldDailyInterest = principalBefore * dailyRate;
-      const newDailyInterest = principalAfter * dailyRate;
+      const oldDailyInterest = principalBefore * effectiveDailyRate;
+      const newDailyInterest = principalAfter * effectiveDailyRate;
       const interestDifference = (newDailyInterest - oldDailyInterest) * daysRemaining;
 
       // Round to 2 decimal places
@@ -812,7 +973,8 @@ export class InterestOnlyScheduler extends BaseScheduler {
     const principalBefore = this.utils.calculatePrincipalAtDate(
       originalPrincipal,
       transactionsBeforeChange,
-      capitalChangeDate
+      capitalChangeDate,
+      startDate
     );
 
     // Calculate the change amount
@@ -822,11 +984,15 @@ export class InterestOnlyScheduler extends BaseScheduler {
 
     const principalAfter = principalBefore + principalChange;
 
+    // Get the effective rate for this date (respecting penalty rates)
+    const effectiveRateForDate = getEffectiveRate(loan, capitalChangeDate);
+    const effectiveDailyRate = this.utils.getDailyRate(effectiveRateForDate);
+
     // Calculate interest difference for remaining days
     // If capital decreased (repayment): new daily interest < old daily interest → negative difference (credit)
     // If capital increased (advance): new daily interest > old daily interest → positive difference (debit)
-    const oldDailyInterest = principalBefore * dailyRate;
-    const newDailyInterest = principalAfter * dailyRate;
+    const oldDailyInterest = principalBefore * effectiveDailyRate;
+    const newDailyInterest = principalAfter * effectiveDailyRate;
     const interestDifference = (newDailyInterest - oldDailyInterest) * daysRemaining;
 
     // Round to 2 decimal places

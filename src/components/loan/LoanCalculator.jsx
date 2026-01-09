@@ -1517,8 +1517,9 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
     if (lastDueDate && lastDueDate < today) {
       const daysSinceLastDue = differenceInDays(today, lastDueDate);
       if (daysSinceLastDue > 0) {
-        const rate = loan.interest_rate || 0;
-        const dailyRate = runningPrincipalBalance * (rate / 100 / 365);
+        // Use getEffectiveRate to respect penalty rates
+        const effectiveRate = getEffectiveRate(loan, today);
+        const dailyRate = runningPrincipalBalance * (effectiveRate / 100 / 365);
         accruedSinceLastDue = dailyRate * daysSinceLastDue;
       }
     }
@@ -1624,27 +1625,39 @@ export function calculateInterestFromLedger(loan, capitalEvents, fromDate, toDat
     }
   }
 
+  // Prepare penalty rate info
+  const hasPenaltyRate = loan.has_penalty_rate && loan.penalty_rate && loan.penalty_rate_from;
+  let penaltyDate = null;
+  if (hasPenaltyRate) {
+    penaltyDate = new Date(loan.penalty_rate_from);
+    penaltyDate.setHours(0, 0, 0, 0);
+  }
+
   let totalInterest = 0;
   const segments = [];
 
   while (periodStart < endDate) {
     // Determine the rate for this segment
     let rate = loan.interest_rate;
-    if (loan.penalty_rate && loan.penalty_rate_from) {
-      const penaltyDate = new Date(loan.penalty_rate_from);
-      penaltyDate.setHours(0, 0, 0, 0);
-      if (periodStart >= penaltyDate) {
-        rate = loan.penalty_rate;
-      }
+    if (hasPenaltyRate && penaltyDate && periodStart >= penaltyDate) {
+      rate = loan.penalty_rate;
     }
     const dailyRate = rate / 100 / 365;
 
-    // Find the end of this segment (next capital event or endDate)
-    let segmentEnd;
-    if (eventIndex < capitalEvents.length && capitalEvents[eventIndex].date < endDate) {
+    // Find the end of this segment - earliest of:
+    // 1. Next capital event
+    // 2. Penalty rate start date (if it falls within this segment)
+    // 3. endDate
+    let segmentEnd = endDate;
+
+    // Check next capital event
+    if (eventIndex < capitalEvents.length && capitalEvents[eventIndex].date < segmentEnd) {
       segmentEnd = capitalEvents[eventIndex].date;
-    } else {
-      segmentEnd = endDate;
+    }
+
+    // Check if penalty rate starts mid-segment (and we haven't applied it yet)
+    if (hasPenaltyRate && penaltyDate && periodStart < penaltyDate && penaltyDate < segmentEnd) {
+      segmentEnd = penaltyDate;
     }
 
     // Calculate days and interest for this segment

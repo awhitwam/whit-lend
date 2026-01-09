@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { format, differenceInDays } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from './LoanCalculator';
-import { CalendarClock, ArrowUpCircle, ArrowDownCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
+import { CalendarClock, ArrowUpCircle, ArrowDownCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUp, ArrowDown, TrendingUp } from 'lucide-react';
 
 /**
  * Build a unified timeline from transactions and schedule entries
@@ -97,9 +97,32 @@ function buildTimeline({ loan, product, schedule, transactions }) {
     });
   });
 
+  // 3.5 Add rate change row if loan has a penalty rate
+  if (loan?.has_penalty_rate && loan?.penalty_rate && loan?.penalty_rate_from) {
+    const penaltyDateKey = getDateKey(loan.penalty_rate_from);
+    rows.push({
+      id: `rate-change-${penaltyDateKey}`,
+      date: penaltyDateKey,
+      primaryType: 'rate_change',
+      // No ledger data
+      principalChange: 0,
+      interestPaid: 0,
+      transaction: null,
+      // Rate change data
+      expectedInterest: 0,
+      isDueDate: false,
+      scheduleEntry: null,
+      calculationBreakdown: null,
+      // Rate change specific
+      previousRate: loan.interest_rate,
+      newRate: loan.penalty_rate,
+      isRateChange: true
+    });
+  }
+
   // 4. Sort all rows by date, then by type order:
-  // Capital first (disbursements), then schedule (adjustments, due dates), then interest payments (repayments)
-  const typeOrder = { disbursement: 0, adjustment: 1, due_date: 2, repayment: 3 };
+  // Capital first (disbursements), rate changes, then schedule (adjustments, due dates), then interest payments (repayments)
+  const typeOrder = { disbursement: 0, rate_change: 1, adjustment: 2, due_date: 3, repayment: 4 };
 
   rows.sort((a, b) => {
     const dateCompare = a.date.localeCompare(b.date);
@@ -111,7 +134,18 @@ function buildTimeline({ loan, product, schedule, transactions }) {
   });
 
   // 5. Calculate running balances
-  const rate = loan?.interest_rate || product?.interest_rate || 0;
+  const baseRate = loan?.interest_rate || product?.interest_rate || 0;
+  const hasPenaltyRate = loan?.has_penalty_rate && loan?.penalty_rate && loan?.penalty_rate_from;
+  const penaltyRate = loan?.penalty_rate || baseRate;
+  const penaltyRateFrom = hasPenaltyRate ? new Date(loan.penalty_rate_from) : null;
+
+  // Helper to get the effective rate for a given date
+  const getEffectiveRateForDate = (dateStr) => {
+    if (!hasPenaltyRate) return baseRate;
+    const entryDate = new Date(dateStr);
+    return entryDate >= penaltyRateFrom ? penaltyRate : baseRate;
+  };
+
   let runningPrincipal = 0;
   let totalExpectedToDate = 0;
   let totalPaidToDate = 0;
@@ -126,7 +160,9 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       const scheduleEntry = row.scheduleEntry;
       const days = scheduleEntry.calculation_days || 0;
       const principalForCalc = runningPrincipal;
-      const dailyRate = principalForCalc * (rate / 100 / 365);
+      // Use the effective rate for this schedule entry's date
+      const effectiveRate = getEffectiveRateForDate(scheduleEntry.due_date);
+      const dailyRate = principalForCalc * (effectiveRate / 100 / 365);
       const isAdjustment = scheduleEntry.installment_number === 0;
 
       if (isAdjustment) {
@@ -150,14 +186,15 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         const storedInterest = scheduleEntry.interest_amount || 0;
         // For display, use the stored calculation values if available
         const displayPrincipal = scheduleEntry.calculation_principal_start || principalForCalc;
-        const displayDailyRate = displayPrincipal * (rate / 100 / 365);
+        const displayDailyRate = displayPrincipal * (effectiveRate / 100 / 365);
 
         row.calculationBreakdown = {
           days,
           dailyRate: displayDailyRate,
           principal: displayPrincipal,
+          effectiveRate,
           breakdown: days > 0 && displayDailyRate > 0
-            ? `${days}d × ${formatCurrency(displayDailyRate)}/day`
+            ? `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`
             : storedInterest === 0 ? 'Prepaid' : `${days}d`
         };
         // Use stored interest amount from schedule
@@ -214,7 +251,9 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       ? differenceInDays(today, new Date(lastDueDateRow.date))
       : 0;
 
-    const dailyRate = previousRow.principalBalance * (rate / 100 / 365);
+    // Use the effective rate for today's date
+    const todayEffectiveRate = getEffectiveRateForDate(todayKey);
+    const dailyRate = previousRow.principalBalance * (todayEffectiveRate / 100 / 365);
     const accruedSinceLastDue = isInterestInAdvance ? 0 : dailyRate * daysSinceLastDue;
     const todayInterestBalance = previousRow.interestBalance + accruedSinceLastDue;
 
@@ -233,7 +272,8 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         days: daysSinceLastDue,
         dailyRate,
         principal: previousRow.principalBalance,
-        breakdown: `${daysSinceLastDue}d × ${formatCurrency(dailyRate)}/day accrued`
+        effectiveRate: todayEffectiveRate,
+        breakdown: `${daysSinceLastDue}d × ${formatCurrency(dailyRate)}/day (${todayEffectiveRate}% pa) accrued`
       } : null,
       principalBalance: previousRow.principalBalance,
       interestBalance: todayInterestBalance,
@@ -288,7 +328,8 @@ function groupRowsByMonth(rows) {
           disbursements: 0,
           interestRepayments: 0,
           capitalRepayments: 0,
-          adjustments: 0
+          adjustments: 0,
+          rateChanges: 0
         }
       });
     }
@@ -307,6 +348,8 @@ function groupRowsByMonth(rows) {
       }
     } else if (row.primaryType === 'adjustment') {
       group.typeCounts.adjustments++;
+    } else if (row.primaryType === 'rate_change') {
+      group.typeCounts.rateChanges++;
     }
   });
 
@@ -417,6 +460,11 @@ function TypeIcon({ row }) {
       tooltip = 'Today - current position';
       colorClass = 'text-amber-600';
       break;
+    case 'rate_change':
+      icon = <TrendingUp className="w-4 h-4" />;
+      tooltip = `Interest rate changed: ${row.previousRate}% → ${row.newRate}% p.a.`;
+      colorClass = 'text-orange-600';
+      break;
     case 'adjustment':
       icon = <CircleDot className="w-4 h-4" />;
       tooltip = 'Schedule adjustment';
@@ -492,6 +540,13 @@ function GroupTypeIcons({ typeCounts }) {
   for (let i = 0; i < typeCounts.adjustments; i++) {
     icons.push(
       <CircleDot key={`adj-${i}`} className="w-4 h-4 text-amber-600" />
+    );
+  }
+
+  // Rate changes (orange trending up)
+  for (let i = 0; i < (typeCounts.rateChanges || 0); i++) {
+    icons.push(
+      <TrendingUp key={`rate-${i}`} className="w-4 h-4 text-orange-600" />
     );
   }
 
@@ -668,6 +723,7 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
   const isFuture = new Date(row.date) > new Date();
   const isDueDate = row.isDueDate;
   const isToday = row.isToday;
+  const isRateChange = row.primaryType === 'rate_change';
 
   // Determine interest balance color
   let balanceColorClass = '';
@@ -682,7 +738,38 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
   const hasInterestPaid = row.interestPaid > 0.01;
 
   // Only show principal balance on first row, last row, or when there's a change
-  const showPrincipalBalance = isFirst || isLast || hasPrincipalChange || isToday;
+  const showPrincipalBalance = isFirst || isLast || hasPrincipalChange || isToday || isRateChange;
+
+  // Special display for rate change rows
+  if (isRateChange) {
+    return (
+      <TableRow className="bg-orange-50 border-y border-orange-300">
+        {/* Date */}
+        <TableCell className={cn(
+          "font-mono text-xs whitespace-nowrap py-1.5",
+          isNested && "pl-6"
+        )}>
+          {format(new Date(row.date), 'dd/MM/yy')}
+        </TableCell>
+
+        {/* Type */}
+        <TableCell className="py-1.5">
+          <TypeIcon row={row} />
+        </TableCell>
+
+        {/* Rate change message spanning remaining columns */}
+        <TableCell colSpan={6} className="py-1.5">
+          <div className="flex items-center gap-2 text-orange-700 font-medium">
+            <span>Interest rate changed:</span>
+            <span className="font-mono">{row.previousRate}% p.a.</span>
+            <span>→</span>
+            <span className="font-mono font-bold">{row.newRate}% p.a.</span>
+            <span className="text-orange-500 text-xs font-normal">(Penalty rate effective from this date)</span>
+          </div>
+        </TableCell>
+      </TableRow>
+    );
+  }
 
   return (
     <TableRow className={cn(

@@ -11,7 +11,7 @@ import { format, differenceInDays, isValid } from 'date-fns';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { cn } from '@/lib/utils';
 
-function calculateSettlementAmount(loan, settlementDate, transactions = []) {
+function calculateSettlementAmount(loan, settlementDate, transactions = [], schedule = [], product = null) {
   const startDate = new Date(loan.start_date);
   const settleDate = new Date(settlementDate);
 
@@ -27,12 +27,21 @@ function calculateSettlementAmount(loan, settlementDate, transactions = []) {
   // Interest accrues up to and including the settlement date
   const daysElapsed = Math.max(0, differenceInDays(settleDate, startDate) + 1);
   const principal = loan.principal_amount;
-  const annualRate = loan.interest_rate / 100;
+
+  // Handle penalty rates - use effective rate at settlement date
+  const hasPenaltyRate = loan.has_penalty_rate && loan.penalty_rate && loan.penalty_rate_from;
+  const penaltyRateFrom = hasPenaltyRate ? new Date(loan.penalty_rate_from) : null;
+  if (penaltyRateFrom) penaltyRateFrom.setHours(0, 0, 0, 0);
+  const baseRate = loan.interest_rate;
+  const effectiveRate = (hasPenaltyRate && penaltyRateFrom && settleDate >= penaltyRateFrom)
+    ? loan.penalty_rate
+    : baseRate;
+  const annualRate = effectiveRate / 100;
   const dailyRate = annualRate / 365;
 
   // Use the shared calculation function for accurate interest calculation
-  // This ensures consistency with the main panel's display
-  const liveCalc = calculateAccruedInterestWithTransactions(loan, transactions, settleDate);
+  // Pass schedule and product to enable penalty rate support
+  const liveCalc = calculateAccruedInterestWithTransactions(loan, transactions, settleDate, schedule, product);
 
   // Get repayment transactions sorted by date
   const repayments = transactions
@@ -229,14 +238,16 @@ export default function SettleLoanModal({
   onClose,
   loan,
   borrower,
-  transactions = []
+  transactions = [],
+  schedule = [],
+  product = null
 }) {
   const { currentOrganization } = useOrganization();
   const [settlementDate, setSettlementDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [showInterestDetails, setShowInterestDetails] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
 
-  const settlement = loan ? calculateSettlementAmount(loan, settlementDate, transactions) : null;
+  const settlement = loan ? calculateSettlementAmount(loan, settlementDate, transactions, schedule, product) : null;
 
   const handleDownloadPDF = () => {
     const settlementData = {

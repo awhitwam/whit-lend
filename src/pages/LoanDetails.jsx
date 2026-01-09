@@ -592,7 +592,7 @@ export default function LoanDetails() {
   });
 
   const handleGenerateLoanStatement = () => {
-    generateLoanStatementPDF(loan, schedule, transactions);
+    generateLoanStatementPDF(loan, schedule, transactions, product);
   };
 
   const handleExportScheduleCSV = () => {
@@ -1214,22 +1214,9 @@ export default function LoanDetails() {
   const liveInterestOutstanding = liveInterestCalc.interestRemaining;
   const isLoanActive = loan.status === 'Live' || loan.status === 'Active';
 
-  // Calculate settlement interest (ledger-based, to today)
-  const capitalEvents = buildCapitalEvents(loan, transactions);
-  const loanStartDate = new Date(loan.start_date);
-  loanStartDate.setHours(0, 0, 0, 0);
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-
-  const ledgerResult = calculateInterestFromLedger(loan, capitalEvents, loanStartDate, today);
-  const settlementInterestAccrued = ledgerResult.totalInterest;
-
-  // Interest paid from all repayments
-  const totalInterestPaid = transactions
-    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
-    .reduce((sum, tx) => sum + (tx.interest_applied || 0), 0);
-
-  const settlementInterestOwed = settlementInterestAccrued - totalInterestPaid;
+  // Use the schedule-based interest calculation for consistency with InterestOnlyScheduleView
+  // This ensures the settlement card matches the TODAY row in the schedule view
+  const settlementInterestOwed = liveInterestCalc.interestRemaining;
 
     return (
       <div className="absolute inset-0 bg-gradient-to-br from-slate-50 to-slate-100 flex overflow-hidden">
@@ -3174,6 +3161,8 @@ export default function LoanDetails() {
               loan={loan}
               borrower={borrower}
               transactions={transactions}
+              schedule={schedule}
+              product={product}
             />
           </div>
         )}

@@ -59,26 +59,54 @@ export function calculateInterestForDays(principal, dailyRate, days, interestTyp
 
 /**
  * Calculate principal outstanding at a specific date for schedule/interest purposes.
- * Uses GROSS principal (loan.principal_amount) minus repayments.
  *
- * NOTE: We do NOT add disbursement transactions here because:
- * - initialPrincipal IS the GROSS loan amount (what borrower owes)
- * - Disbursement transactions represent NET cash given (after arrangement fee)
- * - Adding them would double-count: GROSS + NET = wrong
+ * This accounts for:
+ * 1. Initial principal (loan.principal_amount)
+ * 2. Further advances (Disbursement transactions after initial, using gross_amount)
+ * 3. Principal repayments (reduce balance)
  *
- * For cash flow/ledger purposes, use disbursement transactions directly.
- *
- * @param {number} initialPrincipal - Initial loan principal amount
+ * @param {number} initialPrincipal - Initial loan principal amount (from loan.principal_amount)
  * @param {Array} transactions - Array of transaction objects
  * @param {Date} date - Date to calculate principal at
+ * @param {Date} loanStartDate - Optional loan start date to identify initial disbursement
  * @returns {number} Principal outstanding at the given date
  */
-export function calculatePrincipalAtDate(initialPrincipal, transactions, date) {
+export function calculatePrincipalAtDate(initialPrincipal, transactions, date, loanStartDate = null) {
+  const targetDate = new Date(date);
+  targetDate.setHours(0, 0, 0, 0);
+
+  // Calculate principal repayments before this date
   const repayments = transactions
-    .filter(t => t.type === 'Repayment' && new Date(t.date) < date)
+    .filter(t => {
+      if (t.type !== 'Repayment' || t.is_deleted) return false;
+      const txDate = new Date(t.date);
+      txDate.setHours(0, 0, 0, 0);
+      return txDate < targetDate;
+    })
     .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
 
-  return Math.max(0, initialPrincipal - repayments);
+  // Calculate further advances (disbursements after the loan start date) before this date
+  // Use gross_amount which represents what the borrower owes
+  let furtherAdvances = 0;
+  if (loanStartDate) {
+    const startDate = new Date(loanStartDate);
+    startDate.setHours(0, 0, 0, 0);
+    const startDateKey = startDate.toISOString().split('T')[0];
+
+    furtherAdvances = transactions
+      .filter(t => {
+        if (t.type !== 'Disbursement' || t.is_deleted) return false;
+        const txDate = new Date(t.date);
+        txDate.setHours(0, 0, 0, 0);
+        const txDateKey = txDate.toISOString().split('T')[0];
+        // Exclude initial disbursement (on start date), only count further advances
+        // and only count those before the target date
+        return txDateKey !== startDateKey && txDate < targetDate;
+      })
+      .reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
+  }
+
+  return Math.max(0, initialPrincipal + furtherAdvances - repayments);
 }
 
 /**
