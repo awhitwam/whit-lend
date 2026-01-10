@@ -4999,8 +4999,8 @@ export default function BankReconciliation() {
                     )}
                   </Button>
                 )}
-                {/* Show Create Expenses if entries with expense types are selected */}
-                {selectedWithExpenseType > 0 && (
+                {/* Show Create Expenses if entries with expense types are selected (only on Create New tab) */}
+                {selectedWithExpenseType > 0 && activeTab === 'create' && (
                   <Button
                     size="sm"
                     onClick={handleBulkCreateExpenses}
@@ -5020,8 +5020,8 @@ export default function BankReconciliation() {
                     )}
                   </Button>
                 )}
-                {/* Show Create Other Income if entries marked as other income are selected */}
-                {selectedWithOtherIncome > 0 && (
+                {/* Show Create Other Income if entries marked as other income are selected (only on Create New tab) */}
+                {selectedWithOtherIncome > 0 && activeTab === 'create' && (
                   <Button
                     size="sm"
                     onClick={handleBulkCreateOtherIncome}
@@ -5343,22 +5343,14 @@ export default function BankReconciliation() {
                         <Checkbox
                           checked={(() => {
                             if (selectedEntries.size === 0) return false;
-                            if (filter === 'reconciled') {
-                              // Check if all reconciled entries are selected
-                              const allReconciled = filteredStatements.filter(s => s.is_reconciled);
-                              return allReconciled.length > 0 && allReconciled.every(s => selectedEntries.has(s.id));
-                            } else {
-                              // Check if all entries with 90%+ suggestions are selected
-                              const eligible = filteredStatements.filter(s => {
-                                const suggestion = suggestedMatches.get(s.id);
-                                return !s.is_reconciled && suggestion && suggestion.confidence >= 0.9;
-                              });
-                              return eligible.length > 0 && eligible.every(s => selectedEntries.has(s.id));
-                            }
+                            // Check if all visible entries are selected
+                            return filteredStatements.length > 0 && filteredStatements.every(s => selectedEntries.has(s.id));
                           })()}
                           onCheckedChange={(checked) => {
                             if (checked) {
-                              selectAllVisible();
+                              // Select all visible entries
+                              const allIds = filteredStatements.map(s => s.id);
+                              setSelectedEntries(new Set(allIds));
                             } else {
                               clearSelection();
                             }
@@ -5463,7 +5455,10 @@ export default function BankReconciliation() {
                                     links.push({
                                       type: 'loan',
                                       label: loan ? `${tx?.type || 'Loan'}: ${loan.borrower_name}` : (tx?.type || 'Loan Transaction'),
-                                      amount: recon.amount
+                                      loanNumber: loan?.loan_number,
+                                      loanId: loan?.id,
+                                      amount: recon.amount,
+                                      txDate: tx?.date
                                     });
                                   }
                                   if (recon.investor_transaction_id) {
@@ -5472,7 +5467,9 @@ export default function BankReconciliation() {
                                     links.push({
                                       type: 'investor',
                                       label: investor ? `${tx?.type?.replace('_', ' ') || 'Investor'}: ${investor.business_name || investor.name}` : (tx?.type?.replace('_', ' ') || 'Investor Transaction'),
-                                      amount: recon.amount
+                                      investorId: investor?.id,
+                                      amount: recon.amount,
+                                      txDate: tx?.date
                                     });
                                   }
                                   if (recon.interest_id) {
@@ -5481,7 +5478,9 @@ export default function BankReconciliation() {
                                     links.push({
                                       type: 'interest',
                                       label: investor ? `Interest: ${investor.business_name || investor.name}` : 'Interest',
-                                      amount: recon.amount
+                                      investorId: investor?.id,
+                                      amount: recon.amount,
+                                      txDate: interest?.date
                                     });
                                   }
                                   if (recon.expense_id) {
@@ -5490,7 +5489,17 @@ export default function BankReconciliation() {
                                     links.push({
                                       type: 'expense',
                                       label: expType ? `Expense: ${expType.name}` : 'Expense',
-                                      amount: recon.amount
+                                      amount: recon.amount,
+                                      txDate: exp?.date
+                                    });
+                                  }
+                                  if (recon.other_income_id) {
+                                    const otherInc = otherIncome.find(o => o.id === recon.other_income_id);
+                                    links.push({
+                                      type: 'other_income',
+                                      label: otherInc?.description ? `Other Income: ${otherInc.description}` : 'Other Income',
+                                      amount: recon.amount,
+                                      txDate: otherInc?.date
                                     });
                                   }
                                 }
@@ -5501,11 +5510,43 @@ export default function BankReconciliation() {
 
                                 return (
                                   <div className="space-y-0.5">
-                                    {links.map((link, idx) => (
-                                      <div key={idx} className="text-xs text-emerald-600 truncate" title={link.label}>
-                                        {link.label}
-                                      </div>
-                                    ))}
+                                    {links.map((link, idx) => {
+                                      // Determine the href for the link
+                                      let linkHref = null;
+                                      if (link.type === 'loan' && link.loanId) {
+                                        linkHref = `/LoanDetails?id=${link.loanId}`;
+                                      } else if ((link.type === 'investor' || link.type === 'interest') && link.investorId) {
+                                        linkHref = `/InvestorDetails?id=${link.investorId}`;
+                                      } else if (link.type === 'expense') {
+                                        linkHref = '/Expenses';
+                                      } else if (link.type === 'other_income') {
+                                        linkHref = '/OtherIncome';
+                                      }
+
+                                      const colorClass = link.type === 'loan' ? 'text-blue-600 hover:text-blue-800' :
+                                        link.type === 'investor' ? 'text-purple-600 hover:text-purple-800' :
+                                        link.type === 'interest' ? 'text-amber-600 hover:text-amber-800' :
+                                        link.type === 'expense' ? 'text-orange-600 hover:text-orange-800' :
+                                        'text-emerald-600 hover:text-emerald-800';
+
+                                      return (
+                                        <div key={idx} className={`text-xs truncate ${colorClass}`} title={link.label}>
+                                          {linkHref ? (
+                                            <Link to={linkHref} className="font-medium hover:underline">
+                                              {link.label}
+                                            </Link>
+                                          ) : (
+                                            <span className="font-medium">{link.label}</span>
+                                          )}
+                                          {link.loanNumber && <span className="text-slate-400 ml-1">({link.loanNumber})</span>}
+                                          {link.txDate && (
+                                            <span className="text-slate-400 ml-1">
+                                              {format(parseISO(link.txDate), 'dd MMM')}
+                                            </span>
+                                          )}
+                                        </div>
+                                      );
+                                    })}
                                   </div>
                                 );
                               }
@@ -5520,6 +5561,13 @@ export default function BankReconciliation() {
                                   } else if (suggestion.loan?.borrower_name) {
                                     // For grouped_disbursement matches
                                     linkText += `: ${suggestion.loan.borrower_name}`;
+                                  } else if (suggestion.loan_id || suggestion.existingTransaction?.loan_id) {
+                                    // Look up loan by ID for individual loan transaction matches
+                                    const loanId = suggestion.loan_id || suggestion.existingTransaction?.loan_id;
+                                    const loan = loans.find(l => l.id === loanId);
+                                    if (loan?.borrower_name) {
+                                      linkText += `: ${loan.borrower_name}`;
+                                    }
                                   } else if (suggestion.existingInvestor?.name || suggestion.existingInvestor?.business_name) {
                                     linkText += `: ${suggestion.existingInvestor.business_name || suggestion.existingInvestor.name}`;
                                   } else if (suggestion.existingExpense) {
