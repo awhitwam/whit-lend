@@ -75,12 +75,14 @@ export default function AuditLog() {
       const entityName = log.entity_name?.toLowerCase() || '';
       const action = log.action?.toLowerCase() || '';
       const entityType = log.entity_type?.toLowerCase() || '';
+      const subAction = (log.sub_action || '').toLowerCase();
       const details = JSON.stringify(log.details || '').toLowerCase();
 
       return userName.includes(search) ||
              entityName.includes(search) ||
              action.includes(search) ||
              entityType.includes(search) ||
+             subAction.includes(search) ||
              details.includes(search);
     }
 
@@ -117,6 +119,79 @@ export default function AuditLog() {
   // Keys to skip in display (internal/technical fields)
   const skipKeys = ['source', 'loan_id', 'borrower_id', 'investor_id', 'draft_id', 'entity_id',
     'bank_statement_id', 'transaction_id', 'id', 'organization_id', 'user_id'];
+
+  // Keys that are used as sub-actions and should be excluded from details display
+  const subActionKeys = ['action', 'type', 'match_type', 'reconciliation_type', 'match_mode',
+    'charge_type', 'value_type', 'category', 'entityType'];
+
+  // Extract sub-action from log entry based on action type
+  const getSubAction = (log) => {
+    // First check if sub_action column is populated (new logs)
+    if (log.sub_action) return log.sub_action;
+
+    const details = parseJson(log.details);
+    if (!details) return null;
+
+    const action = log.action?.toLowerCase() || '';
+
+    // Transaction events - use 'action' field (e.g., edit_disbursement, add_repayment)
+    if (action.includes('transaction')) {
+      if (details.action) return details.action;
+      if (details.source) return details.source;
+      if (details.reason) return details.reason;
+    }
+
+    // Reconciliation events - use type/match_type/match_mode
+    if (action.includes('reconciliation')) {
+      if (details.reconciliation_type) return details.reconciliation_type;
+      if (details.type) return details.type;
+      if (details.match_type) return details.match_type;
+      if (details.match_mode) return details.match_mode;
+    }
+
+    // Bulk imports - use entityType
+    if (action.includes('bulk_import') || action.includes('import')) {
+      if (details.entityType) return details.entityType;
+    }
+
+    // Expense events - use category/type_name
+    if (action.includes('expense')) {
+      if (details.category) return details.category;
+      if (details.type_name) return details.type_name;
+    }
+
+    // Investor transaction events - use type
+    if (action.includes('investor_transaction') || action.includes('investor_interest')) {
+      if (details.type) return details.type;
+      if (details.transaction_type) return details.transaction_type;
+    }
+
+    // Loan property events - use charge_type
+    if (action.includes('property') || action.includes('loan_property')) {
+      if (details.charge_type) return details.charge_type;
+      if (details.value_type) return details.value_type;
+    }
+
+    // Loan events - check for reason or status changes
+    if (action.includes('loan') && !action.includes('property')) {
+      if (details.edit_reason) return null; // edit_reason shows in details, not sub-action
+      if (details.status && action.includes('update')) return `status: ${details.status}`;
+    }
+
+    // Backup events
+    if (action.includes('backup')) {
+      if (details.totalRecords) return `${details.totalRecords} records`;
+      if (details.restoredRecords) return `${details.restoredRecords} records`;
+    }
+
+    return null;
+  };
+
+  // Format sub-action for display (convert snake_case to Title Case)
+  const formatSubAction = (subAction) => {
+    if (!subAction) return null;
+    return subAction.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+  };
 
   // Check if value looks like a UUID
   const isUuid = (value) => {
@@ -179,6 +254,7 @@ export default function AuditLog() {
     if (details && typeof details === 'object' && result.length <= 1) {
       const entries = Object.entries(details).filter(([key, value]) => {
         if (skipKeys.includes(key)) return false;
+        if (subActionKeys.includes(key)) return false; // Shown in Sub-Action column
         if (key === 'edit_reason') return false; // Already shown above
         if (key.endsWith('_id') && isUuid(value)) return false;
         if (value === null || value === undefined) return false;
@@ -321,11 +397,12 @@ export default function AuditLog() {
                 <Table>
                   <TableHeader>
                     <TableRow>
-                      <TableHead className="w-[180px]">Timestamp</TableHead>
-                      <TableHead className="w-[120px]">User</TableHead>
-                      <TableHead className="w-[140px]">Action</TableHead>
-                      <TableHead className="w-[100px]">Entity</TableHead>
-                      <TableHead className="w-[180px]">Name</TableHead>
+                      <TableHead className="w-[160px]">Timestamp</TableHead>
+                      <TableHead className="w-[100px]">User</TableHead>
+                      <TableHead className="w-[130px]">Action</TableHead>
+                      <TableHead className="w-[120px]">Sub-Action</TableHead>
+                      <TableHead className="w-[90px]">Entity</TableHead>
+                      <TableHead className="w-[160px]">Name</TableHead>
                       <TableHead>Details</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -343,10 +420,20 @@ export default function AuditLog() {
                             {log.action}
                           </Badge>
                         </TableCell>
+                        <TableCell className="text-sm text-slate-600">
+                          {(() => {
+                            const subAction = getSubAction(log);
+                            return subAction ? (
+                              <span className="text-xs bg-slate-100 px-2 py-0.5 rounded">
+                                {formatSubAction(subAction)}
+                              </span>
+                            ) : '-';
+                          })()}
+                        </TableCell>
                         <TableCell className="text-sm font-medium">
                           {log.entity_type}
                         </TableCell>
-                        <TableCell className="text-sm text-slate-600 truncate max-w-[180px]" title={log.entity_name}>
+                        <TableCell className="text-sm text-slate-600 truncate max-w-[160px]" title={log.entity_name}>
                           {log.entity_name || '-'}
                         </TableCell>
                         <TableCell className="max-w-xs">

@@ -149,7 +149,8 @@ export async function logAudit({
 
     const { error } = await supabase
       .from('audit_logs')
-      .insert(auditEntry);
+      .insert(auditEntry)
+      .select();
 
     if (error) {
       console.error('Failed to log audit event:', error);

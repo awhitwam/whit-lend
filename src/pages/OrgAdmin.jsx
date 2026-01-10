@@ -16,6 +16,14 @@ import { applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
 import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
+import {
+  CURRENT_SCHEMA_VERSION,
+  tableSchemas,
+  analyzeBackup,
+  processRecordsForRestore,
+  isBackupCompatible,
+  getAnalysisSummary
+} from '@/lib/backupSchema';
 
 export default function OrgAdmin() {
   const { canAdmin, currentOrganization, refreshOrganizations } = useOrganization();
@@ -1113,7 +1121,8 @@ export default function OrgAdmin() {
     addLog('Starting backup export...');
 
     const backup = {
-      version: '1.0',
+      version: '2.0',
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       exportDate: new Date().toISOString(),
       organizationId: currentOrganization.id,
       organizationName: currentOrganization.name,
@@ -1213,10 +1222,14 @@ export default function OrgAdmin() {
       // Calculate total records
       const totalRecords = Object.values(backup.metadata.recordCounts || {}).reduce((a, b) => a + b, 0);
 
+      // Analyze backup for schema compatibility
+      const analysis = analyzeBackup(backup, tableSchemas);
+
       setRestorePreview({
         ...backup,
         totalRecords,
-        fileName: file.name
+        fileName: file.name,
+        analysis
       });
       setRestoreConfirmText('');
     } catch (err) {
@@ -1311,8 +1324,11 @@ export default function OrgAdmin() {
           try {
             const fkFields = fkFieldMap[table] || [];
 
+            // First apply schema processing to filter unknown columns and apply defaults
+            const schemaProcessedRecords = processRecordsForRestore(table, records);
+
             // Prepare records: strip IDs and remap FKs
-            let cleanRecords = records.map(r => prepareRecord(r, fkFields));
+            let cleanRecords = schemaProcessedRecords.map(r => prepareRecord(r, fkFields));
 
             // Special handling for loans - remove restructured_from_loan_id for first pass
             // (will be updated after all loans are inserted since it's self-referential)
@@ -1788,6 +1804,64 @@ export default function OrgAdmin() {
                           </span>
                         ))}
                     </div>
+
+                    {/* Schema compatibility warnings */}
+                    {restorePreview.analysis && (
+                      <div className="space-y-2 mt-2">
+                        {/* Schema version info */}
+                        {restorePreview.analysis.backupVersion !== restorePreview.analysis.currentVersion && (
+                          <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                            <p className="font-medium text-blue-800">
+                              Schema version: backup={restorePreview.analysis.backupVersion}, current={restorePreview.analysis.currentVersion}
+                            </p>
+                          </div>
+                        )}
+
+                        {/* Columns that will be dropped */}
+                        {Object.keys(restorePreview.analysis.droppedColumns).length > 0 && (
+                          <div className="p-2 bg-amber-50 border border-amber-200 rounded text-xs">
+                            <p className="font-medium text-amber-800">Data will be dropped:</p>
+                            {Object.entries(restorePreview.analysis.droppedColumns).map(([table, cols]) => (
+                              <p key={table} className="text-amber-700">
+                                {table}: {cols.join(', ')}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Columns that will use defaults */}
+                        {Object.keys(restorePreview.analysis.addedColumns).length > 0 && (
+                          <div className="p-2 bg-blue-50 border border-blue-200 rounded text-xs">
+                            <p className="font-medium text-blue-800">Defaults will be applied:</p>
+                            {Object.entries(restorePreview.analysis.addedColumns).map(([table, cols]) => (
+                              <p key={table} className="text-blue-700">
+                                {table}: {cols.map(c => `${c.column}=${JSON.stringify(c.default)}`).join(', ')}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+
+                        {/* Unknown tables that will be skipped */}
+                        {restorePreview.analysis.unknownTables.length > 0 && (
+                          <div className="p-2 bg-slate-100 border border-slate-200 rounded text-xs">
+                            <p className="font-medium text-slate-800">Tables will be skipped:</p>
+                            <p className="text-slate-600">{restorePreview.analysis.unknownTables.join(', ')}</p>
+                          </div>
+                        )}
+
+                        {/* Missing required columns - this is a blocking issue */}
+                        {Object.keys(restorePreview.analysis.missingRequired).length > 0 && (
+                          <div className="p-2 bg-red-50 border border-red-200 rounded text-xs">
+                            <p className="font-medium text-red-800">Warning: Missing required columns (restore may fail):</p>
+                            {Object.entries(restorePreview.analysis.missingRequired).map(([table, cols]) => (
+                              <p key={table} className="text-red-700">
+                                {table}: {cols.join(', ')}
+                              </p>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    )}
 
                     {/* Confirmation */}
                     <div className="space-y-2">
