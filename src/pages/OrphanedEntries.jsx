@@ -21,7 +21,7 @@ import { toast } from 'sonner';
 export default function OrphanedEntries() {
   const [typeFilter, setTypeFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
-  const [showAccepted, setShowAccepted] = useState(false);
+  const [showAccepted, setShowAccepted] = useState(true);
   const [expandedYears, setExpandedYears] = useState(new Set());
 
   // Accept orphan dialog state

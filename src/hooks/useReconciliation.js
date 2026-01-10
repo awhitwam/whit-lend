@@ -442,13 +442,18 @@ export function useReconciliation() {
    * Import bank statements from CSV
    */
   const importStatements = useCallback(async (csvText, bankSource) => {
+    console.log('[importStatements] Starting import, bankSource:', bankSource);
+
     // Auto-detect bank format if not specified
     let detectedSource = bankSource;
     if (!detectedSource) {
       const rows = parseCSV(csvText);
+      console.log('[importStatements] Auto-detect: parsed rows:', rows.length);
       if (rows.length > 0) {
         const headers = Object.keys(rows[0]);
+        console.log('[importStatements] Auto-detect: headers:', headers);
         detectedSource = detectBankFormat(headers);
+        console.log('[importStatements] Auto-detect: detected source:', detectedSource);
       }
     }
 
@@ -458,6 +463,7 @@ export function useReconciliation() {
 
     // Parse the CSV
     const { entries, errors } = parseBankStatement(csvText, detectedSource);
+    console.log('[importStatements] Parsed entries:', entries.length, 'errors:', errors.length);
 
     if (errors.length > 0) {
       console.warn('Import warnings:', errors);
@@ -469,7 +475,22 @@ export function useReconciliation() {
 
     // Check for duplicates
     const existingRefs = new Set(bankStatements.map(s => s.external_reference).filter(Boolean));
-    const newEntries = entries.filter(e => !existingRefs.has(e.external_reference));
+    console.log('[importStatements] Existing references in DB:', existingRefs.size);
+    console.log('[importStatements] Sample existing refs:', Array.from(existingRefs).slice(0, 5));
+
+    const newEntries = entries.filter(e => {
+      const isDupe = existingRefs.has(e.external_reference);
+      if (isDupe) {
+        console.log('[importStatements] DUPLICATE:', e.external_reference);
+      }
+      return !isDupe;
+    });
+    console.log('[importStatements] New entries after duplicate check:', newEntries.length);
+
+    // Log first few new entry references for debugging
+    if (newEntries.length > 0) {
+      console.log('[importStatements] Sample new refs:', newEntries.slice(0, 5).map(e => e.external_reference));
+    }
 
     if (newEntries.length === 0) {
       throw new Error('All entries already exist (duplicates detected)');

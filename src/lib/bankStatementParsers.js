@@ -105,16 +105,22 @@ function cleanText(text) {
  */
 export function parseCSV(text) {
   const lines = text.trim().split('\n');
+  console.log('[parseCSV] Total lines:', lines.length);
   if (lines.length < 2) return [];
 
   const headers = parseCSVLine(lines[0]);
+  console.log('[parseCSV] Headers:', headers);
   const data = [];
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (!line) continue;
+    if (!line) {
+      console.log(`[parseCSV] Line ${i + 1}: SKIPPED (empty)`);
+      continue;
+    }
 
     const values = parseCSVLine(line);
+    console.log(`[parseCSV] Line ${i + 1}: ${values.length} values`, values);
     const row = {};
 
     headers.forEach((header, index) => {
@@ -124,11 +130,14 @@ export function parseCSV(text) {
     data.push(row);
   }
 
+  console.log('[parseCSV] Total rows parsed:', data.length);
   return data;
 }
 
 /**
  * Parse a single CSV line, handling quoted fields
+ * Also handles Barclays CSV quirk where fields may have unquoted commas
+ * followed by quoted continuation (e.g., GITHUB," INC...")
  */
 function parseCSVLine(line) {
   const values = [];
@@ -139,7 +148,17 @@ function parseCSVLine(line) {
     const char = line[i];
 
     if (char === '"') {
-      inQuotes = !inQuotes;
+      // Check if this quote starts right after a comma (new quoted field)
+      // vs being a continuation of an unquoted field with embedded comma
+      if (!inQuotes && current.length > 0) {
+        // We have unquoted content before this quote - this is a Barclays quirk
+        // where they have: GITHUB," INC..." - treat the comma as part of the field
+        // Continue accumulating into current field
+        current += char;
+        inQuotes = true;
+      } else {
+        inQuotes = !inQuotes;
+      }
     } else if (char === ',' && !inQuotes) {
       values.push(current.trim().replace(/^"|"$/g, ''));
       current = '';
@@ -168,13 +187,22 @@ export const bankParsers = {
       const date = parseUKDate(row.Date);
       if (!date) return null;
 
+      const balance = row.Balance ? parseFloat(row.Balance) : null;
+
+      // Include balance in reference to differentiate identical transactions
+      // (e.g., two payments of £6500 on the same day with same description)
+      const baseRef = generateReference(row.Date, row.Amount, row.Description);
+      const external_reference = balance !== null
+        ? `${baseRef}-bal${String(balance).replace('.', '')}`
+        : baseRef;
+
       return {
         statement_date: date,
         transaction_type: row.TYPE || row['Transaction Type'],
         description: cleanText(row.Description),
         amount: amount,
-        balance: row.Balance ? parseFloat(row.Balance) : null,
-        external_reference: generateReference(row.Date, row.Amount, row.Description),
+        balance,
+        external_reference,
         raw_data: row
       };
     },
@@ -200,9 +228,16 @@ export const bankParsers = {
       if (!date) return null;
 
       // Barclays Number field is often 0, use it only if meaningful
+      // But even meaningful numbers (like DD references) can repeat monthly,
+      // so we always include date to ensure uniqueness
       const number = row.Number && row.Number !== '0' && !row.Number.trim().startsWith('\t')
         ? row.Number.trim()
         : null;
+
+      // Always generate a reference that includes date for uniqueness
+      // Even if we have a Number, DD references like "941284" repeat monthly
+      const baseRef = generateReference(row.Date, row.Amount, row.Memo);
+      const external_reference = number ? `${number}-${baseRef}` : baseRef;
 
       return {
         statement_date: date,
@@ -210,7 +245,7 @@ export const bankParsers = {
         description: cleanText(row.Memo),
         amount: amount,
         balance: null, // Barclays CSV doesn't consistently provide balance
-        external_reference: number || generateReference(row.Date, row.Amount, row.Memo),
+        external_reference,
         raw_data: row
       };
     },
@@ -260,13 +295,16 @@ export function detectBankFormat(headers) {
  * Parse bank statement CSV and return normalized entries
  */
 export function parseBankStatement(csvText, bankSource) {
+  console.log('[parseBankStatement] Bank source:', bankSource);
   const rows = parseCSV(csvText);
+  console.log('[parseBankStatement] Rows from CSV:', rows.length);
   if (rows.length === 0) {
     return { entries: [], errors: ['No data found in CSV'] };
   }
 
   const parser = bankParsers[bankSource];
   if (!parser || !parser.parseRow) {
+    console.log('[parseBankStatement] Unknown bank source:', bankSource);
     return { entries: [], errors: [`Unknown bank source: ${bankSource}`] };
   }
 
@@ -275,17 +313,22 @@ export function parseBankStatement(csvText, bankSource) {
 
   rows.forEach((row, index) => {
     try {
+      console.log(`[parseBankStatement] Row ${index + 2}:`, row);
       const entry = parser.parseRow(row);
       if (entry) {
+        console.log(`[parseBankStatement] Row ${index + 2} PARSED:`, entry.external_reference);
         entries.push(entry);
       } else {
+        console.log(`[parseBankStatement] Row ${index + 2} FAILED: parseRow returned null`);
         errors.push(`Row ${index + 2}: Could not parse row`);
       }
     } catch (err) {
+      console.log(`[parseBankStatement] Row ${index + 2} ERROR:`, err.message);
       errors.push(`Row ${index + 2}: ${err.message}`);
     }
   });
 
+  console.log('[parseBankStatement] Total entries:', entries.length, 'Errors:', errors.length);
   return { entries, errors };
 }
 
