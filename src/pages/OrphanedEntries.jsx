@@ -44,6 +44,18 @@ export default function OrphanedEntries() {
     queryFn: () => api.entities.AcceptedOrphan.list()
   });
 
+  // Loans (to get borrower names)
+  const { data: loans = [], isLoading: loadingLoansData } = useQuery({
+    queryKey: ['loans-all'],
+    queryFn: () => api.entities.Loan.listAll()
+  });
+
+  // Investors (to get investor names)
+  const { data: investors = [], isLoading: loadingInvestorsData } = useQuery({
+    queryKey: ['investors-all'],
+    queryFn: () => api.entities.Investor.list()
+  });
+
   // Loan transactions (repayments & disbursements)
   const { data: loanTransactions = [], isLoading: loadingLoans } = useQuery({
     queryKey: ['loan-transactions-all'],
@@ -80,7 +92,7 @@ export default function OrphanedEntries() {
     queryFn: () => api.entities.ReceiptDraft.list('-date')
   });
 
-  const isLoading = loadingLoans || loadingInvestors || loadingInterest || loadingExpenses || loadingOtherIncome || loadingReceipts;
+  const isLoading = loadingLoansData || loadingInvestorsData || loadingLoans || loadingInvestors || loadingInterest || loadingExpenses || loadingOtherIncome || loadingReceipts;
 
   // Build sets of IDs that ARE reconciled
   const reconciledIds = useMemo(() => {
@@ -120,6 +132,7 @@ export default function OrphanedEntries() {
       .forEach(tx => {
         const key = `loan_transaction-${tx.id}`;
         const accepted = acceptedOrphanMap.get(key);
+        const loan = loans.find(l => l.id === tx.loan_id);
         entries.push({
           id: tx.id,
           type: 'loan_transaction',
@@ -127,7 +140,8 @@ export default function OrphanedEntries() {
           date: tx.date,
           amount: tx.type === 'Disbursement' ? -Math.abs(tx.amount) : tx.amount,
           description: tx.reference || tx.notes,
-          entityName: tx.borrower_name,
+          entityName: loan?.borrower_name || tx.borrower_name || '-',
+          loanNumber: loan?.loan_number,
           entityLink: createPageUrl(`LoanDetails?id=${tx.loan_id}`),
           accepted,
           acceptedReason: accepted?.reason
@@ -140,6 +154,7 @@ export default function OrphanedEntries() {
       .forEach(tx => {
         const key = `investor_transaction-${tx.id}`;
         const accepted = acceptedOrphanMap.get(key);
+        const investor = investors.find(i => i.id === tx.investor_id);
         entries.push({
           id: tx.id,
           type: 'investor_transaction',
@@ -147,7 +162,7 @@ export default function OrphanedEntries() {
           date: tx.date,
           amount: tx.type === 'capital_out' ? -Math.abs(tx.amount) : tx.amount,
           description: tx.notes,
-          entityName: tx.investor_name,
+          entityName: investor?.business_name || investor?.name || tx.investor_name || '-',
           entityLink: createPageUrl(`InvestorDetails?id=${tx.investor_id}`),
           accepted,
           acceptedReason: accepted?.reason
@@ -160,6 +175,7 @@ export default function OrphanedEntries() {
       .forEach(entry => {
         const key = `investor_interest-${entry.id}`;
         const accepted = acceptedOrphanMap.get(key);
+        const investor = investors.find(i => i.id === entry.investor_id);
         entries.push({
           id: entry.id,
           type: 'investor_interest',
@@ -167,7 +183,7 @@ export default function OrphanedEntries() {
           date: entry.date,
           amount: entry.type === 'debit' ? -Math.abs(entry.amount) : entry.amount,
           description: entry.description,
-          entityName: entry.investor_name,
+          entityName: investor?.business_name || investor?.name || entry.investor_name || '-',
           entityLink: createPageUrl(`InvestorDetails?id=${entry.investor_id}`),
           accepted,
           acceptedReason: accepted?.reason
@@ -236,7 +252,7 @@ export default function OrphanedEntries() {
 
     // Sort by date descending
     return entries.sort((a, b) => new Date(b.date) - new Date(a.date));
-  }, [loanTransactions, investorTransactions, investorInterest, expenses, otherIncome, receipts, reconciledIds, acceptedOrphanMap]);
+  }, [loans, investors, loanTransactions, investorTransactions, investorInterest, expenses, otherIncome, receipts, reconciledIds, acceptedOrphanMap]);
 
   // Filter entries by type, search, and accepted status
   const filteredEntries = useMemo(() => {
@@ -422,6 +438,18 @@ export default function OrphanedEntries() {
     }
   };
 
+  const formatCategory = (type) => {
+    switch (type) {
+      case 'loan_transaction': return 'Loan';
+      case 'investor_transaction': return 'Investor';
+      case 'investor_interest': return 'Investor';
+      case 'expense': return 'Expense';
+      case 'other_income': return 'Income';
+      case 'receipt': return 'Receipt';
+      default: return type;
+    }
+  };
+
   const handleFindMatch = (entry) => {
     const searchValue = entry.entityName || formatCurrency(Math.abs(entry.amount));
     window.location.href = createPageUrl(`BankReconciliation?search=${encodeURIComponent(searchValue)}`);
@@ -572,9 +600,10 @@ export default function OrphanedEntries() {
                           <TableHeader>
                             <TableRow className="bg-slate-50/50">
                               <TableHead className="w-[80px]">Date</TableHead>
+                              <TableHead className="w-[80px]">Category</TableHead>
                               <TableHead className="w-[110px]">Type</TableHead>
                               <TableHead className="w-[140px]">Entity</TableHead>
-                              <TableHead className="min-w-[300px]">Description</TableHead>
+                              <TableHead className="min-w-[250px]">Description</TableHead>
                               <TableHead className="text-right w-[100px]">Amount</TableHead>
                               <TableHead className="w-[70px]"></TableHead>
                             </TableRow>
@@ -589,13 +618,27 @@ export default function OrphanedEntries() {
                                   {format(new Date(entry.date), 'dd MMM')}
                                 </TableCell>
                                 <TableCell>
+                                  <span className={`text-xs font-medium ${
+                                    entry.type === 'loan_transaction' ? 'text-blue-600' :
+                                    entry.type === 'investor_transaction' || entry.type === 'investor_interest' ? 'text-purple-600' :
+                                    entry.type === 'expense' ? 'text-red-600' :
+                                    entry.type === 'other_income' ? 'text-emerald-600' :
+                                    'text-cyan-600'
+                                  }`}>
+                                    {formatCategory(entry.type)}
+                                  </span>
+                                </TableCell>
+                                <TableCell>
                                   <Badge variant="outline" className={getTypeBadgeColor(entry.type)}>
                                     {formatEntryType(entry.type, entry.subType)}
                                   </Badge>
                                 </TableCell>
                                 <TableCell>
-                                  <Link to={entry.entityLink} className="text-blue-600 hover:underline truncate block max-w-[130px]">
-                                    {entry.entityName || '-'}
+                                  <Link to={entry.entityLink} className="text-blue-600 hover:underline">
+                                    <div className="truncate max-w-[130px]">{entry.entityName || '-'}</div>
+                                    {entry.loanNumber && (
+                                      <div className="text-xs text-slate-400 font-mono">#{entry.loanNumber}</div>
+                                    )}
                                   </Link>
                                 </TableCell>
                                 <TableCell className="text-slate-600">
