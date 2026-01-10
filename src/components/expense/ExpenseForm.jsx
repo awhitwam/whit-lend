@@ -25,12 +25,15 @@ export default function ExpenseForm({
 
   const handleSubmit = (e) => {
     e.preventDefault();
-    
+
     const selectedType = expenseTypes.find(t => t.id === formData.type_id);
-    const selectedLoan = formData.loan_id ? loans.find(l => l.id === formData.loan_id) : null;
-    
+    // Handle loan_id - convert empty string or 'none' to null for proper UUID handling
+    const loanId = formData.loan_id && formData.loan_id !== '' && formData.loan_id !== 'none' ? formData.loan_id : null;
+    const selectedLoan = loanId ? loans.find(l => l.id === loanId) : null;
+
     onSubmit({
       ...formData,
+      loan_id: loanId,  // Use the properly converted value
       amount: parseFloat(formData.amount),
       type_name: selectedType?.name,
       borrower_name: selectedLoan?.borrower_name || null
@@ -85,12 +88,12 @@ export default function ExpenseForm({
 
       <div className="space-y-2">
         <Label htmlFor="loan_id">Link to Loan (Optional)</Label>
-        <Select value={formData.loan_id} onValueChange={(value) => handleChange('loan_id', value)}>
+        <Select value={formData.loan_id || 'none'} onValueChange={(value) => handleChange('loan_id', value === 'none' ? '' : value)}>
           <SelectTrigger>
             <SelectValue placeholder="No loan linked" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value={null}>No loan linked</SelectItem>
+            <SelectItem value="none">No loan linked</SelectItem>
             {loans.filter(l => !l.is_deleted).map(loan => (
               <SelectItem key={loan.id} value={loan.id}>
                 {loan.borrower_name} - {loan.product_name}
