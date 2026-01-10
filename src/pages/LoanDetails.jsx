@@ -104,7 +104,7 @@ export default function LoanDetails() {
   const [isDeletingDisbursements, setIsDeletingDisbursements] = useState(false);
   const [editReceiptDialogOpen, setEditReceiptDialogOpen] = useState(false);
   const [editReceiptTarget, setEditReceiptTarget] = useState(null);
-  const [editReceiptValues, setEditReceiptValues] = useState({ principal: 0, interest: 0, fees: 0 });
+  const [editReceiptValues, setEditReceiptValues] = useState({ principal: 0, interest: 0, fees: 0, amount: 0, date: '', reference: '' });
   const [isSavingReceipt, setIsSavingReceipt] = useState(false);
   const [editDisbursementDialogOpen, setEditDisbursementDialogOpen] = useState(false);
   const [editDisbursementTarget, setEditDisbursementTarget] = useState(null);
@@ -1827,13 +1827,16 @@ export default function LoanDetails() {
                                             setEditReceiptValues({
                                               principal: tx.principal_applied || 0,
                                               interest: tx.interest_applied || 0,
-                                              fees: tx.fees_applied || 0
+                                              fees: tx.fees_applied || 0,
+                                              amount: parseFloat(tx.amount) || 0,
+                                              date: tx.date?.split('T')[0] || '',
+                                              reference: tx.reference || ''
                                             });
                                             setEditReceiptDialogOpen(true);
                                           }}
                                         >
                                           <Edit className="w-4 h-4 mr-2" />
-                                          Edit Allocation
+                                          Edit Receipt
                                         </DropdownMenuItem>
                                         <DropdownMenuItem
                                           className="text-red-600"
@@ -2604,7 +2607,7 @@ export default function LoanDetails() {
           </AlertDialogContent>
         </AlertDialog>
 
-        {/* Edit Receipt Allocation Dialog */}
+        {/* Edit Receipt Dialog */}
         <AlertDialog open={editReceiptDialogOpen} onOpenChange={(open) => {
           setEditReceiptDialogOpen(open);
           if (!open) {
@@ -2616,83 +2619,134 @@ export default function LoanDetails() {
             <AlertDialogHeader>
               <AlertDialogTitle className="flex items-center gap-2">
                 <Edit className="w-5 h-5" />
-                Edit Receipt Allocation
+                Edit Receipt
               </AlertDialogTitle>
               <AlertDialogDescription>
-                Reallocate the receipt amount between principal, interest, and fees. The total must equal the receipt amount.
+                Update the receipt details and allocation. The allocation total must equal the receipt amount.
               </AlertDialogDescription>
             </AlertDialogHeader>
 
             {editReceiptTarget && (
               <div className="py-4 space-y-4">
-                <div className="bg-slate-50 rounded-lg p-3">
-                  <div className="text-sm text-slate-500">Receipt Total (Fixed)</div>
-                  <div className="text-xl font-bold text-emerald-600">{formatCurrency(editReceiptTarget.amount)}</div>
-                  <div className="text-xs text-slate-400 mt-1">
-                    {format(new Date(editReceiptTarget.date), 'dd/MM/yyyy')}
-                    {editReceiptTarget.reference && ` • ${editReceiptTarget.reference}`}
+                {/* Receipt Details Section */}
+                <div className="space-y-3">
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <Label htmlFor="edit-receipt-date" className="text-sm font-medium">Date</Label>
+                      <Input
+                        id="edit-receipt-date"
+                        type="date"
+                        value={editReceiptValues.date || ''}
+                        onChange={(e) => setEditReceiptValues(prev => ({
+                          ...prev,
+                          date: e.target.value
+                        }))}
+                        className="mt-1"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-receipt-amount" className="text-sm font-medium">Amount</Label>
+                      <Input
+                        id="edit-receipt-amount"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editReceiptValues.amount || ''}
+                        onChange={(e) => setEditReceiptValues(prev => ({
+                          ...prev,
+                          amount: parseFloat(e.target.value) || 0
+                        }))}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <Label htmlFor="edit-receipt-reference" className="text-sm font-medium">Reference</Label>
+                    <Input
+                      id="edit-receipt-reference"
+                      type="text"
+                      value={editReceiptValues.reference || ''}
+                      onChange={(e) => setEditReceiptValues(prev => ({
+                        ...prev,
+                        reference: e.target.value
+                      }))}
+                      className="mt-1"
+                      placeholder="Payment reference..."
+                    />
                   </div>
                 </div>
 
-                <div className="space-y-3">
-                  <div>
-                    <Label htmlFor="edit-principal" className="text-sm font-medium">Principal</Label>
-                    <Input
-                      id="edit-principal"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={editReceiptValues.principal || ''}
-                      onChange={(e) => setEditReceiptValues(prev => ({
-                        ...prev,
-                        principal: parseFloat(e.target.value) || 0
-                      }))}
-                      className="mt-1"
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="edit-interest" className="text-sm font-medium">Interest</Label>
-                    <Input
-                      id="edit-interest"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={editReceiptValues.interest || ''}
-                      onChange={(e) => setEditReceiptValues(prev => ({
-                        ...prev,
-                        interest: parseFloat(e.target.value) || 0
-                      }))}
-                      className="mt-1"
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div>
-                    <Label htmlFor="edit-fees" className="text-sm font-medium">Fees</Label>
-                    <Input
-                      id="edit-fees"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={editReceiptValues.fees || ''}
-                      onChange={(e) => setEditReceiptValues(prev => ({
-                        ...prev,
-                        fees: parseFloat(e.target.value) || 0
-                      }))}
-                      className="mt-1"
-                      placeholder="0.00"
-                    />
+                {/* Allocation Section */}
+                <div className="border-t pt-4">
+                  <div className="text-sm font-medium text-slate-700 mb-3">Allocation</div>
+                  <div className="space-y-3">
+                    <div>
+                      <Label htmlFor="edit-principal" className="text-sm font-medium">Principal</Label>
+                      <Input
+                        id="edit-principal"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editReceiptValues.principal || ''}
+                        onChange={(e) => setEditReceiptValues(prev => ({
+                          ...prev,
+                          principal: parseFloat(e.target.value) || 0
+                        }))}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-interest" className="text-sm font-medium">Interest</Label>
+                      <Input
+                        id="edit-interest"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editReceiptValues.interest || ''}
+                        onChange={(e) => setEditReceiptValues(prev => ({
+                          ...prev,
+                          interest: parseFloat(e.target.value) || 0
+                        }))}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                    </div>
+                    <div>
+                      <Label htmlFor="edit-fees" className="text-sm font-medium">Fees</Label>
+                      <Input
+                        id="edit-fees"
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        value={editReceiptValues.fees || ''}
+                        onChange={(e) => setEditReceiptValues(prev => ({
+                          ...prev,
+                          fees: parseFloat(e.target.value) || 0
+                        }))}
+                        className="mt-1"
+                        placeholder="0.00"
+                      />
+                    </div>
                   </div>
                 </div>
 
                 {/* Allocation Summary */}
                 {(() => {
                   const total = (editReceiptValues.principal || 0) + (editReceiptValues.interest || 0) + (editReceiptValues.fees || 0);
-                  const diff = editReceiptTarget.amount - total;
+                  const receiptAmount = editReceiptValues.amount || 0;
+                  const diff = receiptAmount - total;
                   const isBalanced = Math.abs(diff) < 0.01;
                   return (
                     <div className={`p-3 rounded-lg border ${isBalanced ? 'bg-green-50 border-green-200' : 'bg-amber-50 border-amber-200'}`}>
                       <div className="flex justify-between items-center text-sm">
+                        <span className={isBalanced ? 'text-green-700' : 'text-amber-700'}>Receipt Amount:</span>
+                        <span className={`font-medium ${isBalanced ? 'text-green-700' : 'text-amber-700'}`}>
+                          {formatCurrency(receiptAmount)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm mt-1">
                         <span className={isBalanced ? 'text-green-700' : 'text-amber-700'}>Allocated:</span>
                         <span className={`font-medium ${isBalanced ? 'text-green-700' : 'text-amber-700'}`}>
                           {formatCurrency(total)}
@@ -2716,9 +2770,15 @@ export default function LoanDetails() {
                 onClick={async () => {
                   if (!editReceiptTarget) return;
 
+                  const receiptAmount = editReceiptValues.amount || 0;
                   const total = (editReceiptValues.principal || 0) + (editReceiptValues.interest || 0) + (editReceiptValues.fees || 0);
-                  if (Math.abs(editReceiptTarget.amount - total) >= 0.01) {
+                  if (Math.abs(receiptAmount - total) >= 0.01) {
                     toast.error('Allocation must equal the receipt amount');
+                    return;
+                  }
+
+                  if (!editReceiptValues.date) {
+                    toast.error('Date is required');
                     return;
                   }
 
@@ -2726,13 +2786,17 @@ export default function LoanDetails() {
 
                   try {
                     // Calculate the difference from previous values
+                    const prevAmount = parseFloat(editReceiptTarget.amount) || 0;
                     const prevPrincipal = editReceiptTarget.principal_applied || 0;
                     const prevInterest = editReceiptTarget.interest_applied || 0;
                     const principalDiff = editReceiptValues.principal - prevPrincipal;
                     const interestDiff = editReceiptValues.interest - prevInterest;
 
-                    // Update the transaction
+                    // Update the transaction with all fields
                     await api.entities.Transaction.update(editReceiptTarget.id, {
+                      amount: receiptAmount,
+                      date: editReceiptValues.date,
+                      reference: editReceiptValues.reference || null,
                       principal_applied: editReceiptValues.principal,
                       interest_applied: editReceiptValues.interest,
                       fees_applied: editReceiptValues.fees
@@ -2747,13 +2811,19 @@ export default function LoanDetails() {
                     // Log the change
                     await logTransactionEvent(
                       AuditAction.TRANSACTION_UPDATE,
-                      { id: editReceiptTarget.id, type: 'Repayment', amount: editReceiptTarget.amount, loan_id: loan.id },
+                      { id: editReceiptTarget.id, type: 'Repayment', amount: receiptAmount, loan_id: loan.id },
                       { loan_number: loan.loan_number },
                       {
-                        action: 'edit_allocation',
+                        action: 'edit_receipt',
+                        previous_amount: prevAmount,
+                        previous_date: editReceiptTarget.date,
+                        previous_reference: editReceiptTarget.reference,
                         previous_principal: prevPrincipal,
                         previous_interest: editReceiptTarget.interest_applied || 0,
                         previous_fees: editReceiptTarget.fees_applied || 0,
+                        new_amount: receiptAmount,
+                        new_date: editReceiptValues.date,
+                        new_reference: editReceiptValues.reference,
                         new_principal: editReceiptValues.principal,
                         new_interest: editReceiptValues.interest,
                         new_fees: editReceiptValues.fees
@@ -2767,7 +2837,7 @@ export default function LoanDetails() {
                       queryClient.invalidateQueries({ queryKey: ['loans'] })
                     ]);
 
-                    toast.success('Receipt allocation updated');
+                    toast.success('Receipt updated');
                     setEditReceiptDialogOpen(false);
                     setEditReceiptTarget(null);
                   } catch (error) {
@@ -2777,7 +2847,7 @@ export default function LoanDetails() {
                     setIsSavingReceipt(false);
                   }
                 }}
-                disabled={isSavingReceipt || (editReceiptTarget && Math.abs(editReceiptTarget.amount - ((editReceiptValues.principal || 0) + (editReceiptValues.interest || 0) + (editReceiptValues.fees || 0))) >= 0.01)}
+                disabled={isSavingReceipt || !editReceiptValues.date || (editReceiptTarget && Math.abs((editReceiptValues.amount || 0) - ((editReceiptValues.principal || 0) + (editReceiptValues.interest || 0) + (editReceiptValues.fees || 0))) >= 0.01)}
               >
                 {isSavingReceipt ? (
                   <>
