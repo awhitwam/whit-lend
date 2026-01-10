@@ -105,22 +105,16 @@ function cleanText(text) {
  */
 export function parseCSV(text) {
   const lines = text.trim().split('\n');
-  console.log('[parseCSV] Total lines:', lines.length);
   if (lines.length < 2) return [];
 
   const headers = parseCSVLine(lines[0]);
-  console.log('[parseCSV] Headers:', headers);
   const data = [];
 
   for (let i = 1; i < lines.length; i++) {
     const line = lines[i].trim();
-    if (!line) {
-      console.log(`[parseCSV] Line ${i + 1}: SKIPPED (empty)`);
-      continue;
-    }
+    if (!line) continue;
 
     const values = parseCSVLine(line);
-    console.log(`[parseCSV] Line ${i + 1}: ${values.length} values`, values);
     const row = {};
 
     headers.forEach((header, index) => {
@@ -130,7 +124,6 @@ export function parseCSV(text) {
     data.push(row);
   }
 
-  console.log('[parseCSV] Total rows parsed:', data.length);
   return data;
 }
 
@@ -295,16 +288,13 @@ export function detectBankFormat(headers) {
  * Parse bank statement CSV and return normalized entries
  */
 export function parseBankStatement(csvText, bankSource) {
-  console.log('[parseBankStatement] Bank source:', bankSource);
   const rows = parseCSV(csvText);
-  console.log('[parseBankStatement] Rows from CSV:', rows.length);
   if (rows.length === 0) {
     return { entries: [], errors: ['No data found in CSV'] };
   }
 
   const parser = bankParsers[bankSource];
   if (!parser || !parser.parseRow) {
-    console.log('[parseBankStatement] Unknown bank source:', bankSource);
     return { entries: [], errors: [`Unknown bank source: ${bankSource}`] };
   }
 
@@ -313,22 +303,17 @@ export function parseBankStatement(csvText, bankSource) {
 
   rows.forEach((row, index) => {
     try {
-      console.log(`[parseBankStatement] Row ${index + 2}:`, row);
       const entry = parser.parseRow(row);
       if (entry) {
-        console.log(`[parseBankStatement] Row ${index + 2} PARSED:`, entry.external_reference);
         entries.push(entry);
       } else {
-        console.log(`[parseBankStatement] Row ${index + 2} FAILED: parseRow returned null`);
         errors.push(`Row ${index + 2}: Could not parse row`);
       }
     } catch (err) {
-      console.log(`[parseBankStatement] Row ${index + 2} ERROR:`, err.message);
       errors.push(`Row ${index + 2}: ${err.message}`);
     }
   });
 
-  console.log('[parseBankStatement] Total entries:', entries.length, 'Errors:', errors.length);
   return { entries, errors };
 }
 

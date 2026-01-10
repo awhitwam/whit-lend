@@ -89,7 +89,7 @@ export default function OrphanedEntries() {
   // Receipts (filed only)
   const { data: receipts = [], isLoading: loadingReceipts } = useQuery({
     queryKey: ['receipts-all'],
-    queryFn: () => api.entities.ReceiptDraft.list('-date')
+    queryFn: () => api.entities.ReceiptDraft.list('-receipt_date')
   });
 
   const isLoading = loadingLoansData || loadingInvestorsData || loadingLoans || loadingInvestors || loadingInterest || loadingExpenses || loadingOtherIncome || loadingReceipts;
@@ -329,17 +329,19 @@ export default function OrphanedEntries() {
     return Array.from(groups.values()).sort((a, b) => b.year - a.year);
   }, [filteredEntries]);
 
-  // Initialize expanded years to show current financial year expanded by default
-  useMemo(() => {
-    if (entriesByYear.length > 0 && expandedYears.size === 0) {
-      const currentFY = getFinancialYear(new Date());
-      if (entriesByYear.find(g => g.year === currentFY)) {
-        setExpandedYears(new Set([currentFY]));
-      } else if (entriesByYear.length > 0) {
-        setExpandedYears(new Set([entriesByYear[0].year]));
-      }
+  // Track if we've done initial expansion (to avoid re-expanding after user collapses)
+  const [hasInitialized, setHasInitialized] = useState(false);
+
+  // Initialize expanded years to show current financial year expanded by default (only once)
+  if (entriesByYear.length > 0 && !hasInitialized) {
+    const currentFY = getFinancialYear(new Date());
+    if (entriesByYear.find(g => g.year === currentFY)) {
+      setExpandedYears(new Set([currentFY]));
+    } else {
+      setExpandedYears(new Set([entriesByYear[0].year]));
     }
-  }, [entriesByYear]);
+    setHasInitialized(true);
+  }
 
   // Stats by type (excluding accepted if not showing)
   const statsByType = useMemo(() => {

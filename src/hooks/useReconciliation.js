@@ -442,18 +442,13 @@ export function useReconciliation() {
    * Import bank statements from CSV
    */
   const importStatements = useCallback(async (csvText, bankSource) => {
-    console.log('[importStatements] Starting import, bankSource:', bankSource);
-
     // Auto-detect bank format if not specified
     let detectedSource = bankSource;
     if (!detectedSource) {
       const rows = parseCSV(csvText);
-      console.log('[importStatements] Auto-detect: parsed rows:', rows.length);
       if (rows.length > 0) {
         const headers = Object.keys(rows[0]);
-        console.log('[importStatements] Auto-detect: headers:', headers);
         detectedSource = detectBankFormat(headers);
-        console.log('[importStatements] Auto-detect: detected source:', detectedSource);
       }
     }
 
@@ -463,7 +458,6 @@ export function useReconciliation() {
 
     // Parse the CSV
     const { entries, errors } = parseBankStatement(csvText, detectedSource);
-    console.log('[importStatements] Parsed entries:', entries.length, 'errors:', errors.length);
 
     if (errors.length > 0) {
       console.warn('Import warnings:', errors);
@@ -473,24 +467,63 @@ export function useReconciliation() {
       throw new Error('No valid entries found in CSV');
     }
 
-    // Check for duplicates
-    const existingRefs = new Set(bankStatements.map(s => s.external_reference).filter(Boolean));
-    console.log('[importStatements] Existing references in DB:', existingRefs.size);
-    console.log('[importStatements] Sample existing refs:', Array.from(existingRefs).slice(0, 5));
+    // Fetch fresh bank statements directly from API to ensure we have latest data
+    const freshBankStatements = await api.entities.BankStatement.list('-statement_date');
+
+    // Check for duplicates using hybrid lookup:
+    // 1. Match by external_reference (primary)
+    // 2. Match by date + amount + description (fallback for old format references)
+    const existingRefs = new Set(freshBankStatements.map(s => s.external_reference).filter(Boolean));
+
+    // Build a set of composite keys for fallback matching (date|amount)
+    const existingCompositeKeys = new Set(
+      freshBankStatements.map(s => {
+        const date = s.statement_date || '';
+        const amount = Math.round((parseFloat(s.amount) || 0) * 100);
+        return `${date}|${amount}`;
+      })
+    );
+
+    // Also build a map for more detailed matching (date+amount -> array of descriptions)
+    const existingByDateAmount = new Map();
+    freshBankStatements.forEach(s => {
+      const date = s.statement_date || '';
+      const amount = Math.round((parseFloat(s.amount) || 0) * 100);
+      const key = `${date}|${amount}`;
+      if (!existingByDateAmount.has(key)) {
+        existingByDateAmount.set(key, []);
+      }
+      existingByDateAmount.get(key).push((s.description || '').toLowerCase().trim());
+    });
 
     const newEntries = entries.filter(e => {
-      const isDupe = existingRefs.has(e.external_reference);
-      if (isDupe) {
-        console.log('[importStatements] DUPLICATE:', e.external_reference);
+      // Check by external_reference first
+      if (existingRefs.has(e.external_reference)) {
+        return false;
       }
-      return !isDupe;
-    });
-    console.log('[importStatements] New entries after duplicate check:', newEntries.length);
 
-    // Log first few new entry references for debugging
-    if (newEntries.length > 0) {
-      console.log('[importStatements] Sample new refs:', newEntries.slice(0, 5).map(e => e.external_reference));
-    }
+      // Fallback: check by date + amount + description
+      // This catches duplicates when reference format changed
+      const date = e.statement_date;
+      const amount = Math.round((parseFloat(e.amount) || 0) * 100);
+      const compositeKey = `${date}|${amount}`;
+      const newDesc = (e.description || '').toLowerCase().trim();
+
+      if (existingCompositeKeys.has(compositeKey)) {
+        const existingDescs = existingByDateAmount.get(compositeKey) || [];
+        const descMatch = existingDescs.some(existingDesc => {
+          if (existingDesc === newDesc) return true;
+          if (existingDesc.includes(newDesc) || newDesc.includes(existingDesc)) return true;
+          if (existingDesc.slice(0, 20) === newDesc.slice(0, 20) && existingDesc.length > 10) return true;
+          return false;
+        });
+        if (descMatch) {
+          return false;
+        }
+      }
+
+      return true;
+    });
 
     if (newEntries.length === 0) {
       throw new Error('All entries already exist (duplicates detected)');
@@ -520,7 +553,7 @@ export function useReconciliation() {
     } finally {
       setIsProcessing(false);
     }
-  }, [bankStatements, queryClient]);
+  }, [queryClient]);
 
   // ==================== Dialog Helpers ====================
 
