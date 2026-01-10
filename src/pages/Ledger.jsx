@@ -9,7 +9,7 @@ import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Search, TrendingUp, TrendingDown, DollarSign, ArrowUpDown, ChevronLeft, ChevronRight, FileCheck, ExternalLink } from 'lucide-react';
+import { Search, TrendingUp, TrendingDown, DollarSign, ArrowUpDown, ChevronLeft, ChevronRight, FileCheck, ExternalLink, ShieldCheck } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
 import { useNavigate } from 'react-router-dom';
@@ -65,6 +65,13 @@ export default function Ledger() {
     enabled: !!currentOrganization
   });
 
+  // Fetch accepted orphans
+  const { data: acceptedOrphans = [] } = useQuery({
+    queryKey: ['accepted-orphans', currentOrganization?.id],
+    queryFn: () => api.entities.AcceptedOrphan.list(),
+    enabled: !!currentOrganization
+  });
+
   const isLoading = transactionsLoading || loansLoading || expensesLoading || investorTxLoading || investorsLoading || reconcilingLoading || bankStatementsLoading;
 
   // Create investor lookup map
@@ -100,6 +107,21 @@ export default function Ledger() {
     }
   });
 
+  // Build accepted orphan lookup maps
+  const txToAcceptedOrphan = {};
+  const invTxToAcceptedOrphan = {};
+  const expToAcceptedOrphan = {};
+
+  acceptedOrphans.forEach(ao => {
+    if (ao.entity_type === 'loan_transaction') {
+      txToAcceptedOrphan[ao.entity_id] = ao;
+    } else if (ao.entity_type === 'investor_transaction') {
+      invTxToAcceptedOrphan[ao.entity_id] = ao;
+    } else if (ao.entity_type === 'expense') {
+      expToAcceptedOrphan[ao.entity_id] = ao;
+    }
+  });
+
   // Create loan lookup map
   const loanMap = {};
   loans.forEach((loan, index) => {
@@ -117,6 +139,7 @@ export default function Ledger() {
       .map(t => {
         const loan = loanMap[t.loan_id];
         const recon = txToReconciliation[t.id];
+        const acceptedOrphan = txToAcceptedOrphan[t.id];
         return {
           id: `tx-${t.id}`,
           date: t.date,
@@ -128,7 +151,8 @@ export default function Ledger() {
           amount_in: t.amount,
           amount_out: 0,
           balance: 0,
-          reconciliation: recon || null
+          reconciliation: recon || null,
+          acceptedOrphan: acceptedOrphan || null
         };
       }),
 
@@ -138,6 +162,7 @@ export default function Ledger() {
       .map(t => {
         const loan = loanMap[t.loan_id];
         const recon = txToReconciliation[t.id];
+        const acceptedOrphan = txToAcceptedOrphan[t.id];
         return {
           id: `tx-disb-${t.id}`,
           date: t.date,
@@ -149,7 +174,8 @@ export default function Ledger() {
           amount_in: 0,
           amount_out: t.amount,
           balance: 0,
-          reconciliation: recon || null
+          reconciliation: recon || null,
+          acceptedOrphan: acceptedOrphan || null
         };
       }),
 
@@ -169,13 +195,15 @@ export default function Ledger() {
           amount_in: 0,
           amount_out: l.net_disbursed || l.principal_amount,
           balance: 0,
-          reconciliation: null
+          reconciliation: null,
+          acceptedOrphan: null
         };
       }),
 
     // Expenses (money out)
     ...expenses.map(e => {
       const recon = expToReconciliation[e.id];
+      const acceptedOrphan = expToAcceptedOrphan[e.id];
       return {
         id: `exp-${e.id}`,
         date: e.date,
@@ -187,7 +215,8 @@ export default function Ledger() {
         amount_in: 0,
         amount_out: e.amount,
         balance: 0,
-        reconciliation: recon || null
+        reconciliation: recon || null,
+        acceptedOrphan: acceptedOrphan || null
       };
     }),
 
@@ -196,6 +225,7 @@ export default function Ledger() {
       .filter(t => t.type === 'capital_in')
       .map(t => {
         const recon = invTxToReconciliation[t.id];
+        const acceptedOrphan = invTxToAcceptedOrphan[t.id];
         return {
           id: `inv-in-${t.id}`,
           date: t.date,
@@ -207,7 +237,8 @@ export default function Ledger() {
           amount_in: t.amount,
           amount_out: 0,
           balance: 0,
-          reconciliation: recon || null
+          reconciliation: recon || null,
+          acceptedOrphan: acceptedOrphan || null
         };
       }),
 
@@ -216,6 +247,7 @@ export default function Ledger() {
       .filter(t => t.type === 'capital_out')
       .map(t => {
         const recon = invTxToReconciliation[t.id];
+        const acceptedOrphan = invTxToAcceptedOrphan[t.id];
         return {
           id: `inv-out-${t.id}`,
           date: t.date,
@@ -227,7 +259,8 @@ export default function Ledger() {
           amount_in: 0,
           amount_out: t.amount,
           balance: 0,
-          reconciliation: recon || null
+          reconciliation: recon || null,
+          acceptedOrphan: acceptedOrphan || null
         };
       }),
 
@@ -236,6 +269,7 @@ export default function Ledger() {
       .filter(t => t.type === 'interest_payment')
       .map(t => {
         const recon = invTxToReconciliation[t.id];
+        const acceptedOrphan = invTxToAcceptedOrphan[t.id];
         return {
           id: `inv-int-${t.id}`,
           date: t.date,
@@ -247,7 +281,8 @@ export default function Ledger() {
           amount_in: 0,
           amount_out: t.amount,
           balance: 0,
-          reconciliation: recon || null
+          reconciliation: recon || null,
+          acceptedOrphan: acceptedOrphan || null
         };
       })
   ];
@@ -558,6 +593,20 @@ export default function Ledger() {
                                       </p>
                                     )}
                                     <p className="text-xs text-slate-400 pt-1">Click to view in Bank Reconciliation</p>
+                                  </div>
+                                </TooltipContent>
+                              </Tooltip>
+                            ) : entry.acceptedOrphan ? (
+                              <Tooltip>
+                                <TooltipTrigger asChild>
+                                  <span className="inline-flex items-center justify-center p-1.5 rounded-full bg-amber-100">
+                                    <ShieldCheck className="w-4 h-4 text-amber-600" />
+                                  </span>
+                                </TooltipTrigger>
+                                <TooltipContent side="left" className="max-w-xs">
+                                  <div className="space-y-1">
+                                    <p className="font-medium text-amber-500">Accepted Orphan</p>
+                                    <p className="text-xs text-slate-300">{entry.acceptedOrphan.reason}</p>
                                   </div>
                                 </TooltipContent>
                               </Tooltip>

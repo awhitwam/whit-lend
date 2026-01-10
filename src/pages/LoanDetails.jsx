@@ -41,7 +41,8 @@ import {
   Receipt,
   ArrowRight,
   Landmark,
-  Layers
+  Layers,
+  ShieldCheck
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -183,6 +184,17 @@ export default function LoanDetails() {
 
   // Keep the Set for simple boolean checks
   const reconciledTransactionIds = new Set(reconciliationMap.keys());
+
+  // Fetch accepted orphans for loan transactions
+  const { data: acceptedOrphans = [] } = useQuery({
+    queryKey: ['accepted-orphans-loan-transactions'],
+    queryFn: () => api.entities.AcceptedOrphan.filter({ entity_type: 'loan_transaction' }),
+    enabled: !!loanId
+  });
+
+  // Build a map of transaction ID -> accepted orphan record
+  const acceptedOrphanMap = new Map();
+  acceptedOrphans.forEach(ao => acceptedOrphanMap.set(ao.entity_id, ao));
 
   const { data: borrower } = useQuery({
     queryKey: ['borrower', loan?.borrower_id],
@@ -1787,6 +1799,16 @@ export default function LoanDetails() {
                                           </Tooltip>
                                         );
                                       })()
+                                    ) : acceptedOrphanMap.has(tx.id) ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <ShieldCheck className="w-3.5 h-3.5 text-amber-500 cursor-help" />
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-xs">
+                                          <p className="font-medium text-amber-400">Accepted Orphan</p>
+                                          <p className="text-xs text-slate-300 mt-1">{acceptedOrphanMap.get(tx.id).reason}</p>
+                                        </TooltipContent>
+                                      </Tooltip>
                                     ) : (
                                       <span className="text-slate-300">—</span>
                                     )}
@@ -2083,6 +2105,16 @@ export default function LoanDetails() {
                                           </Tooltip>
                                         );
                                       })()
+                                    ) : acceptedOrphanMap.has(entry.id) ? (
+                                      <Tooltip>
+                                        <TooltipTrigger asChild>
+                                          <ShieldCheck className="w-3.5 h-3.5 text-amber-500 cursor-help" />
+                                        </TooltipTrigger>
+                                        <TooltipContent className="max-w-xs">
+                                          <p className="font-medium text-amber-400">Accepted Orphan</p>
+                                          <p className="text-xs text-slate-300 mt-1">{acceptedOrphanMap.get(entry.id).reason}</p>
+                                        </TooltipContent>
+                                      </Tooltip>
                                     ) : (
                                       <span className="text-slate-300">—</span>
                                     )}

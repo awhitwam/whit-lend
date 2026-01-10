@@ -680,9 +680,13 @@ export default function BankReconciliation() {
     if (!multiLoanBorrowerId) {
       setMultiLoanBorrowerId(loan.borrower_id);
     }
+    // If this is the first loan being added, default interest to full amount
+    // (most common case for interest-only loans)
+    const isFirstLoan = multiLoanAllocations.length === 0;
+    const defaultInterest = isFirstLoan && selectedEntry ? Math.abs(selectedEntry.amount) : 0;
     setMultiLoanAllocations(prev => [
       ...prev,
-      { loan, principal: 0, interest: 0, fees: 0 }
+      { loan, principal: 0, interest: defaultInterest, fees: 0 }
     ]);
   };
 
@@ -904,15 +908,31 @@ export default function BankReconciliation() {
         }
       } else {
         // Debits could be disbursements
+        console.log(`[MATCH DEBUG] Bank entry: ${entry.statement_date} amount=${entry.amount} desc="${entry.description?.substring(0, 50)}"`);
+        console.log(`[MATCH DEBUG] Checking ${loanTransactions.filter(tx => tx.type === 'Disbursement').length} disbursement transactions`);
+
         for (const tx of loanTransactions) {
-          if (tx.is_deleted || reconciledTxIds.has(tx.id)) continue;
-          if (claimedTxIds.has(tx.id)) continue; // Skip transactions claimed by earlier entries
+          if (tx.is_deleted) {
+            console.log(`[MATCH DEBUG] Skipping tx ${tx.id} - is_deleted`);
+            continue;
+          }
+          if (reconciledTxIds.has(tx.id)) {
+            console.log(`[MATCH DEBUG] Skipping tx ${tx.id} - already reconciled`);
+            continue;
+          }
+          if (claimedTxIds.has(tx.id)) {
+            console.log(`[MATCH DEBUG] Skipping tx ${tx.id} - claimed by earlier entry`);
+            continue;
+          }
           if (tx.type !== 'Disbursement') continue;
 
+          const loan = loans.find(l => l.id === tx.loan_id);
+          console.log(`[MATCH DEBUG] Checking disbursement: tx.id=${tx.id} loan=${loan?.loan_number} borrower=${loan?.borrower_name} date=${tx.date} amount=${tx.amount} loan.restructured=${loan?.restructured}`);
+
           let score = calculateMatchScore(entry, tx, 'date');
+          console.log(`[MATCH DEBUG] calculateMatchScore returned: ${score}`);
 
           // BOOST: If bank description contains borrower name, increase score
-          const loan = loans.find(l => l.id === tx.loan_id);
           if (loan && score > 0) {
             const borrower = borrowers.find(b => b.id === loan.borrower_id);
             const nameMatch = descriptionContainsName(
@@ -924,10 +944,12 @@ export default function BankReconciliation() {
             if (nameMatch > 0) {
               // Boost score by up to 15% for name match
               score = Math.min(0.99, score + (nameMatch * 0.15));
+              console.log(`[MATCH DEBUG] Name boost applied, new score: ${score}`);
             }
           }
 
           if (score > bestScore) {
+            console.log(`[MATCH DEBUG] New best match! score=${score} > bestScore=${bestScore}`);
             bestScore = score;
             const borrowerName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
             bestMatch = {
@@ -938,8 +960,11 @@ export default function BankReconciliation() {
               confidence: score,
               reason: `Disbursement match: ${borrowerName} - ${formatCurrency(tx.amount)} on ${tx.date ? format(parseISO(tx.date), 'dd/MM') : '?'}`
             };
+          } else if (score > 0) {
+            console.log(`[MATCH DEBUG] Score ${score} not better than bestScore ${bestScore}`);
           }
         }
+        console.log(`[MATCH DEBUG] After disbursement check: bestScore=${bestScore}, bestMatch=${bestMatch?.type || 'none'}`);
       }
 
       // 1c. GROUPED DISBURSEMENT MATCH: Multiple bank debits → single disbursement transaction
@@ -2448,12 +2473,11 @@ export default function BankReconciliation() {
           setInvestorWithdrawalSplit({ capital: amount, interest: 0 });
         }
       } else {
-        setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
+        setSplitAmounts({ capital: 0, interest: amount, fees: 0 });
         setInvestorWithdrawalSplit({ capital: amount, interest: 0 });
       }
     } else {
       // Default behavior - use amount-based heuristics
-      setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
       setInvestorWithdrawalSplit({ capital: amount, interest: 0 });
 
       // Check for expense type suggestion from our learning system
@@ -2464,8 +2488,11 @@ export default function BankReconciliation() {
         // Credits (money in)
         if (amount < 10000) {
           setReconciliationType('loan_repayment');  // Small credit = likely loan repayment
+          // Default loan repayments to interest (most common for interest-only loans)
+          setSplitAmounts({ capital: 0, interest: amount, fees: 0 });
         } else {
           setReconciliationType('investor_credit');  // Large credit = likely investor capital
+          setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
         }
       } else {
         // Debits (money out)
@@ -2474,10 +2501,13 @@ export default function BankReconciliation() {
           setReconciliationType('expense');
           const expType = expenseTypes.find(t => t.id === expenseSuggestion.expenseTypeId);
           if (expType) setSelectedExpenseType(expType);
+          setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
         } else if (amount < 2000) {
           setReconciliationType('expense');  // Small debit = likely expense
+          setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
         } else {
           setReconciliationType('loan_disbursement');  // Large debit = investor payment or loan disbursement
+          setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
         }
       }
       setMatchMode('create');
@@ -2774,8 +2804,15 @@ export default function BankReconciliation() {
         }
         if (reconciliationType === 'loan_repayment' || reconciliationType === 'loan_disbursement') {
           transactionId = selectedExistingTx.id;
-        } else if (reconciliationType.startsWith('investor_')) {
+        } else if (reconciliationType === 'investor_withdrawal' || reconciliationType === 'investor_credit') {
           investorTransactionId = selectedExistingTx.id;
+        } else if (reconciliationType === 'interest_withdrawal') {
+          // Matching to existing investor interest entry
+          interestId = selectedExistingTx.id;
+        } else if (reconciliationType === 'expense') {
+          expenseId = selectedExistingTx.id;
+        } else if (reconciliationType === 'other_income') {
+          otherIncomeId = selectedExistingTx.id;
         }
       } else {
         if (reconciliationType === 'loan_repayment' && multiLoanAllocations.length > 0) {
@@ -6368,6 +6405,14 @@ export default function BankReconciliation() {
                             // Reset multi-loan state when type changes
                             setMultiLoanAllocations([]);
                             setMultiLoanBorrowerId(null);
+                            // Set appropriate default split amounts based on type
+                            const amount = Math.abs(selectedEntry.amount);
+                            if (value === 'loan_repayment') {
+                              // Default loan repayments to interest (most common for interest-only loans)
+                              setSplitAmounts({ capital: 0, interest: amount, fees: 0 });
+                            } else {
+                              setSplitAmounts({ capital: amount, interest: 0, fees: 0 });
+                            }
                           }}
                         >
                           <SelectTrigger className="mt-1">

@@ -11,7 +11,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Receipt, Edit, Trash2, Settings, FileText, ChevronLeft, ChevronRight, Landmark } from 'lucide-react';
+import { Plus, Search, Receipt, Edit, Trash2, Settings, FileText, ChevronLeft, ChevronRight, Landmark, ShieldCheck } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
@@ -85,6 +85,17 @@ export default function Expenses() {
 
   // Set for simple boolean checks
   const reconciledExpenseIds = new Set(reconciliationMap.keys());
+
+  // Fetch accepted orphans for expenses
+  const { data: acceptedOrphans = [] } = useQuery({
+    queryKey: ['accepted-orphans-expenses', currentOrganization?.id],
+    queryFn: () => api.entities.AcceptedOrphan.filter({ entity_type: 'expense' }),
+    enabled: !!currentOrganization
+  });
+
+  // Build a map of expense ID -> accepted orphan details for quick lookup
+  const acceptedOrphanMap = new Map();
+  acceptedOrphans.forEach(ao => acceptedOrphanMap.set(ao.entity_id, ao));
 
   const createExpenseMutation = useMutation({
     mutationFn: async (data) => {
@@ -397,6 +408,16 @@ export default function Expenses() {
                             </Tooltip>
                           );
                         })()
+                      ) : acceptedOrphanMap.has(expense.id) ? (
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <ShieldCheck className="w-3.5 h-3.5 text-amber-500 cursor-help mx-auto" />
+                          </TooltipTrigger>
+                          <TooltipContent className="max-w-xs">
+                            <p className="font-medium text-amber-400">Accepted Orphan</p>
+                            <p className="text-xs text-slate-300 mt-1">{acceptedOrphanMap.get(expense.id).reason}</p>
+                          </TooltipContent>
+                        </Tooltip>
                       ) : null}
                     </TableCell>
                     <TableCell>

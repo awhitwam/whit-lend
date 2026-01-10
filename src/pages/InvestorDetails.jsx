@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Loader2, Percent, Building2, Pencil, RefreshCw, Landmark } from 'lucide-react';
+import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Loader2, Percent, Building2, Pencil, RefreshCw, Landmark, ShieldCheck } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -446,6 +446,32 @@ export default function InvestorDetails() {
     return map;
   }, [reconciliationEntries, bankStatements]);
 
+  // Fetch accepted orphans for investor transactions and interest
+  const { data: acceptedOrphansTransactions = [] } = useQuery({
+    queryKey: ['accepted-orphans-investor-transactions', investorId],
+    queryFn: () => api.entities.AcceptedOrphan.filter({ entity_type: 'investor_transaction' }),
+    enabled: !!investorId
+  });
+
+  const { data: acceptedOrphansInterest = [] } = useQuery({
+    queryKey: ['accepted-orphans-investor-interest', investorId],
+    queryFn: () => api.entities.AcceptedOrphan.filter({ entity_type: 'investor_interest' }),
+    enabled: !!investorId
+  });
+
+  // Build maps for accepted orphans
+  const acceptedOrphanTransactionMap = useMemo(() => {
+    const map = new Map();
+    acceptedOrphansTransactions.forEach(ao => map.set(ao.entity_id, ao));
+    return map;
+  }, [acceptedOrphansTransactions]);
+
+  const acceptedOrphanInterestMap = useMemo(() => {
+    const map = new Map();
+    acceptedOrphansInterest.forEach(ao => map.set(ao.entity_id, ao));
+    return map;
+  }, [acceptedOrphansInterest]);
+
 
   if (investorLoading) {
     return (
@@ -751,7 +777,7 @@ export default function InvestorDetails() {
                       </div>
                       <div className="w-16 shrink-0 flex justify-end gap-1">
                         {/* Bank reconciliation indicator */}
-                        {isReconciled && (
+                        {isReconciled ? (
                           <Tooltip>
                             <TooltipTrigger asChild>
                               <span className="text-blue-500 cursor-help flex items-center">
@@ -782,7 +808,21 @@ export default function InvestorDetails() {
                               </div>
                             </TooltipContent>
                           </Tooltip>
-                        )}
+                        ) : (isInterest ? acceptedOrphanInterestMap.has(item.id) : acceptedOrphanTransactionMap.has(item.id)) ? (
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="text-amber-500 cursor-help flex items-center">
+                                <ShieldCheck className="w-3.5 h-3.5" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs">
+                              <p className="font-medium text-amber-400">Accepted Orphan</p>
+                              <p className="text-xs text-slate-300 mt-1">
+                                {(isInterest ? acceptedOrphanInterestMap.get(item.id) : acceptedOrphanTransactionMap.get(item.id))?.reason}
+                              </p>
+                            </TooltipContent>
+                          </Tooltip>
+                        ) : null}
                         <Button
                           variant="ghost"
                           size="icon"

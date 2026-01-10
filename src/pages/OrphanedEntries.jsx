@@ -281,22 +281,39 @@ export default function OrphanedEntries() {
     return filtered;
   }, [orphanedEntries, typeFilter, searchTerm, showAccepted]);
 
-  // Group entries by year
+  // Get financial year for a date (UK financial year: Apr 1 - Mar 31)
+  // Returns the starting year of the financial year (e.g., 2025 for FY 2025/26)
+  const getFinancialYear = (date) => {
+    const d = new Date(date);
+    const month = d.getMonth(); // 0-indexed (0 = Jan, 3 = Apr)
+    const year = d.getFullYear();
+    // If Jan-Mar, it's the previous calendar year's FY
+    // If Apr-Dec, it's the current calendar year's FY
+    return month < 3 ? year - 1 : year;
+  };
+
+  // Format financial year for display (e.g., "2025/26")
+  const formatFinancialYear = (startYear) => {
+    return `${startYear}/${(startYear + 1).toString().slice(-2)}`;
+  };
+
+  // Group entries by financial year
   const entriesByYear = useMemo(() => {
     const groups = new Map();
 
     filteredEntries.forEach(entry => {
-      const year = getYear(new Date(entry.date));
-      if (!groups.has(year)) {
-        groups.set(year, {
-          year,
+      const fyYear = getFinancialYear(entry.date);
+      if (!groups.has(fyYear)) {
+        groups.set(fyYear, {
+          year: fyYear,
+          label: formatFinancialYear(fyYear),
           entries: [],
           totalIn: 0,
           totalOut: 0,
           acceptedCount: 0
         });
       }
-      const group = groups.get(year);
+      const group = groups.get(fyYear);
       group.entries.push(entry);
       if (entry.amount >= 0) {
         group.totalIn += entry.amount;
@@ -308,16 +325,16 @@ export default function OrphanedEntries() {
       }
     });
 
-    // Sort by year descending
+    // Sort by financial year descending
     return Array.from(groups.values()).sort((a, b) => b.year - a.year);
   }, [filteredEntries]);
 
-  // Initialize expanded years to show current year expanded by default
+  // Initialize expanded years to show current financial year expanded by default
   useMemo(() => {
     if (entriesByYear.length > 0 && expandedYears.size === 0) {
-      const currentYear = new Date().getFullYear();
-      if (entriesByYear.find(g => g.year === currentYear)) {
-        setExpandedYears(new Set([currentYear]));
+      const currentFY = getFinancialYear(new Date());
+      if (entriesByYear.find(g => g.year === currentFY)) {
+        setExpandedYears(new Set([currentFY]));
       } else if (entriesByYear.length > 0) {
         setExpandedYears(new Set([entriesByYear[0].year]));
       }
@@ -580,7 +597,7 @@ export default function OrphanedEntries() {
                       <button className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 rounded-lg border transition-colors">
                         <div className="flex items-center gap-3">
                           <ChevronDown className={`w-4 h-4 transition-transform ${expandedYears.has(yearGroup.year) ? '' : '-rotate-90'}`} />
-                          <span className="font-semibold text-lg">{yearGroup.year}</span>
+                          <span className="font-semibold text-lg">FY {yearGroup.label}</span>
                           <Badge variant="outline">{yearGroup.entries.length} items</Badge>
                           {yearGroup.acceptedCount > 0 && (
                             <Badge variant="outline" className="bg-emerald-50 text-emerald-700 border-emerald-200">
