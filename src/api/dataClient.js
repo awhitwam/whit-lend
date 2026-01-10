@@ -192,6 +192,7 @@ function createEntityHandler(tableName) {
     },
 
     // Filter records by conditions with optional ordering
+    // NOTE: Supabase has a default 1000 row limit. Use filterAll() for large filtered datasets.
     async filter(conditions, orderBy) {
       let query = supabase.from(tableName).select('*');
 
@@ -211,6 +212,45 @@ function createEntityHandler(tableName) {
       const { data, error} = await query;
       if (error) throw error;
       return data || [];
+    },
+
+    // Filter ALL records by paginating through Supabase's 1000 row limit
+    async filterAll(conditions, orderBy) {
+      const PAGE_SIZE = 1000;
+      let allData = [];
+      let offset = 0;
+      let hasMore = true;
+
+      const order = parseOrder(orderBy, tableName);
+
+      while (hasMore) {
+        let query = supabase.from(tableName).select('*');
+        query = applyOrgFilter(query, tableName);
+
+        // Apply filter conditions
+        for (const [key, value] of Object.entries(conditions)) {
+          query = query.eq(key, value);
+        }
+
+        if (order) {
+          query = query.order(order.column, { ascending: order.ascending });
+        }
+
+        query = query.range(offset, offset + PAGE_SIZE - 1);
+
+        const { data, error } = await query;
+        if (error) throw error;
+
+        if (data && data.length > 0) {
+          allData = allData.concat(data);
+          offset += data.length;
+          hasMore = data.length === PAGE_SIZE;
+        } else {
+          hasMore = false;
+        }
+      }
+
+      return allData;
     },
 
     // Create a new record
@@ -267,6 +307,7 @@ function createEntityHandler(tableName) {
     },
 
     // Batch create multiple records at once (much faster than individual creates)
+    // Batches in chunks of 500 to avoid Supabase row limits
     async createMany(records) {
       if (!records || records.length === 0) return [];
 
@@ -279,13 +320,22 @@ function createEntityHandler(tableName) {
         records = records.map(r => ({ ...r, organization_id: orgId }));
       }
 
-      const { data: created, error } = await supabase
-        .from(tableName)
-        .insert(records)
-        .select();
+      // Batch inserts to avoid Supabase row limits (max ~1000 per request)
+      const BATCH_SIZE = 500;
+      let allCreated = [];
 
-      if (error) throw error;
-      return created || [];
+      for (let i = 0; i < records.length; i += BATCH_SIZE) {
+        const batch = records.slice(i, i + BATCH_SIZE);
+        const { data: created, error } = await supabase
+          .from(tableName)
+          .insert(batch)
+          .select();
+
+        if (error) throw error;
+        if (created) allCreated = allCreated.concat(created);
+      }
+
+      return allCreated;
     },
 
     // Batch delete by condition (much faster than individual deletes)
@@ -342,6 +392,11 @@ function createOrganizationSummaryHandler() {
 
       if (error) throw error;
       return data || [];
+    },
+
+    // listAll for backup compatibility (same as list since there's only one row per org)
+    async listAll() {
+      return this.list();
     },
 
     // Upsert (insert or update) summary for the current organization

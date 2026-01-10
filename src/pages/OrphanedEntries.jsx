@@ -32,9 +32,10 @@ export default function OrphanedEntries() {
   const queryClient = useQueryClient();
 
   // Query all reconciliation entries to know what's already reconciled
+  // IMPORTANT: Use listAll() to avoid 1000 row limit
   const { data: reconciliationEntries = [] } = useQuery({
     queryKey: ['reconciliation-entries-all'],
-    queryFn: () => api.entities.ReconciliationEntry.list()
+    queryFn: () => api.entities.ReconciliationEntry.listAll()
   });
 
   // Query accepted orphans

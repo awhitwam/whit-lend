@@ -653,14 +653,41 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               .filter(tx => !tx.is_deleted)
               .sort((a, b) => new Date(a.date) - new Date(b.date));
 
+            // Build ledger entries: transactions + rate change events
+            const ledgerEntries = [];
+
+            // Add rate change event if loan has penalty rate
+            if (loan?.has_penalty_rate && loan?.penalty_rate && loan?.penalty_rate_from) {
+              ledgerEntries.push({
+                id: 'rate-change-' + loan.penalty_rate_from,
+                date: loan.penalty_rate_from,
+                type: 'RateChange',
+                isRateChange: true,
+                oldRate: loan.interest_rate,
+                newRate: loan.penalty_rate
+              });
+            }
+
+            // Add all transactions
+            sortedTx.forEach(tx => {
+              ledgerEntries.push({ ...tx, isRateChange: false });
+            });
+
+            // Sort all entries by date
+            ledgerEntries.sort((a, b) => new Date(a.date) - new Date(b.date));
+
             let runningPrincipal = 0;
-            const txWithBalance = sortedTx.map(tx => {
-              if (tx.type === 'Disbursement') {
-                runningPrincipal += tx.amount || 0;
-              } else if (tx.type === 'Repayment') {
-                runningPrincipal -= tx.principal_applied || 0;
+            const txWithBalance = ledgerEntries.map(entry => {
+              if (entry.isRateChange) {
+                // Rate change doesn't affect balance
+                return { ...entry, runningBalance: runningPrincipal };
               }
-              return { ...tx, runningBalance: runningPrincipal };
+              if (entry.type === 'Disbursement') {
+                runningPrincipal += entry.amount || 0;
+              } else if (entry.type === 'Repayment') {
+                runningPrincipal -= entry.principal_applied || 0;
+              }
+              return { ...entry, runningBalance: runningPrincipal };
             });
 
             // Calculate totals
@@ -694,34 +721,51 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                   </TableHeader>
                   <TableBody>
                     {txWithBalance.map((tx) => (
-                      <TableRow key={tx.id} className={tx.type === 'Disbursement' ? 'bg-red-50/30' : 'bg-emerald-50/30'}>
-                        <TableCell className="text-xs font-mono">{format(new Date(tx.date), 'dd MMM yyyy')}</TableCell>
-                        <TableCell className="text-xs">
-                          <Badge variant="outline" className={tx.type === 'Disbursement' ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}>
-                            {tx.type}
-                          </Badge>
-                        </TableCell>
-                        <TableCell className="text-xs text-right font-mono font-semibold">
-                          {formatCurrency(tx.amount)}
-                        </TableCell>
-                        <TableCell className="text-xs text-right font-mono">
-                          {tx.type === 'Disbursement'
-                            ? <span className="text-red-600">+{formatCurrency(tx.amount)}</span>
-                            : tx.principal_applied
-                              ? <span className="text-emerald-600">-{formatCurrency(tx.principal_applied)}</span>
-                              : '—'}
-                        </TableCell>
-                        <TableCell className="text-xs text-right font-mono">
-                          {tx.interest_applied ? formatCurrency(tx.interest_applied) : '—'}
-                        </TableCell>
-                        <TableCell className="text-xs text-right font-mono">
-                          {tx.fees_applied ? formatCurrency(tx.fees_applied) : '—'}
-                        </TableCell>
-                        <TableCell className="text-xs text-right font-mono font-semibold">
-                          {formatCurrency(tx.runningBalance)}
-                        </TableCell>
-                        <TableCell className="text-xs text-slate-500">{tx.reference || '—'}</TableCell>
-                      </TableRow>
+                      tx.isRateChange ? (
+                        // Rate change row
+                        <TableRow key={tx.id} className="bg-amber-50/50 border-y border-amber-200">
+                          <TableCell className="text-xs font-mono">{format(new Date(tx.date), 'dd MMM yyyy')}</TableCell>
+                          <TableCell className="text-xs">
+                            <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300">
+                              Rate Change
+                            </Badge>
+                          </TableCell>
+                          <TableCell colSpan={5} className="text-xs text-amber-700">
+                            Interest rate changed from <span className="font-semibold">{tx.oldRate}%</span> to <span className="font-semibold">{tx.newRate}%</span> pa
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-500">—</TableCell>
+                        </TableRow>
+                      ) : (
+                        // Regular transaction row
+                        <TableRow key={tx.id} className={tx.type === 'Disbursement' ? 'bg-red-50/30' : 'bg-emerald-50/30'}>
+                          <TableCell className="text-xs font-mono">{format(new Date(tx.date), 'dd MMM yyyy')}</TableCell>
+                          <TableCell className="text-xs">
+                            <Badge variant="outline" className={tx.type === 'Disbursement' ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}>
+                              {tx.type}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-xs text-right font-mono font-semibold">
+                            {formatCurrency(tx.amount)}
+                          </TableCell>
+                          <TableCell className="text-xs text-right font-mono">
+                            {tx.type === 'Disbursement'
+                              ? <span className="text-red-600">+{formatCurrency(tx.amount)}</span>
+                              : tx.principal_applied
+                                ? <span className="text-emerald-600">-{formatCurrency(tx.principal_applied)}</span>
+                                : '—'}
+                          </TableCell>
+                          <TableCell className="text-xs text-right font-mono">
+                            {tx.interest_applied ? formatCurrency(tx.interest_applied) : '—'}
+                          </TableCell>
+                          <TableCell className="text-xs text-right font-mono">
+                            {tx.fees_applied ? formatCurrency(tx.fees_applied) : '—'}
+                          </TableCell>
+                          <TableCell className="text-xs text-right font-mono font-semibold">
+                            {formatCurrency(tx.runningBalance)}
+                          </TableCell>
+                          <TableCell className="text-xs text-slate-500">{tx.reference || '—'}</TableCell>
+                        </TableRow>
+                      )
                     ))}
                     {txWithBalance.length === 0 && (
                       <TableRow>

@@ -262,10 +262,30 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
   await api.entities.RepaymentSchedule.deleteWhere({ loan_id: loanId });
 
   // Batch create all schedule rows at once
-  const scheduleWithLoanId = finalSchedule.map(row => ({
-    loan_id: loanId,
-    ...row
-  }));
+  // Ensure numeric fields are valid numbers (not null/undefined/NaN) to prevent DB constraint violations
+  const scheduleWithLoanId = finalSchedule.map(row => {
+    const principalAmount = Number.isFinite(row.principal_amount) ? row.principal_amount : 0;
+    const interestAmount = Number.isFinite(row.interest_amount) ? row.interest_amount : 0;
+    const balance = Number.isFinite(row.balance) ? row.balance : 0;
+    const calcDays = Number.isFinite(row.calculation_days) ? row.calculation_days : 0;
+    const calcPrincipalStart = Number.isFinite(row.calculation_principal_start) ? row.calculation_principal_start : 0;
+
+    return {
+      loan_id: loanId,
+      installment_number: row.installment_number,
+      due_date: row.due_date,
+      principal_amount: principalAmount,
+      interest_amount: interestAmount,
+      total_due: principalAmount + interestAmount,
+      balance: Math.max(0, balance),
+      principal_paid: row.principal_paid || 0,
+      interest_paid: row.interest_paid || 0,
+      status: row.status || 'Pending',
+      calculation_days: calcDays,
+      calculation_principal_start: calcPrincipalStart,
+      is_extension_period: row.is_extension_period || false
+    };
+  });
   await api.entities.RepaymentSchedule.createMany(scheduleWithLoanId);
 
   // Calculate totals from generated schedule

@@ -227,19 +227,26 @@ export class BaseScheduler {
     // are NOT in the DB schema yet and must be excluded
     const scheduleWithLoanId = schedule.map(row => {
       // Explicitly construct object with ONLY database columns - no spreading!
+      // Ensure numeric fields are valid numbers (not null/undefined/NaN)
+      const principalAmount = Number.isFinite(row.principal_amount) ? row.principal_amount : 0;
+      const interestAmount = Number.isFinite(row.interest_amount) ? row.interest_amount : 0;
+      const balance = Number.isFinite(row.balance) ? row.balance : 0;
+      const calcDays = Number.isFinite(row.calculation_days) ? row.calculation_days : 0;
+      const calcPrincipalStart = Number.isFinite(row.calculation_principal_start) ? row.calculation_principal_start : 0;
+
       return {
         loan_id: loanId,
         installment_number: row.installment_number,
         due_date: row.due_date,
-        principal_amount: row.principal_amount,
-        interest_amount: row.interest_amount,
-        total_due: row.total_due,
-        balance: row.balance,
+        principal_amount: principalAmount,
+        interest_amount: interestAmount,
+        total_due: principalAmount + interestAmount,
+        balance: Math.max(0, balance),
         principal_paid: row.principal_paid || 0,
         interest_paid: row.interest_paid || 0,
         status: row.status || 'Pending',
-        calculation_days: row.calculation_days,
-        calculation_principal_start: row.calculation_principal_start,
+        calculation_days: calcDays,
+        calculation_principal_start: calcPrincipalStart,
         is_extension_period: row.is_extension_period || false
       };
     });

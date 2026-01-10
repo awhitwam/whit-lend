@@ -136,7 +136,7 @@ export default function OrgAdmin() {
 
       // Fetch all loans for current org using org-scoped API
       // Include Live loans and Closed/Settled loans (to fix historical schedules)
-      const allLoans = await api.entities.Loan.list();
+      const allLoans = await api.entities.Loan.listAll();
       const loansToProcess = allLoans.filter(l =>
         l.status === 'Live' || l.status === 'Active' || l.status === 'Closed'
       );
@@ -263,7 +263,7 @@ export default function OrgAdmin() {
     // 1. Delete accepted orphans (no FK dependencies)
     setClearProgress({ current: 1, total: totalSteps, step: 'Deleting accepted orphans...' });
     try {
-      const acceptedOrphans = await api.entities.AcceptedOrphan.list();
+      const acceptedOrphans = await api.entities.AcceptedOrphan.listAll();
       if (acceptedOrphans.length > 0) {
         addLog(`  Deleting ${acceptedOrphans.length} accepted orphans...`);
         for (const ao of acceptedOrphans) {
@@ -277,7 +277,7 @@ export default function OrgAdmin() {
     // 2. Delete borrower loan preferences (no FK dependencies)
     setClearProgress({ current: 2, total: totalSteps, step: 'Deleting borrower preferences...' });
     try {
-      const preferences = await api.entities.BorrowerLoanPreference.list();
+      const preferences = await api.entities.BorrowerLoanPreference.listAll();
       if (preferences.length > 0) {
         addLog(`  Deleting ${preferences.length} borrower loan preferences...`);
         for (const pref of preferences) {
@@ -291,7 +291,7 @@ export default function OrgAdmin() {
     // 3. Delete receipt drafts (no FK dependencies)
     setClearProgress({ current: 3, total: totalSteps, step: 'Deleting receipt drafts...' });
     try {
-      const receipts = await api.entities.ReceiptDraft.list();
+      const receipts = await api.entities.ReceiptDraft.listAll();
       if (receipts.length > 0) {
         addLog(`  Deleting ${receipts.length} receipt drafts...`);
         for (const r of receipts) {
@@ -306,7 +306,7 @@ export default function OrgAdmin() {
     setClearProgress({ current: 4, total: totalSteps, step: 'Deleting audit logs...' });
     addLog(`  Deleting audit logs for current organization...`);
     try {
-      const auditLogs = await api.entities.AuditLog.list();
+      const auditLogs = await api.entities.AuditLog.listAll();
       if (auditLogs.length > 0) {
         addLog(`    Found ${auditLogs.length} audit logs in current organization`);
         for (let i = 0; i < auditLogs.length; i += 100) {
@@ -327,7 +327,7 @@ export default function OrgAdmin() {
     // 5. Delete reconciliation entries (references bank_statements)
     setClearProgress({ current: 5, total: totalSteps, step: 'Deleting reconciliation entries...' });
     try {
-      const entries = await api.entities.ReconciliationEntry.list();
+      const entries = await api.entities.ReconciliationEntry.listAll();
       if (entries.length > 0) {
         addLog(`  Deleting ${entries.length} reconciliation entries...`);
         for (const entry of entries) {
@@ -341,7 +341,7 @@ export default function OrgAdmin() {
     // 6. Delete reconciliation patterns
     setClearProgress({ current: 6, total: totalSteps, step: 'Deleting reconciliation patterns...' });
     try {
-      const patterns = await api.entities.ReconciliationPattern.list();
+      const patterns = await api.entities.ReconciliationPattern.listAll();
       if (patterns.length > 0) {
         addLog(`  Deleting ${patterns.length} reconciliation patterns...`);
         for (const pattern of patterns) {
@@ -355,7 +355,7 @@ export default function OrgAdmin() {
     // 7. Delete bank statements
     setClearProgress({ current: 7, total: totalSteps, step: 'Deleting bank statements...' });
     try {
-      const statements = await api.entities.BankStatement.list();
+      const statements = await api.entities.BankStatement.listAll();
       if (statements.length > 0) {
         addLog(`  Deleting ${statements.length} bank statements...`);
         for (const stmt of statements) {
@@ -369,7 +369,7 @@ export default function OrgAdmin() {
     // 8. Delete value_history (references loan_properties via loan_property_id)
     setClearProgress({ current: 8, total: totalSteps, step: 'Deleting value history...' });
     try {
-      const valueHistory = await api.entities.ValueHistory.list();
+      const valueHistory = await api.entities.ValueHistory.listAll();
       if (valueHistory.length > 0) {
         addLog(`  Deleting ${valueHistory.length} value history records...`);
         for (const vh of valueHistory) {
@@ -383,7 +383,7 @@ export default function OrgAdmin() {
     // 9. Delete loan_properties (references loans via loan_id, properties via property_id)
     setClearProgress({ current: 9, total: totalSteps, step: 'Deleting loan-property links...' });
     try {
-      const loanProperties = await api.entities.LoanProperty.list();
+      const loanProperties = await api.entities.LoanProperty.listAll();
       if (loanProperties.length > 0) {
         addLog(`  Deleting ${loanProperties.length} loan-property links...`);
         for (const lp of loanProperties) {
@@ -397,7 +397,7 @@ export default function OrgAdmin() {
     // 10. Delete properties (no FK to loans, but loan_properties references it)
     setClearProgress({ current: 10, total: totalSteps, step: 'Deleting properties...' });
     try {
-      const properties = await api.entities.Property.list();
+      const properties = await api.entities.Property.listAll();
       if (properties.length > 0) {
         addLog(`  Deleting ${properties.length} properties...`);
         for (const p of properties) {
@@ -412,7 +412,7 @@ export default function OrgAdmin() {
     setClearProgress({ current: 11, total: totalSteps, step: 'Deleting transactions...' });
     addLog(`  Deleting transactions for current organization...`);
     try {
-      const transactions = await api.entities.Transaction.list();
+      const transactions = await api.entities.Transaction.listAll();
       if (transactions.length > 0) {
         addLog(`    Found ${transactions.length} transactions in current organization`);
         let deletedSoFar = 0;
@@ -436,7 +436,7 @@ export default function OrgAdmin() {
     setClearProgress({ current: 12, total: totalSteps, step: 'Deleting repayment schedules...' });
     addLog(`  Deleting repayment schedules for current organization...`);
     try {
-      const schedules = await api.entities.RepaymentSchedule.list();
+      const schedules = await api.entities.RepaymentSchedule.listAll();
       if (schedules.length > 0) {
         addLog(`    Found ${schedules.length} schedules in current organization`);
         let deletedSoFar = 0;
@@ -459,7 +459,7 @@ export default function OrgAdmin() {
     // 13. Delete expenses (references expense_types via expense_type_id - nullable)
     setClearProgress({ current: 13, total: totalSteps, step: 'Deleting expenses...' });
     try {
-      const expenses = await api.entities.Expense.list();
+      const expenses = await api.entities.Expense.listAll();
       if (expenses.length > 0) {
         addLog(`  Deleting ${expenses.length} expenses...`);
         let expenseErrors = 0;
@@ -484,7 +484,7 @@ export default function OrgAdmin() {
     // 14. Delete expense types (categories)
     setClearProgress({ current: 14, total: totalSteps, step: 'Deleting expense categories...' });
     try {
-      const expenseTypes = await api.entities.ExpenseType.list();
+      const expenseTypes = await api.entities.ExpenseType.listAll();
       if (expenseTypes.length > 0) {
         addLog(`  Deleting ${expenseTypes.length} expense categories...`);
         let typeErrors = 0;
@@ -509,7 +509,7 @@ export default function OrgAdmin() {
     // 15. Delete other income
     setClearProgress({ current: 15, total: totalSteps, step: 'Deleting other income...' });
     try {
-      const otherIncome = await api.entities.OtherIncome.list();
+      const otherIncome = await api.entities.OtherIncome.listAll();
       if (otherIncome.length > 0) {
         addLog(`  Deleting ${otherIncome.length} other income records...`);
         for (const oi of otherIncome) {
@@ -523,7 +523,7 @@ export default function OrgAdmin() {
     // 16. Delete investor interest records (references investors)
     setClearProgress({ current: 16, total: totalSteps, step: 'Deleting investor interest...' });
     try {
-      const investorInterest = await api.entities.InvestorInterest.list();
+      const investorInterest = await api.entities.InvestorInterest.listAll();
       if (investorInterest.length > 0) {
         addLog(`  Deleting ${investorInterest.length} investor interest records...`);
         for (const ii of investorInterest) {
@@ -537,7 +537,7 @@ export default function OrgAdmin() {
     // 17. Delete investor transactions (references investors)
     setClearProgress({ current: 17, total: totalSteps, step: 'Deleting investor transactions...' });
     try {
-      const investorTx = await api.entities.InvestorTransaction.list();
+      const investorTx = await api.entities.InvestorTransaction.listAll();
       if (investorTx.length > 0) {
         addLog(`  Deleting ${investorTx.length} investor transactions...`);
         for (const it of investorTx) {
@@ -550,7 +550,7 @@ export default function OrgAdmin() {
 
     // 18. Delete loans (references borrowers via borrower_id, self-references via restructured_from_loan_id)
     setClearProgress({ current: 18, total: totalSteps, step: 'Deleting loans...' });
-    let loans = await api.entities.Loan.list();
+    let loans = await api.entities.Loan.listAll();
     const initialLoanCount = loans.length;
     addLog(`  Deleting ${loans.length} loans...`);
 
@@ -577,7 +577,7 @@ export default function OrgAdmin() {
           addLog(`      Failed to clear ${clearErrors} restructure references`);
         }
 
-        const verifyLoans = await api.entities.Loan.list();
+        const verifyLoans = await api.entities.Loan.listAll();
         const stillHaveRef = verifyLoans.filter(l => l.restructured_from_loan_id).length;
         if (stillHaveRef > 0) {
           addLog(`      WARNING: ${stillHaveRef} loans still have restructure references after clearing!`);
@@ -633,7 +633,7 @@ export default function OrgAdmin() {
 
     // 19. Delete borrowers (no FK references to other tables)
     setClearProgress({ current: 19, total: totalSteps, step: 'Deleting borrowers...' });
-    const borrowers = await api.entities.Borrower.list();
+    const borrowers = await api.entities.Borrower.listAll();
     addLog(`  Deleting ${borrowers.length} borrowers...`);
 
     let borrowerErrors = 0;
@@ -655,7 +655,7 @@ export default function OrgAdmin() {
     // 20. Delete investors
     setClearProgress({ current: 20, total: totalSteps, step: 'Deleting investors...' });
     try {
-      const investors = await api.entities.Investor.list();
+      const investors = await api.entities.Investor.listAll();
       if (investors.length > 0) {
         addLog(`  Deleting ${investors.length} investors...`);
         for (const inv of investors) {
@@ -669,7 +669,7 @@ export default function OrgAdmin() {
     // 21. Delete investor products
     setClearProgress({ current: 21, total: totalSteps, step: 'Deleting investor products...' });
     try {
-      const investorProducts = await api.entities.InvestorProduct.list();
+      const investorProducts = await api.entities.InvestorProduct.listAll();
       if (investorProducts.length > 0) {
         addLog(`  Deleting ${investorProducts.length} investor products...`);
         for (const ip of investorProducts) {
@@ -683,7 +683,7 @@ export default function OrgAdmin() {
     // 22. Delete loan products (must be after loans since loans reference them)
     setClearProgress({ current: 22, total: totalSteps, step: 'Deleting loan products...' });
     try {
-      const loanProducts = await api.entities.LoanProduct.list();
+      const loanProducts = await api.entities.LoanProduct.listAll();
       if (loanProducts.length > 0) {
         addLog(`  Deleting ${loanProducts.length} loan products...`);
         for (const lp of loanProducts) {
@@ -697,7 +697,7 @@ export default function OrgAdmin() {
     // 23. Delete invitations (pending org invites)
     setClearProgress({ current: 23, total: totalSteps, step: 'Deleting invitations...' });
     try {
-      const invitations = await api.entities.Invitation.list();
+      const invitations = await api.entities.Invitation.listAll();
       if (invitations.length > 0) {
         addLog(`  Deleting ${invitations.length} invitations...`);
         for (const inv of invitations) {
@@ -711,7 +711,7 @@ export default function OrgAdmin() {
     // 24. Delete nightly job runs (job execution history)
     setClearProgress({ current: 24, total: totalSteps, step: 'Deleting job run history...' });
     try {
-      const jobRuns = await api.entities.NightlyJobRun.list();
+      const jobRuns = await api.entities.NightlyJobRun.listAll();
       if (jobRuns.length > 0) {
         addLog(`  Deleting ${jobRuns.length} nightly job runs...`);
         for (const jr of jobRuns) {
@@ -746,7 +746,7 @@ export default function OrgAdmin() {
     // 1. Delete investor transactions first (references investors via investor_id)
     setClearProgress({ current: 1, total: 2, step: 'Deleting investor transactions...' });
     try {
-      const investorTx = await api.entities.InvestorTransaction.list();
+      const investorTx = await api.entities.InvestorTransaction.listAll();
       if (investorTx.length > 0) {
         addLog(`  Found ${investorTx.length} investor transactions to delete...`);
         let deletedCount = 0;
@@ -768,7 +768,7 @@ export default function OrgAdmin() {
     // 2. Delete investors
     setClearProgress({ current: 2, total: 2, step: 'Deleting investors...' });
     try {
-      const investors = await api.entities.Investor.list();
+      const investors = await api.entities.Investor.listAll();
       if (investors.length > 0) {
         addLog(`  Found ${investors.length} investors to delete...`);
         let deletedCount = 0;
@@ -808,7 +808,7 @@ export default function OrgAdmin() {
     // 1. Delete expenses first (they reference expense_types)
     setClearProgress({ current: 1, total: 2, step: 'Deleting expenses...' });
     try {
-      const expenses = await api.entities.Expense.list();
+      const expenses = await api.entities.Expense.listAll();
       if (expenses.length > 0) {
         addLog(`  Found ${expenses.length} expenses to delete...`);
         let deletedCount = 0;
@@ -843,7 +843,7 @@ export default function OrgAdmin() {
     // 2. Delete expense types
     setClearProgress({ current: 2, total: 2, step: 'Deleting expense types...' });
     try {
-      const expenseTypes = await api.entities.ExpenseType.list();
+      const expenseTypes = await api.entities.ExpenseType.listAll();
       if (expenseTypes.length > 0) {
         addLog(`  Found ${expenseTypes.length} expense types to delete...`);
         let deletedCount = 0;
@@ -882,7 +882,7 @@ export default function OrgAdmin() {
     // 1. Delete reconciliation entries first (references bank_statements)
     setClearProgress({ current: 1, total: 3, step: 'Deleting reconciliation entries...' });
     try {
-      const entries = await api.entities.ReconciliationEntry.list();
+      const entries = await api.entities.ReconciliationEntry.listAll();
       if (entries.length > 0) {
         addLog(`  Found ${entries.length} reconciliation entries to delete...`);
         let deletedCount = 0;
@@ -917,7 +917,7 @@ export default function OrgAdmin() {
     // 2. Delete reconciliation patterns
     setClearProgress({ current: 2, total: 3, step: 'Deleting reconciliation patterns...' });
     try {
-      const patterns = await api.entities.ReconciliationPattern.list();
+      const patterns = await api.entities.ReconciliationPattern.listAll();
       if (patterns.length > 0) {
         addLog(`  Found ${patterns.length} reconciliation patterns to delete...`);
         let deletedCount = 0;
@@ -942,7 +942,7 @@ export default function OrgAdmin() {
     // 3. Delete bank statements
     setClearProgress({ current: 3, total: 3, step: 'Deleting bank statements...' });
     try {
-      const statements = await api.entities.BankStatement.list();
+      const statements = await api.entities.BankStatement.listAll();
       if (statements.length > 0) {
         addLog(`  Found ${statements.length} bank statements to delete...`);
         let deletedCount = 0;
@@ -1006,14 +1006,11 @@ export default function OrgAdmin() {
       return;
     }
 
-    // Double confirmation for safety
-    if (!window.confirm('This is a PERMANENT deletion. Type "DELETE" in the next prompt to confirm.')) {
-      return;
-    }
-
-    const confirmText = window.prompt('Type "DELETE" to confirm permanent data deletion:');
-    if (confirmText !== 'DELETE') {
-      alert('Deletion cancelled. You must type DELETE exactly.');
+    // Double confirmation for safety - require DELETE + org name
+    const expectedConfirm = `DELETE ${currentOrganization?.name}`;
+    const confirmText = window.prompt(`Type "${expectedConfirm}" to confirm permanent data deletion:`);
+    if (confirmText !== expectedConfirm) {
+      alert(`Deletion cancelled. You must type "${expectedConfirm}" exactly.`);
       return;
     }
 
@@ -1148,7 +1145,8 @@ export default function OrgAdmin() {
         addLog(`  Exporting ${table}...`);
 
         try {
-          const data = await api.entities[entityName].list();
+          // Use listAll to get ALL records (no 1000-row limit)
+          const data = await api.entities[entityName].listAll();
           backup.tables[table] = data;
           backup.metadata.recordCounts[table] = data.length;
           addLog(`    Found ${data.length} records`);
@@ -1261,6 +1259,49 @@ export default function OrgAdmin() {
       ];
 
       let restoredCount = 0;
+
+      // ID mapping: oldId -> newId (for maintaining FK relationships with new IDs)
+      const idMap = new Map();
+
+      // Helper to remap an ID field
+      const remapId = (oldId) => oldId ? (idMap.get(oldId) || oldId) : null;
+
+      // Helper to strip old ID and remap FK fields for a record
+      const prepareRecord = (record, fkFields = []) => {
+        const { id, organization_id, created_at, updated_at, ...rest } = record;
+        // Store old ID for mapping after insert
+        rest._oldId = id;
+        // Remap FK fields to new IDs
+        for (const fk of fkFields) {
+          if (rest[fk]) {
+            rest[fk] = remapId(rest[fk]);
+          }
+        }
+        return rest;
+      };
+
+      // FK field mappings for each table (column names must match actual DB schema)
+      // Note: loans.restructured_from_loan_id is handled specially (two-pass) since it's self-referential
+      const fkFieldMap = {
+        'loans': ['borrower_id', 'product_id'],  // restructured_from_loan_id handled in second pass
+        'InvestorTransaction': ['investor_id', 'investor_product_id'],
+        'investor_interest': ['investor_id'],
+        'transactions': ['loan_id', 'borrower_id'],
+        'repayment_schedules': ['loan_id'],
+        'loan_properties': ['loan_id', 'property_id', 'first_charge_holder_id'],
+        'expenses': ['type_id', 'loan_id'],  // type_id for expense type, loan_id for loan reference
+        'reconciliation_patterns': ['expense_type_id'],  // patterns table DOES use expense_type_id
+        'value_history': ['loan_property_id'],
+        'borrower_loan_preferences': ['borrower_id', 'loan_id'],
+        'receipt_drafts': ['loan_id', 'borrower_id'],
+        'reconciliation_entries': ['bank_statement_id', 'loan_transaction_id', 'investor_transaction_id', 'expense_id', 'other_income_id', 'interest_id'],
+        'accepted_orphans': ['entity_id'],  // entity_id is polymorphic, handled specially
+        'organization_summary': []  // Uses organization_id as PK, handled specially
+      };
+
+      // Track loans with restructure references for second pass
+      const loansWithRestructureRefs = [];
+
       for (const table of restoreOrder) {
         const records = restorePreview.tables[table];
         if (records && records.length > 0) {
@@ -1268,18 +1309,116 @@ export default function OrgAdmin() {
           addLog(`  Restoring ${table} (${records.length} records)...`);
 
           try {
-            // Strip organization_id - createMany will inject current org
-            const cleanRecords = records.map(r => {
-              const { organization_id, ...rest } = r;
-              return rest;
-            });
+            const fkFields = fkFieldMap[table] || [];
 
-            await api.entities[entityName].createMany(cleanRecords);
-            restoredCount += records.length;
-            addLog(`    Restored ${records.length} records`);
+            // Prepare records: strip IDs and remap FKs
+            let cleanRecords = records.map(r => prepareRecord(r, fkFields));
+
+            // Special handling for loans - remove restructured_from_loan_id for first pass
+            // (will be updated after all loans are inserted since it's self-referential)
+            if (table === 'loans') {
+              cleanRecords = cleanRecords.map(r => {
+                if (r.restructured_from_loan_id) {
+                  // Store the mapping for second pass: oldLoanId -> oldRestructuredFromId
+                  loansWithRestructureRefs.push({
+                    oldLoanId: r._oldId,
+                    oldRestructuredFromId: r.restructured_from_loan_id
+                  });
+                  // Remove the FK for now - will update after all loans exist
+                  const { restructured_from_loan_id, ...rest } = r;
+                  return rest;
+                }
+                return r;
+              });
+            }
+
+            // Special handling for accepted_orphans - remap entity_id based on entity_type
+            if (table === 'accepted_orphans') {
+              cleanRecords = cleanRecords.map(r => {
+                if (r.entity_id) {
+                  r.entity_id = remapId(r.entity_id);
+                }
+                return r;
+              }).filter(r => r.entity_id); // Filter out if entity wasn't restored
+            }
+
+            // Special handling for reconciliation_entries - filter out records where FK wasn't remapped
+            if (table === 'reconciliation_entries') {
+              const originalCount = cleanRecords.length;
+              cleanRecords = cleanRecords.filter(r => {
+                // All FK fields should either be null or have been remapped (exist in idMap)
+                const hasValidRefs =
+                  (!r.bank_statement_id || idMap.has(r.bank_statement_id) || r.bank_statement_id === remapId(r.bank_statement_id)) &&
+                  (!r.loan_transaction_id || idMap.has(r.loan_transaction_id) || r.loan_transaction_id === remapId(r.loan_transaction_id)) &&
+                  (!r.investor_transaction_id || idMap.has(r.investor_transaction_id) || r.investor_transaction_id === remapId(r.investor_transaction_id)) &&
+                  (!r.expense_id || idMap.has(r.expense_id) || r.expense_id === remapId(r.expense_id)) &&
+                  (!r.other_income_id || idMap.has(r.other_income_id) || r.other_income_id === remapId(r.other_income_id)) &&
+                  (!r.interest_id || idMap.has(r.interest_id) || r.interest_id === remapId(r.interest_id));
+                return hasValidRefs;
+              });
+              if (cleanRecords.length < originalCount) {
+                addLog(`    Filtered out ${originalCount - cleanRecords.length} orphaned reconciliation entries`);
+              }
+            }
+
+            if (cleanRecords.length > 0) {
+              // Remove _oldId before inserting, but keep track for ID mapping
+              const oldIds = cleanRecords.map(r => r._oldId);
+              const recordsToInsert = cleanRecords.map(r => {
+                const { _oldId, ...rest } = r;
+                return rest;
+              });
+
+              // Insert and get back the new IDs
+              const created = await api.entities[entityName].createMany(recordsToInsert);
+
+              // Build ID mapping: oldId -> newId
+              if (created && created.length === oldIds.length) {
+                for (let i = 0; i < oldIds.length; i++) {
+                  if (oldIds[i] && created[i]?.id) {
+                    idMap.set(oldIds[i], created[i].id);
+                  }
+                }
+              }
+
+              restoredCount += cleanRecords.length;
+              addLog(`    Restored ${cleanRecords.length} records`);
+            } else {
+              addLog(`    No valid records to restore`);
+            }
           } catch (err) {
             addLog(`    ERROR restoring ${table}: ${err.message}`);
           }
+        }
+      }
+
+      // Step 2b: Update loan restructure references (second pass for self-referential FK)
+      if (loansWithRestructureRefs.length > 0) {
+        addLog(`  Updating ${loansWithRestructureRefs.length} loan restructure references...`);
+        let updatedCount = 0;
+        let updateErrors = 0;
+        for (const ref of loansWithRestructureRefs) {
+          const newLoanId = idMap.get(ref.oldLoanId);
+          const newRestructuredFromId = idMap.get(ref.oldRestructuredFromId);
+          if (newLoanId && newRestructuredFromId) {
+            try {
+              await api.entities.Loan.update(newLoanId, {
+                restructured_from_loan_id: newRestructuredFromId
+              });
+              updatedCount++;
+            } catch (err) {
+              addLog(`    Failed to update restructure ref for loan: ${err.message}`);
+              updateErrors++;
+            }
+          } else {
+            addLog(`    Skipping restructure ref: loan or target not found in ID map`);
+          }
+        }
+        if (updatedCount > 0) {
+          addLog(`    Updated ${updatedCount} restructure references`);
+        }
+        if (updateErrors > 0) {
+          addLog(`    ${updateErrors} restructure reference updates failed`);
         }
       }
 
@@ -1653,13 +1792,13 @@ export default function OrgAdmin() {
                     {/* Confirmation */}
                     <div className="space-y-2">
                       <Label htmlFor="restore-confirm" className="text-sm">
-                        Type <strong>RESTORE</strong> to confirm:
+                        Type <strong>DELETE {currentOrganization?.name}</strong> to confirm:
                       </Label>
                       <Input
                         id="restore-confirm"
                         value={restoreConfirmText}
                         onChange={(e) => setRestoreConfirmText(e.target.value)}
-                        placeholder="RESTORE"
+                        placeholder={`DELETE ${currentOrganization?.name}`}
                         className="font-mono"
                       />
                     </div>
@@ -1679,7 +1818,7 @@ export default function OrgAdmin() {
                       <Button
                         variant="destructive"
                         onClick={executeRestore}
-                        disabled={isRestoring || restoreConfirmText !== 'RESTORE'}
+                        disabled={isRestoring || restoreConfirmText !== `DELETE ${currentOrganization?.name}`}
                         className="flex-1"
                       >
                         {isRestoring ? (

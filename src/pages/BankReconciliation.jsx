@@ -2973,6 +2973,7 @@ export default function BankReconciliation() {
           };
           const created = await api.entities.Expense.create(expenseData);
           expenseId = created.id;
+          console.log('[Reconcile] Created expense:', expenseId);
         } else if (reconciliationType === 'other_income') {
           const otherIncomeData = {
             amount: amount,
@@ -3022,19 +3023,54 @@ export default function BankReconciliation() {
         }
       }
 
+      // Defensive check: ensure expenseId is set when reconciling as expense
+      if (reconciliationType === 'expense' && matchMode === 'create' && !expenseId) {
+        console.error('[Reconcile] CRITICAL: Expense type but no expenseId!', {
+          reconciliationType,
+          matchMode,
+          expenseId
+        });
+        throw new Error('Expense reconciliation failed: expenseId not set after creation');
+      }
+
       // Create reconciliation entry (for non-offset types)
-      await api.entities.ReconciliationEntry.create({
-        bank_statement_id: selectedEntry.id,
-        loan_transaction_id: transactionId,
-        investor_transaction_id: investorTransactionId,
-        expense_id: expenseId,
-        other_income_id: otherIncomeId,
-        interest_id: interestId,
-        amount: amount,
-        reconciliation_type: reconciliationType,
-        notes: matchMode === 'match' ? 'Matched to existing transaction' : 'Created new transaction',
-        was_created: matchMode === 'create'
-      });
+      // Wrap in try-catch to rollback created entities if ReconciliationEntry fails
+      try {
+        await api.entities.ReconciliationEntry.create({
+          bank_statement_id: selectedEntry.id,
+          loan_transaction_id: transactionId,
+          investor_transaction_id: investorTransactionId,
+          expense_id: expenseId,
+          other_income_id: otherIncomeId,
+          interest_id: interestId,
+          amount: amount,
+          reconciliation_type: reconciliationType,
+          notes: matchMode === 'match' ? 'Matched to existing transaction' : 'Created new transaction',
+          was_created: matchMode === 'create'
+        });
+      } catch (reconError) {
+        // Rollback: if we created an expense/other_income but ReconciliationEntry failed, delete it
+        console.error('[Reconcile] ReconciliationEntry creation failed:', reconError);
+        if (matchMode === 'create') {
+          if (expenseId) {
+            console.error('[Reconcile] Rolling back expense:', expenseId);
+            try {
+              await api.entities.Expense.delete(expenseId);
+            } catch (deleteError) {
+              console.error('[Reconcile] Failed to rollback expense:', deleteError);
+            }
+          }
+          if (otherIncomeId) {
+            console.error('[Reconcile] Rolling back other_income:', otherIncomeId);
+            try {
+              await api.entities.OtherIncome.delete(otherIncomeId);
+            } catch (deleteError) {
+              console.error('[Reconcile] Failed to rollback other_income:', deleteError);
+            }
+          }
+        }
+        throw reconError; // Re-throw to be caught by outer catch
+      }
 
       // Mark bank statement as reconciled
       await api.entities.BankStatement.update(selectedEntry.id, {
