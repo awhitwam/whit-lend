@@ -2145,26 +2145,42 @@ export default function BankReconciliation() {
     return filtered;
   }, [bankStatements, activeTab, filter, searchTerm, suggestedMatches, confidenceFilter, dismissedSuggestions, reconciliationEntries, loanTransactions, loans, borrowers, investorTransactions, investors, expenses, sortBy, sortDirection, investorInterestEntries, expenseTypes]);
 
-  // Group reconciled statements by import date for collapsed view
-  const reconciledByImportDate = useMemo(() => {
+  // Get financial year for a date (UK financial year: Apr 1 - Mar 31)
+  // Returns the starting year of the financial year (e.g., 2025 for FY 2025/26)
+  const getFinancialYear = (date) => {
+    const d = new Date(date);
+    const month = d.getMonth(); // 0-indexed (0 = Jan, 3 = Apr)
+    const year = d.getFullYear();
+    // If Jan-Mar, it's the previous calendar year's FY
+    // If Apr-Dec, it's the current calendar year's FY
+    return month < 3 ? year - 1 : year;
+  };
+
+  // Format financial year for display (e.g., "2025/26")
+  const formatFinancialYear = (startYear) => {
+    return `${startYear}/${(startYear + 1).toString().slice(-2)}`;
+  };
+
+  // Group reconciled statements by financial year for collapsed view
+  const reconciledByFinancialYear = useMemo(() => {
     if (filter !== 'reconciled') return null;
 
     const reconciled = filteredStatements.filter(s => s.is_reconciled);
     const groups = new Map();
 
     reconciled.forEach(statement => {
-      // Group by date portion of created_at (import date)
-      const importDate = format(new Date(statement.created_at), 'yyyy-MM-dd');
-      if (!groups.has(importDate)) {
-        groups.set(importDate, {
-          date: importDate,
-          displayDate: format(new Date(statement.created_at), 'dd MMM yyyy'),
+      // Group by financial year based on statement_date
+      const fyYear = getFinancialYear(statement.statement_date);
+      if (!groups.has(fyYear)) {
+        groups.set(fyYear, {
+          year: fyYear,
+          displayDate: formatFinancialYear(fyYear),
           statements: [],
           totalIn: 0,
           totalOut: 0
         });
       }
-      const group = groups.get(importDate);
+      const group = groups.get(fyYear);
       group.statements.push(statement);
       if (statement.amount > 0) {
         group.totalIn += statement.amount;
@@ -2173,10 +2189,13 @@ export default function BankReconciliation() {
       }
     });
 
-    // Sort by date descending (most recent imports first)
-    return Array.from(groups.values()).sort((a, b) =>
-      new Date(b.date) - new Date(a.date)
-    );
+    // Sort statements within each group by date descending
+    groups.forEach(group => {
+      group.statements.sort((a, b) => new Date(b.statement_date) - new Date(a.statement_date));
+    });
+
+    // Sort by financial year descending (most recent first)
+    return Array.from(groups.values()).sort((a, b) => b.year - a.year);
   }, [filteredStatements, filter]);
 
   // Toggle expand/collapse for reconciled groups
@@ -2193,8 +2212,8 @@ export default function BankReconciliation() {
   };
 
   const expandAllGroups = () => {
-    if (reconciledByImportDate) {
-      setExpandedGroups(new Set(reconciledByImportDate.map(g => g.date)));
+    if (reconciledByFinancialYear) {
+      setExpandedGroups(new Set(reconciledByFinancialYear.map(g => g.year)));
     }
   };
 
@@ -5098,17 +5117,17 @@ export default function BankReconciliation() {
                   ? 'No bank statements imported yet. Upload a CSV file above.'
                   : 'No statements match your filters.'}
               </div>
-            ) : filter === 'reconciled' && reconciledByImportDate ? (
+            ) : filter === 'reconciled' && reconciledByFinancialYear ? (
               /* Grouped view for reconciled items */
               <div className="p-4 space-y-3">
-                {reconciledByImportDate.length === 0 ? (
+                {reconciledByFinancialYear.length === 0 ? (
                   <div className="text-center py-8 text-slate-500">
                     No reconciled items to display.
                   </div>
                 ) : (
                   <>
                     {/* Expand/Collapse controls */}
-                    {reconciledByImportDate.length > 1 && (
+                    {reconciledByFinancialYear.length > 1 && (
                       <div className="flex items-center justify-end gap-2 text-sm mb-2">
                         <Button variant="ghost" size="sm" onClick={expandAllGroups}>
                           Expand All
@@ -5118,16 +5137,16 @@ export default function BankReconciliation() {
                         </Button>
                       </div>
                     )}
-                    {reconciledByImportDate.map(group => (
-                      <div key={group.date} className="border rounded-lg overflow-hidden">
+                    {reconciledByFinancialYear.map(group => (
+                      <div key={group.year} className="border rounded-lg overflow-hidden">
                         {/* Group Header */}
                         <button
-                          onClick={() => toggleGroupExpanded(group.date)}
+                          onClick={() => toggleGroupExpanded(group.year)}
                           className="w-full flex items-center justify-between px-4 py-3 bg-slate-50 hover:bg-slate-100 transition-colors"
                         >
                           <div className="flex items-center gap-3">
-                            <ChevronRight className={`w-4 h-4 transition-transform ${expandedGroups.has(group.date) ? 'rotate-90' : ''}`} />
-                            <span className="font-medium text-slate-700">Imported {group.displayDate}</span>
+                            <ChevronRight className={`w-4 h-4 transition-transform ${expandedGroups.has(group.year) ? 'rotate-90' : ''}`} />
+                            <span className="font-medium text-slate-700">FY {group.displayDate}</span>
                             <Badge variant="outline" className="text-slate-600">{group.statements.length} item{group.statements.length !== 1 ? 's' : ''}</Badge>
                           </div>
                           <div className="flex items-center gap-4 text-sm">
@@ -5137,7 +5156,7 @@ export default function BankReconciliation() {
                         </button>
 
                         {/* Group Content - Expandable */}
-                        {expandedGroups.has(group.date) && (
+                        {expandedGroups.has(group.year) && (
                           <div className="border-t">
                             <table className="w-full table-fixed">
                               <thead>
