@@ -178,7 +178,9 @@ const AuthenticatedApp = () => {
   // Render the main app
   return (
     <Routes>
-      {/* Password reset route - public, handles recovery tokens */}
+      {/* Public routes - no layout wrapper */}
+      <Route path="/Login" element={<Pages.Login />} />
+      <Route path="/AcceptInvitation" element={<Pages.AcceptInvitation />} />
       <Route path="/ResetPassword" element={<ResetPassword />} />
 
       {/* MFA routes - require auth but not MFA completion */}
@@ -194,20 +196,22 @@ const AuthenticatedApp = () => {
           </LayoutWrapper>
         </>
       } />
-      {Object.entries(Pages).map(([path, Page]) => (
-        <Route
-          key={path}
-          path={`/${path}`}
-          element={
-            <>
-              <MFAProtectedApp />
-              <LayoutWrapper currentPageName={path}>
-                <Page />
-              </LayoutWrapper>
-            </>
-          }
-        />
-      ))}
+      {Object.entries(Pages)
+        .filter(([path]) => !['Login', 'AcceptInvitation', 'ResetPassword'].includes(path))
+        .map(([path, Page]) => (
+          <Route
+            key={path}
+            path={`/${path}`}
+            element={
+              <>
+                <MFAProtectedApp />
+                <LayoutWrapper currentPageName={path}>
+                  <Page />
+                </LayoutWrapper>
+              </>
+            }
+          />
+        ))}
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );

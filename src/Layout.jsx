@@ -455,14 +455,11 @@ export default function Layout({ children, currentPageName }) {
             style={{ backgroundColor: currentTheme.primary }}
           />
           <div className="flex h-full flex-col">
-            {/* Logo and Collapse Toggle */}
+            {/* Header and Collapse Toggle */}
             <div className="flex h-16 items-center justify-between px-4 border-b border-slate-800">
-              <div className="flex items-center gap-2">
-                <img src="/logo.png" alt="WhitLend" className="h-10 flex-shrink-0" />
-                {!sidebarCollapsed && (
-                  <span className="text-xl font-bold text-white tracking-tight">WhitLend</span>
-                )}
-              </div>
+              {!sidebarCollapsed && (
+                <span className="text-xl font-bold text-white tracking-tight">WhitLend</span>
+              )}
               <Button
                 variant="ghost"
                 size="icon"
@@ -517,7 +514,6 @@ export default function Layout({ children, currentPageName }) {
                   <ArrowLeft className="w-5 h-5" />
                 </button>
               )}
-              <img src="/logo.png" alt="WhitLend" className="h-8" />
               <span className="text-lg font-bold text-slate-900">WhitLend</span>
             </div>
             <Button

@@ -31,13 +31,7 @@ export default function About() {
         <CardContent className="pt-8 pb-8">
           <div className="flex flex-col items-center text-center space-y-6">
             {/* Logo */}
-            <img src="/logo.png" alt="Whit-Lend" className="h-32" />
-
-            {/* App Name */}
-            <div>
-              <h1 className="text-3xl font-bold text-slate-900">Whit-Lend</h1>
-              <p className="text-slate-500 mt-1">Empowering Loans</p>
-            </div>
+            <img src="/logo.png" alt="Whit-Lend" className="h-80" />
 
             {/* Version Info */}
             <div className="bg-slate-50 rounded-lg px-6 py-4 w-full max-w-sm">

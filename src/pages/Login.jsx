@@ -36,9 +36,9 @@ const Login = () => {
 
   return (
     <div className="flex items-center justify-center min-h-screen bg-slate-100">
-      <form onSubmit={handleSubmit} className="p-8 bg-white rounded shadow-md w-96">
+      <form onSubmit={handleSubmit} className="p-8 bg-white rounded shadow-md w-[480px]">
         <div className="flex justify-center mb-6">
-          <img src="/logo.png" alt="Whit-Lend" className="h-24" />
+          <img src="/logo.png" alt="Whit-Lend" className="h-96" />
         </div>
         {errorMessage && (
           <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-800 text-sm text-center">
