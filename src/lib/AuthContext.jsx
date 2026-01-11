@@ -175,55 +175,67 @@ export const AuthProvider = ({ children }) => {
 
       // Check if browser was closed and reopened (session should end on browser close)
       if (session?.user) {
-        const sessionAlive = sessionStorage.getItem(SESSION_ALIVE_KEY);
+        // Skip browser-close detection for authentication callback routes
+        // These routes handle their own session/token processing (e.g., invite links, password reset)
+        const authCallbackRoutes = ['/AcceptInvitation', '/ResetPassword'];
+        const currentPath = window.location.pathname;
+        const isAuthCallback = authCallbackRoutes.some(route => currentPath.startsWith(route));
 
-        if (!sessionAlive) {
-          // sessionStorage is empty = browser was closed and reopened
-          // This means the user closed the browser, so we should log them out
-          console.log('[AuthContext] Browser was closed - ending session');
-          localStorage.removeItem(LAST_ACTIVITY_KEY);
-          sessionStorage.removeItem('currentOrganizationId');
-          await supabase.auth.signOut();
-          setIsLoadingAuth(false);
-          window.location.href = '/Login?session_expired=true';
-          return;
-        }
+        if (!isAuthCallback) {
+          const sessionAlive = sessionStorage.getItem(SESSION_ALIVE_KEY);
 
-        // Browser wasn't closed, check for inactivity timeout (e.g., page refresh after long idle)
-        const lastActivity = localStorage.getItem(LAST_ACTIVITY_KEY);
-        if (lastActivity) {
-          const lastActivityTime = parseInt(lastActivity, 10);
-          const elapsed = Date.now() - lastActivityTime;
-
-          // Load timeout setting (or use default)
-          let timeoutMs = DEFAULT_INACTIVITY_TIMEOUT_MS;
-          try {
-            const { data: settingsData } = await supabase
-              .from('app_settings')
-              .select('value')
-              .eq('key', 'session_timeout_minutes')
-              .single();
-            if (settingsData?.value) {
-              const minutes = parseInt(settingsData.value, 10);
-              if (minutes >= 5 && minutes <= 60) {
-                timeoutMs = minutes * 60 * 1000;
-              }
-            }
-          } catch (e) {
-            // Use default if fetch fails
-          }
-
-          if (elapsed >= timeoutMs) {
-            // Session expired due to inactivity
-            console.log('[AuthContext] Session expired due to inactivity');
+          if (!sessionAlive) {
+            // sessionStorage is empty = browser was closed and reopened
+            // This means the user closed the browser, so we should log them out
+            console.log('[AuthContext] Browser was closed - ending session');
             localStorage.removeItem(LAST_ACTIVITY_KEY);
             sessionStorage.removeItem('currentOrganizationId');
-            sessionStorage.removeItem(SESSION_ALIVE_KEY);
             await supabase.auth.signOut();
             setIsLoadingAuth(false);
             window.location.href = '/Login?session_expired=true';
             return;
           }
+
+          // Browser wasn't closed, check for inactivity timeout (e.g., page refresh after long idle)
+          const lastActivity = localStorage.getItem(LAST_ACTIVITY_KEY);
+          if (lastActivity) {
+            const lastActivityTime = parseInt(lastActivity, 10);
+            const elapsed = Date.now() - lastActivityTime;
+
+            // Load timeout setting (or use default)
+            let timeoutMs = DEFAULT_INACTIVITY_TIMEOUT_MS;
+            try {
+              const { data: settingsData } = await supabase
+                .from('app_settings')
+                .select('value')
+                .eq('key', 'session_timeout_minutes')
+                .single();
+              if (settingsData?.value) {
+                const minutes = parseInt(settingsData.value, 10);
+                if (minutes >= 5 && minutes <= 60) {
+                  timeoutMs = minutes * 60 * 1000;
+                }
+              }
+            } catch (e) {
+              // Use default if fetch fails
+            }
+
+            if (elapsed >= timeoutMs) {
+              // Session expired due to inactivity
+              console.log('[AuthContext] Session expired due to inactivity');
+              localStorage.removeItem(LAST_ACTIVITY_KEY);
+              sessionStorage.removeItem('currentOrganizationId');
+              sessionStorage.removeItem(SESSION_ALIVE_KEY);
+              await supabase.auth.signOut();
+              setIsLoadingAuth(false);
+              window.location.href = '/Login?session_expired=true';
+              return;
+            }
+          }
+        } else {
+          // For auth callbacks, set the session alive marker since user is actively authenticating
+          console.log('[AuthContext] Auth callback route detected, skipping browser-close detection');
+          sessionStorage.setItem(SESSION_ALIVE_KEY, 'true');
         }
       }
 
