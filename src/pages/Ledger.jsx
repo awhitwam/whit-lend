@@ -531,7 +531,7 @@ export default function Ledger() {
                     ) : (
                       paginatedEntries.map((entry) => (
                         <TableRow key={entry.id} className="hover:bg-slate-50">
-                          <TableCell className="font-medium text-slate-700">
+                          <TableCell className="font-medium text-base text-slate-700">
                             {format(new Date(entry.date), 'dd MMM yyyy')}
                           </TableCell>
                           <TableCell>
@@ -541,25 +541,25 @@ export default function Ledger() {
                           </TableCell>
                           <TableCell>
                             <div>
-                              <p className="font-medium text-slate-900">{entry.description}</p>
+                              <p className="font-medium text-base text-slate-900">{entry.description}</p>
                               {entry.borrower && (
-                                <p className="text-xs text-slate-500">{entry.borrower}</p>
+                                <p className="text-sm text-slate-500">{entry.borrower}</p>
                               )}
                             </div>
                           </TableCell>
-                          <TableCell className="font-mono text-sm text-slate-700">
+                          <TableCell className="font-mono text-base text-slate-700">
                             {entry.loanId || '-'}
                           </TableCell>
-                          <TableCell className="text-sm text-slate-600">
+                          <TableCell className="text-base text-slate-600">
                             {entry.reference || '-'}
                           </TableCell>
-                          <TableCell className="text-right font-mono font-semibold text-emerald-600">
+                          <TableCell className="text-right font-mono text-base font-semibold text-emerald-600">
                             {entry.amount_in > 0 ? formatCurrency(entry.amount_in) : '-'}
                           </TableCell>
-                          <TableCell className="text-right font-mono font-semibold text-red-600">
+                          <TableCell className="text-right font-mono text-base font-semibold text-red-600">
                             {entry.amount_out > 0 ? formatCurrency(entry.amount_out) : '-'}
                           </TableCell>
-                          <TableCell className="text-right font-mono font-bold text-slate-900">
+                          <TableCell className="text-right font-mono text-base font-bold text-slate-900">
                             {formatCurrency(entry.balance)}
                           </TableCell>
                           <TableCell className="text-center">

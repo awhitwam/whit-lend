@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { format, differenceInDays } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from './LoanCalculator';
-import { CalendarClock, ArrowUpCircle, ArrowDownCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUp, ArrowDown, TrendingUp } from 'lucide-react';
+import { CalendarClock, ArrowRightCircle, ArrowLeftCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUp, ArrowDown, TrendingUp } from 'lucide-react';
 
 /**
  * Build a unified timeline from transactions and schedule entries
@@ -121,8 +121,9 @@ function buildTimeline({ loan, product, schedule, transactions }) {
   }
 
   // 4. Sort all rows by date, then by type order:
-  // Capital first (disbursements), rate changes, then schedule (adjustments, due dates), then interest payments (repayments)
-  const typeOrder = { disbursement: 0, rate_change: 1, adjustment: 2, due_date: 3, repayment: 4 };
+  // Capital first (disbursements), then capital repayments, then adjustments/due dates, rate changes last
+  // This ensures interest adjustments appear AFTER any transactions on the same date
+  const typeOrder = { disbursement: 0, repayment: 1, adjustment: 2, due_date: 3, rate_change: 4 };
 
   rows.sort((a, b) => {
     const dateCompare = a.date.localeCompare(b.date);
@@ -174,6 +175,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
           days,
           dailyRate: adjDailyRate,
           principal: principalForCalc,
+          effectiveRate,
           isAdjustment: true,
           breakdown: isCredit
             ? `${days}d × ${formatCurrency(adjDailyRate)} = -${formatCurrency(adjAmount)}`
@@ -476,12 +478,12 @@ function TypeIcon({ row }) {
       colorClass = 'text-blue-600';
       break;
     case 'disbursement':
-      icon = <ArrowUpCircle className="w-4 h-4" />;
+      icon = <ArrowRightCircle className="w-4 h-4" />;
       tooltip = 'Disbursement (capital advanced)';
       colorClass = 'text-red-600';
       break;
     case 'repayment':
-      icon = <ArrowDownCircle className="w-4 h-4" />;
+      icon = <ArrowLeftCircle className="w-4 h-4" />;
       // Blue for capital receipts (principal applied), green for interest receipts
       const hasPrincipal = row.transaction?.principal_applied > 0;
       tooltip = hasPrincipal ? 'Capital repayment received' : 'Interest payment received';
@@ -515,24 +517,24 @@ function TypeIcon({ row }) {
 function GroupTypeIcons({ typeCounts }) {
   const icons = [];
 
-  // Disbursements (red up arrows - capital out)
+  // Disbursements (red right arrows - capital out)
   for (let i = 0; i < typeCounts.disbursements; i++) {
     icons.push(
-      <ArrowUpCircle key={`disb-${i}`} className="w-4 h-4 text-red-600" />
+      <ArrowRightCircle key={`disb-${i}`} className="w-4 h-4 text-red-600" />
     );
   }
 
-  // Capital repayments (blue down arrows - principal returned)
+  // Capital repayments (blue left arrows - principal returned)
   for (let i = 0; i < typeCounts.capitalRepayments; i++) {
     icons.push(
-      <ArrowDownCircle key={`cap-${i}`} className="w-4 h-4 text-blue-600" />
+      <ArrowLeftCircle key={`cap-${i}`} className="w-4 h-4 text-blue-600" />
     );
   }
 
-  // Interest repayments (green down arrows - interest received)
+  // Interest repayments (green left arrows - interest received)
   for (let i = 0; i < typeCounts.interestRepayments; i++) {
     icons.push(
-      <ArrowDownCircle key={`int-${i}`} className="w-4 h-4 text-emerald-600" />
+      <ArrowLeftCircle key={`int-${i}`} className="w-4 h-4 text-emerald-600" />
     );
   }
 
@@ -564,13 +566,8 @@ function GroupTypeIcons({ typeCounts }) {
  * Shows month name and summary totals
  */
 function MonthGroupRow({ group, isExpanded, onToggle, maxInterestBalance }) {
-  // Determine interest balance color
-  let balanceColorClass = '';
-  if (group.endingInterestBalance > 0.01) {
-    balanceColorClass = 'text-red-600'; // Behind
-  } else if (group.endingInterestBalance < -0.01) {
-    balanceColorClass = 'text-emerald-600'; // Ahead
-  }
+  // Interest balance is always black (no color coding)
+  const balanceColorClass = '';
 
   return (
     <TableRow
@@ -590,11 +587,6 @@ function MonthGroupRow({ group, isExpanded, onToggle, maxInterestBalance }) {
         </div>
       </TableCell>
 
-      {/* Interest Received total */}
-      <TableCell className="text-right font-mono text-base text-emerald-600 py-1">
-        {group.totalInterestPaid > 0 && `-${formatCurrency(group.totalInterestPaid)}`}
-      </TableCell>
-
       {/* Interest Balance (ending) */}
       <TableCell className={cn('text-right font-mono text-base py-1', balanceColorClass)}>
         <div className="flex items-center justify-end">
@@ -611,17 +603,22 @@ function MonthGroupRow({ group, isExpanded, onToggle, maxInterestBalance }) {
         </div>
       </TableCell>
 
+      {/* Interest Received total */}
+      <TableCell className="text-right font-mono text-base text-emerald-600 py-1">
+        {group.totalInterestPaid > 0 && `-${formatCurrency(group.totalInterestPaid)}`}
+      </TableCell>
+
       {/* Principal Change total */}
       <TableCell className="text-right font-mono text-base py-1 border-r">
         {group.totalPrincipalChange !== 0 && (
-          <span className={group.totalPrincipalChange > 0 ? 'text-emerald-600' : ''}>
+          <span className={group.totalPrincipalChange > 0 ? 'text-red-600' : ''}>
             {group.totalPrincipalChange > 0 ? '+' : ''}{formatCurrency(group.totalPrincipalChange)}
           </span>
         )}
       </TableCell>
 
       {/* Expected Interest total */}
-      <TableCell className="text-right font-mono text-base py-1">
+      <TableCell className="text-right font-mono text-base text-blue-600 py-1">
         {group.totalExpectedInterest > 0 && formatCurrency(group.totalExpectedInterest)}
       </TableCell>
 
@@ -640,13 +637,8 @@ function MonthGroupRow({ group, isExpanded, onToggle, maxInterestBalance }) {
  * Standalone TODAY row - appears between month groups at the correct chronological position
  */
 function TodayStandaloneRow({ row, maxInterestBalance }) {
-  // Determine interest balance color
-  let balanceColorClass = '';
-  if (row.interestBalance > 0.01) {
-    balanceColorClass = 'text-red-600 font-medium'; // Behind
-  } else if (row.interestBalance < -0.01) {
-    balanceColorClass = 'text-emerald-600 font-medium'; // Ahead
-  }
+  // Interest balance is always black (no color coding)
+  const balanceColorClass = '';
 
   return (
     <TableRow className="bg-amber-100 border-y-2 border-amber-400">
@@ -657,11 +649,6 @@ function TodayStandaloneRow({ row, maxInterestBalance }) {
           <span>TODAY</span>
           <span className="font-normal text-amber-600">{format(new Date(row.date), 'dd/MM/yyyy')}</span>
         </div>
-      </TableCell>
-
-      {/* Interest Received - none for today */}
-      <TableCell className="text-right font-mono text-base py-1">
-        <span className="text-slate-300">—</span>
       </TableCell>
 
       {/* Interest Balance */}
@@ -678,6 +665,11 @@ function TodayStandaloneRow({ row, maxInterestBalance }) {
           </span>
           <BalanceGauge balance={row.interestBalance} maxBalance={maxInterestBalance} />
         </div>
+      </TableCell>
+
+      {/* Interest Received - none for today */}
+      <TableCell className="text-right font-mono text-base py-1">
+        <span className="text-slate-300">—</span>
       </TableCell>
 
       {/* Principal Change - none for today */}
@@ -725,13 +717,8 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
   const isToday = row.isToday;
   const isRateChange = row.primaryType === 'rate_change';
 
-  // Determine interest balance color
-  let balanceColorClass = '';
-  if (row.interestBalance > 0.01) {
-    balanceColorClass = 'text-red-600 font-medium'; // Behind
-  } else if (row.interestBalance < -0.01) {
-    balanceColorClass = 'text-emerald-600 font-medium'; // Ahead
-  }
+  // Interest balance is always black (no color coding)
+  const balanceColorClass = '';
 
   // Determine if payment was made
   const hasPrincipalChange = Math.abs(row.principalChange) > 0.01;
@@ -746,25 +733,29 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
       <TableRow className="bg-orange-50 border-y border-orange-300">
         {/* Date */}
         <TableCell className={cn(
-          "font-mono text-xs whitespace-nowrap py-1.5",
+          "font-mono text-base whitespace-nowrap py-1.5",
           isNested && "pl-6"
-        )}>
+        )} colSpan={2}>
           {format(new Date(row.date), 'dd/MM/yy')}
-        </TableCell>
-
-        {/* Type */}
-        <TableCell className="py-1.5">
-          <TypeIcon row={row} />
         </TableCell>
 
         {/* Rate change message spanning remaining columns */}
         <TableCell colSpan={6} className="py-1.5">
-          <div className="flex items-center gap-2 text-orange-700 font-medium">
+          <div className="flex items-center gap-2 text-orange-700 font-medium text-base">
             <span>Interest rate changed:</span>
             <span className="font-mono">{row.previousRate}% p.a.</span>
             <span>→</span>
             <span className="font-mono font-bold">{row.newRate}% p.a.</span>
-            <span className="text-orange-500 text-xs font-normal">(Penalty rate effective from this date)</span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-orange-600 cursor-help">
+                  <TrendingUp className="w-4 h-4" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Penalty rate effective from this date</p>
+              </TooltipContent>
+            </Tooltip>
           </div>
         </TableCell>
       </TableRow>
@@ -779,10 +770,10 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
     )}>
       {/* Date */}
       <TableCell className={cn(
-        "font-mono text-xs whitespace-nowrap py-1",
+        "font-mono text-base whitespace-nowrap py-1",
         isNested && "pl-6",
         isToday && "font-bold text-amber-700"
-      )}>
+      )} colSpan={2}>
         {isToday ? (
           <span>TODAY {format(new Date(row.date), 'dd/MM/yy')}</span>
         ) : (
@@ -790,40 +781,51 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
         )}
       </TableCell>
 
-      {/* Type */}
-      <TableCell className="py-1">
-        <TypeIcon row={row} />
-      </TableCell>
-
-      {/* Interest Paid (Reality) */}
-      <TableCell className="text-right font-mono text-xs py-1">
-        {hasInterestPaid ? (
-          <span className="text-emerald-600">
-            -{formatCurrency(row.interestPaid)}
-          </span>
+      {/* Interest Balance (Reality) - only show when there's an actual balance change (transaction) */}
+      <TableCell className={cn('text-right font-mono text-base py-1', balanceColorClass)}>
+        {(hasInterestPaid || hasPrincipalChange || isToday || isFirst || isLast) ? (
+          <div className="flex items-center justify-end">
+            <span>
+              {Math.abs(row.interestBalance) < 0.01 ? (
+                formatCurrency(0)
+              ) : row.interestBalance > 0 ? (
+                formatCurrency(row.interestBalance)
+              ) : (
+                `-${formatCurrency(Math.abs(row.interestBalance))}`
+              )}
+            </span>
+            <BalanceGauge balance={row.interestBalance} maxBalance={maxInterestBalance} />
+          </div>
         ) : (
           <span className="text-slate-300">—</span>
         )}
       </TableCell>
 
-      {/* Interest Balance (Reality) */}
-      <TableCell className={cn('text-right font-mono text-xs py-1', balanceColorClass)}>
-        <div className="flex items-center justify-end">
-          <span>
-            {Math.abs(row.interestBalance) < 0.01 ? (
-              formatCurrency(0)
-            ) : row.interestBalance > 0 ? (
-              formatCurrency(row.interestBalance)
-            ) : (
-              `-${formatCurrency(Math.abs(row.interestBalance))}`
-            )}
-          </span>
-          <BalanceGauge balance={row.interestBalance} maxBalance={maxInterestBalance} />
-        </div>
+      {/* Interest Paid (Reality) - with repayment icon */}
+      <TableCell className="text-right font-mono text-base py-1">
+        {hasInterestPaid ? (
+          <div className="flex items-center justify-end gap-1">
+            <span className="text-emerald-600">
+              -{formatCurrency(row.interestPaid)}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-emerald-600 cursor-help">
+                  <ArrowLeftCircle className="w-4 h-4" />
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Interest payment received</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
       </TableCell>
 
-      {/* Principal Change (Reality) - rightmost in ledger section */}
-      <TableCell className="text-right font-mono text-xs py-1 border-r">
+      {/* Principal Change (Reality) - rightmost in ledger section, with disbursement/capital icon */}
+      <TableCell className="text-right font-mono text-base py-1 border-r">
         {hasPrincipalChange ? (
           (() => {
             // Check if this disbursement has deductions (gross != net)
@@ -831,6 +833,9 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
             const hasDeductions = tx?.type === 'Disbursement' &&
               tx.gross_amount &&
               tx.gross_amount !== tx.amount;
+            const isDisbursement = row.principalChange > 0;
+            const iconColor = isDisbursement ? 'text-red-600' : 'text-blue-600';
+            const iconTooltip = isDisbursement ? 'Disbursement (capital advanced)' : 'Capital repayment received';
 
             if (hasDeductions) {
               const grossAmount = tx.gross_amount;
@@ -839,28 +844,52 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
               const deductedInterest = tx.deducted_interest || 0;
 
               return (
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <span className="text-emerald-600 cursor-help underline decoration-dotted">
-                      +{formatCurrency(row.principalChange)}
-                    </span>
-                  </TooltipTrigger>
-                  <TooltipContent className="text-xs">
-                    <div className="space-y-1">
-                      <p className="font-medium">Gross: {formatCurrency(grossAmount)}</p>
-                      {deductedFee > 0 && <p>Less fee: -{formatCurrency(deductedFee)}</p>}
-                      {deductedInterest > 0 && <p>Less interest: -{formatCurrency(deductedInterest)}</p>}
-                      <p className="border-t pt-1">Net transferred: {formatCurrency(netAmount)}</p>
-                    </div>
-                  </TooltipContent>
-                </Tooltip>
+                <div className="flex items-center justify-end gap-1">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="text-red-600 cursor-help underline decoration-dotted">
+                        +{formatCurrency(row.principalChange)}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent className="text-xs">
+                      <div className="space-y-1">
+                        <p className="font-medium">Gross: {formatCurrency(grossAmount)}</p>
+                        {deductedFee > 0 && <p>Less fee: -{formatCurrency(deductedFee)}</p>}
+                        {deductedInterest > 0 && <p>Less interest: -{formatCurrency(deductedInterest)}</p>}
+                        <p className="border-t pt-1">Net transferred: {formatCurrency(netAmount)}</p>
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className={cn(iconColor, 'cursor-help')}>
+                        {isDisbursement ? <ArrowRightCircle className="w-4 h-4" /> : <ArrowLeftCircle className="w-4 h-4" />}
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{iconTooltip}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
               );
             }
 
             return (
-              <span className={row.principalChange > 0 ? 'text-emerald-600' : 'text-slate-700'}>
-                {row.principalChange > 0 ? '+' : ''}{formatCurrency(row.principalChange)}
-              </span>
+              <div className="flex items-center justify-end gap-1">
+                <span className={isDisbursement ? 'text-red-600' : 'text-slate-700'}>
+                  {isDisbursement ? '+' : ''}{formatCurrency(row.principalChange)}
+                </span>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className={cn(iconColor, 'cursor-help')}>
+                      {isDisbursement ? <ArrowRightCircle className="w-4 h-4" /> : <ArrowLeftCircle className="w-4 h-4" />}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent>
+                    <p>{iconTooltip}</p>
+                  </TooltipContent>
+                </Tooltip>
+              </div>
             );
           })()
         ) : (
@@ -868,19 +897,31 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
         )}
       </TableCell>
 
-      {/* Expected Interest (Expectations) */}
-      <TableCell className="text-right font-mono text-xs py-1">
+      {/* Expected Interest (Expectations) - with schedule icon */}
+      <TableCell className="text-right font-mono text-base py-1">
         {row.isDueDate && row.expectedInterest > 0.01 ? (
-          <span className={isFuture ? 'text-slate-400' : ''}>
-            {formatCurrency(row.expectedInterest)}
-          </span>
+          <div className="flex items-center justify-end gap-1">
+            <span className={isFuture ? 'text-slate-400' : (row.primaryType === 'adjustment' ? 'text-amber-600' : 'text-blue-600')}>
+              {formatCurrency(row.expectedInterest)}
+            </span>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className={cn('cursor-help', row.primaryType === 'adjustment' ? 'text-amber-600' : 'text-blue-600')}>
+                  {row.primaryType === 'adjustment' ? <CircleDot className="w-4 h-4" /> : <CalendarClock className="w-4 h-4" />}
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{row.primaryType === 'adjustment' ? 'Schedule adjustment' : 'Interest due date'}</p>
+              </TooltipContent>
+            </Tooltip>
+          </div>
         ) : (
           <span className="text-slate-300">—</span>
         )}
       </TableCell>
 
       {/* Calculation (Expectations) */}
-      <TableCell className={cn("text-xs py-1", isToday ? "text-amber-600" : "text-slate-500")}>
+      <TableCell className={cn("text-base py-1", isToday ? "text-amber-600" : "text-slate-500")}>
         {isToday && row.accruedInterest > 0.01 ? (
           <Tooltip>
             <TooltipTrigger asChild>
@@ -903,10 +944,13 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
                 {row.calculationBreakdown.breakdown}
               </span>
             </TooltipTrigger>
-            <TooltipContent>
+            <TooltipContent className="space-y-1">
               <p className="font-medium">Mid-period capital adjustment</p>
-              <p>{row.calculationBreakdown.days} days remaining in period</p>
-              <p>Interest {row.expectedInterest < 0 ? 'credit' : 'due'}: {formatCurrency(Math.abs(row.expectedInterest))}</p>
+              <p className="text-xs text-slate-300">Principal: {formatCurrency(row.calculationBreakdown.principal)}</p>
+              <p className="text-xs text-slate-300">Rate: {row.calculationBreakdown.effectiveRate}% p.a.</p>
+              <p className="text-xs text-slate-300">Daily: {formatCurrency(row.calculationBreakdown.principal)} × {row.calculationBreakdown.effectiveRate}% ÷ 365 = {formatCurrency(row.calculationBreakdown.dailyRate)}/day</p>
+              <p className="text-xs text-slate-300">{row.calculationBreakdown.days} days × {formatCurrency(row.calculationBreakdown.dailyRate)} = {formatCurrency(Math.abs(row.expectedInterest))}</p>
+              <p className="font-medium mt-1">Interest {row.expectedInterest < 0 ? 'credit' : 'due'}: {formatCurrency(Math.abs(row.expectedInterest))}</p>
             </TooltipContent>
           </Tooltip>
         ) : row.calculationBreakdown ? (
@@ -917,7 +961,7 @@ function TimelineRow({ row, product, isFirst, isLast, maxInterestBalance, isNest
       </TableCell>
 
       {/* Principal Balance (Expectations) - only show at start, end, or on changes */}
-      <TableCell className="text-right font-mono text-xs font-medium py-1">
+      <TableCell className="text-right font-mono text-base font-medium py-1">
         {showPrincipalBalance ? (
           formatCurrency(row.principalBalance)
         ) : (
@@ -976,49 +1020,48 @@ function TotalsRow({ rows }) {
 
   return (
     <TableRow className="bg-slate-100 font-semibold border-t-2">
-      <TableCell className="text-xs py-1.5">TOTALS</TableCell>
-      <TableCell className="py-1.5"></TableCell>
-      <TableCell className="text-right font-mono text-xs text-emerald-600 py-1.5">
+      <TableCell className="text-base py-1.5" colSpan={2}>TOTALS</TableCell>
+      <TableCell className={cn('text-right font-mono text-base py-1.5', statusColor)}>
+        <div>{Math.abs(interestBalance) < 0.01 ? formatCurrency(0) : formatCurrency(Math.abs(interestBalance))}</div>
+        <div className="text-xs">{statusLabel}</div>
+      </TableCell>
+      <TableCell className="text-right font-mono text-base text-emerald-600 py-1.5">
         -{formatCurrency(totalInterestPaid)}
       </TableCell>
-      <TableCell className={cn('text-right font-mono text-xs py-1.5', statusColor)}>
-        <div>{Math.abs(interestBalance) < 0.01 ? formatCurrency(0) : formatCurrency(Math.abs(interestBalance))}</div>
-        <div className="text-[10px]">{statusLabel}</div>
-      </TableCell>
-      <TableCell className="text-right font-mono text-xs py-1.5 border-r">
+      <TableCell className="text-right font-mono text-base py-1.5 border-r">
         {totalPrincipalChange !== 0 && (
           hasDeductions ? (
             <Tooltip>
               <TooltipTrigger asChild>
                 <span className={cn(
                   'cursor-help underline decoration-dotted',
-                  totalPrincipalChange > 0 ? 'text-emerald-600' : ''
+                  totalPrincipalChange > 0 ? 'text-red-600' : ''
                 )}>
                   {totalPrincipalChange > 0 ? '+' : ''}{formatCurrency(totalPrincipalChange)}
                 </span>
               </TooltipTrigger>
-              <TooltipContent className="text-xs">
+              <TooltipContent className="text-base">
                 <div className="space-y-1">
                   <p className="font-medium">Total Gross: {formatCurrency(totalGross)}</p>
                   {totalDeductedFee > 0 && <p>Less fees: -{formatCurrency(totalDeductedFee)}</p>}
                   {totalDeductedInterest > 0 && <p>Less interest: -{formatCurrency(totalDeductedInterest)}</p>}
                   <p className="border-t pt-1">Total Net transferred: {formatCurrency(totalNet)}</p>
-                  <p className="text-slate-400 text-[10px]">({disbursementsWithDeductions.length} disbursement{disbursementsWithDeductions.length > 1 ? 's' : ''} with deductions)</p>
+                  <p className="text-slate-400 text-xs">({disbursementsWithDeductions.length} disbursement{disbursementsWithDeductions.length > 1 ? 's' : ''} with deductions)</p>
                 </div>
               </TooltipContent>
             </Tooltip>
           ) : (
-            <span className={totalPrincipalChange > 0 ? 'text-emerald-600' : ''}>
+            <span className={totalPrincipalChange > 0 ? 'text-red-600' : ''}>
               {totalPrincipalChange > 0 ? '+' : ''}{formatCurrency(totalPrincipalChange)}
             </span>
           )
         )}
       </TableCell>
-      <TableCell className="text-right font-mono text-xs py-1.5">
+      <TableCell className="text-right font-mono text-base py-1.5">
         {formatCurrency(totalExpected)}
       </TableCell>
       <TableCell className="py-1.5"></TableCell>
-      <TableCell className="text-right font-mono text-xs py-1.5">
+      <TableCell className="text-right font-mono text-base py-1.5">
         {formatCurrency(principalBalance)}
       </TableCell>
     </TableRow>
@@ -1143,7 +1186,7 @@ export default function InterestOnlyScheduleView({
     return (
       <div className="text-center text-slate-500 py-8">
         <p>No schedule data available.</p>
-        <p className="text-sm mt-1">Record transactions to see the schedule timeline.</p>
+        <p className="text-base mt-1">Record transactions to see the schedule timeline.</p>
       </div>
     );
   }
@@ -1174,9 +1217,9 @@ export default function InterestOnlyScheduleView({
                 </Tooltip>
               </div>
             </TableHead>
-            <TableHead className="text-xs w-8 py-1"></TableHead>
-            <TableHead className="text-xs text-right w-24 py-1">Int Received</TableHead>
+            <TableHead className="text-xs w-4 py-1"></TableHead>
             <TableHead className="text-xs text-right w-28 py-1">Int Bal</TableHead>
+            <TableHead className="text-xs text-right w-24 py-1">Int Received</TableHead>
             <TableHead className="text-xs text-right w-24 border-r py-1">Principal</TableHead>
             <TableHead className="text-xs text-right w-24 py-1">Expected</TableHead>
             <TableHead className="text-xs w-32 py-1">Calculation</TableHead>

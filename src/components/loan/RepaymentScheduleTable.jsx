@@ -709,14 +709,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <Table>
                   <TableHeader className="[&_tr]:sticky [&_tr]:top-0 [&_tr]:z-20 [&_tr]:bg-slate-50">
                     <TableRow className="bg-slate-50">
-                      <TableHead className="font-semibold text-xs w-28">Date</TableHead>
-                      <TableHead className="font-semibold text-xs w-28">Type</TableHead>
-                      <TableHead className="font-semibold text-xs text-right">Amount</TableHead>
-                      <TableHead className="font-semibold text-xs text-right">Principal</TableHead>
-                      <TableHead className="font-semibold text-xs text-right">Interest</TableHead>
-                      <TableHead className="font-semibold text-xs text-right">Fees</TableHead>
-                      <TableHead className="font-semibold text-xs text-right">Balance</TableHead>
-                      <TableHead className="font-semibold text-xs">Reference</TableHead>
+                      <TableHead className="font-semibold text-xs w-20 py-1">Date</TableHead>
+                      <TableHead className="font-semibold text-xs w-24 py-1">Type</TableHead>
+                      <TableHead className="font-semibold text-xs text-right py-1">Amount</TableHead>
+                      <TableHead className="font-semibold text-xs text-right py-1">Principal</TableHead>
+                      <TableHead className="font-semibold text-xs text-right py-1">Interest</TableHead>
+                      <TableHead className="font-semibold text-xs text-right py-1">Fees</TableHead>
+                      <TableHead className="font-semibold text-xs text-right py-1">Balance</TableHead>
+                      <TableHead className="font-semibold text-xs py-1">Reference</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -724,46 +724,46 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                       tx.isRateChange ? (
                         // Rate change row
                         <TableRow key={tx.id} className="bg-amber-50/50 border-y border-amber-200">
-                          <TableCell className="text-xs font-mono">{format(new Date(tx.date), 'dd MMM yyyy')}</TableCell>
-                          <TableCell className="text-xs">
+                          <TableCell className="text-sm font-mono py-0.5 whitespace-nowrap">{format(new Date(tx.date), 'dd/MM/yy')}</TableCell>
+                          <TableCell className="text-sm py-0.5">
                             <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-300">
                               Rate Change
                             </Badge>
                           </TableCell>
-                          <TableCell colSpan={5} className="text-xs text-amber-700">
+                          <TableCell colSpan={5} className="text-sm text-amber-700 py-0.5">
                             Interest rate changed from <span className="font-semibold">{tx.oldRate}%</span> to <span className="font-semibold">{tx.newRate}%</span> pa
                           </TableCell>
-                          <TableCell className="text-xs text-slate-500">—</TableCell>
+                          <TableCell className="text-sm text-slate-500 py-0.5">—</TableCell>
                         </TableRow>
                       ) : (
                         // Regular transaction row
                         <TableRow key={tx.id} className={tx.type === 'Disbursement' ? 'bg-red-50/30' : 'bg-emerald-50/30'}>
-                          <TableCell className="text-xs font-mono">{format(new Date(tx.date), 'dd MMM yyyy')}</TableCell>
-                          <TableCell className="text-xs">
+                          <TableCell className="text-sm font-mono py-0.5 whitespace-nowrap">{format(new Date(tx.date), 'dd/MM/yy')}</TableCell>
+                          <TableCell className="text-sm py-0.5">
                             <Badge variant="outline" className={tx.type === 'Disbursement' ? 'bg-red-50 text-red-700' : 'bg-emerald-50 text-emerald-700'}>
                               {tx.type}
                             </Badge>
                           </TableCell>
-                          <TableCell className="text-xs text-right font-mono font-semibold">
+                          <TableCell className="text-sm text-right font-mono py-0.5">
                             {formatCurrency(tx.amount)}
                           </TableCell>
-                          <TableCell className="text-xs text-right font-mono">
+                          <TableCell className="text-sm text-right font-mono py-0.5">
                             {tx.type === 'Disbursement'
                               ? <span className="text-red-600">+{formatCurrency(tx.amount)}</span>
                               : tx.principal_applied
                                 ? <span className="text-emerald-600">-{formatCurrency(tx.principal_applied)}</span>
                                 : '—'}
                           </TableCell>
-                          <TableCell className="text-xs text-right font-mono">
+                          <TableCell className="text-sm text-right font-mono py-0.5">
                             {tx.interest_applied ? formatCurrency(tx.interest_applied) : '—'}
                           </TableCell>
-                          <TableCell className="text-xs text-right font-mono">
+                          <TableCell className="text-sm text-right font-mono py-0.5">
                             {tx.fees_applied ? formatCurrency(tx.fees_applied) : '—'}
                           </TableCell>
-                          <TableCell className="text-xs text-right font-mono font-semibold">
+                          <TableCell className="text-sm text-right font-mono py-0.5">
                             {formatCurrency(tx.runningBalance)}
                           </TableCell>
-                          <TableCell className="text-xs text-slate-500">{tx.reference || '—'}</TableCell>
+                          <TableCell className="text-sm text-slate-500 py-0.5">{tx.reference || '—'}</TableCell>
                         </TableRow>
                       )
                     ))}
@@ -777,22 +777,22 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     {/* Totals row */}
                     {txWithBalance.length > 0 && (
                       <TableRow className="bg-slate-100 border-t-2 border-slate-300">
-                        <TableCell className="text-xs font-semibold" colSpan={2}>Totals</TableCell>
-                        <TableCell className="text-xs text-right font-mono">—</TableCell>
-                        <TableCell className="text-xs text-right font-mono font-semibold">
+                        <TableCell className="text-sm font-semibold py-0.5" colSpan={2}>Totals</TableCell>
+                        <TableCell className="text-sm text-right font-mono py-0.5">—</TableCell>
+                        <TableCell className="text-sm text-right font-mono py-0.5">
                           <div className="text-red-600">+{formatCurrency(totalDisbursed)}</div>
                           <div className="text-emerald-600">-{formatCurrency(totalPrincipalRepaid)}</div>
                         </TableCell>
-                        <TableCell className="text-xs text-right font-mono font-semibold text-emerald-600">
+                        <TableCell className="text-sm text-right font-mono text-emerald-600 py-0.5">
                           {formatCurrency(totalInterestPaid)}
                         </TableCell>
-                        <TableCell className="text-xs text-right font-mono font-semibold">
+                        <TableCell className="text-sm text-right font-mono py-0.5">
                           {totalFeesPaid > 0 ? formatCurrency(totalFeesPaid) : '—'}
                         </TableCell>
-                        <TableCell className="text-xs text-right font-mono font-bold">
+                        <TableCell className="text-sm text-right font-mono py-0.5">
                           {formatCurrency(totalDisbursed - totalPrincipalRepaid)}
                         </TableCell>
-                        <TableCell></TableCell>
+                        <TableCell className="py-0.5"></TableCell>
                       </TableRow>
                     )}
                   </TableBody>

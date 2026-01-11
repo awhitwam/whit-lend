@@ -1452,8 +1452,8 @@ export default function LoanDetails() {
                       </div>
                     )}
                     {product && (
-                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-3 py-2 text-xs">
-                        <p className="font-medium text-slate-700">{product.name}</p>
+                      <div className="bg-slate-50 border border-slate-200 rounded-lg px-4 py-2.5 text-sm min-w-[200px]">
+                        <p className="font-semibold text-slate-700">{product.name}</p>
                         <p className="text-slate-500">
                           {product.interest_calculation_method === 'daily' ? 'Daily calc' : 'Monthly fixed'}
                           {' • '}
@@ -1472,7 +1472,7 @@ export default function LoanDetails() {
                           <TooltipProvider>
                             <Tooltip>
                               <TooltipTrigger asChild>
-                                <p className="text-slate-400 text-[10px] font-mono mt-1 cursor-help">
+                                <p className="text-slate-400 text-xs font-mono mt-1 cursor-help">
                                   {product.scheduler_type} → {getScheduler(product.scheduler_type)?.ViewComponent ? 'Custom' : 'Table'}
                                 </p>
                               </TooltipTrigger>
@@ -1731,15 +1731,15 @@ export default function LoanDetails() {
                           <table className="w-full">
                             <thead className="bg-slate-50 border-b border-slate-200">
                               <tr>
-                                <th className="text-left py-1.5 px-2 text-xs font-semibold text-slate-700">Date</th>
-                                <th className="text-left py-1.5 px-2 text-xs font-semibold text-slate-700">Reference</th>
-                                <th className="text-right py-1.5 px-2 text-xs font-semibold text-slate-700">Amount</th>
-                                <th className="text-right py-1.5 px-2 text-xs font-semibold text-slate-700">Principal</th>
-                                <th className="text-right py-1.5 px-2 text-xs font-semibold text-slate-700">Interest</th>
+                                <th className="text-left py-1.5 px-2 text-sm font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-1.5 px-2 text-sm font-semibold text-slate-700">Reference</th>
+                                <th className="text-right py-1.5 px-2 text-sm font-semibold text-slate-700">Amount</th>
+                                <th className="text-right py-1.5 px-2 text-sm font-semibold text-slate-700">Principal</th>
+                                <th className="text-right py-1.5 px-2 text-sm font-semibold text-slate-700">Interest</th>
                                 {totalFees > 0 && (
-                                  <th className="text-right py-1.5 px-2 text-xs font-semibold text-slate-700">Fees</th>
+                                  <th className="text-right py-1.5 px-2 text-sm font-semibold text-slate-700">Fees</th>
                                 )}
-                                <th className="text-left py-1.5 px-2 text-xs font-semibold text-slate-700">Notes</th>
+                                <th className="text-left py-1.5 px-2 text-sm font-semibold text-slate-700">Notes</th>
                                 <th className="w-6 py-1.5 px-1">
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -1754,15 +1754,15 @@ export default function LoanDetails() {
                             <tbody className="divide-y divide-slate-100">
                               {repayments.map((tx) => (
                                 <tr key={tx.id} className="hover:bg-slate-50">
-                                  <td className="py-1 px-2 text-sm font-medium">{format(new Date(tx.date), 'dd/MM/yy')}</td>
-                                  <td className="py-1 px-2 text-sm text-slate-600">{tx.reference || '—'}</td>
-                                  <td className="py-1 px-2 text-sm font-semibold text-emerald-600 text-right">{formatCurrency(tx.amount)}</td>
-                                  <td className="py-1 px-2 text-sm text-slate-600 text-right">{(tx.principal_applied || 0) > 0 ? formatCurrency(tx.principal_applied) : ''}</td>
-                                  <td className="py-1 px-2 text-sm text-slate-600 text-right">{(tx.interest_applied || 0) > 0 ? formatCurrency(tx.interest_applied) : ''}</td>
+                                  <td className="py-1 px-2 text-base font-medium">{format(new Date(tx.date), 'dd/MM/yy')}</td>
+                                  <td className="py-1 px-2 text-base text-slate-600">{tx.reference || '—'}</td>
+                                  <td className="py-1 px-2 text-base font-semibold text-emerald-600 text-right">{formatCurrency(tx.amount)}</td>
+                                  <td className="py-1 px-2 text-base text-slate-600 text-right">{(tx.principal_applied || 0) > 0 ? formatCurrency(tx.principal_applied) : ''}</td>
+                                  <td className="py-1 px-2 text-base text-slate-600 text-right">{(tx.interest_applied || 0) > 0 ? formatCurrency(tx.interest_applied) : ''}</td>
                                   {totalFees > 0 && (
-                                    <td className="py-1 px-2 text-sm text-purple-600 text-right">{(tx.fees_applied || 0) > 0 ? formatCurrency(tx.fees_applied) : ''}</td>
+                                    <td className="py-1 px-2 text-base text-purple-600 text-right">{(tx.fees_applied || 0) > 0 ? formatCurrency(tx.fees_applied) : ''}</td>
                                   )}
-                                  <td className="py-1 px-2 text-sm text-slate-500 max-w-[200px] truncate" title={tx.notes || ''}>{tx.notes || '—'}</td>
+                                  <td className="py-1 px-2 text-base text-slate-500 max-w-[200px] truncate" title={tx.notes || ''}>{tx.notes || '—'}</td>
                                   <td className="py-1 px-1 text-center">
                                     {reconciledTransactionIds.has(tx.id) ? (
                                       (() => {
@@ -2003,12 +2003,12 @@ export default function LoanDetails() {
                                     className={someSelected && !allSelected ? 'data-[state=checked]:bg-slate-400' : ''}
                                   />
                                 </th>
-                                <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Date</th>
-                                <th className="text-left py-1 px-2 text-xs font-semibold text-slate-700">Description</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Gross</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-amber-600">Deductions</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-emerald-700">Net</th>
-                                <th className="text-right py-1 px-2 text-xs font-semibold text-slate-700">Principal</th>
+                                <th className="text-left py-1 px-2 text-sm font-semibold text-slate-700">Date</th>
+                                <th className="text-left py-1 px-2 text-sm font-semibold text-slate-700">Description</th>
+                                <th className="text-right py-1 px-2 text-sm font-semibold text-slate-700">Gross</th>
+                                <th className="text-right py-1 px-2 text-sm font-semibold text-amber-600">Deductions</th>
+                                <th className="text-right py-1 px-2 text-sm font-semibold text-emerald-700">Net</th>
+                                <th className="text-right py-1 px-2 text-sm font-semibold text-slate-700">Principal</th>
                                 <th className="w-6 py-1 px-1">
                                   <Tooltip>
                                     <TooltipTrigger asChild>
@@ -2029,21 +2029,21 @@ export default function LoanDetails() {
                                       onCheckedChange={() => handleSelectOne(entry.id)}
                                     />
                                   </td>
-                                  <td className="py-1 px-2 text-xs">{format(entry.date, 'dd/MM/yy')}</td>
-                                  <td className="py-1 px-2 text-xs">
-                                    <Badge variant="default" className="text-[10px] px-1.5 py-0 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
+                                  <td className="py-1 px-2 text-base">{format(entry.date, 'dd/MM/yy')}</td>
+                                  <td className="py-1 px-2 text-base">
+                                    <Badge variant="default" className="text-xs px-1.5 py-0 bg-emerald-100 text-emerald-700 hover:bg-emerald-100">
                                       {entry.description}
                                     </Badge>
                                     {entry.notes && (
-                                      <p className="text-[10px] text-slate-400 mt-0.5 truncate max-w-[150px]" title={entry.notes}>
+                                      <p className="text-sm text-slate-400 mt-0.5 truncate max-w-[150px]" title={entry.notes}>
                                         {entry.notes}
                                       </p>
                                     )}
                                   </td>
-                                  <td className="py-1 px-2 text-xs text-slate-700 text-right font-medium">
+                                  <td className="py-1 px-2 text-base text-slate-700 text-right font-medium">
                                     {formatCurrency(entry.gross_amount)}
                                   </td>
-                                  <td className="py-1 px-2 text-xs text-right">
+                                  <td className="py-1 px-2 text-base text-right">
                                     {entry.hasDeductions ? (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
@@ -2066,10 +2066,10 @@ export default function LoanDetails() {
                                       <span className="text-slate-300">-</span>
                                     )}
                                   </td>
-                                  <td className="py-1 px-2 text-xs text-emerald-600 text-right font-medium">
+                                  <td className="py-1 px-2 text-base text-emerald-600 text-right font-medium">
                                     {formatCurrency(entry.amount)}
                                   </td>
-                                  <td className="py-1 px-2 text-xs text-slate-700 text-right font-semibold">
+                                  <td className="py-1 px-2 text-base text-slate-700 text-right font-semibold">
                                     {formatCurrency(balanceMap[entry.id])}
                                   </td>
                                   <td className="py-1 px-1 text-center">

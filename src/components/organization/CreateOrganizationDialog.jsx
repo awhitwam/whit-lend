@@ -59,6 +59,18 @@ export default function CreateOrganizationDialog({ open, onClose }) {
 
       if (memberError) throw memberError;
 
+      // Create organization summary row with default values
+      const { error: summaryError } = await supabase
+        .from('organization_summary')
+        .insert({
+          organization_id: org.id
+        });
+
+      if (summaryError) {
+        console.error('Error creating organization summary:', summaryError);
+        // Don't throw - this is not critical for org creation
+      }
+
       return org;
     },
     onSuccess: () => {
