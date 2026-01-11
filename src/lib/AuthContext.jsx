@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { logAuthEvent, AuditAction } from '@/lib/auditLog';
 
@@ -7,6 +7,16 @@ const AuthContext = createContext();
 // Constants for MFA
 const DEVICE_TRUST_DAYS = 7;
 const DEVICE_TOKEN_KEY = 'mfa_device_token';
+
+// Constants for inactivity timeout
+const DEFAULT_INACTIVITY_TIMEOUT_MS = 20 * 60 * 1000; // 20 minutes default
+const ACTIVITY_CHECK_INTERVAL_MS = 10 * 1000; // Check every 10 seconds
+// Only track intentional user interactions (not passive mouse movement)
+const ACTIVITY_EVENTS = ['mousedown', 'keydown', 'touchstart', 'scroll', 'click'];
+// localStorage key for persisting activity timestamp across browser restarts
+const LAST_ACTIVITY_KEY = 'whit_lend_last_activity';
+// sessionStorage key to detect browser restart (sessionStorage is cleared when browser closes)
+const SESSION_ALIVE_KEY = 'whit_lend_session_alive';
 
 // Generate a secure device token
 const generateDeviceToken = () => {
@@ -49,6 +59,15 @@ export const AuthProvider = ({ children }) => {
 
   // Super admin state
   const [isSuperAdmin, setIsSuperAdmin] = useState(false);
+
+  // Session expiry tracking for timeout warning
+  const [sessionExpiresAt, setSessionExpiresAt] = useState(null);
+  const isManualLogoutRef = useRef(false);
+
+  // Activity-based inactivity timeout
+  const lastActivityRef = useRef(Date.now());
+  const inactivityTimerRef = useRef(null);
+  const [inactivityTimeoutMs, setInactivityTimeoutMs] = useState(DEFAULT_INACTIVITY_TIMEOUT_MS);
 
   // Check if user is a super admin - defined before useEffect to avoid hoisting issues
   const checkSuperAdminStatus = async (userId) => {
@@ -98,8 +117,33 @@ export const AuthProvider = ({ children }) => {
         return;
       }
 
+      // Handle session expiration (inactivity timeout)
+      if (event === 'SIGNED_OUT') {
+        // Only redirect if we were previously authenticated AND it wasn't a manual logout
+        // Manual logout already handles its own redirect
+        if (isAuthenticated && !isManualLogoutRef.current) {
+          console.log('[AuthContext] Session expired due to inactivity, redirecting to login');
+          sessionStorage.removeItem('currentOrganizationId');
+          setUser(null);
+          setIsAuthenticated(false);
+          setIsSuperAdmin(false);
+          setSessionExpiresAt(null);
+          window.location.href = '/Login?session_expired=true';
+          return;
+        }
+        // Reset the manual logout flag
+        isManualLogoutRef.current = false;
+      }
+
       setUser(session?.user ?? null);
       setIsAuthenticated(!!session?.user);
+
+      // Track session expiry time for timeout warning
+      if (session?.expires_at) {
+        setSessionExpiresAt(session.expires_at * 1000); // Convert to milliseconds
+      } else {
+        setSessionExpiresAt(null);
+      }
 
       // Check super admin status on auth change (with internal timeout protection)
       if (session?.user) {
@@ -129,8 +173,74 @@ export const AuthProvider = ({ children }) => {
       const sessionPromise = supabase.auth.getSession();
       const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
 
+      // Check if browser was closed and reopened (session should end on browser close)
+      if (session?.user) {
+        const sessionAlive = sessionStorage.getItem(SESSION_ALIVE_KEY);
+
+        if (!sessionAlive) {
+          // sessionStorage is empty = browser was closed and reopened
+          // This means the user closed the browser, so we should log them out
+          console.log('[AuthContext] Browser was closed - ending session');
+          localStorage.removeItem(LAST_ACTIVITY_KEY);
+          sessionStorage.removeItem('currentOrganizationId');
+          await supabase.auth.signOut();
+          setIsLoadingAuth(false);
+          window.location.href = '/Login?session_expired=true';
+          return;
+        }
+
+        // Browser wasn't closed, check for inactivity timeout (e.g., page refresh after long idle)
+        const lastActivity = localStorage.getItem(LAST_ACTIVITY_KEY);
+        if (lastActivity) {
+          const lastActivityTime = parseInt(lastActivity, 10);
+          const elapsed = Date.now() - lastActivityTime;
+
+          // Load timeout setting (or use default)
+          let timeoutMs = DEFAULT_INACTIVITY_TIMEOUT_MS;
+          try {
+            const { data: settingsData } = await supabase
+              .from('app_settings')
+              .select('value')
+              .eq('key', 'session_timeout_minutes')
+              .single();
+            if (settingsData?.value) {
+              const minutes = parseInt(settingsData.value, 10);
+              if (minutes >= 5 && minutes <= 60) {
+                timeoutMs = minutes * 60 * 1000;
+              }
+            }
+          } catch (e) {
+            // Use default if fetch fails
+          }
+
+          if (elapsed >= timeoutMs) {
+            // Session expired due to inactivity
+            console.log('[AuthContext] Session expired due to inactivity');
+            localStorage.removeItem(LAST_ACTIVITY_KEY);
+            sessionStorage.removeItem('currentOrganizationId');
+            sessionStorage.removeItem(SESSION_ALIVE_KEY);
+            await supabase.auth.signOut();
+            setIsLoadingAuth(false);
+            window.location.href = '/Login?session_expired=true';
+            return;
+          }
+        }
+      }
+
       setUser(session?.user ?? null);
       setIsAuthenticated(!!session?.user);
+
+      // Mark session as alive if user is authenticated (for page refresh)
+      if (session?.user) {
+        sessionStorage.setItem(SESSION_ALIVE_KEY, 'true');
+      }
+
+      // Track session expiry time for timeout warning
+      if (session?.expires_at) {
+        setSessionExpiresAt(session.expires_at * 1000); // Convert to milliseconds
+      } else {
+        setSessionExpiresAt(null);
+      }
 
       // Check super admin status if user is authenticated
       if (session?.user) {
@@ -180,6 +290,8 @@ export const AuthProvider = ({ children }) => {
 
       setUser(data.user);
       setIsAuthenticated(true);
+      // Mark session as alive (cleared when browser closes)
+      sessionStorage.setItem(SESSION_ALIVE_KEY, 'true');
       // Log successful login
       logAuthEvent(AuditAction.LOGIN, email, true);
       return { data };
@@ -246,9 +358,14 @@ export const AuthProvider = ({ children }) => {
   const logout = async () => {
     try {
       const userEmail = user?.email;
+      // Mark as manual logout so onAuthStateChange doesn't show "session expired" message
+      isManualLogoutRef.current = true;
       // SECURITY: Clear organization context to prevent data leakage on next login
       // Using sessionStorage (per-tab isolation)
       sessionStorage.removeItem('currentOrganizationId');
+      // Clear session markers
+      sessionStorage.removeItem(SESSION_ALIVE_KEY);
+      localStorage.removeItem(LAST_ACTIVITY_KEY);
       await supabase.auth.signOut();
       // Log logout event
       logAuthEvent(AuditAction.LOGOUT, userEmail, true);
@@ -265,12 +382,138 @@ export const AuthProvider = ({ children }) => {
       window.location.href = '/Login';
     } catch (error) {
       console.error('Logout failed:', error);
-      // Still clear org context even if signOut fails
+      // Still clear org context and session markers even if signOut fails
       sessionStorage.removeItem('currentOrganizationId');
+      sessionStorage.removeItem(SESSION_ALIVE_KEY);
+      localStorage.removeItem(LAST_ACTIVITY_KEY);
       // Still redirect to login
       window.location.href = '/Login';
     }
   };
+
+  // Refresh the session to extend the timeout
+  const refreshSession = async () => {
+    try {
+      const { data, error } = await supabase.auth.refreshSession();
+      if (error) throw error;
+
+      // Update session expiry time
+      if (data?.session?.expires_at) {
+        setSessionExpiresAt(data.session.expires_at * 1000); // Convert to milliseconds
+      }
+
+      return { data, error: null };
+    } catch (error) {
+      console.error('Failed to refresh session:', error);
+      return { data: null, error };
+    }
+  };
+
+  // Reset activity timestamp on user interaction
+  const resetActivityTimer = useCallback(() => {
+    const now = Date.now();
+    lastActivityRef.current = now;
+    // Persist to localStorage for cross-session validation
+    try {
+      localStorage.setItem(LAST_ACTIVITY_KEY, now.toString());
+    } catch (e) {
+      // Ignore localStorage errors (e.g., private browsing)
+    }
+  }, []);
+
+  // Get last activity time (for SessionTimeoutWarning)
+  const getLastActivityTime = useCallback(() => {
+    return lastActivityRef.current;
+  }, []);
+
+  // Load session timeout setting from app_settings
+  const loadSessionTimeoutSetting = useCallback(async () => {
+    try {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'session_timeout_minutes')
+        .single();
+
+      if (!error && data?.value) {
+        const minutes = parseInt(data.value, 10);
+        if (minutes >= 5 && minutes <= 60) {
+          setInactivityTimeoutMs(minutes * 60 * 1000);
+          console.log(`[AuthContext] Session timeout set to ${minutes} minutes`);
+        }
+      }
+    } catch (err) {
+      console.error('Error loading session timeout setting:', err);
+    }
+  }, []);
+
+  // Set up activity tracking when authenticated
+  useEffect(() => {
+    if (!isAuthenticated) {
+      // Clear timer when not authenticated
+      if (inactivityTimerRef.current) {
+        clearInterval(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+      return;
+    }
+
+    // Load timeout setting
+    loadSessionTimeoutSetting();
+
+    // Initialize activity timestamp from localStorage or set to now
+    const savedActivity = localStorage.getItem(LAST_ACTIVITY_KEY);
+    if (savedActivity) {
+      lastActivityRef.current = parseInt(savedActivity, 10);
+    } else {
+      const now = Date.now();
+      lastActivityRef.current = now;
+      try {
+        localStorage.setItem(LAST_ACTIVITY_KEY, now.toString());
+      } catch (e) {
+        // Ignore localStorage errors
+      }
+    }
+
+    // Listen for user activity
+    ACTIVITY_EVENTS.forEach(event => {
+      window.addEventListener(event, resetActivityTimer, { passive: true });
+    });
+
+    // Check inactivity periodically
+    const checkInactivity = () => {
+      const elapsed = Date.now() - lastActivityRef.current;
+      if (elapsed >= inactivityTimeoutMs) {
+        console.log('[AuthContext] User inactive for too long, signing out');
+        // Clear the interval before logout to prevent multiple calls
+        if (inactivityTimerRef.current) {
+          clearInterval(inactivityTimerRef.current);
+          inactivityTimerRef.current = null;
+        }
+        // Treat as session timeout (not manual logout)
+        isManualLogoutRef.current = false;
+        // Clear org context
+        sessionStorage.removeItem('currentOrganizationId');
+        // Sign out and redirect
+        supabase.auth.signOut().then(() => {
+          window.location.href = '/Login?session_expired=true';
+        });
+      }
+    };
+
+    inactivityTimerRef.current = setInterval(checkInactivity, ACTIVITY_CHECK_INTERVAL_MS);
+
+    return () => {
+      // Cleanup
+      ACTIVITY_EVENTS.forEach(event => {
+        window.removeEventListener(event, resetActivityTimer);
+      });
+      if (inactivityTimerRef.current) {
+        clearInterval(inactivityTimerRef.current);
+        inactivityTimerRef.current = null;
+      }
+    };
+  }, [isAuthenticated, inactivityTimeoutMs, resetActivityTimer, loadSessionTimeoutSetting]);
 
   // Check MFA enrollment status and AAL level
   const checkMfaStatus = async () => {
@@ -511,6 +754,14 @@ export const AuthProvider = ({ children }) => {
       logout,
       resetPasswordForEmail,
       checkSession,
+      // Session timeout (JWT-based, kept for backwards compatibility)
+      sessionExpiresAt,
+      refreshSession,
+      // Activity-based inactivity timeout
+      inactivityTimeoutMs,
+      setInactivityTimeoutMs,
+      getLastActivityTime,
+      resetActivityTimer,
       // MFA methods
       mfaFactors,
       mfaRequired,

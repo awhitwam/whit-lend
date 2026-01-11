@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { Loader2 } from 'lucide-react';
 import { ForgotPasswordForm } from '@/components/auth/ForgotPasswordForm';
@@ -7,6 +7,9 @@ import { isPasswordValid } from '@/lib/passwordValidation';
 
 const Login = () => {
   const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
+  const sessionExpired = searchParams.get('session_expired') === 'true';
+
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [isLoggingIn, setIsLoggingIn] = useState(false);
@@ -55,6 +58,11 @@ const Login = () => {
           <ForgotPasswordForm onBack={() => setShowForgotPassword(false)} />
         ) : (
           <form onSubmit={handleSubmit}>
+            {sessionExpired && (
+              <div className="mb-4 p-3 bg-amber-50 border border-amber-200 rounded text-amber-800 text-sm text-center">
+                Your session has expired due to inactivity. Please sign in again.
+              </div>
+            )}
             {errorMessage && (
               <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded text-red-800 text-sm text-center">
                 {errorMessage}

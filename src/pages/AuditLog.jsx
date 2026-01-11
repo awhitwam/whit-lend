@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
@@ -7,16 +7,61 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { ChevronLeft, ChevronRight, History, Loader2, Search } from 'lucide-react';
+import { ChevronLeft, ChevronRight, History, Loader2, Search, Filter, ChevronDown, ChevronUp } from 'lucide-react';
 import { format } from 'date-fns';
+
+// Storage key for filter preferences
+const AUDIT_FILTER_PREFS_KEY = 'audit_log_filter_prefs';
+
+// Default filter settings
+const defaultFilterPrefs = {
+  showLoginActivity: false,      // Login/logout events
+  showOrgSwitches: false,        // Organization switch events
+  showReconciliation: true,      // Reconciliation activity
+  showBulkImports: true,         // Bulk import activity
+};
+
+// Load saved preferences from localStorage
+const loadFilterPrefs = () => {
+  try {
+    const saved = localStorage.getItem(AUDIT_FILTER_PREFS_KEY);
+    if (saved) {
+      return { ...defaultFilterPrefs, ...JSON.parse(saved) };
+    }
+  } catch (err) {
+    console.error('Error loading audit filter preferences:', err);
+  }
+  return defaultFilterPrefs;
+};
+
+// Save preferences to localStorage
+const saveFilterPrefs = (prefs) => {
+  try {
+    localStorage.setItem(AUDIT_FILTER_PREFS_KEY, JSON.stringify(prefs));
+  } catch (err) {
+    console.error('Error saving audit filter preferences:', err);
+  }
+};
 
 export default function AuditLog() {
   const { currentOrganization } = useOrganization();
   const [auditPage, setAuditPage] = useState(1);
   const [auditFilter, setAuditFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
+  const [showFilterPanel, setShowFilterPanel] = useState(false);
+  const [filterPrefs, setFilterPrefs] = useState(loadFilterPrefs);
   const auditPerPage = 25;
+
+  // Update a filter preference and save to localStorage
+  const updateFilterPref = (key, value) => {
+    const newPrefs = { ...filterPrefs, [key]: value };
+    setFilterPrefs(newPrefs);
+    saveFilterPrefs(newPrefs);
+    setAuditPage(1); // Reset to first page when filter changes
+  };
 
   // Fetch audit logs
   const { data: auditLogs = [], isLoading: auditLoading } = useQuery({
@@ -40,9 +85,27 @@ export default function AuditLog() {
 
   // Filter and paginate audit logs
   const filteredAuditLogs = auditLogs.filter(log => {
+    const action = log.action?.toLowerCase() || '';
+
+    // Apply toggle filters (exclude by default unless enabled)
+    // Login activity filter (login, logout, login_failed)
+    const isLoginActivity = action === 'login' || action === 'logout' || action === 'login_failed';
+    if (isLoginActivity && !filterPrefs.showLoginActivity) return false;
+
+    // Organization switch filter
+    const isOrgSwitch = action === 'org_switch';
+    if (isOrgSwitch && !filterPrefs.showOrgSwitches) return false;
+
+    // Reconciliation filter
+    const isReconciliation = log.entity_type === 'reconciliation' || action.includes('reconciliation');
+    if (isReconciliation && !filterPrefs.showReconciliation) return false;
+
+    // Bulk import filter
+    const isBulkImport = action.includes('bulk_import');
+    if (isBulkImport && !filterPrefs.showBulkImports) return false;
+
     // Apply dropdown filter
     if (auditFilter !== 'all') {
-      const action = log.action?.toLowerCase() || '';
       switch (auditFilter) {
         case 'creates':
           if (!action.includes('create') && !action.includes('import')) return false;
@@ -73,7 +136,6 @@ export default function AuditLog() {
       const search = searchTerm.toLowerCase();
       const userName = userLookup[log.user_id]?.toLowerCase() || '';
       const entityName = log.entity_name?.toLowerCase() || '';
-      const action = log.action?.toLowerCase() || '';
       const entityType = log.entity_type?.toLowerCase() || '';
       const subAction = (log.sub_action || '').toLowerCase();
       const details = JSON.stringify(log.details || '').toLowerCase();
@@ -102,6 +164,7 @@ export default function AuditLog() {
     if (lowerAction.includes('update') || lowerAction.includes('match')) return 'bg-blue-100 text-blue-700';
     if (lowerAction.includes('delete') || lowerAction.includes('unmatch')) return 'bg-red-100 text-red-700';
     if (lowerAction.includes('login') || lowerAction.includes('logout')) return 'bg-purple-100 text-purple-700';
+    if (lowerAction === 'org_switch') return 'bg-amber-100 text-amber-700';
     return 'bg-slate-100 text-slate-700';
   };
 
@@ -379,8 +442,69 @@ export default function AuditLog() {
                     <SelectItem value="reconciliation">Reconciliation</SelectItem>
                   </SelectContent>
                 </Select>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setShowFilterPanel(!showFilterPanel)}
+                  className="flex items-center gap-1"
+                >
+                  <Filter className="w-4 h-4" />
+                  Filters
+                  {showFilterPanel ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                </Button>
               </div>
             </div>
+
+            {/* Collapsible Filter Panel */}
+            {showFilterPanel && (
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <div className="flex flex-wrap gap-6">
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="filter-login"
+                      checked={filterPrefs.showLoginActivity}
+                      onCheckedChange={(checked) => updateFilterPref('showLoginActivity', checked)}
+                    />
+                    <Label htmlFor="filter-login" className="text-sm cursor-pointer">
+                      Login Activity
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="filter-org-switch"
+                      checked={filterPrefs.showOrgSwitches}
+                      onCheckedChange={(checked) => updateFilterPref('showOrgSwitches', checked)}
+                    />
+                    <Label htmlFor="filter-org-switch" className="text-sm cursor-pointer">
+                      Org Switches
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="filter-reconciliation"
+                      checked={filterPrefs.showReconciliation}
+                      onCheckedChange={(checked) => updateFilterPref('showReconciliation', checked)}
+                    />
+                    <Label htmlFor="filter-reconciliation" className="text-sm cursor-pointer">
+                      Reconciliation
+                    </Label>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Switch
+                      id="filter-bulk-imports"
+                      checked={filterPrefs.showBulkImports}
+                      onCheckedChange={(checked) => updateFilterPref('showBulkImports', checked)}
+                    />
+                    <Label htmlFor="filter-bulk-imports" className="text-sm cursor-pointer">
+                      Bulk Imports
+                    </Label>
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 mt-2">
+                  Toggle filters are saved and remembered between sessions
+                </p>
+              </div>
+            )}
           </CardHeader>
           <CardContent>
             {auditLoading ? (

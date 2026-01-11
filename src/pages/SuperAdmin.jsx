@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { supabase } from '@/lib/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -71,8 +71,16 @@ export default function SuperAdmin() {
   // Create organization dialog state
   const [isCreateOrgOpen, setIsCreateOrgOpen] = useState(false);
 
+  // Default organization state
+  const [defaultOrgId, setDefaultOrgId] = useState('');
+  const [isSavingDefaultOrg, setIsSavingDefaultOrg] = useState(false);
+
   // Schedule regeneration state
   const [selectedOrgForSchedules, setSelectedOrgForSchedules] = useState('');
+
+  // Session timeout state
+  const [sessionTimeoutMinutes, setSessionTimeoutMinutes] = useState(20);
+  const [isSavingTimeout, setIsSavingTimeout] = useState(false);
 
   // Fetch all users across all organizations
   const { data: allUsers = [], isLoading: loadingUsers } = useQuery({
@@ -101,6 +109,105 @@ export default function SuperAdmin() {
     },
     enabled: isSuperAdmin
   });
+
+  // Fetch user's default organization preference
+  const { data: userProfile } = useQuery({
+    queryKey: ['user-profile-default-org', user?.id],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('default_organization_id')
+        .eq('id', user.id)
+        .single();
+      if (error) throw error;
+      return data;
+    },
+    enabled: isSuperAdmin && !!user?.id,
+    onSuccess: (data) => {
+      if (data?.default_organization_id) {
+        setDefaultOrgId(data.default_organization_id);
+      }
+    }
+  });
+
+  // Set default org when profile loads
+  useEffect(() => {
+    if (userProfile?.default_organization_id) {
+      setDefaultOrgId(userProfile.default_organization_id);
+    }
+  }, [userProfile]);
+
+  // Save default organization preference
+  const saveDefaultOrg = async (orgId) => {
+    setIsSavingDefaultOrg(true);
+    try {
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ default_organization_id: orgId || null })
+        .eq('id', user.id);
+      if (error) throw error;
+      setDefaultOrgId(orgId);
+      queryClient.invalidateQueries({ queryKey: ['user-profile-default-org'] });
+    } catch (err) {
+      console.error('Error saving default organization:', err);
+      alert('Failed to save default organization preference');
+    } finally {
+      setIsSavingDefaultOrg(false);
+    }
+  };
+
+  // Fetch session timeout setting
+  const { data: sessionTimeoutSetting } = useQuery({
+    queryKey: ['app-settings-session-timeout'],
+    queryFn: async () => {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'session_timeout_minutes')
+        .single();
+      if (error && error.code !== 'PGRST116') throw error; // Ignore "not found" error
+      return data;
+    },
+    enabled: isSuperAdmin
+  });
+
+  // Set session timeout when setting loads
+  useEffect(() => {
+    if (sessionTimeoutSetting?.value) {
+      const minutes = parseInt(sessionTimeoutSetting.value, 10);
+      if (minutes >= 5 && minutes <= 60) {
+        setSessionTimeoutMinutes(minutes);
+      }
+    }
+  }, [sessionTimeoutSetting]);
+
+  // Save session timeout setting
+  const saveSessionTimeout = async (minutes) => {
+    if (minutes < 5 || minutes > 60) {
+      alert('Session timeout must be between 5 and 60 minutes');
+      return;
+    }
+    setIsSavingTimeout(true);
+    try {
+      const { error } = await supabase
+        .from('app_settings')
+        .upsert({
+          key: 'session_timeout_minutes',
+          value: minutes.toString(),
+          updated_by: user.id
+        }, {
+          onConflict: 'key'
+        });
+      if (error) throw error;
+      setSessionTimeoutMinutes(minutes);
+      queryClient.invalidateQueries({ queryKey: ['app-settings-session-timeout'] });
+    } catch (err) {
+      console.error('Error saving session timeout:', err);
+      alert('Failed to save session timeout setting');
+    } finally {
+      setIsSavingTimeout(false);
+    }
+  };
 
   // Fetch all organization memberships
   const { data: allMemberships = [], isLoading: loadingMemberships } = useQuery({
@@ -412,6 +519,85 @@ export default function SuperAdmin() {
             <strong>Super Admin Mode</strong> - You have access to all users and organizations across the entire system.
           </AlertDescription>
         </Alert>
+
+        {/* Default Organization Setting */}
+        <Card className="max-w-md">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Building2 className="w-4 h-4" />
+              Default Organization
+            </CardTitle>
+            <CardDescription>
+              Choose which organization to load by default when you log in
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2">
+              <Select
+                value={defaultOrgId || 'none'}
+                onValueChange={(val) => saveDefaultOrg(val === 'none' ? '' : val)}
+              >
+                <SelectTrigger className="flex-1">
+                  <SelectValue placeholder="Select default organization..." />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="none">None (use first available)</SelectItem>
+                  {allOrganizations.map(org => (
+                    <SelectItem key={org.id} value={org.id}>
+                      {org.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              {isSavingDefaultOrg && (
+                <div className="flex items-center text-slate-500">
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Session Timeout Setting */}
+        <Card className="max-w-md">
+          <CardHeader className="pb-3">
+            <CardTitle className="text-base flex items-center gap-2">
+              <Clock className="w-4 h-4" />
+              Session Timeout
+            </CardTitle>
+            <CardDescription>
+              Users will be logged out after this many minutes of inactivity
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex gap-2 items-center">
+              <Input
+                type="number"
+                min={5}
+                max={60}
+                value={sessionTimeoutMinutes}
+                onChange={(e) => setSessionTimeoutMinutes(parseInt(e.target.value, 10) || 20)}
+                className="w-24"
+              />
+              <span className="text-sm text-slate-600">minutes</span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => saveSessionTimeout(sessionTimeoutMinutes)}
+                disabled={isSavingTimeout}
+              >
+                {isSavingTimeout ? (
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                ) : (
+                  'Save'
+                )}
+              </Button>
+            </div>
+            <p className="text-xs text-slate-500 mt-2">
+              Valid range: 5-60 minutes. Changes apply to new sessions.
+            </p>
+          </CardContent>
+        </Card>
 
         {/* Search and Refresh */}
         <div className="flex gap-2 max-w-md">

@@ -48,6 +48,7 @@ export const AuditAction = {
   ORG_MEMBER_INVITE: 'org_member_invite',
   ORG_MEMBER_REMOVE: 'org_member_remove',
   ORG_SETTINGS_UPDATE: 'org_settings_update',
+  ORG_SWITCH: 'org_switch',
 
   // Bulk Imports
   BULK_IMPORT: 'bulk_import',
@@ -367,5 +368,25 @@ export async function logReconciliationEvent(action, details = null) {
     entityId: details?.transaction_id || details?.bank_transaction_id || null,
     entityName: details?.description || 'Bank Reconciliation',
     details
+  });
+}
+
+/**
+ * Helper to log organization switch events
+ */
+export async function logOrgSwitchEvent(fromOrg, toOrg, userId = null) {
+  await logAudit({
+    action: AuditAction.ORG_SWITCH,
+    entityType: EntityType.ORGANIZATION,
+    entityId: toOrg?.id,
+    entityName: toOrg?.name,
+    details: {
+      from_org_id: fromOrg?.id,
+      from_org_name: fromOrg?.name,
+      to_org_id: toOrg?.id,
+      to_org_name: toOrg?.name
+    },
+    userId,
+    organizationId: toOrg?.id // Log under the new organization
   });
 }

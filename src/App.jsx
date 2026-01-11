@@ -8,11 +8,12 @@ import { pagesConfig } from './pages.config'
 import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
-import { OrganizationProvider } from '@/lib/OrganizationContext';
+import { OrganizationProvider, useOrganization } from '@/lib/OrganizationContext';
 import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import MFASetup from '@/pages/MFASetup';
 import MFAVerify from '@/pages/MFAVerify';
 import ResetPassword from '@/pages/ResetPassword';
+import SessionTimeoutWarning from '@/components/SessionTimeoutWarning';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -107,6 +108,7 @@ const MFAProtectedApp = () => {
 
 const AuthenticatedApp = () => {
   const { isLoadingAuth, isAuthenticated, authError, logout } = useAuth();
+  const { isLoadingOrgs, currentOrganization } = useOrganization();
   const location = useLocation();
 
   // Check for password recovery token in URL hash FIRST, before anything else
@@ -155,17 +157,25 @@ const AuthenticatedApp = () => {
     );
   }
 
+  // Public routes that don't require organization context
+  const publicRoutes = ['/Login', '/AcceptInvitation', '/ResetPassword', '/UpdatePassword'];
+  const isPublicRoute = publicRoutes.some(route => location.pathname.startsWith(route));
+
+  // Show loading spinner while loading organization context (only for authenticated non-public routes)
+  if (isAuthenticated && !isPublicRoute && isLoadingOrgs) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
   // Handle authentication errors
   if (authError) {
     if (authError.type === 'user_not_registered') {
       return <UserNotRegisteredError />;
     }
   }
-
-  // Public routes that don't require authentication
-  // UpdatePassword requires auth but is treated as "public" for layout purposes
-  const publicRoutes = ['/Login', '/AcceptInvitation', '/ResetPassword', '/UpdatePassword'];
-  const isPublicRoute = publicRoutes.some(route => location.pathname.startsWith(route));
 
   // If not authenticated and not on a public route, redirect to Login
   if (!isAuthenticated && !isPublicRoute) {
@@ -178,44 +188,49 @@ const AuthenticatedApp = () => {
 
   // Render the main app
   return (
-    <Routes>
-      {/* Public routes - no layout wrapper */}
-      <Route path="/Login" element={<Pages.Login />} />
-      <Route path="/AcceptInvitation" element={<Pages.AcceptInvitation />} />
-      <Route path="/ResetPassword" element={<ResetPassword />} />
-      <Route path="/UpdatePassword" element={<Pages.UpdatePassword />} />
+    <>
+      {/* Session timeout warning for authenticated users */}
+      {isAuthenticated && <SessionTimeoutWarning />}
 
-      {/* MFA routes - require auth but not MFA completion */}
-      <Route path="/mfa-setup" element={<MFASetup />} />
-      <Route path="/mfa-verify" element={<MFAVerify />} />
+      <Routes>
+        {/* Public routes - no layout wrapper */}
+        <Route path="/Login" element={<Pages.Login />} />
+        <Route path="/AcceptInvitation" element={<Pages.AcceptInvitation />} />
+        <Route path="/ResetPassword" element={<ResetPassword />} />
+        <Route path="/UpdatePassword" element={<Pages.UpdatePassword />} />
 
-      {/* Protected routes - require auth AND MFA */}
-      <Route path="/" element={
-        <>
-          <MFAProtectedApp />
-          <LayoutWrapper currentPageName={mainPageKey}>
-            <MainPage />
-          </LayoutWrapper>
-        </>
-      } />
-      {Object.entries(Pages)
-        .filter(([path]) => !['Login', 'AcceptInvitation', 'ResetPassword', 'UpdatePassword'].includes(path))
-        .map(([path, Page]) => (
-          <Route
-            key={path}
-            path={`/${path}`}
-            element={
-              <>
-                <MFAProtectedApp />
-                <LayoutWrapper currentPageName={path}>
-                  <Page />
-                </LayoutWrapper>
-              </>
-            }
-          />
-        ))}
-      <Route path="*" element={<PageNotFound />} />
-    </Routes>
+        {/* MFA routes - require auth but not MFA completion */}
+        <Route path="/mfa-setup" element={<MFASetup />} />
+        <Route path="/mfa-verify" element={<MFAVerify />} />
+
+        {/* Protected routes - require auth AND MFA */}
+        <Route path="/" element={
+          <>
+            <MFAProtectedApp />
+            <LayoutWrapper currentPageName={mainPageKey}>
+              <MainPage />
+            </LayoutWrapper>
+          </>
+        } />
+        {Object.entries(Pages)
+          .filter(([path]) => !['Login', 'AcceptInvitation', 'ResetPassword', 'UpdatePassword'].includes(path))
+          .map(([path, Page]) => (
+            <Route
+              key={path}
+              path={`/${path}`}
+              element={
+                <>
+                  <MFAProtectedApp />
+                  <LayoutWrapper currentPageName={path}>
+                    <Page />
+                  </LayoutWrapper>
+                </>
+              }
+            />
+          ))}
+        <Route path="*" element={<PageNotFound />} />
+      </Routes>
+    </>
   );
 };
 

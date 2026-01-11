@@ -3,6 +3,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import { setOrganizationIdGetter } from '@/api/dataClient';
 import { getOrganizationTheme } from '@/lib/organizationThemes';
+import { logOrgSwitchEvent, logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 
 const OrganizationContext = createContext();
 
@@ -82,18 +83,56 @@ export const OrganizationProvider = ({ children }) => {
 
       setOrganizations(orgs);
 
-      // Set current organization from sessionStorage or default to first
-      // Using sessionStorage (not localStorage) so each browser tab/window can have its own organization
+      // Set current organization priority:
+      // 1. From sessionStorage (for tab continuity)
+      // 2. From user_profiles.default_organization_id (user preference)
+      // 3. First organization in list (fallback)
       const savedOrgId = sessionStorage.getItem('currentOrganizationId');
       const savedOrg = orgs.find(o => o.id === savedOrgId);
 
       if (savedOrg) {
         setCurrentOrganization(savedOrg);
         setMemberRole(savedOrg.role);
-      } else if (orgs.length > 0) {
-        setCurrentOrganization(orgs[0]);
-        setMemberRole(orgs[0].role);
-        sessionStorage.setItem('currentOrganizationId', orgs[0].id);
+      } else {
+        // Check for user's default organization preference
+        let defaultOrg = null;
+        try {
+          const { data: profile } = await supabase
+            .from('user_profiles')
+            .select('default_organization_id')
+            .eq('id', user.id)
+            .single();
+
+          if (profile?.default_organization_id) {
+            defaultOrg = orgs.find(o => o.id === profile.default_organization_id);
+          }
+        } catch (err) {
+          console.error('Error fetching default organization:', err);
+        }
+
+        // Use default org if found, otherwise first in list
+        const orgToUse = defaultOrg || orgs[0];
+        if (orgToUse) {
+          setCurrentOrganization(orgToUse);
+          setMemberRole(orgToUse.role);
+          sessionStorage.setItem('currentOrganizationId', orgToUse.id);
+
+          // Log initial organization context on login
+          logAudit({
+            action: AuditAction.LOGIN,
+            entityType: EntityType.ORGANIZATION,
+            entityId: orgToUse.id,
+            entityName: orgToUse.name,
+            details: {
+              event: 'login_org_context',
+              organization_id: orgToUse.id,
+              organization_name: orgToUse.name,
+              source: defaultOrg ? 'user_preference' : 'first_available'
+            },
+            userId: user.id,
+            organizationId: orgToUse.id
+          });
+        }
       }
     } catch (error) {
       console.error('Error fetching organizations:', error);
@@ -105,6 +144,9 @@ export const OrganizationProvider = ({ children }) => {
   const switchOrganization = (organizationId) => {
     const org = organizations.find(o => o.id === organizationId);
     if (org) {
+      // Capture previous org for audit logging
+      const previousOrg = currentOrganization;
+
       // CRITICAL: Update the organization ID getter SYNCHRONOUSLY before state change
       // This prevents a race condition where queries fire with the old org ID
       // during React's async state update cycle
@@ -113,6 +155,11 @@ export const OrganizationProvider = ({ children }) => {
       setCurrentOrganization(org);
       setMemberRole(org.role);
       sessionStorage.setItem('currentOrganizationId', organizationId);
+
+      // Log organization switch to audit trail
+      if (previousOrg && previousOrg.id !== org.id) {
+        logOrgSwitchEvent(previousOrg, org, user?.id);
+      }
 
       // Invalidate all queries to refetch with new organization context
       // This will be handled by queryClient in consuming components
