@@ -19,7 +19,7 @@ import {
   SelectTrigger,
   SelectValue
 } from "@/components/ui/select";
-import { Loader2, Mail, CheckCircle } from 'lucide-react';
+import { Loader2, Mail, CheckCircle, User } from 'lucide-react';
 import { useAuth } from '@/lib/AuthContext';
 import { toast } from 'sonner';
 
@@ -27,14 +27,16 @@ export default function InviteUserDialog({ open, onClose }) {
   const { currentOrganization } = useOrganization();
   const { user } = useAuth();
   const queryClient = useQueryClient();
+  const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('Viewer');
 
   const inviteMutation = useMutation({
-    mutationFn: async ({ email, role }) => {
+    mutationFn: async ({ fullName, email, role }) => {
       // Call the invite-user Edge Function
       const { data, error } = await supabase.functions.invoke('invite-user', {
         body: {
+          full_name: fullName.trim(),
           email: email.toLowerCase().trim(),
           role,
           organization_id: currentOrganization.id
@@ -75,6 +77,7 @@ export default function InviteUserDialog({ open, onClose }) {
         });
       }
 
+      setFullName('');
       setEmail('');
       setRole('Viewer');
       onClose();
@@ -90,12 +93,17 @@ export default function InviteUserDialog({ open, onClose }) {
   const handleSubmit = (e) => {
     e.preventDefault();
 
+    if (!fullName.trim()) {
+      toast.error('Please enter the user\'s full name');
+      return;
+    }
+
     if (!email || !email.includes('@')) {
       toast.error('Please enter a valid email address');
       return;
     }
 
-    inviteMutation.mutate({ email, role });
+    inviteMutation.mutate({ fullName, email, role });
   };
 
   return (
@@ -108,6 +116,23 @@ export default function InviteUserDialog({ open, onClose }) {
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="fullName">Full Name</Label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <Input
+                id="fullName"
+                type="text"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                placeholder="John Smith"
+                className="pl-10"
+                required
+                disabled={inviteMutation.isPending}
+              />
+            </div>
+          </div>
+
           <div className="space-y-2">
             <Label htmlFor="email">Email Address</Label>
             <div className="relative">

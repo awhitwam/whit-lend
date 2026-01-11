@@ -66,10 +66,11 @@ Deno.serve(async (req) => {
 
     // Parse request body
     console.log('[InviteUser] About to parse request body...')
-    let email: string, role: string, organization_id: string
+    let full_name: string, email: string, role: string, organization_id: string
     try {
       const body = await req.json()
       console.log('[InviteUser] Raw body:', JSON.stringify(body))
+      full_name = body.full_name || ''
       email = body.email
       role = body.role
       organization_id = body.organization_id
@@ -80,7 +81,7 @@ Deno.serve(async (req) => {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
-    console.log('[InviteUser] Request body:', { email, role, organization_id })
+    console.log('[InviteUser] Request body:', { full_name, email, role, organization_id })
 
     if (!email || !role || !organization_id) {
       console.log('[InviteUser] Missing required fields')
@@ -191,6 +192,14 @@ Deno.serve(async (req) => {
           throw new Error(`Failed to reactivate member: ${reactivateError.message}`)
         }
 
+        // Update user profile with name if provided
+        if (full_name) {
+          await supabaseAdmin
+            .from('user_profiles')
+            .update({ full_name })
+            .eq('id', existingUser.id)
+        }
+
         console.log('[InviteUser] Successfully reactivated membership')
         return new Response(JSON.stringify({
           success: true,
@@ -220,6 +229,14 @@ Deno.serve(async (req) => {
         throw new Error(`Failed to add member: ${addError.message}`)
       }
 
+      // Update user profile with name if provided
+      if (full_name) {
+        await supabaseAdmin
+          .from('user_profiles')
+          .update({ full_name })
+          .eq('id', existingUser.id)
+      }
+
       console.log('[InviteUser] Successfully added existing user to organization')
       return new Response(JSON.stringify({
         success: true,
@@ -239,6 +256,7 @@ Deno.serve(async (req) => {
       email,
       {
         data: {
+          full_name,
           organization_id,
           role,
           invited_by: user.id,
@@ -254,6 +272,24 @@ Deno.serve(async (req) => {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
+    }
+
+    // Create user_profile with the name
+    if (full_name) {
+      const { error: profileError } = await supabaseAdmin
+        .from('user_profiles')
+        .upsert({
+          id: inviteData.user.id,
+          email,
+          full_name
+        }, {
+          onConflict: 'id'
+        })
+
+      if (profileError) {
+        console.error('Failed to create user profile:', profileError)
+        // Don't fail the request, continue with invitation
+      }
     }
 
     // Create a pending organization member record
