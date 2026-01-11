@@ -7,6 +7,9 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, CheckCircle2, XCircle, User, Eye, EyeOff } from 'lucide-react';
+import { isPasswordValid, getPasswordError } from '@/lib/passwordValidation';
+import { PasswordStrengthIndicator } from '@/components/auth/PasswordStrengthIndicator';
+import { PasswordRequirements } from '@/components/auth/PasswordRequirements';
 
 export default function AcceptInvitation() {
   const navigate = useNavigate();
@@ -139,22 +142,6 @@ export default function AcceptInvitation() {
     }
   };
 
-  const validatePassword = (pwd) => {
-    if (pwd.length < 8) {
-      return 'Password must be at least 8 characters';
-    }
-    if (!/[A-Z]/.test(pwd)) {
-      return 'Password must contain at least one uppercase letter';
-    }
-    if (!/[a-z]/.test(pwd)) {
-      return 'Password must contain at least one lowercase letter';
-    }
-    if (!/[0-9]/.test(pwd)) {
-      return 'Password must contain at least one number';
-    }
-    return null;
-  };
-
   const handleProfileSubmit = async (e) => {
     e.preventDefault();
     setPasswordError('');
@@ -163,11 +150,10 @@ export default function AcceptInvitation() {
       return;
     }
 
-    // Validate password if needed
+    // Validate password if needed using shared validation
     if (needsPassword) {
-      const pwdError = validatePassword(password);
-      if (pwdError) {
-        setPasswordError(pwdError);
+      if (!isPasswordValid(password)) {
+        setPasswordError(getPasswordError(password));
         return;
       }
       if (password !== confirmPassword) {
@@ -308,9 +294,8 @@ export default function AcceptInvitation() {
                         {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                       </button>
                     </div>
-                    <p className="text-xs text-slate-500">
-                      At least 8 characters with uppercase, lowercase, and number
-                    </p>
+                    <PasswordStrengthIndicator password={password} className="mt-2" />
+                    <PasswordRequirements password={password} className="mt-3" />
                   </div>
 
                   <div className="space-y-2">

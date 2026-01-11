@@ -31,6 +31,7 @@ import OtherIncome from './pages/OtherIncome';
 import OrphanedEntries from './pages/OrphanedEntries';
 import Receipts from './pages/Receipts';
 import About from './pages/About';
+import UpdatePassword from './pages/UpdatePassword';
 import __Layout from './Layout.jsx';
 
 
@@ -68,6 +69,7 @@ export const PAGES = {
     "OrphanedEntries": OrphanedEntries,
     "Receipts": Receipts,
     "About": About,
+    "UpdatePassword": UpdatePassword,
 }
 
 export const pagesConfig = {

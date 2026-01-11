@@ -163,7 +163,8 @@ const AuthenticatedApp = () => {
   }
 
   // Public routes that don't require authentication
-  const publicRoutes = ['/Login', '/AcceptInvitation', '/ResetPassword'];
+  // UpdatePassword requires auth but is treated as "public" for layout purposes
+  const publicRoutes = ['/Login', '/AcceptInvitation', '/ResetPassword', '/UpdatePassword'];
   const isPublicRoute = publicRoutes.some(route => location.pathname.startsWith(route));
 
   // If not authenticated and not on a public route, redirect to Login
@@ -182,6 +183,7 @@ const AuthenticatedApp = () => {
       <Route path="/Login" element={<Pages.Login />} />
       <Route path="/AcceptInvitation" element={<Pages.AcceptInvitation />} />
       <Route path="/ResetPassword" element={<ResetPassword />} />
+      <Route path="/UpdatePassword" element={<Pages.UpdatePassword />} />
 
       {/* MFA routes - require auth but not MFA completion */}
       <Route path="/mfa-setup" element={<MFASetup />} />
@@ -197,7 +199,7 @@ const AuthenticatedApp = () => {
         </>
       } />
       {Object.entries(Pages)
-        .filter(([path]) => !['Login', 'AcceptInvitation', 'ResetPassword'].includes(path))
+        .filter(([path]) => !['Login', 'AcceptInvitation', 'ResetPassword', 'UpdatePassword'].includes(path))
         .map(([path, Page]) => (
           <Route
             key={path}

@@ -218,6 +218,31 @@ export const AuthProvider = ({ children }) => {
     }
   };
 
+  // Request password reset email
+  const resetPasswordForEmail = async (email) => {
+    try {
+      const { data, error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/ResetPassword`
+      });
+
+      if (error) {
+        logAuthEvent(AuditAction.LOGIN_FAILED, email, false, {
+          reason: 'Password reset request failed: ' + error.message
+        });
+        return { error };
+      }
+
+      // Log the password reset request
+      logAuthEvent(AuditAction.LOGIN, email, true, {
+        action: 'password_reset_requested'
+      });
+
+      return { data };
+    } catch (error) {
+      return { error };
+    }
+  };
+
   const logout = async () => {
     try {
       const userEmail = user?.email;
@@ -484,6 +509,7 @@ export const AuthProvider = ({ children }) => {
       login,
       signup,
       logout,
+      resetPasswordForEmail,
       checkSession,
       // MFA methods
       mfaFactors,
