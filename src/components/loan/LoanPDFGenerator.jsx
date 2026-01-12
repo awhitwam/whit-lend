@@ -220,10 +220,185 @@ function buildInterestLedger(loan, transactions, product) {
   };
 }
 
-export function generateLoanStatementPDF(loan, schedule, transactions, product = null, interestCalc = null) {
+/**
+ * Build a timeline for PDF output matching the InterestOnlyScheduleView UI
+ * Returns rows with: date, interestPaid, expectedInterest, interestBalance, principalChange, principalBalance
+ */
+function buildPDFTimeline(loan, schedule, transactions, product) {
+  const rows = [];
+
+  const getDateKey = (date) => {
+    if (typeof date === 'string') {
+      const match = date.match(/^(\d{4}-\d{2}-\d{2})/);
+      if (match) return match[1];
+    }
+    const d = new Date(date);
+    return format(d, 'yyyy-MM-dd');
+  };
+
+  // 1. Add disbursement rows
+  (transactions || [])
+    .filter(tx => tx.type === 'Disbursement' && !tx.is_deleted)
+    .forEach(tx => {
+      const dateKey = getDateKey(tx.date);
+      const grossAmount = tx.gross_amount ?? tx.amount;
+      rows.push({
+        id: `tx-${tx.id}`,
+        date: dateKey,
+        primaryType: 'disbursement',
+        principalChange: grossAmount,
+        interestPaid: 0,
+        expectedInterest: 0,
+        isDueDate: false,
+        reference: tx.reference || 'Funds advanced'
+      });
+    });
+
+  // 2. Add repayment rows
+  (transactions || [])
+    .filter(tx => tx.type === 'Repayment' && !tx.is_deleted)
+    .forEach(tx => {
+      const dateKey = getDateKey(tx.date);
+      rows.push({
+        id: `tx-${tx.id}`,
+        date: dateKey,
+        primaryType: 'repayment',
+        principalChange: -(tx.principal_applied || 0),
+        interestPaid: tx.interest_applied || 0,
+        expectedInterest: 0,
+        isDueDate: false,
+        reference: tx.reference || 'Payment received'
+      });
+    });
+
+  // 3. Add schedule due date rows
+  (schedule || []).forEach(scheduleEntry => {
+    const dateKey = getDateKey(scheduleEntry.due_date);
+    const isAdjustment = scheduleEntry.installment_number === 0;
+    const row = {
+      id: `schedule-${scheduleEntry.installment_number}-${dateKey}`,
+      date: dateKey,
+      primaryType: isAdjustment ? 'adjustment' : 'due_date',
+      principalChange: 0,
+      interestPaid: 0,
+      expectedInterest: scheduleEntry.interest_amount || 0,
+      isDueDate: true,
+      scheduleEntry: scheduleEntry
+    };
+
+    // For adjustments, store the calculation details for display
+    if (isAdjustment && scheduleEntry.calculation_days) {
+      const days = scheduleEntry.calculation_days;
+      const adjAmount = Math.abs(scheduleEntry.interest_amount || 0);
+      const adjDailyRate = days > 0 ? adjAmount / days : 0;
+      const isCredit = (scheduleEntry.interest_amount || 0) < 0;
+      row.calculationBreakdown = {
+        days,
+        dailyRate: adjDailyRate,
+        isCredit,
+        breakdown: isCredit
+          ? `${days}d × ${formatCurrency(adjDailyRate)}/day = -${formatCurrency(adjAmount)}`
+          : `${days}d × ${formatCurrency(adjDailyRate)}/day = +${formatCurrency(adjAmount)}`
+      };
+    }
+
+    rows.push(row);
+  });
+
+  // 4. Add rate change row if loan has a penalty rate
+  if (loan?.has_penalty_rate && loan?.penalty_rate && loan?.penalty_rate_from) {
+    const penaltyDateKey = getDateKey(loan.penalty_rate_from);
+    rows.push({
+      id: `rate-change-${penaltyDateKey}`,
+      date: penaltyDateKey,
+      primaryType: 'rate_change',
+      principalChange: 0,
+      interestPaid: 0,
+      expectedInterest: 0,
+      isDueDate: false,
+      previousRate: loan.interest_rate,
+      newRate: loan.penalty_rate
+    });
+  }
+
+  // 5. Sort all rows by date, then by type order
+  const typeOrder = { disbursement: 0, repayment: 1, adjustment: 2, due_date: 3, rate_change: 4 };
+  rows.sort((a, b) => {
+    const dateCompare = a.date.localeCompare(b.date);
+    if (dateCompare !== 0) return dateCompare;
+    const aOrder = typeOrder[a.primaryType] ?? 99;
+    const bOrder = typeOrder[b.primaryType] ?? 99;
+    return aOrder - bOrder;
+  });
+
+  // 6. Calculate running balances
+  let runningPrincipal = 0;
+  let totalExpectedToDate = 0;
+  let totalPaidToDate = 0;
+
+  rows.forEach(row => {
+    runningPrincipal += row.principalChange;
+    row.principalBalance = runningPrincipal;
+
+    totalExpectedToDate += row.expectedInterest;
+    totalPaidToDate += row.interestPaid;
+    row.interestBalance = totalExpectedToDate - totalPaidToDate;
+    row.totalExpectedToDate = totalExpectedToDate;
+    row.totalPaidToDate = totalPaidToDate;
+  });
+
+  return rows;
+}
+
+export function generateLoanStatementPDF(loan, schedule, transactions, product = null, interestCalc = null, organization = null) {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
-  let y = 20;
+  let y = 15;
+
+  // Organization Details (if available)
+  if (organization) {
+    // Organization Name
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(organization.name || '', pageWidth / 2, y, { align: 'center' });
+    y += 6;
+
+    // Address lines
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+
+    const addressParts = [];
+    if (organization.address_line1) addressParts.push(organization.address_line1);
+    if (organization.address_line2) addressParts.push(organization.address_line2);
+
+    const cityPostcode = [organization.city, organization.postcode].filter(Boolean).join(' ');
+    if (cityPostcode) addressParts.push(cityPostcode);
+    if (organization.country) addressParts.push(organization.country);
+
+    // Print each address line centered
+    for (const line of addressParts) {
+      doc.text(line, pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    // Contact details on one line
+    const contactParts = [];
+    if (organization.phone) contactParts.push(`Tel: ${organization.phone}`);
+    if (organization.email) contactParts.push(`Email: ${organization.email}`);
+    if (organization.website) contactParts.push(organization.website);
+
+    if (contactParts.length > 0) {
+      doc.setFontSize(8);
+      doc.text(contactParts.join('  |  '), pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    // Add a line separator
+    y += 2;
+    doc.setDrawColor(200, 200, 200);
+    doc.line(40, y, pageWidth - 40, y);
+    y += 8;
+  }
 
   // Header
   doc.setFontSize(20);
@@ -336,278 +511,194 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
   }
 
   // ============================================
-  // PAGE 2+: INTEREST CALCULATION LEDGER
+  // PAGE 2+: LOAN LEDGER (Timeline View)
   // ============================================
   doc.addPage();
   y = 15;
 
   doc.setFontSize(16);
   doc.setFont(undefined, 'bold');
-  doc.text('INTEREST CALCULATION LEDGER', pageWidth / 2, y, { align: 'center' });
+  doc.text('LOAN LEDGER', pageWidth / 2, y, { align: 'center' });
 
   y += 8;
   doc.setFontSize(10);
   doc.setFont(undefined, 'normal');
   doc.text(`Loan: #${loan.loan_number || loan.id.slice(0, 8)} - ${loan.borrower_name}`, pageWidth / 2, y, { align: 'center' });
 
-  // Calculation Method explanation
   y += 10;
-  doc.setFontSize(9);
-  doc.setFont(undefined, 'bold');
-  doc.text('About this Ledger:', 15, y);
-  y += 5;
-  doc.setFont(undefined, 'normal');
-  doc.text(`This ledger shows day-by-day interest accrual for audit purposes.`, 15, y);
-  y += 4;
-  doc.text(`Formula: Daily Interest = Principal Balance × (Annual Rate / 365)`, 15, y);
-  y += 4;
-  doc.setFont(undefined, 'italic');
-  doc.text(`Note: The summary on page 1 uses schedule-aligned calculations which may differ from this ledger.`, 15, y);
-  y += 4;
-  doc.text(`For "interest paid in advance" products, interest is due at the start of each period.`, 15, y);
-  doc.setFont(undefined, 'normal');
 
-  y += 8;
+  // Build timeline for ledger display
+  const timelineRows = buildPDFTimeline(loan, schedule, transactions, product);
 
-  // Ledger entries table
-  const drawLedgerHeader = (yPos) => {
+  // Column positions (A4 = 210mm, margins = 10mm each side = 190mm usable)
+  const cols = {
+    date: 12,
+    intReceived: 55,
+    expected: 85,
+    intBal: 115,
+    principal: 150,
+    prinBal: 190
+  };
+
+  // Ledger table header
+  const drawTimelineHeader = (yPos) => {
     doc.setFillColor(240, 240, 240);
     doc.rect(10, yPos - 4, 190, 7, 'F');
-    doc.setFontSize(7);
+    doc.setFontSize(8);
     doc.setFont(undefined, 'bold');
-    doc.text('Date/Period', 12, yPos);
-    doc.text('Description', 50, yPos);
-    doc.text('Days', 105, yPos, { align: 'right' });
-    doc.text('Rate', 118, yPos, { align: 'right' });
-    doc.text('Interest', 140, yPos, { align: 'right' });
-    doc.text('Int. Paid', 160, yPos, { align: 'right' });
-    doc.text('Int. O/S', 180, yPos, { align: 'right' });
-    doc.text('Princ. O/S', 198, yPos, { align: 'right' });
+    doc.text('Date', cols.date, yPos);
+    doc.text('Int Received', cols.intReceived, yPos, { align: 'right' });
+    doc.text('Expected', cols.expected, yPos, { align: 'right' });
+    doc.text('Int Bal', cols.intBal, yPos, { align: 'right' });
+    doc.text('Principal', cols.principal, yPos, { align: 'right' });
+    doc.text('Prin Bal', cols.prinBal, yPos, { align: 'right' });
     return yPos + 5;
   };
 
-  y = drawLedgerHeader(y);
+  y = drawTimelineHeader(y);
   doc.line(10, y, 200, y);
   y += 1;
 
   doc.setFont(undefined, 'normal');
-  doc.setFontSize(7);
+  doc.setFontSize(8);
 
-  ledger.entries.forEach((entry, idx) => {
+  timelineRows.forEach((row, idx) => {
     // Check for page break
     if (y > 275) {
       doc.addPage();
       y = 20;
-      y = drawLedgerHeader(y);
+      y = drawTimelineHeader(y);
       doc.line(10, y, 200, y);
       y += 1;
       doc.setFont(undefined, 'normal');
-      doc.setFontSize(7);
+      doc.setFontSize(8);
     }
 
     y += 5;
 
-    if (entry.type === 'InterestAccrual') {
-      // Interest accrual row - show period
-      const fromStr = format(entry.fromDate, 'dd/MM/yy');
-      const toStr = format(entry.toDate, 'dd/MM/yy');
-      doc.text(`${fromStr}-${toStr}`, 12, y);
-
-      // Truncate description if needed
-      const desc = entry.description.length > 35 ? entry.description.slice(0, 33) + '...' : entry.description;
-      doc.text(desc, 50, y);
-
-      doc.text(String(entry.days), 105, y, { align: 'right' });
-      doc.text(`${entry.rate}%`, 118, y, { align: 'right' });
-      doc.text(formatCurrency(entry.interest), 140, y, { align: 'right' });
-      doc.text('-', 160, y, { align: 'right' });
-      doc.text(formatCurrency(entry.interestBalance), 180, y, { align: 'right' });
-      doc.text(formatCurrency(entry.principal), 198, y, { align: 'right' });
-
-    } else if (entry.type === 'Disbursement') {
-      // Disbursement row
-      doc.setFillColor(239, 246, 255); // Light blue
+    // Row background color based on type
+    if (row.primaryType === 'disbursement') {
+      doc.setFillColor(255, 235, 235); // Light red
       doc.rect(10, y - 4, 190, 5.5, 'F');
-
-      doc.text(format(entry.date, 'dd/MM/yy'), 12, y);
-      doc.setTextColor(37, 99, 235); // Blue
-      doc.text(`DISBURSEMENT: ${entry.description}`, 50, y);
-      doc.text(formatCurrency(entry.amount), 140, y, { align: 'right' });
-      doc.setTextColor(0, 0, 0);
-      doc.text('-', 160, y, { align: 'right' });
-      doc.text(formatCurrency(entry.interestBalance), 180, y, { align: 'right' });
-      doc.text(formatCurrency(entry.principalAfter), 198, y, { align: 'right' });
-
-    } else if (entry.type === 'Repayment') {
-      // Repayment row
-      doc.setFillColor(240, 253, 244); // Light green
+    } else if (row.primaryType === 'repayment') {
+      doc.setFillColor(235, 255, 235); // Light green
       doc.rect(10, y - 4, 190, 5.5, 'F');
+    } else if (row.primaryType === 'due_date') {
+      doc.setFillColor(235, 245, 255); // Light blue
+      doc.rect(10, y - 4, 190, 5.5, 'F');
+    } else if (row.primaryType === 'adjustment') {
+      doc.setFillColor(255, 250, 235); // Light amber
+      doc.rect(10, y - 4, 190, 5.5, 'F');
+    } else if (row.primaryType === 'rate_change') {
+      doc.setFillColor(255, 243, 220); // Light orange
+      doc.rect(10, y - 4, 190, 5.5, 'F');
+    }
 
-      doc.text(format(entry.date, 'dd/MM/yy'), 12, y);
+    // Date
+    doc.text(format(new Date(row.date), 'dd/MM/yy'), cols.date, y);
+
+    // Interest Received (green for payments)
+    if (row.interestPaid > 0.01) {
       doc.setTextColor(22, 163, 74); // Green
-
-      let repaymentDesc = `REPAYMENT: ${formatCurrency(entry.amount)}`;
-      if (entry.interestApplied > 0 && entry.principalApplied > 0) {
-        repaymentDesc += ` (${formatCurrency(entry.interestApplied)} int, ${formatCurrency(entry.principalApplied)} princ)`;
-      } else if (entry.interestApplied > 0) {
-        repaymentDesc += ` (${formatCurrency(entry.interestApplied)} to interest)`;
-      } else if (entry.principalApplied > 0) {
-        repaymentDesc += ` (${formatCurrency(entry.principalApplied)} to principal)`;
-      }
-      const truncDesc = repaymentDesc.length > 48 ? repaymentDesc.slice(0, 46) + '...' : repaymentDesc;
-      doc.text(truncDesc, 50, y);
+      doc.text(`-${formatCurrency(row.interestPaid)}`, cols.intReceived, y, { align: 'right' });
       doc.setTextColor(0, 0, 0);
+    } else {
+      doc.setTextColor(180, 180, 180);
+      doc.text('-', cols.intReceived, y, { align: 'right' });
+      doc.setTextColor(0, 0, 0);
+    }
 
-      doc.text('-', 105, y, { align: 'right' });
-      doc.text('-', 118, y, { align: 'right' });
-      doc.text('-', 140, y, { align: 'right' });
-
-      if (entry.interestApplied > 0) {
-        doc.setTextColor(22, 163, 74);
-        doc.text(`-${formatCurrency(entry.interestApplied)}`, 160, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
+    // Expected Interest (blue for due dates, amber for adjustments)
+    if (row.expectedInterest > 0.01 || row.expectedInterest < -0.01) {
+      if (row.primaryType === 'adjustment') {
+        doc.setTextColor(180, 83, 9); // Amber
       } else {
-        doc.text('-', 160, y, { align: 'right' });
+        doc.setTextColor(37, 99, 235); // Blue
       }
-
-      doc.text(formatCurrency(entry.interestBalance), 180, y, { align: 'right' });
-      doc.text(formatCurrency(entry.principalAfter), 198, y, { align: 'right' });
-
-    } else if (entry.type === 'RateChange') {
-      // Rate change row
-      doc.setFillColor(254, 243, 199); // Light amber
-      doc.rect(10, y - 4, 190, 5.5, 'F');
-
-      doc.text(format(entry.date, 'dd/MM/yy'), 12, y);
-      doc.setTextColor(180, 83, 9); // Amber
-      doc.text(`RATE CHANGE: ${entry.fromRate}% → ${entry.toRate}%`, 50, y);
+      doc.text(formatCurrency(row.expectedInterest), cols.expected, y, { align: 'right' });
       doc.setTextColor(0, 0, 0);
-      doc.text('-', 105, y, { align: 'right' });
-      doc.text(`${entry.toRate}%`, 118, y, { align: 'right' });
-      doc.text('-', 140, y, { align: 'right' });
-      doc.text('-', 160, y, { align: 'right' });
-      doc.text(formatCurrency(entry.interestBalance), 180, y, { align: 'right' });
-      doc.text(formatCurrency(entry.principalBalance), 198, y, { align: 'right' });
+    } else {
+      doc.setTextColor(180, 180, 180);
+      doc.text('-', cols.expected, y, { align: 'right' });
+      doc.setTextColor(0, 0, 0);
+    }
+
+    // Interest Balance
+    if (Math.abs(row.interestBalance) < 0.01) {
+      doc.text(formatCurrency(0), cols.intBal, y, { align: 'right' });
+    } else if (row.interestBalance > 0) {
+      doc.text(formatCurrency(row.interestBalance), cols.intBal, y, { align: 'right' });
+    } else {
+      doc.text(`-${formatCurrency(Math.abs(row.interestBalance))}`, cols.intBal, y, { align: 'right' });
+    }
+
+    // Principal Change (red for disbursements, blue for repayments)
+    if (Math.abs(row.principalChange) > 0.01) {
+      if (row.principalChange > 0) {
+        doc.setTextColor(220, 38, 38); // Red for disbursement
+        doc.text(`+${formatCurrency(row.principalChange)}`, cols.principal, y, { align: 'right' });
+      } else {
+        doc.setTextColor(37, 99, 235); // Blue for capital repayment
+        doc.text(formatCurrency(row.principalChange), cols.principal, y, { align: 'right' });
+      }
+      doc.setTextColor(0, 0, 0);
+    } else if (row.primaryType === 'rate_change') {
+      doc.setTextColor(180, 83, 9); // Amber
+      doc.text(`${row.previousRate}%→${row.newRate}%`, cols.principal, y, { align: 'right' });
+      doc.setTextColor(0, 0, 0);
+    } else {
+      doc.setTextColor(180, 180, 180);
+      doc.text('-', cols.principal, y, { align: 'right' });
+      doc.setTextColor(0, 0, 0);
+    }
+
+    // Principal Balance
+    doc.setFont(undefined, 'bold');
+    doc.text(formatCurrency(row.principalBalance), cols.prinBal, y, { align: 'right' });
+    doc.setFont(undefined, 'normal');
+
+    // For adjustment rows, add a note line with the calculation breakdown
+    if (row.primaryType === 'adjustment' && row.calculationBreakdown) {
+      y += 4;
+      doc.setFontSize(7);
+      doc.setTextColor(120, 120, 120);
+      const noteText = row.calculationBreakdown.isCredit
+        ? `Interest credit: ${row.calculationBreakdown.breakdown} (mid-period capital change)`
+        : `Interest debit: ${row.calculationBreakdown.breakdown} (mid-period capital change)`;
+      doc.text(noteText, cols.date + 2, y);
+      doc.setTextColor(0, 0, 0);
+      doc.setFontSize(8);
     }
   });
 
-  // Totals
+  // Totals row
   y += 4;
   doc.line(10, y, 200, y);
   y += 6;
 
-  doc.setFillColor(255, 243, 205);
+  const lastRow = timelineRows.length > 0 ? timelineRows[timelineRows.length - 1] : null;
+  const totalInterestPaid = lastRow?.totalPaidToDate || 0;
+  const totalExpected = lastRow?.totalExpectedToDate || 0;
+  const finalInterestBalance = lastRow?.interestBalance || 0;
+  const finalPrincipalBalance = lastRow?.principalBalance || 0;
+
+  doc.setFillColor(240, 240, 240);
   doc.rect(10, y - 4, 190, 7, 'F');
   doc.setFont(undefined, 'bold');
   doc.setFontSize(8);
-  doc.text('LEDGER TOTALS', 12, y);
-  doc.text(formatCurrency(ledger.summary.totalInterestAccrued), 140, y, { align: 'right' });
-  doc.text(formatCurrency(ledger.summary.totalInterestPaid), 160, y, { align: 'right' });
-  doc.text(formatCurrency(ledger.summary.interestOutstanding), 180, y, { align: 'right' });
-  doc.text(formatCurrency(ledger.summary.principalOutstanding), 198, y, { align: 'right' });
+  doc.text('TOTALS', cols.date, y);
 
-  // Show schedule-aligned position if different
-  if (interestCalc && Math.abs(summaryValues.interestOutstanding - ledger.summary.interestOutstanding) > 0.01) {
-    y += 6;
-    doc.setFillColor(240, 253, 244);
-    doc.rect(10, y - 4, 190, 7, 'F');
-    doc.setFont(undefined, 'bold');
-    doc.text('SCHEDULE POSITION*', 12, y);
-    doc.text(formatCurrency(summaryValues.interestAccrued), 140, y, { align: 'right' });
-    doc.text(formatCurrency(summaryValues.interestPaid), 160, y, { align: 'right' });
-    doc.text(formatCurrency(summaryValues.interestOutstanding), 180, y, { align: 'right' });
-    doc.text(formatCurrency(summaryValues.principalOutstanding), 198, y, { align: 'right' });
-    y += 5;
-    doc.setFont(undefined, 'italic');
-    doc.setFontSize(7);
-    doc.text('* Official position per repayment schedule (matches page 1 summary)', 12, y);
-  }
+  doc.setTextColor(22, 163, 74);
+  doc.text(`-${formatCurrency(totalInterestPaid)}`, cols.intReceived, y, { align: 'right' });
+  doc.setTextColor(0, 0, 0);
+
+  doc.text(formatCurrency(totalExpected), cols.expected, y, { align: 'right' });
+  doc.text(formatCurrency(Math.abs(finalInterestBalance)), cols.intBal, y, { align: 'right' });
+  doc.text('', cols.principal, y, { align: 'right' });
+  doc.text(formatCurrency(finalPrincipalBalance), cols.prinBal, y, { align: 'right' });
 
   // ============================================
-  // PAGE 3+: REPAYMENT SCHEDULE
-  // ============================================
-  if (schedule && schedule.length > 0) {
-    doc.addPage();
-    y = 15;
-
-    doc.setFontSize(16);
-    doc.setFont(undefined, 'bold');
-    doc.text('REPAYMENT SCHEDULE', pageWidth / 2, y, { align: 'center' });
-
-    y += 10;
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    doc.text(`Loan: #${loan.loan_number || loan.id.slice(0, 8)} - ${loan.borrower_name}`, pageWidth / 2, y, { align: 'center' });
-
-    y += 10;
-
-    // Schedule table header
-    const drawScheduleHeader = (yPos) => {
-      doc.setFillColor(240, 240, 240);
-      doc.rect(15, yPos - 4, 180, 7, 'F');
-      doc.setFontSize(8);
-      doc.setFont(undefined, 'bold');
-      doc.text('#', 17, yPos);
-      doc.text('Due Date', 28, yPos);
-      doc.text('Interest Due', 85, yPos, { align: 'right' });
-      doc.text('Total Due', 115, yPos, { align: 'right' });
-      doc.text('Paid', 145, yPos, { align: 'right' });
-      doc.text('Status', 160, yPos);
-      return yPos + 5;
-    };
-
-    y = drawScheduleHeader(y);
-    doc.line(15, y, 195, y);
-
-    doc.setFont(undefined, 'normal');
-    schedule.forEach((row) => {
-      y += 6;
-      if (y > 275) {
-        doc.addPage();
-        y = 20;
-        y = drawScheduleHeader(y);
-        doc.line(15, y, 195, y);
-        y += 6;
-        doc.setFont(undefined, 'normal');
-      }
-
-      // Color code by status
-      if (row.status === 'Paid') {
-        doc.setFillColor(240, 253, 244);
-        doc.rect(15, y - 4, 180, 5.5, 'F');
-      } else if (row.status === 'Overdue') {
-        doc.setFillColor(254, 242, 242);
-        doc.rect(15, y - 4, 180, 5.5, 'F');
-      }
-
-      doc.setFontSize(8);
-      doc.text(String(row.installment_number), 17, y);
-      doc.text(format(new Date(row.due_date), 'dd MMM yyyy'), 28, y);
-      doc.text(formatCurrency(row.interest_amount), 85, y, { align: 'right' });
-      doc.text(formatCurrency(row.total_due), 115, y, { align: 'right' });
-
-      const paid = (row.principal_paid || 0) + (row.interest_paid || 0);
-      if (paid > 0) {
-        doc.setTextColor(22, 163, 74);
-        doc.text(formatCurrency(paid), 145, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
-      } else {
-        doc.text('-', 145, y, { align: 'right' });
-      }
-
-      // Status with color
-      if (row.status === 'Paid') {
-        doc.setTextColor(22, 163, 74);
-      } else if (row.status === 'Overdue') {
-        doc.setTextColor(220, 38, 38);
-      }
-      doc.text(row.status, 160, y);
-      doc.setTextColor(0, 0, 0);
-    });
-  }
-
-  // ============================================
-  // FINAL PAGE: TRANSACTION HISTORY
+  // PAGE 3+: TRANSACTION HISTORY
   // ============================================
   const activeTransactions = (transactions || []).filter(t => !t.is_deleted);
   if (activeTransactions.length > 0) {
@@ -706,16 +797,23 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
 
     const totalDisbursed = sortedTx.filter(t => t.type === 'Disbursement').reduce((s, t) => s + t.amount, 0);
     const totalRepaid = sortedTx.filter(t => t.type === 'Repayment').reduce((s, t) => s + t.amount, 0);
+    const totalAmount = sortedTx.reduce((s, t) => s + t.amount, 0);
     const totalInterestPaid = sortedTx.reduce((s, t) => s + (t.interest_applied || 0), 0);
     const totalPrincipalPaid = sortedTx.reduce((s, t) => s + (t.principal_applied || 0), 0);
 
+    doc.setFillColor(240, 240, 240);
+    doc.rect(15, y - 4, 180, 7, 'F');
     doc.setFont(undefined, 'bold');
     doc.setFontSize(8);
-    doc.text('TOTALS:', 17, y);
-    doc.text(`Disbursed: ${formatCurrency(totalDisbursed)}`, 45, y);
-    doc.text(`Repaid: ${formatCurrency(totalRepaid)}`, 120, y, { align: 'right' });
+    doc.text('TOTALS', 17, y);
+    doc.text(formatCurrency(totalAmount), 120, y, { align: 'right' });
     doc.text(formatCurrency(totalInterestPaid), 145, y, { align: 'right' });
     doc.text(formatCurrency(totalPrincipalPaid), 170, y, { align: 'right' });
+
+    // Summary below totals
+    y += 8;
+    doc.setFont(undefined, 'normal');
+    doc.text(`Disbursed: ${formatCurrency(totalDisbursed)}  |  Interest Received: ${formatCurrency(totalInterestPaid)}`, 17, y);
   }
 
   // Footer on all pages

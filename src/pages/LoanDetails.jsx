@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { logLoanEvent, logTransactionEvent, AuditAction } from '@/lib/auditLog';
 import { Button } from "@/components/ui/button";
@@ -80,6 +81,7 @@ export default function LoanDetails() {
   const loanId = urlParams.get('id');
   const navigate = useNavigate();
   const { user } = useAuth();
+  const { currentOrganization } = useOrganization();
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
@@ -606,7 +608,7 @@ export default function LoanDetails() {
   const handleGenerateLoanStatement = () => {
     // Calculate schedule-based interest at the time of generation
     const interestCalc = calculateAccruedInterestWithTransactions(loan, transactions, new Date(), schedule, product);
-    generateLoanStatementPDF(loan, schedule, transactions, product, interestCalc);
+    generateLoanStatementPDF(loan, schedule, transactions, product, interestCalc, currentOrganization);
   };
 
   const handleExportScheduleCSV = () => {
@@ -1423,23 +1425,48 @@ export default function LoanDetails() {
                     <div>
                       <span className="text-slate-500 text-xs">Principal</span>
                       <p className="font-bold text-lg">{formatCurrency(totalPrincipal)}</p>
+                      {Math.abs(principalRemaining - totalPrincipal) > 0.01 && (
+                        <p className="text-sm text-blue-600">{formatCurrency(principalRemaining)}</p>
+                      )}
                     </div>
                     <div>
-                      <span className="text-slate-500 text-xs">Rate{loan.override_interest_rate && ' (Custom)'}</span>
+                      <span className="text-slate-500 text-xs">Rate{loan.override_interest_rate && ' (Custom)'}{loan.has_penalty_rate && loan.penalty_rate && ' (Penalty)'}</span>
                       <p className="font-bold text-lg">
-                        {loan.override_interest_rate && loan.overridden_rate != null
-                          ? loan.overridden_rate
-                          : loan.interest_rate}% {loan.interest_type}
-                        {loan.has_penalty_rate && loan.penalty_rate && (
-                          <span className="text-amber-600 text-sm ml-1" title={`Penalty rate ${loan.penalty_rate}% from ${format(new Date(loan.penalty_rate_from), 'dd/MM/yy')}`}>
-                            → {loan.penalty_rate}%
-                          </span>
+                        {loan.has_penalty_rate && loan.penalty_rate ? (
+                          <>
+                            <span className="text-amber-600">{loan.penalty_rate}%</span>
+                            <span className="text-slate-400 text-sm font-normal ml-1" title={`Penalty rate from ${format(new Date(loan.penalty_rate_from), 'dd/MM/yy')}`}>
+                              (was {loan.override_interest_rate && loan.overridden_rate != null ? loan.overridden_rate : loan.interest_rate}%)
+                            </span>
+                            {' '}{loan.interest_type}
+                          </>
+                        ) : (
+                          <>
+                            {loan.override_interest_rate && loan.overridden_rate != null
+                              ? loan.overridden_rate
+                              : loan.interest_rate}% {loan.interest_type}
+                          </>
                         )}
                       </p>
                     </div>
                     <div>
                       <span className="text-slate-500 text-xs">Duration</span>
-                      <p className="font-bold text-lg">{loan.duration} {loan.period === 'Monthly' ? 'mo' : 'wk'}{loan.auto_extend && ' (ext)'}</p>
+                      <p className="font-bold text-lg">
+                        {loan.period === 'Monthly' ? (
+                          loan.duration >= 12 ? (
+                            <>
+                              {Math.floor(loan.duration / 12)}y{loan.duration % 12 > 0 && ` ${loan.duration % 12}m`}
+                            </>
+                          ) : (
+                            `${loan.duration}m`
+                          )
+                        ) : (
+                          `${loan.duration}w`
+                        )}
+                      </p>
+                      {loan.auto_extend && (
+                        <p className="text-xs text-amber-600">Auto Extend</p>
+                      )}
                     </div>
                     <div>
                       <span className="text-slate-500 text-xs">Start Date</span>

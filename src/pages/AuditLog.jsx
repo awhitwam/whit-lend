@@ -326,7 +326,7 @@ export default function AuditLog() {
       });
 
       if (entries.length > 0) {
-        const detailItems = entries.slice(0, 5).map(([key, value]) => (
+        const detailItems = entries.slice(0, 8).map(([key, value]) => (
           <div key={key} className="text-xs">
             <span className="font-medium">{formatFieldName(key)}:</span>{' '}
             <span className="text-slate-600">{formatValue(value, key)}</span>
@@ -341,11 +341,15 @@ export default function AuditLog() {
 
   // Fields that should be formatted as currency
   const currencyFields = ['principal_paid', 'interest_paid', 'principal_amount', 'interest_amount',
-    'amount', 'total_interest', 'fees_paid', 'fees_applied', 'principal_applied', 'interest_applied'];
+    'amount', 'total_interest', 'fees_paid', 'fees_applied', 'principal_applied', 'interest_applied',
+    'previous_amount', 'previous_principal', 'previous_interest', 'previous_fees',
+    'new_amount', 'new_principal', 'new_interest', 'new_fees',
+    'previous_gross', 'new_gross', 'previous_net', 'new_net',
+    'previous_deducted_fee', 'new_deducted_fee', 'previous_deducted_interest', 'new_deducted_interest'];
 
   // Fields that should be formatted as dates
   const dateFields = ['transaction_date', 'date', 'start_date', 'end_date', 'due_date', 'payment_date',
-    'statement_date', 'reconciled_at', 'deleted_date', 'created_date', 'maturity_date'];
+    'statement_date', 'reconciled_at', 'deleted_date', 'created_date', 'maturity_date', 'previous_date', 'new_date'];
 
   // Check if a string looks like a date (YYYY-MM-DD or ISO format)
   const isDateString = (value) => {
