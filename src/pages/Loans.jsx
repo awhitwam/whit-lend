@@ -223,7 +223,7 @@ export default function Loans() {
   const { data: allBorrowers = [] } = useQuery({
     queryKey: ['borrowers', currentOrganization?.id],
     queryFn: () => api.entities.Borrower.list(),
-    enabled: !!contactEmailFilter && !!currentOrganization
+    enabled: !!currentOrganization
   });
 
   const contactBorrowerIds = useMemo(() => {
@@ -265,6 +265,13 @@ export default function Loans() {
     return map;
   }, [allProducts]);
 
+  // Create a map of borrower_id -> borrower for quick lookup
+  const borrowerMap = useMemo(() => {
+    const map = new Map();
+    allBorrowers.forEach(b => map.set(b.id, b));
+    return map;
+  }, [allBorrowers]);
+
   // Calculate further advances per loan (disbursements beyond the first one)
   // The first disbursement represents the initial principal, so we skip it
   // Uses gross_amount for accurate principal tracking (falls back to amount for legacy data)
@@ -305,11 +312,19 @@ export default function Loans() {
   const deletedLoans = borrowerFilteredLoans.filter(loan => loan.is_deleted);
 
   const filteredLoans = loans.filter(loan => {
+    const searchLower = searchTerm.toLowerCase();
+    // Get borrower for first_name/last_name search when no description
+    const borrower = borrowerMap.get(loan.borrower_id);
+    const borrowerFullName = borrower
+      ? `${borrower.first_name || ''} ${borrower.last_name || ''}`.trim().toLowerCase()
+      : '';
+
     const matchesSearch =
-      loan.borrower_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.loan_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.product_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      loan.description?.toLowerCase().includes(searchTerm.toLowerCase());
+      loan.borrower_name?.toLowerCase().includes(searchLower) ||
+      loan.loan_number?.toLowerCase().includes(searchLower) ||
+      loan.product_name?.toLowerCase().includes(searchLower) ||
+      loan.description?.toLowerCase().includes(searchLower) ||
+      (!loan.description && borrowerFullName.includes(searchLower));
 
     const matchesStatus = statusFilter === 'all' ||
       loan.status === statusFilter ||
@@ -633,11 +648,37 @@ export default function Loans() {
       header: 'Description',
       sortKey: null,
       align: 'left',
-      render: (loan) => (
-        <span className="text-sm text-slate-600">
-          {loan.description || '-'}
-        </span>
-      )
+      render: (loan, { borrower }) => {
+        if (loan.description) {
+          return (
+            <span className="text-sm text-slate-600">
+              {loan.description}
+            </span>
+          );
+        }
+        // Fallback to borrower first + last name with subtle icon and tooltip
+        const name = borrower
+          ? `${borrower.first_name || ''} ${borrower.last_name || ''}`.trim()
+          : null;
+        if (name) {
+          return (
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-sm text-slate-400 flex items-center gap-1 cursor-help">
+                    <User className="w-3 h-3" />
+                    {name}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>No description - showing contact name</p>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          );
+        }
+        return <span className="text-sm text-slate-400">-</span>;
+      }
     },
     date: {
       header: 'Date',
@@ -1131,8 +1172,9 @@ export default function Loans() {
                         const lastScheduleEntry = getLastScheduleEntryForLoan(loan.id);
                         // Use product abbreviation from join, otherwise generate from product name
                         const productAbbr = productAbbreviations.get(loan.product_id) || getProductAbbreviation(loan.product_name);
+                        const borrower = borrowerMap.get(loan.borrower_id);
 
-                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr };
+                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr, borrower };
 
                         return (
                           <tr

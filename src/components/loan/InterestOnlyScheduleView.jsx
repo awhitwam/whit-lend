@@ -570,8 +570,8 @@ function GroupTypeIcons({ typeCounts }) {
  * Shows month name and summary totals
  */
 function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
-  // Interest balance is always black (no color coding)
-  const balanceColorClass = '';
+  // Green for negative (ahead), default for positive/zero
+  const balanceColorClass = group.endingInterestBalance < -0.01 ? 'text-emerald-600' : '';
 
   return (
     <TableRow
@@ -579,7 +579,7 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
       onClick={onToggle}
     >
       {/* Month name with expand/collapse chevron and type icons */}
-      <TableCell className="font-medium text-base py-0.5" colSpan={2}>
+      <TableCell className="font-medium text-base py-0.5 whitespace-nowrap">
         <div className="flex items-center gap-1">
           {isExpanded ? (
             <ChevronDown className="w-4 h-4 text-slate-500" />
@@ -592,17 +592,17 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
       </TableCell>
 
       {/* Interest Received total */}
-      <TableCell className="text-right font-mono text-base text-emerald-600 py-0.5">
+      <TableCell className="text-right font-mono text-base text-emerald-600 py-0.5 whitespace-nowrap">
         {group.totalInterestPaid > 0 && `-${formatCurrency(group.totalInterestPaid)}`}
       </TableCell>
 
       {/* Expected Interest total */}
-      <TableCell className="text-right font-mono text-base text-blue-600 py-0.5">
+      <TableCell className="text-right font-mono text-base text-blue-600 py-0.5 whitespace-nowrap">
         {group.totalExpectedInterest > 0 && formatCurrency(group.totalExpectedInterest)}
       </TableCell>
 
       {/* Interest Balance (ending) */}
-      <TableCell className={cn('text-right font-mono text-base py-0.5', balanceColorClass)}>
+      <TableCell className={cn('text-right font-mono text-base py-0.5 whitespace-nowrap', balanceColorClass)}>
         <div className="flex items-center justify-end">
           <span>
             {Math.abs(group.endingInterestBalance) < 0.01 ? (
@@ -618,7 +618,7 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
       </TableCell>
 
       {/* Principal Change total */}
-      <TableCell className="text-right font-mono text-base py-0.5 border-r">
+      <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
         {group.totalPrincipalChange !== 0 && (
           <span className={group.totalPrincipalChange > 0 ? 'text-red-600' : ''}>
             {group.totalPrincipalChange > 0 ? '+' : ''}{formatCurrency(group.totalPrincipalChange)}
@@ -626,13 +626,13 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
         )}
       </TableCell>
 
-      {/* Calculation - empty for month summary */}
-      <TableCell className="text-base py-0.5"></TableCell>
-
       {/* Principal Balance (ending) */}
-      <TableCell className="text-right font-mono text-base font-medium py-0.5">
+      <TableCell className="text-right font-mono text-base font-medium py-0.5 whitespace-nowrap">
         {formatCurrency(group.endingPrincipalBalance)}
       </TableCell>
+
+      {/* Calculation - empty for month summary */}
+      <TableCell className="text-base py-0.5"></TableCell>
     </TableRow>
   );
 }
@@ -641,13 +641,13 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
  * Standalone TODAY row - appears between month groups at the correct chronological position
  */
 function TodayStandaloneRow({ row, monthlyInterest }) {
-  // Interest balance is always black (no color coding)
-  const balanceColorClass = '';
+  // Green for negative (ahead), default for positive/zero
+  const balanceColorClass = row.interestBalance < -0.01 ? 'text-emerald-600' : '';
 
   return (
     <TableRow className="bg-amber-100 border-y-2 border-amber-400">
       {/* Date with TODAY label */}
-      <TableCell className="font-mono text-base font-bold text-amber-700 py-0.5" colSpan={2}>
+      <TableCell className="font-mono text-base font-bold text-amber-700 py-0.5 whitespace-nowrap">
         <div className="flex items-center gap-2">
           <Clock className="w-4 h-4 text-amber-600" />
           <span>TODAY</span>
@@ -656,17 +656,17 @@ function TodayStandaloneRow({ row, monthlyInterest }) {
       </TableCell>
 
       {/* Interest Received - none for today */}
-      <TableCell className="text-right font-mono text-base py-0.5">
+      <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
         <span className="text-slate-300">—</span>
       </TableCell>
 
       {/* Expected Interest - show accrued */}
-      <TableCell className="text-right font-mono text-base py-0.5 text-amber-600">
+      <TableCell className="text-right font-mono text-base py-0.5 text-amber-600 whitespace-nowrap">
         {row.accruedInterest > 0.01 && `+${formatCurrency(row.accruedInterest)}`}
       </TableCell>
 
       {/* Interest Balance */}
-      <TableCell className={cn('text-right font-mono text-base py-0.5', balanceColorClass)}>
+      <TableCell className={cn('text-right font-mono text-base py-0.5 whitespace-nowrap', balanceColorClass)}>
         <div className="flex items-center justify-end">
           <span>
             {Math.abs(row.interestBalance) < 0.01 ? (
@@ -682,8 +682,13 @@ function TodayStandaloneRow({ row, monthlyInterest }) {
       </TableCell>
 
       {/* Principal Change - none for today */}
-      <TableCell className="text-right font-mono text-base py-0.5 border-r">
+      <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
         <span className="text-slate-300">—</span>
+      </TableCell>
+
+      {/* Principal Balance */}
+      <TableCell className="text-right font-mono text-base font-medium py-0.5 whitespace-nowrap">
+        {formatCurrency(row.principalBalance)}
       </TableCell>
 
       {/* Calculation - accrued breakdown */}
@@ -703,11 +708,6 @@ function TodayStandaloneRow({ row, monthlyInterest }) {
           </Tooltip>
         )}
       </TableCell>
-
-      {/* Principal Balance */}
-      <TableCell className="text-right font-mono text-base font-medium py-0.5">
-        {formatCurrency(row.principalBalance)}
-      </TableCell>
     </TableRow>
   );
 }
@@ -721,8 +721,8 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
   const isToday = row.isToday;
   const isRateChange = row.primaryType === 'rate_change';
 
-  // Interest balance is always black (no color coding)
-  const balanceColorClass = '';
+  // Green for negative (ahead), default for positive/zero
+  const balanceColorClass = row.interestBalance < -0.01 ? 'text-emerald-600' : '';
 
   // Determine if payment was made
   const hasPrincipalChange = Math.abs(row.principalChange) > 0.01;
@@ -739,12 +739,19 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
         <TableCell className={cn(
           "font-mono text-base whitespace-nowrap py-0.5",
           isNested && "pl-6"
-        )} colSpan={2}>
+        )}>
           {format(new Date(row.date), 'dd/MM/yy')}
         </TableCell>
 
-        {/* Rate change message spanning remaining columns */}
-        <TableCell colSpan={6} className="py-0.5">
+        {/* Empty cells for Int Received, Expected, Int Bal, Principal, Prin Bal */}
+        <TableCell className="py-0.5"></TableCell>
+        <TableCell className="py-0.5"></TableCell>
+        <TableCell className="py-0.5"></TableCell>
+        <TableCell className="py-0.5"></TableCell>
+        <TableCell className="py-0.5"></TableCell>
+
+        {/* Rate change message in Calculation column (last, fills remaining space) */}
+        <TableCell className="py-0.5">
           <div className="flex items-center gap-2 text-orange-700 font-medium text-base">
             <span>Interest rate changed:</span>
             <span className="font-mono">{row.previousRate}% p.a.</span>
@@ -777,7 +784,7 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
         "font-mono text-base whitespace-nowrap py-0.5",
         isNested && "pl-6",
         isToday && "font-bold text-amber-700"
-      )} colSpan={2}>
+      )}>
         {isToday ? (
           <span>TODAY {format(new Date(row.date), 'dd/MM/yy')}</span>
         ) : (
@@ -786,7 +793,7 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
       </TableCell>
 
       {/* Interest Paid (Reality) - with repayment icon */}
-      <TableCell className="text-right font-mono text-base py-0.5">
+      <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
         {hasInterestPaid ? (
           <div className="flex items-center justify-end gap-1">
             <Tooltip>
@@ -809,7 +816,7 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
       </TableCell>
 
       {/* Expected Interest (Expectations) - with schedule icon */}
-      <TableCell className="text-right font-mono text-base py-0.5">
+      <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
         {row.isDueDate && row.expectedInterest > 0.01 ? (
           <div className="flex items-center justify-end gap-1">
             <Tooltip>
@@ -832,7 +839,7 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
       </TableCell>
 
       {/* Interest Balance (Reality) - always show */}
-      <TableCell className={cn('text-right font-mono text-base py-0.5', balanceColorClass)}>
+      <TableCell className={cn('text-right font-mono text-base py-0.5 whitespace-nowrap', balanceColorClass)}>
         <div className="flex items-center justify-end">
           <span>
             {Math.abs(row.interestBalance) < 0.01 ? (
@@ -847,8 +854,8 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
         </div>
       </TableCell>
 
-      {/* Principal Change (Reality) - rightmost in ledger section, with disbursement/capital icon */}
-      <TableCell className="text-right font-mono text-base py-0.5 border-r">
+      {/* Principal Change (Reality) - with disbursement/capital icon */}
+      <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
         {hasPrincipalChange ? (
           (() => {
             // Check if this disbursement has deductions (gross != net)
@@ -920,7 +927,16 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
         )}
       </TableCell>
 
-      {/* Calculation (Expectations) */}
+      {/* Principal Balance - only show at start, end, or on changes */}
+      <TableCell className="text-right font-mono text-base font-medium py-0.5 whitespace-nowrap">
+        {showPrincipalBalance ? (
+          formatCurrency(row.principalBalance)
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
+      </TableCell>
+
+      {/* Calculation (last column, fills remaining space, left-justified) */}
       <TableCell className={cn("text-base py-0.5", isToday ? "text-amber-600" : "text-slate-500")}>
         {isToday && row.accruedInterest > 0.01 ? (
           <Tooltip>
@@ -955,15 +971,6 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
           </Tooltip>
         ) : row.calculationBreakdown ? (
           row.calculationBreakdown.breakdown
-        ) : (
-          <span className="text-slate-300">—</span>
-        )}
-      </TableCell>
-
-      {/* Principal Balance (Expectations) - only show at start, end, or on changes */}
-      <TableCell className="text-right font-mono text-base font-medium py-0.5">
-        {showPrincipalBalance ? (
-          formatCurrency(row.principalBalance)
         ) : (
           <span className="text-slate-300">—</span>
         )}
@@ -1020,18 +1027,18 @@ function TotalsRow({ rows }) {
 
   return (
     <TableRow className="bg-slate-100 font-semibold border-t-2">
-      <TableCell className="text-base py-1" colSpan={2}>TOTALS</TableCell>
-      <TableCell className="text-right font-mono text-base text-emerald-600 py-1">
+      <TableCell className="text-base py-1 whitespace-nowrap">TOTALS</TableCell>
+      <TableCell className="text-right font-mono text-base text-emerald-600 py-1 whitespace-nowrap">
         -{formatCurrency(totalInterestPaid)}
       </TableCell>
-      <TableCell className="text-right font-mono text-base py-1">
+      <TableCell className="text-right font-mono text-base py-1 whitespace-nowrap">
         {formatCurrency(totalExpected)}
       </TableCell>
-      <TableCell className={cn('text-right font-mono text-base py-1', statusColor)}>
+      <TableCell className={cn('text-right font-mono text-base py-1 whitespace-nowrap', statusColor)}>
         <div>{Math.abs(interestBalance) < 0.01 ? formatCurrency(0) : formatCurrency(Math.abs(interestBalance))}</div>
         <div className="text-xs">{statusLabel}</div>
       </TableCell>
-      <TableCell className="text-right font-mono text-base py-1 border-r">
+      <TableCell className="text-right font-mono text-base py-1 whitespace-nowrap">
         {totalPrincipalChange !== 0 && (
           hasDeductions ? (
             <Tooltip>
@@ -1060,10 +1067,10 @@ function TotalsRow({ rows }) {
           )
         )}
       </TableCell>
-      <TableCell className="py-1"></TableCell>
-      <TableCell className="text-right font-mono text-base py-1">
+      <TableCell className="text-right font-mono text-base py-1 whitespace-nowrap">
         {formatCurrency(principalBalance)}
       </TableCell>
+      <TableCell className="py-1"></TableCell>
     </TableRow>
   );
 }
@@ -1202,10 +1209,10 @@ export default function InterestOnlyScheduleView({
   return (
     <TooltipProvider>
     <div>
-      <Table>
+      <Table className="w-full">
         <TableHeader>
           <TableRow>
-            <TableHead className="text-xs py-0.5 w-80">
+            <TableHead className="text-xs py-0.5 whitespace-nowrap min-w-[400px]">
               <div className="flex items-center gap-1">
                 <span>Date</span>
                 <Tooltip>
@@ -1225,13 +1232,11 @@ export default function InterestOnlyScheduleView({
                 </Tooltip>
               </div>
             </TableHead>
-            <TableHead className="text-xs w-4 py-0.5"></TableHead>
-            <TableHead className="text-xs text-right py-0.5">Int Received</TableHead>
-            <TableHead className="text-xs text-right py-0.5">Expected</TableHead>
-            <TableHead className="text-xs text-right py-0.5">Int Bal</TableHead>
-            <TableHead className="text-xs text-right border-r py-0.5">Principal</TableHead>
-            <TableHead className="text-xs py-0.5">Calculation</TableHead>
-            <TableHead className="text-xs text-right py-0.5">
+            <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Int Received</TableHead>
+            <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Expected</TableHead>
+            <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Int Bal</TableHead>
+            <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Principal</TableHead>
+            <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">
               <div className="flex items-center justify-end gap-1">
                 <span>Prin Bal</span>
                 <Tooltip>
@@ -1268,6 +1273,7 @@ export default function InterestOnlyScheduleView({
                 )}
               </div>
             </TableHead>
+            <TableHead className="text-xs py-0.5 w-full">Calculation</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
