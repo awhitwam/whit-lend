@@ -1081,10 +1081,21 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
 
   // Rent and Irregular Income loans don't accrue interest
   if (loan.product_type === 'Rent' || loan.product_type === 'Irregular Income') {
-    const principalRemaining = (loan?.principal_amount || 0) -
-      transactions
-        .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
-        .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+    const startDateKey = loan.start_date?.split('T')[0];
+    // Calculate total disbursed from further advances (exclude initial disbursement on start date)
+    const totalDisbursed = transactions
+      .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
+      .filter(tx => {
+        const txDateKey = tx.date?.split('T')[0];
+        return txDateKey !== startDateKey;
+      })
+      .reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
+    // Calculate total principal repaid
+    const totalPrincipalPaid = transactions
+      .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+      .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+    // Principal remaining = initial amount + further advances - repayments
+    const principalRemaining = (loan?.principal_amount || 0) + totalDisbursed - totalPrincipalPaid;
     return {
       interestAccrued: 0,
       interestPaid: 0,

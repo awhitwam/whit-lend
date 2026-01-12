@@ -2605,6 +2605,9 @@ export default function LoanDetails() {
                       queryClient.invalidateQueries({ queryKey: ['loans'] })
                     ]);
 
+                    // Update balance cache so loans list shows correct principal
+                    queueBalanceCacheUpdate(loanId);
+
                     toast.success(`Deleted ${selectedDisbursements.size} disbursement(s)`, { id: 'delete-disbursements' });
                     setSelectedDisbursements(new Set());
                     setDeleteDisbursementsDialogOpen(false);
@@ -3217,6 +3220,9 @@ export default function LoanDetails() {
                       queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
                       queryClient.invalidateQueries({ queryKey: ['loans'] })
                     ]);
+
+                    // Update balance cache so loans list shows correct principal
+                    queueBalanceCacheUpdate(loanId);
 
                     toast.success('Disbursement updated');
                     setEditDisbursementDialogOpen(false);

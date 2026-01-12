@@ -11,6 +11,7 @@
 import { api } from '@/api/dataClient';
 import { AuditAction, logReconciliationEvent } from '@/lib/auditLog';
 import { maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
+import { queueBalanceCacheUpdate } from '@/components/loan/LoanCalculator';
 
 // Tolerance for floating point comparison (1 cent)
 const BALANCE_TOLERANCE = 0.01;
@@ -351,6 +352,9 @@ export async function createLoanRepayment({ bankEntry, loan, split }) {
     }, 'create');
   }
 
+  // Update balance cache so loans list shows correct balances
+  queueBalanceCacheUpdate(loan.id);
+
   return created;
 }
 
@@ -403,6 +407,9 @@ export async function createLoanDisbursement({ bankEntry, loan }) {
     amount,
     date: bankEntry.statement_date
   }, 'create');
+
+  // Update balance cache so loans list shows correct principal
+  queueBalanceCacheUpdate(loan.id);
 
   return created;
 }

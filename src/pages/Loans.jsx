@@ -528,7 +528,7 @@ export default function Loans() {
         (current, total) => setRecalcProgress({ current, total })
       );
       // Invalidate queries to refresh the UI with new cached values
-      queryClient.invalidateQueries(['loans']);
+      queryClient.invalidateQueries({ queryKey: ['loans'] });
     } catch (err) {
       console.error('[Loans] Failed to refresh balances:', err);
     } finally {
