@@ -8,11 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Upload, Link2, Shield, RefreshCw } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Upload, Link2, Shield, RefreshCw, Download } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
 import { formatCurrency, calculateAccruedInterestWithTransactions, updateAllLoanBalanceCaches } from '@/components/loan/LoanCalculator';
+import { generateContactStatementsPDF } from '@/components/loan/LoanPDFGenerator';
 import EmptyState from '@/components/ui/EmptyState';
+import { toast } from 'sonner';
 import { getOrgJSON, setOrgJSON } from '@/lib/orgStorage';
 
 // Product name abbreviations
@@ -339,6 +341,45 @@ export default function Loans() {
     newParams.delete('contact_email');
     setSearchParams(newParams);
     setStatusFilter('all');
+  };
+
+  // Handler for downloading combined statements for contact group
+  const handleDownloadContactStatements = async () => {
+    if (!contactEmailFilter || filteredLoans.length === 0) return;
+
+    toast.info(`Generating statements for ${filteredLoans.length} loans...`);
+
+    try {
+      // Build loan data for each filtered loan
+      const loansData = filteredLoans.map(loan => {
+        const loanTransactions = allTransactions.filter(t => t.loan_id === loan.id && !t.is_deleted);
+        const loanSchedule = allSchedules.filter(s => s.loan_id === loan.id);
+        const product = allProducts.find(p => p.id === loan.product_id) || null;
+        const interestCalc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule, product);
+
+        return {
+          loan,
+          schedule: loanSchedule,
+          transactions: loanTransactions,
+          product,
+          interestCalc
+        };
+      });
+
+      // Generate the PDF
+      generateContactStatementsPDF({
+        contactEmail: contactEmailFilter,
+        loans: filteredLoans,
+        loansData,
+        totals: filterTotals,
+        organization: currentOrganization
+      });
+
+      toast.success(`Generated combined statement for ${filteredLoans.length} loans`);
+    } catch (error) {
+      console.error('Error generating contact statements:', error);
+      toast.error('Failed to generate statements');
+    }
   };
 
   // Calculate totals for filtered views (borrower or contact filter)
@@ -1024,14 +1065,34 @@ export default function Loans() {
                   </div>
                 )}
               </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={clearBorrowerFilter}
-                className="text-purple-700 hover:bg-purple-100 h-7"
-              >
-                <X className="w-4 h-4" />
-              </Button>
+              <div className="flex items-center gap-2">
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={handleDownloadContactStatements}
+                        className="border-purple-300 text-purple-700 hover:bg-purple-100 h-7 text-xs"
+                      >
+                        <Download className="w-3.5 h-3.5 mr-1" />
+                        Statements
+                      </Button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Download combined statements for all loans in this contact group</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={clearBorrowerFilter}
+                  className="text-purple-700 hover:bg-purple-100 h-7"
+                >
+                  <X className="w-4 h-4" />
+                </Button>
+              </div>
             </div>
           </div>
         )}

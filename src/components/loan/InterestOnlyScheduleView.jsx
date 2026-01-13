@@ -1185,89 +1185,44 @@ function TotalsRow({ rows }) {
   const lastRow = rows[rows.length - 1];
 
   // Calculate totals
-  const totalPrincipalChange = rows.reduce((sum, r) => sum + r.principalChange, 0);
   const totalInterestPaid = rows.reduce((sum, r) => sum + r.interestPaid, 0);
   const totalExpected = lastRow.totalExpectedToDate;
-  const interestBalance = lastRow.interestBalance;
   const principalBalance = lastRow.principalBalance;
 
-  // Aggregate disbursements with deductions for tooltip
-  const disbursementsWithDeductions = [];
-  let totalGross = 0;
-  let totalDeductedFee = 0;
-  let totalDeductedInterest = 0;
-  let totalNet = 0;
-
-  rows.forEach(row => {
-    const tx = row.transaction;
-    if (tx?.type === 'Disbursement' && tx.gross_amount && tx.gross_amount !== tx.amount) {
-      disbursementsWithDeductions.push(tx);
-      totalGross += tx.gross_amount || 0;
-      totalDeductedFee += tx.deducted_fee || 0;
-      totalDeductedInterest += tx.deducted_interest || 0;
-      totalNet += tx.amount || 0;
-    }
-  });
-
-  const hasDeductions = disbursementsWithDeductions.length > 0;
-
-  // Determine status
-  let statusLabel = 'On Track';
-  let statusColor = '';
-  if (interestBalance > 0.01) {
-    statusLabel = 'BEHIND';
-    statusColor = 'text-red-600';
-  } else if (interestBalance < -0.01) {
-    statusLabel = 'AHEAD';
-    statusColor = 'text-emerald-600';
-  }
+  // Total Outstanding = Interest Expected - Interest Received + Principal
+  const totalOutstanding = totalExpected - totalInterestPaid + principalBalance;
 
   return (
-    <TableRow className="bg-slate-100 font-semibold border-t-2">
-      <TableCell className="text-base py-1 whitespace-nowrap">TOTALS</TableCell>
-      <TableCell className="text-right font-mono text-base text-emerald-600 py-1 whitespace-nowrap">
-        -{formatCurrency(totalInterestPaid)}
+    <TableRow className="bg-slate-100 border-t-2">
+      <TableCell className="text-base py-2 whitespace-nowrap underline">TOTALS</TableCell>
+      <TableCell className="text-right font-mono text-base text-emerald-600 py-2 whitespace-nowrap underline">
+        {formatCurrency(totalInterestPaid)}
       </TableCell>
-      <TableCell className="text-right font-mono text-base py-1 whitespace-nowrap">
+      <TableCell className="text-right font-mono text-base py-2 whitespace-nowrap underline">
         {formatCurrency(totalExpected)}
       </TableCell>
-      <TableCell className={cn('text-right font-mono text-base py-1 whitespace-nowrap', statusColor)}>
-        <div>{Math.abs(interestBalance) < 0.01 ? formatCurrency(0) : formatCurrency(Math.abs(interestBalance))}</div>
-        <div className="text-xs">{statusLabel}</div>
-      </TableCell>
-      <TableCell className="text-right font-mono text-base py-1 whitespace-nowrap">
-        {totalPrincipalChange !== 0 && (
-          hasDeductions ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <span className={cn(
-                  'cursor-help underline decoration-dotted',
-                  totalPrincipalChange > 0 ? 'text-red-600' : ''
-                )}>
-                  {totalPrincipalChange > 0 ? '+' : ''}{formatCurrency(totalPrincipalChange)}
-                </span>
-              </TooltipTrigger>
-              <TooltipContent className="text-base">
-                <div className="space-y-1">
-                  <p className="font-medium">Total Gross: {formatCurrency(totalGross)}</p>
-                  {totalDeductedFee > 0 && <p>Less fees: -{formatCurrency(totalDeductedFee)}</p>}
-                  {totalDeductedInterest > 0 && <p>Less interest: -{formatCurrency(totalDeductedInterest)}</p>}
-                  <p className="border-t pt-1">Total Net transferred: {formatCurrency(totalNet)}</p>
-                  <p className="text-slate-400 text-xs">({disbursementsWithDeductions.length} disbursement{disbursementsWithDeductions.length > 1 ? 's' : ''} with deductions)</p>
-                </div>
-              </TooltipContent>
-            </Tooltip>
-          ) : (
-            <span className={totalPrincipalChange > 0 ? 'text-red-600' : ''}>
-              {totalPrincipalChange > 0 ? '+' : ''}{formatCurrency(totalPrincipalChange)}
-            </span>
-          )
-        )}
-      </TableCell>
-      <TableCell className="text-right font-mono text-base py-1 whitespace-nowrap">
+      <TableCell className="py-2"></TableCell>
+      <TableCell className="py-2"></TableCell>
+      <TableCell className="text-right font-mono text-base py-2 whitespace-nowrap underline">
         {formatCurrency(principalBalance)}
       </TableCell>
-      <TableCell className="py-1"></TableCell>
+      <TableCell className="text-right font-mono text-base py-2 whitespace-nowrap text-slate-700">
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className="cursor-help underline">
+              {formatCurrency(totalOutstanding)}
+            </span>
+          </TooltipTrigger>
+          <TooltipContent>
+            <div className="space-y-1 text-sm">
+              <p>Interest Expected: {formatCurrency(totalExpected)}</p>
+              <p>Interest Received: -{formatCurrency(totalInterestPaid)}</p>
+              <p>Principal: +{formatCurrency(principalBalance)}</p>
+              <p className="border-t pt-1 font-medium">Total Outstanding: {formatCurrency(totalOutstanding)}</p>
+            </div>
+          </TooltipContent>
+        </Tooltip>
+      </TableCell>
     </TableRow>
   );
 }

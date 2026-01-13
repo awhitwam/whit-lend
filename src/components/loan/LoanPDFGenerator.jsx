@@ -1457,3 +1457,527 @@ export function generateSettlementStatementPDF(loan, settlementData) {
 
   doc.save(`settlement-statement-${loan.id}-${format(new Date(settlementData.settlementDate), 'yyyy-MM-dd')}.pdf`);
 }
+
+/**
+ * Generate combined loan statements PDF for multiple loans (contact group view)
+ * Creates a header page with totals, then individual statements for each loan
+ */
+export function generateContactStatementsPDF({
+  contactEmail,
+  loans,
+  loansData, // Array of { loan, schedule, transactions, product, interestCalc }
+  totals,
+  organization = null
+}) {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let y = 15;
+
+  // ============================================
+  // PAGE 1: SUMMARY/HEADER PAGE
+  // ============================================
+
+  // Organization Details (if available)
+  if (organization) {
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(organization.name || '', pageWidth / 2, y, { align: 'center' });
+    y += 6;
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+
+    const addressParts = [];
+    if (organization.address_line1) addressParts.push(organization.address_line1);
+    if (organization.address_line2) addressParts.push(organization.address_line2);
+    const cityPostcode = [organization.city, organization.postcode].filter(Boolean).join(' ');
+    if (cityPostcode) addressParts.push(cityPostcode);
+    if (organization.country) addressParts.push(organization.country);
+
+    for (const line of addressParts) {
+      doc.text(line, pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    const contactParts = [];
+    if (organization.phone) contactParts.push(`Tel: ${organization.phone}`);
+    if (organization.email) contactParts.push(`Email: ${organization.email}`);
+    if (organization.website) contactParts.push(organization.website);
+
+    if (contactParts.length > 0) {
+      doc.setFontSize(8);
+      doc.text(contactParts.join('  |  '), pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    y += 2;
+    doc.setDrawColor(200, 200, 200);
+    doc.line(40, y, pageWidth - 40, y);
+    y += 8;
+  }
+
+  // Header
+  doc.setFontSize(20);
+  doc.setFont(undefined, 'bold');
+  doc.text('COMBINED LOAN STATEMENTS', pageWidth / 2, y, { align: 'center' });
+
+  y += 10;
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+  doc.text(`Generated: ${format(new Date(), 'dd MMM yyyy HH:mm')}`, pageWidth / 2, y, { align: 'center' });
+
+  // Contact Info
+  y += 12;
+  doc.setFontSize(12);
+  doc.setFont(undefined, 'bold');
+  doc.text('Contact Group', 15, y);
+
+  y += 7;
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+  doc.text(`Contact: ${contactEmail}`, 15, y);
+  y += 5;
+  doc.text(`Number of Loans: ${loans.length}`, 15, y);
+
+  // Summary Totals
+  y += 12;
+  doc.setFontSize(12);
+  doc.setFont(undefined, 'bold');
+  doc.text('Portfolio Summary', 15, y);
+
+  y += 10;
+
+  // Summary table header
+  doc.setFillColor(240, 240, 240);
+  doc.rect(15, y - 5, 180, 8, 'F');
+  doc.setFontSize(9);
+  doc.setFont(undefined, 'bold');
+  doc.text('Category', 20, y);
+  doc.text('Amount', 160, y, { align: 'right' });
+
+  y += 10;
+  doc.setFont(undefined, 'normal');
+
+  // Principal Outstanding
+  doc.text('Principal Outstanding', 20, y);
+  doc.text(formatCurrency(totals.totalPrincipalBalance), 160, y, { align: 'right' });
+  y += 7;
+
+  // Interest Outstanding
+  doc.text('Interest Outstanding', 20, y);
+  doc.text(formatCurrency(totals.totalInterestOutstanding), 160, y, { align: 'right' });
+  y += 7;
+
+  // Exit Fees
+  if (totals.totalExitFees > 0) {
+    doc.text('Exit Fees', 20, y);
+    doc.text(formatCurrency(totals.totalExitFees), 160, y, { align: 'right' });
+    y += 7;
+  }
+
+  // Total line
+  y += 2;
+  doc.line(15, y, 195, y);
+  y += 8;
+
+  doc.setFontSize(11);
+  doc.setFont(undefined, 'bold');
+  doc.text('TOTAL OUTSTANDING', 20, y);
+  doc.text(formatCurrency(totals.totalOutstanding), 160, y, { align: 'right' });
+
+  // Loan Summary Table
+  y += 15;
+  doc.setFontSize(12);
+  doc.setFont(undefined, 'bold');
+  doc.text('Loan Summary', 15, y);
+
+  y += 10;
+
+  // Column positions for better spacing
+  const sumCols = {
+    ref: 17,
+    borrower: 38,
+    principal: 115,
+    interest: 145,
+    exitFee: 170,
+    total: 195
+  };
+
+  // Table header
+  doc.setFillColor(240, 240, 240);
+  doc.rect(15, y - 5, 185, 8, 'F');
+  doc.setFontSize(7);
+  doc.setFont(undefined, 'bold');
+  doc.text('Ref', sumCols.ref, y);
+  doc.text('Borrower', sumCols.borrower, y);
+  doc.text('Principal', sumCols.principal, y, { align: 'right' });
+  doc.text('Interest', sumCols.interest, y, { align: 'right' });
+  doc.text('Exit Fee', sumCols.exitFee, y, { align: 'right' });
+  doc.text('Total', sumCols.total, y, { align: 'right' });
+
+  y += 5;
+  doc.line(15, y, 200, y);
+  y += 1;
+
+  doc.setFont(undefined, 'normal');
+
+  // List each loan
+  loansData.forEach(({ loan, interestCalc }, idx) => {
+    y += 5;
+
+    // Check for page break
+    if (y > 260) {
+      doc.addPage();
+      y = 20;
+      // Repeat header
+      doc.setFillColor(240, 240, 240);
+      doc.rect(15, y - 5, 185, 8, 'F');
+      doc.setFontSize(7);
+      doc.setFont(undefined, 'bold');
+      doc.text('Ref', sumCols.ref, y);
+      doc.text('Borrower', sumCols.borrower, y);
+      doc.text('Principal', sumCols.principal, y, { align: 'right' });
+      doc.text('Interest', sumCols.interest, y, { align: 'right' });
+      doc.text('Exit Fee', sumCols.exitFee, y, { align: 'right' });
+      doc.text('Total', sumCols.total, y, { align: 'right' });
+      y += 5;
+      doc.line(15, y, 200, y);
+      y += 6;
+      doc.setFont(undefined, 'normal');
+    }
+
+    const loanRef = loan.loan_number || loan.id.slice(0, 8);
+    const borrowerName = (loan.borrower_name || '').slice(0, 30);
+    const principalBal = interestCalc?.principalRemaining ?? loan.principal_remaining ?? loan.principal_amount;
+    const interestBal = interestCalc?.interestRemaining ?? loan.interest_remaining ?? 0;
+    const exitFee = loan.exit_fee || 0;
+    const totalBal = principalBal + interestBal + exitFee;
+
+    doc.setFontSize(7);
+    doc.text(`#${loanRef}`, sumCols.ref, y);
+    doc.text(borrowerName, sumCols.borrower, y);
+    doc.text(formatCurrency(principalBal), sumCols.principal, y, { align: 'right' });
+    doc.text(formatCurrency(interestBal), sumCols.interest, y, { align: 'right' });
+    doc.text(exitFee > 0 ? formatCurrency(exitFee) : '-', sumCols.exitFee, y, { align: 'right' });
+    doc.text(formatCurrency(totalBal), sumCols.total, y, { align: 'right' });
+  });
+
+  // Totals row
+  y += 3;
+  doc.line(15, y, 200, y);
+  y += 5;
+
+  // Calculate total exit fees
+  const totalExitFeesSum = loansData.reduce((sum, { loan }) => sum + (loan.exit_fee || 0), 0);
+
+  doc.setFillColor(240, 240, 240);
+  doc.rect(15, y - 3, 185, 6, 'F');
+  doc.setFont(undefined, 'bold');
+  doc.setFontSize(7);
+  doc.text('TOTALS', sumCols.ref, y);
+  doc.text(formatCurrency(totals.totalPrincipalBalance), sumCols.principal, y, { align: 'right' });
+  doc.text(formatCurrency(totals.totalInterestOutstanding), sumCols.interest, y, { align: 'right' });
+  doc.text(totalExitFeesSum > 0 ? formatCurrency(totalExitFeesSum) : '-', sumCols.exitFee, y, { align: 'right' });
+  doc.text(formatCurrency(totals.totalOutstanding), sumCols.total, y, { align: 'right' });
+
+  // ============================================
+  // INDIVIDUAL LOAN STATEMENTS
+  // ============================================
+  loansData.forEach(({ loan, schedule, transactions, product, interestCalc }, index) => {
+    // Add new page for each loan statement
+    doc.addPage();
+    y = 15;
+
+    // Loan Statement Header (simplified - no org header on subsequent pages)
+    doc.setFontSize(16);
+    doc.setFont(undefined, 'bold');
+    doc.text(`LOAN STATEMENT - ${loan.loan_number || loan.id.slice(0, 8)}`, pageWidth / 2, y, { align: 'center' });
+
+    y += 8;
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(128, 128, 128);
+    doc.text(`Statement ${index + 1} of ${loansData.length} | Contact: ${contactEmail}`, pageWidth / 2, y, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
+
+    // Borrower Info
+    y += 10;
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.text('Borrower Information', 15, y);
+
+    y += 6;
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Name: ${loan.borrower_name}`, 15, y);
+    y += 5;
+    doc.text(`Loan Reference: #${loan.loan_number || loan.id.slice(0, 8)}`, 15, y);
+    if (loan.description) {
+      y += 5;
+      doc.text(`Description: ${loan.description}`, 15, y);
+    }
+
+    // Loan Details
+    y += 10;
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.text('Loan Details', 15, y);
+
+    y += 6;
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Product: ${loan.product_name}`, 15, y);
+    y += 5;
+    doc.text(`Principal: ${formatCurrency(loan.principal_amount)}`, 15, y);
+    y += 5;
+
+    let rateText = `Interest Rate: ${loan.interest_rate}% pa (${loan.interest_type})`;
+    if (loan.has_penalty_rate && loan.penalty_rate) {
+      rateText += ` | Penalty: ${loan.penalty_rate}%`;
+    }
+    doc.text(rateText, 15, y);
+    y += 5;
+    doc.text(`Duration: ${loan.duration} ${loan.period === 'Monthly' ? 'months' : 'weeks'} | Start: ${format(new Date(loan.start_date), 'dd MMM yyyy')} | Status: ${loan.status}`, 15, y);
+
+    if (loan.exit_fee > 0) {
+      y += 5;
+      doc.text(`Exit Fee: ${formatCurrency(loan.exit_fee)}`, 15, y);
+    }
+
+    // Roll-up info
+    if (loan.roll_up_length || loan.roll_up_amount) {
+      y += 5;
+      const rollUpParts = [];
+      if (loan.roll_up_length) rollUpParts.push(`${loan.roll_up_length} months`);
+      if (loan.roll_up_amount) rollUpParts.push(`Accrued: ${formatCurrency(loan.roll_up_amount)}`);
+      doc.text(`Roll-Up: ${rollUpParts.join(' | ')}`, 15, y);
+    }
+
+    // Disbursement Breakdown (if deductions)
+    const arrangementFee = loan.arrangement_fee || 0;
+    const additionalFees = loan.additional_deducted_fees || 0;
+    const totalDeducted = arrangementFee + additionalFees;
+
+    if (totalDeducted > 0) {
+      y += 8;
+      doc.setFontSize(10);
+      doc.setFont(undefined, 'bold');
+      doc.text('Disbursement Breakdown', 15, y);
+
+      y += 5;
+      doc.setFontSize(9);
+      doc.setFont(undefined, 'normal');
+
+      const grossAmount = loan.principal_amount;
+      const netDisbursed = grossAmount - totalDeducted;
+
+      doc.text(`Gross: ${formatCurrency(grossAmount)}`, 15, y);
+      if (arrangementFee > 0) {
+        y += 4;
+        doc.text(`Less Arrangement Fee: -${formatCurrency(arrangementFee)}`, 15, y);
+      }
+      if (additionalFees > 0) {
+        y += 4;
+        const feesNote = loan.additional_deducted_fees_note ? ` (${loan.additional_deducted_fees_note})` : '';
+        doc.text(`Less Other Fees: -${formatCurrency(additionalFees)}${feesNote}`, 15, y);
+      }
+      y += 4;
+      doc.setFont(undefined, 'bold');
+      doc.text(`Net Disbursed: ${formatCurrency(netDisbursed)}`, 15, y);
+      doc.setFont(undefined, 'normal');
+    }
+
+    // Current Position
+    const summaryValues = interestCalc ? {
+      principalOutstanding: interestCalc.principalRemaining,
+      interestAccrued: interestCalc.interestAccrued,
+      interestPaid: interestCalc.interestPaid,
+      interestOutstanding: interestCalc.interestRemaining
+    } : {
+      principalOutstanding: loan.principal_remaining ?? loan.principal_amount,
+      interestAccrued: 0,
+      interestPaid: 0,
+      interestOutstanding: loan.interest_remaining ?? 0
+    };
+
+    y += 10;
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.text('Current Position (as of today)', 15, y);
+
+    y += 6;
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Principal Outstanding: ${formatCurrency(summaryValues.principalOutstanding)}`, 15, y);
+    y += 5;
+    doc.text(`Interest Due: ${formatCurrency(summaryValues.interestAccrued)} | Paid: ${formatCurrency(summaryValues.interestPaid)} | Outstanding: ${formatCurrency(summaryValues.interestOutstanding)}`, 15, y);
+    y += 5;
+    const totalOutstanding = summaryValues.principalOutstanding + summaryValues.interestOutstanding + (loan.exit_fee || 0);
+    doc.setFont(undefined, 'bold');
+    doc.text(`Total Outstanding: ${formatCurrency(totalOutstanding)}${loan.exit_fee > 0 ? ` (inc. ${formatCurrency(loan.exit_fee)} exit fee)` : ''}`, 15, y);
+    doc.setFont(undefined, 'normal');
+
+    // ============================================
+    // LOAN LEDGER (Timeline) - Compact version
+    // ============================================
+    y += 12;
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.text('Loan Ledger', 15, y);
+
+    y += 8;
+
+    // Build timeline
+    const timelineRows = buildPDFTimeline(loan, schedule, transactions, product);
+
+    // Column positions
+    const cols = {
+      date: 17,
+      intReceived: 55,
+      expected: 85,
+      intBal: 115,
+      principal: 145,
+      prinBal: 185
+    };
+
+    // Table header
+    const drawLedgerHeader = (yPos) => {
+      doc.setFillColor(240, 240, 240);
+      doc.rect(15, yPos - 4, 175, 6, 'F');
+      doc.setFontSize(7);
+      doc.setFont(undefined, 'bold');
+      doc.text('Date', cols.date, yPos);
+      doc.text('Int Rcvd', cols.intReceived, yPos, { align: 'right' });
+      doc.text('Expected', cols.expected, yPos, { align: 'right' });
+      doc.text('Int Bal', cols.intBal, yPos, { align: 'right' });
+      doc.text('Principal', cols.principal, yPos, { align: 'right' });
+      doc.text('Prin Bal', cols.prinBal, yPos, { align: 'right' });
+      return yPos + 4;
+    };
+
+    y = drawLedgerHeader(y);
+    doc.line(15, y, 190, y);
+    y += 1;
+
+    doc.setFont(undefined, 'normal');
+    doc.setFontSize(7);
+
+    timelineRows.forEach((row) => {
+      // Check for page break
+      if (y > 280) {
+        doc.addPage();
+        y = 20;
+        y = drawLedgerHeader(y);
+        doc.line(15, y, 190, y);
+        y += 1;
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(7);
+      }
+
+      y += 4;
+
+      // Row background
+      if (row.primaryType === 'disbursement') {
+        doc.setFillColor(255, 240, 240);
+        doc.rect(15, y - 3, 175, 4, 'F');
+      } else if (row.primaryType === 'repayment') {
+        doc.setFillColor(240, 255, 240);
+        doc.rect(15, y - 3, 175, 4, 'F');
+      } else if (row.isRollUpPeriod) {
+        doc.setFillColor(248, 240, 255);
+        doc.rect(15, y - 3, 175, 4, 'F');
+      } else if (row.isDueDate) {
+        doc.setFillColor(240, 248, 255);
+        doc.rect(15, y - 3, 175, 4, 'F');
+      }
+
+      // Date
+      doc.text(format(new Date(row.date), 'dd/MM/yy'), cols.date, y);
+
+      // Interest Received
+      if (row.interestPaid > 0.01) {
+        doc.setTextColor(22, 163, 74);
+        doc.text(`-${formatCurrency(row.interestPaid)}`, cols.intReceived, y, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+      } else {
+        doc.setTextColor(180, 180, 180);
+        doc.text('-', cols.intReceived, y, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+      }
+
+      // Expected
+      if (Math.abs(row.expectedInterest) > 0.01) {
+        doc.setTextColor(37, 99, 235);
+        doc.text(formatCurrency(row.expectedInterest), cols.expected, y, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+      } else {
+        doc.setTextColor(180, 180, 180);
+        doc.text('-', cols.expected, y, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+      }
+
+      // Interest Balance
+      doc.text(formatCurrency(Math.abs(row.interestBalance) < 0.01 ? 0 : row.interestBalance), cols.intBal, y, { align: 'right' });
+
+      // Principal
+      if (Math.abs(row.principalChange) > 0.01) {
+        if (row.principalChange > 0) {
+          doc.setTextColor(220, 38, 38);
+          doc.text(`+${formatCurrency(row.principalChange)}`, cols.principal, y, { align: 'right' });
+        } else {
+          doc.setTextColor(37, 99, 235);
+          doc.text(formatCurrency(row.principalChange), cols.principal, y, { align: 'right' });
+        }
+        doc.setTextColor(0, 0, 0);
+      } else {
+        doc.setTextColor(180, 180, 180);
+        doc.text('-', cols.principal, y, { align: 'right' });
+        doc.setTextColor(0, 0, 0);
+      }
+
+      // Principal Balance
+      doc.setFont(undefined, 'bold');
+      doc.text(formatCurrency(row.principalBalance), cols.prinBal, y, { align: 'right' });
+      doc.setFont(undefined, 'normal');
+    });
+
+    // Totals
+    y += 3;
+    doc.line(15, y, 190, y);
+    y += 5;
+
+    const lastRow = timelineRows.length > 0 ? timelineRows[timelineRows.length - 1] : null;
+    const totalIntPaid = lastRow?.totalPaidToDate || 0;
+    const totalExp = lastRow?.totalExpectedToDate || 0;
+    const finalIntBal = lastRow?.interestBalance || 0;
+    const finalPrinBal = lastRow?.principalBalance || 0;
+
+    doc.setFillColor(240, 240, 240);
+    doc.rect(15, y - 3, 175, 5, 'F');
+    doc.setFont(undefined, 'bold');
+    doc.setFontSize(7);
+    doc.text('TOTALS', cols.date, y);
+    doc.setTextColor(22, 163, 74);
+    doc.text(`-${formatCurrency(totalIntPaid)}`, cols.intReceived, y, { align: 'right' });
+    doc.setTextColor(0, 0, 0);
+    doc.text(formatCurrency(totalExp), cols.expected, y, { align: 'right' });
+    doc.text(formatCurrency(Math.abs(finalIntBal)), cols.intBal, y, { align: 'right' });
+    doc.text('', cols.principal, y, { align: 'right' });
+    doc.text(formatCurrency(finalPrinBal), cols.prinBal, y, { align: 'right' });
+  });
+
+  // Add page numbers to all pages
+  const pageCount = doc.internal.getNumberOfPages();
+  for (let i = 1; i <= pageCount; i++) {
+    doc.setPage(i);
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'normal');
+    doc.setTextColor(128, 128, 128);
+    doc.text(`Page ${i} of ${pageCount}`, pageWidth / 2, 290, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
+  }
+
+  // Generate filename
+  const safeContactEmail = contactEmail.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
+  doc.save(`combined-statements-${safeContactEmail}-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+}
