@@ -1585,6 +1585,26 @@ export function generateContactStatementsPDF({
   doc.text('TOTAL OUTSTANDING', 20, y);
   doc.text(formatCurrency(totals.totalOutstanding), 160, y, { align: 'right' });
 
+  // Build roll-up footnotes data (for loans in roll-up period with pending interest)
+  const rollUpFootnotes = [];
+  loansData.forEach(({ loan }) => {
+    if (!loan.roll_up_length || !loan.start_date) return;
+    const rollUpEndDate = new Date(loan.start_date);
+    rollUpEndDate.setMonth(rollUpEndDate.getMonth() + loan.roll_up_length);
+    if (new Date() < rollUpEndDate && loan.roll_up_amount > 0) {
+      rollUpFootnotes.push({
+        loanId: loan.id,
+        footnoteNum: rollUpFootnotes.length + 1,
+        amount: loan.roll_up_amount,
+        dueDate: rollUpEndDate,
+        loanRef: loan.loan_number || loan.id.slice(0, 8)
+      });
+    }
+  });
+
+  // Create a map for quick lookup
+  const rollUpFootnoteMap = new Map(rollUpFootnotes.map(fn => [fn.loanId, fn]));
+
   // Loan Summary Table
   y += 15;
   doc.setFontSize(12);
@@ -1653,11 +1673,27 @@ export function generateContactStatementsPDF({
     const exitFee = loan.exit_fee || 0;
     const totalBal = principalBal + interestBal + exitFee;
 
+    // Check if this loan has a roll-up footnote
+    const footnote = rollUpFootnoteMap.get(loan.id);
+
     doc.setFontSize(7);
     doc.text(`#${loanRef}`, sumCols.ref, y);
     doc.text(borrowerName, sumCols.borrower, y);
     doc.text(formatCurrency(principalBal), sumCols.principal, y, { align: 'right' });
-    doc.text(formatCurrency(interestBal), sumCols.interest, y, { align: 'right' });
+
+    // Interest column - add footnote number if applicable
+    if (footnote) {
+      const interestText = formatCurrency(interestBal);
+      doc.text(interestText, sumCols.interest, y, { align: 'right' });
+      // Add superscript footnote number
+      doc.setFontSize(5);
+      const textWidth = doc.getTextWidth(interestText);
+      doc.text(`(${footnote.footnoteNum})`, sumCols.interest + 1, y - 1);
+      doc.setFontSize(7);
+    } else {
+      doc.text(formatCurrency(interestBal), sumCols.interest, y, { align: 'right' });
+    }
+
     doc.text(exitFee > 0 ? formatCurrency(exitFee) : '-', sumCols.exitFee, y, { align: 'right' });
     doc.text(formatCurrency(totalBal), sumCols.total, y, { align: 'right' });
   });
@@ -1679,6 +1715,22 @@ export function generateContactStatementsPDF({
   doc.text(formatCurrency(totals.totalInterestOutstanding), sumCols.interest, y, { align: 'right' });
   doc.text(totalExitFeesSum > 0 ? formatCurrency(totalExitFeesSum) : '-', sumCols.exitFee, y, { align: 'right' });
   doc.text(formatCurrency(totals.totalOutstanding), sumCols.total, y, { align: 'right' });
+
+  // Roll-up footnotes at bottom of table
+  if (rollUpFootnotes.length > 0) {
+    y += 10;
+    doc.setFontSize(7);
+    doc.setFont(undefined, 'italic');
+    doc.setTextColor(100, 100, 100);
+
+    rollUpFootnotes.forEach((fn) => {
+      doc.text(`(${fn.footnoteNum}) ${formatCurrency(fn.amount)} roll-up interest falling due ${format(fn.dueDate, 'dd MMM yyyy')}`, 17, y);
+      y += 4;
+    });
+
+    doc.setTextColor(0, 0, 0);
+    doc.setFont(undefined, 'normal');
+  }
 
   // ============================================
   // INDIVIDUAL LOAN STATEMENTS
