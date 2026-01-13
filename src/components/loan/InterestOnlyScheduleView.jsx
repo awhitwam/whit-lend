@@ -695,8 +695,85 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
         {formatCurrency(group.endingPrincipalBalance)}
       </TableCell>
 
-      {/* Calculation - empty for month summary */}
-      <TableCell className="text-base py-0.5"></TableCell>
+      {/* Note - combine all child notes */}
+      <TableCell className={cn(
+        "py-0.5 text-slate-500",
+        group.rows.length === 1 ? "text-base" : "text-xs"
+      )}>
+        {(() => {
+          // Collect all rows with calculation breakdowns
+          const notesData = group.rows
+            .filter(r => r.calculationBreakdown)
+            .map(r => r.calculationBreakdown);
+
+          if (notesData.length === 0) return null;
+
+          // Single row - show full note with tooltip if disbursement
+          if (notesData.length === 1 && notesData[0].isDisbursement) {
+            return (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="cursor-help">
+                    {notesData[0].breakdown}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent className="space-y-1">
+                  <p className="font-medium">Disbursement with deductions</p>
+                  <p className="text-xs text-slate-300">Gross: {formatCurrency(notesData[0].grossAmount)}</p>
+                  {notesData[0].deductedFee > 0 && (
+                    <p className="text-xs text-slate-300">Arrangement fee: -{formatCurrency(notesData[0].deductedFee)}</p>
+                  )}
+                  {notesData[0].deductedInterest > 0 && (
+                    <p className="text-xs text-slate-300">Deducted interest: -{formatCurrency(notesData[0].deductedInterest)}</p>
+                  )}
+                  {notesData[0].otherDeductions > 0.01 && (
+                    <p className="text-xs text-slate-300">Other deductions: -{formatCurrency(notesData[0].otherDeductions)}</p>
+                  )}
+                  <p className="font-medium mt-1">Net disbursed: {formatCurrency(notesData[0].netAmount)}</p>
+                </TooltipContent>
+              </Tooltip>
+            );
+          }
+
+          // Single row, not disbursement - just show breakdown
+          if (notesData.length === 1) {
+            return notesData[0].breakdown;
+          }
+
+          // Multiple rows - combine with separator, smaller font
+          return (
+            <div className="space-y-0.5">
+              {notesData.map((note, idx) => (
+                <div key={idx} className="truncate max-w-[300px]">
+                  {note.isDisbursement ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="cursor-help">{note.breakdown}</span>
+                      </TooltipTrigger>
+                      <TooltipContent className="space-y-1">
+                        <p className="font-medium">Disbursement with deductions</p>
+                        <p className="text-xs text-slate-300">Gross: {formatCurrency(note.grossAmount)}</p>
+                        {note.deductedFee > 0 && (
+                          <p className="text-xs text-slate-300">Arrangement fee: -{formatCurrency(note.deductedFee)}</p>
+                        )}
+                        {note.deductedInterest > 0 && (
+                          <p className="text-xs text-slate-300">Deducted interest: -{formatCurrency(note.deductedInterest)}</p>
+                        )}
+                        {note.otherDeductions > 0.01 && (
+                          <p className="text-xs text-slate-300">Other deductions: -{formatCurrency(note.otherDeductions)}</p>
+                        )}
+                        <p className="font-medium mt-1">Net disbursed: {formatCurrency(note.netAmount)}</p>
+                      </TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    note.breakdown
+                  )}
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+      </TableCell>
     </TableRow>
   );
 }

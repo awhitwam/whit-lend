@@ -310,51 +310,25 @@ export default function LoanDetails() {
       const newPrincipal = updatedData.principal_amount ?? loan.principal_amount;
       const newArrangementFee = updatedData.arrangement_fee ?? loan.arrangement_fee ?? 0;
       const additionalFees = updatedData.additional_deducted_fees ?? loan.additional_deducted_fees ?? 0;
-      const newNetDisbursed = updatedData.net_disbursed ?? (newPrincipal - newArrangementFee - additionalFees);
-      const oldNetDisbursed = loan.net_disbursed ?? (loan.principal_amount - (loan.arrangement_fee || 0) - (loan.additional_deducted_fees || 0));
-
-      console.log('=== DISBURSEMENT UPDATE DEBUG ===');
-      console.log('newPrincipal:', newPrincipal);
-      console.log('newArrangementFee:', newArrangementFee);
-      console.log('additionalFees:', additionalFees);
-      console.log('loan.principal_amount:', loan.principal_amount);
-      console.log('loan.arrangement_fee:', loan.arrangement_fee);
-      console.log('loan.additional_deducted_fees:', loan.additional_deducted_fees);
 
       // Check if any disbursement-related fields changed
       const principalChanged = Math.abs(newPrincipal - loan.principal_amount) > 0.01;
       const feeChanged = Math.abs(newArrangementFee - (loan.arrangement_fee || 0)) > 0.01;
       const additionalFeesChanged = Math.abs(additionalFees - (loan.additional_deducted_fees || 0)) > 0.01;
 
-      console.log('principalChanged:', principalChanged);
-      console.log('feeChanged:', feeChanged);
-      console.log('additionalFeesChanged:', additionalFeesChanged);
-
       // Find the disbursement transaction to check if it needs fixing
       const allTx = await api.entities.Transaction.filter({ loan_id: loanId });
       const disbursementTx = allTx.find(t => t.type === 'Disbursement' && !t.is_deleted);
 
       if (disbursementTx) {
-        console.log('=== DISBURSEMENT TX DEBUG ===');
-        console.log('disbursementTx.gross_amount:', disbursementTx.gross_amount);
-        console.log('disbursementTx.amount:', disbursementTx.amount);
-        console.log('disbursementTx.deducted_fee:', disbursementTx.deducted_fee);
-        console.log('disbursementTx.deducted_interest:', disbursementTx.deducted_interest);
-
         // Calculate what the correct net should be
         const existingDeductedInterest = disbursementTx.deducted_interest || 0;
         const correctNetAmount = newPrincipal - newArrangementFee - existingDeductedInterest - additionalFees;
         const currentTxAmount = disbursementTx.amount || 0;
         const amountNeedsFix = Math.abs(currentTxAmount - correctNetAmount) > 0.01;
 
-        console.log('correctNetAmount:', correctNetAmount);
-        console.log('currentTxAmount:', currentTxAmount);
-        console.log('amountNeedsFix:', amountNeedsFix);
-
         // Update if any field changed OR if the transaction amount is wrong (legacy fix)
         if (principalChanged || feeChanged || additionalFeesChanged || amountNeedsFix) {
-          console.log('>>> UPDATING DISBURSEMENT TRANSACTION <<<');
-
           await api.entities.Transaction.update(disbursementTx.id, {
             gross_amount: newPrincipal,
             deducted_fee: newArrangementFee,
@@ -364,14 +338,8 @@ export default function LoanDetails() {
             fees_applied: newArrangementFee,
             interest_applied: existingDeductedInterest
           });
-          console.log(`Updated disbursement: gross=${newPrincipal}, fee=${newArrangementFee}, additionalFees=${additionalFees}, net=${correctNetAmount}`);
-        } else {
-          console.log('>>> NO UPDATE NEEDED - all values correct <<<');
         }
-      } else {
-        console.log('>>> NO DISBURSEMENT TRANSACTION FOUND <<<');
       }
-      console.log('=== END DISBURSEMENT UPDATE DEBUG ===')
     },
     onSuccess: async () => {
       setProcessingMessage('Refreshing data...');

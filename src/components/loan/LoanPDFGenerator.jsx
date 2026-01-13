@@ -223,6 +223,7 @@ function buildInterestLedger(loan, transactions, product) {
 /**
  * Build a timeline for PDF output matching the InterestOnlyScheduleView UI
  * Returns rows with: date, interestPaid, expectedInterest, interestBalance, principalChange, principalBalance
+ * Includes calculation notes for all row types
  */
 function buildPDFTimeline(loan, schedule, transactions, product) {
   const rows = [];
@@ -236,12 +237,40 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
     return format(d, 'yyyy-MM-dd');
   };
 
-  // 1. Add disbursement rows
+  // 1. Add disbursement rows with fee breakdowns
   (transactions || [])
     .filter(tx => tx.type === 'Disbursement' && !tx.is_deleted)
     .forEach(tx => {
       const dateKey = getDateKey(tx.date);
       const grossAmount = tx.gross_amount ?? tx.amount;
+      const netAmount = tx.amount || grossAmount;
+      const hasDeductions = Math.abs(grossAmount - netAmount) > 0.01;
+
+      // Build calculation breakdown for disbursements with deductions
+      let calcBreakdown = null;
+      if (hasDeductions) {
+        const deductedFee = tx.deducted_fee || 0;
+        const deductedInterest = tx.deducted_interest || 0;
+        const otherDeductions = grossAmount - netAmount - deductedFee - deductedInterest;
+
+        // Build the working string (shorter version for PDF)
+        const parts = [formatCurrency(grossAmount)];
+        if (deductedFee > 0) parts.push(`- ${formatCurrency(deductedFee)} fee`);
+        if (deductedInterest > 0) parts.push(`- ${formatCurrency(deductedInterest)} int`);
+        if (otherDeductions > 0.01) parts.push(`- ${formatCurrency(otherDeductions)} other`);
+        parts.push(`= ${formatCurrency(netAmount)} net`);
+
+        calcBreakdown = {
+          isDisbursement: true,
+          breakdown: parts.join(' '),
+          grossAmount,
+          netAmount,
+          deductedFee,
+          deductedInterest,
+          otherDeductions
+        };
+      }
+
       rows.push({
         id: `tx-${tx.id}`,
         date: dateKey,
@@ -250,7 +279,8 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
         interestPaid: 0,
         expectedInterest: 0,
         isDueDate: false,
-        reference: tx.reference || 'Funds advanced'
+        reference: tx.reference || 'Funds advanced',
+        calculationBreakdown: calcBreakdown
       });
     });
 
@@ -267,7 +297,8 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
         interestPaid: tx.interest_applied || 0,
         expectedInterest: 0,
         isDueDate: false,
-        reference: tx.reference || 'Payment received'
+        reference: tx.reference || 'Payment received',
+        calculationBreakdown: null
       });
     });
 
@@ -283,24 +314,11 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
       interestPaid: 0,
       expectedInterest: scheduleEntry.interest_amount || 0,
       isDueDate: true,
-      scheduleEntry: scheduleEntry
+      scheduleEntry: scheduleEntry,
+      calculationBreakdown: null, // Will be calculated below
+      isRollUpPeriod: scheduleEntry.is_roll_up_period || false,
+      isServicedPeriod: scheduleEntry.is_serviced_period || false
     };
-
-    // For adjustments, store the calculation details for display
-    if (isAdjustment && scheduleEntry.calculation_days) {
-      const days = scheduleEntry.calculation_days;
-      const adjAmount = Math.abs(scheduleEntry.interest_amount || 0);
-      const adjDailyRate = days > 0 ? adjAmount / days : 0;
-      const isCredit = (scheduleEntry.interest_amount || 0) < 0;
-      row.calculationBreakdown = {
-        days,
-        dailyRate: adjDailyRate,
-        isCredit,
-        breakdown: isCredit
-          ? `${days}d × ${formatCurrency(adjDailyRate)}/day = -${formatCurrency(adjAmount)}`
-          : `${days}d × ${formatCurrency(adjDailyRate)}/day = +${formatCurrency(adjAmount)}`
-      };
-    }
 
     rows.push(row);
   });
@@ -317,7 +335,8 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
       expectedInterest: 0,
       isDueDate: false,
       previousRate: loan.interest_rate,
-      newRate: loan.penalty_rate
+      newRate: loan.penalty_rate,
+      calculationBreakdown: null
     });
   }
 
@@ -331,15 +350,84 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
     return aOrder - bOrder;
   });
 
-  // 6. Calculate running balances
+  // 6. Calculate running balances and build calculation breakdowns
+  const baseRate = loan?.interest_rate || product?.interest_rate || 0;
+  const hasPenaltyRate = loan?.has_penalty_rate && loan?.penalty_rate && loan?.penalty_rate_from;
+  const penaltyRate = loan?.penalty_rate || baseRate;
+  const penaltyRateFrom = hasPenaltyRate ? new Date(loan.penalty_rate_from) : null;
+
+  // Helper to get the effective rate for a given date
+  const getEffectiveRateForDate = (dateStr) => {
+    if (!hasPenaltyRate) return baseRate;
+    const entryDate = new Date(dateStr);
+    return entryDate >= penaltyRateFrom ? penaltyRate : baseRate;
+  };
+
   let runningPrincipal = 0;
   let totalExpectedToDate = 0;
   let totalPaidToDate = 0;
 
   rows.forEach(row => {
+    // Update running principal
     runningPrincipal += row.principalChange;
     row.principalBalance = runningPrincipal;
 
+    // Build calculation breakdowns for schedule entries
+    if (row.isDueDate && row.scheduleEntry) {
+      const scheduleEntry = row.scheduleEntry;
+      const days = scheduleEntry.calculation_days || 0;
+      const principalForCalc = runningPrincipal;
+      const effectiveRate = getEffectiveRateForDate(scheduleEntry.due_date);
+      const isAdjustment = scheduleEntry.installment_number === 0;
+
+      if (isAdjustment) {
+        const isCredit = scheduleEntry.interest_amount < 0;
+        const adjAmount = Math.abs(scheduleEntry.interest_amount);
+        const adjDailyRate = days > 0 ? adjAmount / days : 0;
+        row.calculationBreakdown = {
+          days,
+          dailyRate: adjDailyRate,
+          principal: principalForCalc,
+          effectiveRate,
+          isAdjustment: true,
+          isCredit,
+          breakdown: isCredit
+            ? `${days}d × ${formatCurrency(adjDailyRate)} = -${formatCurrency(adjAmount)}`
+            : `${days}d × ${formatCurrency(adjDailyRate)} = +${formatCurrency(adjAmount)}`
+        };
+      } else {
+        // Regular schedule entry
+        const storedInterest = scheduleEntry.interest_amount || 0;
+        const displayPrincipal = scheduleEntry.calculation_principal_start || principalForCalc;
+        const displayDailyRate = displayPrincipal * (effectiveRate / 100 / 365);
+
+        // Build breakdown string with roll-up/serviced prefix if applicable
+        let breakdownStr = '';
+        if (days > 0 && displayDailyRate > 0) {
+          const calcStr = `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}%)`;
+          if (row.isRollUpPeriod) {
+            const rollUpMonths = Math.round(days / 30.44);
+            breakdownStr = `Roll-up (${rollUpMonths}m): ${calcStr}`;
+          } else if (row.isServicedPeriod) {
+            breakdownStr = `Serviced: ${calcStr}`;
+          } else {
+            breakdownStr = calcStr;
+          }
+        } else {
+          breakdownStr = storedInterest === 0 ? 'Prepaid' : `${days}d`;
+        }
+
+        row.calculationBreakdown = {
+          days,
+          dailyRate: displayDailyRate,
+          principal: displayPrincipal,
+          effectiveRate,
+          breakdown: breakdownStr
+        };
+      }
+    }
+
+    // Track totals
     totalExpectedToDate += row.expectedInterest;
     totalPaidToDate += row.interestPaid;
     row.interestBalance = totalExpectedToDate - totalPaidToDate;
@@ -458,12 +546,60 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
   y += 5;
   doc.text(`Status: ${loan.status}`, 15, y);
 
-  if (loan.arrangement_fee > 0 || loan.exit_fee > 0) {
+  // Exit fee (if any)
+  if (loan.exit_fee > 0) {
     y += 5;
-    const fees = [];
-    if (loan.arrangement_fee > 0) fees.push(`Arrangement: ${formatCurrency(loan.arrangement_fee)}`);
-    if (loan.exit_fee > 0) fees.push(`Exit: ${formatCurrency(loan.exit_fee)}`);
-    doc.text(`Fees: ${fees.join(' | ')}`, 15, y);
+    doc.text(`Exit Fee: ${formatCurrency(loan.exit_fee)}`, 15, y);
+  }
+
+  // Roll-up loan specific info
+  if (loan.roll_up_length || loan.roll_up_amount) {
+    y += 5;
+    let rollUpText = 'Roll-Up Period: ';
+    const parts = [];
+    if (loan.roll_up_length) parts.push(`${loan.roll_up_length} months`);
+    if (loan.roll_up_amount) parts.push(`Accrued Interest: ${formatCurrency(loan.roll_up_amount)}`);
+    rollUpText += parts.join(' | ');
+    doc.text(rollUpText, 15, y);
+  }
+
+  // Deducted fees section - show as separate block with calculation breakdown
+  const arrangementFee = loan.arrangement_fee || 0;
+  const additionalFees = loan.additional_deducted_fees || 0;
+  const totalDeducted = arrangementFee + additionalFees;
+
+  if (totalDeducted > 0) {
+    y += 8;
+    doc.setFontSize(11);
+    doc.setFont(undefined, 'bold');
+    doc.text('Disbursement Breakdown', 15, y);
+
+    y += 6;
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+
+    // Calculate net disbursed
+    const grossAmount = loan.principal_amount;
+    const netDisbursed = grossAmount - totalDeducted;
+
+    doc.text(`Gross Principal: ${formatCurrency(grossAmount)}`, 15, y);
+    y += 5;
+
+    if (arrangementFee > 0) {
+      doc.text(`Less Arrangement Fee: -${formatCurrency(arrangementFee)}`, 15, y);
+      y += 5;
+    }
+
+    if (additionalFees > 0) {
+      const feesNote = loan.additional_deducted_fees_note ? ` (${loan.additional_deducted_fees_note})` : '';
+      doc.text(`Less Other Deducted Fees: -${formatCurrency(additionalFees)}${feesNote}`, 15, y);
+      y += 5;
+    }
+
+    // Net disbursed line with emphasis
+    doc.setFont(undefined, 'bold');
+    doc.text(`Net Disbursed: ${formatCurrency(netDisbursed)}`, 15, y);
+    doc.setFont(undefined, 'normal');
   }
 
   // Build interest ledger for detailed transaction history
@@ -584,7 +720,13 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
       doc.setFillColor(235, 255, 235); // Light green
       doc.rect(10, y - 4, 190, 5.5, 'F');
     } else if (row.primaryType === 'due_date') {
-      doc.setFillColor(235, 245, 255); // Light blue
+      if (row.isRollUpPeriod) {
+        doc.setFillColor(245, 235, 255); // Light purple for roll-up
+      } else if (row.isServicedPeriod) {
+        doc.setFillColor(235, 245, 255); // Light blue for serviced
+      } else {
+        doc.setFillColor(235, 245, 255); // Light blue default
+      }
       doc.rect(10, y - 4, 190, 5.5, 'F');
     } else if (row.primaryType === 'adjustment') {
       doc.setFillColor(255, 250, 235); // Light amber
@@ -608,10 +750,12 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
       doc.setTextColor(0, 0, 0);
     }
 
-    // Expected Interest (blue for due dates, amber for adjustments)
+    // Expected Interest (purple for roll-up, blue for serviced/due dates, amber for adjustments)
     if (row.expectedInterest > 0.01 || row.expectedInterest < -0.01) {
       if (row.primaryType === 'adjustment') {
         doc.setTextColor(180, 83, 9); // Amber
+      } else if (row.isRollUpPeriod) {
+        doc.setTextColor(102, 51, 153); // Purple for roll-up
       } else {
         doc.setTextColor(37, 99, 235); // Blue
       }
@@ -657,15 +801,34 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
     doc.text(formatCurrency(row.principalBalance), cols.prinBal, y, { align: 'right' });
     doc.setFont(undefined, 'normal');
 
-    // For adjustment rows, add a note line with the calculation breakdown
-    if (row.primaryType === 'adjustment' && row.calculationBreakdown) {
+    // Add note line with calculation breakdown for all applicable row types
+    if (row.calculationBreakdown) {
       y += 4;
       doc.setFontSize(7);
       doc.setTextColor(120, 120, 120);
-      const noteText = row.calculationBreakdown.isCredit
-        ? `Interest credit: ${row.calculationBreakdown.breakdown} (mid-period capital change)`
-        : `Interest debit: ${row.calculationBreakdown.breakdown} (mid-period capital change)`;
-      doc.text(noteText, cols.date + 2, y);
+
+      let noteText = '';
+      if (row.primaryType === 'adjustment') {
+        // Adjustment rows
+        noteText = row.calculationBreakdown.isCredit
+          ? `Interest credit: ${row.calculationBreakdown.breakdown} (mid-period capital change)`
+          : `Interest debit: ${row.calculationBreakdown.breakdown} (mid-period capital change)`;
+      } else if (row.primaryType === 'disbursement' && row.calculationBreakdown.isDisbursement) {
+        // Disbursement with deductions
+        noteText = `Disbursement: ${row.calculationBreakdown.breakdown}`;
+      } else if (row.primaryType === 'due_date') {
+        // Schedule due dates - show calculation breakdown
+        if (row.isRollUpPeriod) {
+          doc.setTextColor(102, 51, 153); // Purple for roll-up
+        } else if (row.isServicedPeriod) {
+          doc.setTextColor(37, 99, 235); // Blue for serviced
+        }
+        noteText = row.calculationBreakdown.breakdown;
+      }
+
+      if (noteText) {
+        doc.text(noteText, cols.date + 2, y);
+      }
       doc.setTextColor(0, 0, 0);
       doc.setFontSize(8);
     }
