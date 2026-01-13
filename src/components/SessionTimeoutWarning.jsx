@@ -1,13 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback } from 'react';
 import { useAuth } from '@/lib/AuthContext';
 import { Clock, LogOut } from 'lucide-react';
 
-const WARNING_BEFORE_EXPIRY_MS = 2 * 60 * 1000; // Show warning 2 minutes before expiry
-
 export default function SessionTimeoutWarning() {
-  const { logout, isAuthenticated, inactivityTimeoutMs, getLastActivityTime, resetActivityTimer } = useAuth();
-  const [showWarning, setShowWarning] = useState(false);
-  const [timeRemaining, setTimeRemaining] = useState(0);
+  const { logout, resetActivityTimer, showTimeoutWarning, timeoutSecondsRemaining } = useAuth();
 
   // Format seconds to MM:SS
   const formatTime = (seconds) => {
@@ -21,7 +17,6 @@ export default function SessionTimeoutWarning() {
   const handleStayLoggedIn = useCallback(() => {
     // Explicitly reset activity timer (clicking also does this via event listener)
     resetActivityTimer();
-    setShowWarning(false);
   }, [resetActivityTimer]);
 
   // Handle logout
@@ -29,41 +24,7 @@ export default function SessionTimeoutWarning() {
     logout();
   }, [logout]);
 
-  useEffect(() => {
-    if (!isAuthenticated) {
-      setShowWarning(false);
-      return;
-    }
-
-    const checkExpiry = () => {
-      const lastActivity = getLastActivityTime();
-      const expiresAt = lastActivity + inactivityTimeoutMs;
-      const timeUntilExpiry = expiresAt - Date.now();
-
-      if (timeUntilExpiry <= 0) {
-        // Session has expired - the auth context will handle logout
-        setShowWarning(false);
-        return;
-      }
-
-      if (timeUntilExpiry <= WARNING_BEFORE_EXPIRY_MS) {
-        setShowWarning(true);
-        setTimeRemaining(Math.ceil(timeUntilExpiry / 1000));
-      } else {
-        setShowWarning(false);
-      }
-    };
-
-    // Check immediately
-    checkExpiry();
-
-    // Check every second
-    const interval = setInterval(checkExpiry, 1000);
-
-    return () => clearInterval(interval);
-  }, [isAuthenticated, inactivityTimeoutMs, getLastActivityTime]);
-
-  if (!showWarning) {
+  if (!showTimeoutWarning) {
     return null;
   }
 
@@ -86,7 +47,7 @@ export default function SessionTimeoutWarning() {
         {/* Content */}
         <div className="px-6 py-6 text-center">
           <div className="text-4xl font-mono font-bold text-slate-900 mb-2">
-            {formatTime(timeRemaining)}
+            {formatTime(timeoutSecondsRemaining)}
           </div>
           <p className="text-slate-600 text-sm">
             You will be automatically logged out when the timer reaches zero.

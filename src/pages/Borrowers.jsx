@@ -147,7 +147,13 @@ export default function Borrowers() {
     return counts;
   }, [borrowerMetrics]);
 
-  const borrowers = allBorrowers.filter(b => !b.is_archived);
+  const borrowers = allBorrowers
+    .filter(b => !b.is_archived)
+    .sort((a, b) => {
+      const nameA = (a.business || `${a.first_name || ''} ${a.last_name || ''}`).trim().toLowerCase();
+      const nameB = (b.business || `${b.first_name || ''} ${b.last_name || ''}`).trim().toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
 
   const createMutation = useMutation({
     mutationFn: (data) => api.entities.Borrower.create(data),

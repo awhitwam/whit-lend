@@ -10,6 +10,7 @@ import { Loader2, AlertTriangle, Percent, Zap, TrendingUp, ArrowLeft, ChevronRig
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
+import { calculateRollUpAmount } from '@/lib/loanCalculations';
 
 export default function EditLoanPanel({
   isOpen,
@@ -39,7 +40,13 @@ export default function EditLoanPanel({
     penalty_rate: loan?.penalty_rate || '',
     penalty_rate_from: loan?.penalty_rate_from || '',
     // Product type tracking
-    product_type: loan?.product_type || ''
+    product_type: loan?.product_type || '',
+    // Roll-Up & Serviced fields
+    roll_up_length: loan?.roll_up_length || '',
+    roll_up_amount: loan?.roll_up_amount || '',
+    // Additional deducted fees
+    additional_deducted_fees: loan?.additional_deducted_fees || '',
+    additional_deducted_fees_note: loan?.additional_deducted_fees_note || ''
   });
 
   // Confirmation step state
@@ -57,7 +64,14 @@ export default function EditLoanPanel({
   const isFixedCharge = selectedProduct?.product_type === 'Fixed Charge' || formData.product_type === 'Fixed Charge';
   const isIrregularIncome = selectedProduct?.product_type === 'Irregular Income' || formData.product_type === 'Irregular Income';
   const isRent = selectedProduct?.product_type === 'Rent' || formData.product_type === 'Rent';
+  const isRollUpServiced = selectedProduct?.product_type === 'Roll-Up & Serviced' || formData.product_type === 'Roll-Up & Serviced';
   const isSpecialType = isFixedCharge || isIrregularIncome || isRent;
+
+  // Roll-up calculation now uses shared utility from @/lib/loanCalculations
+  // Principal IS the gross amount - no additional fees added
+
+  // Format currency for display
+  const formatCurrency = (val) => `£${parseFloat(val || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
 
   // Detect changes between current loan and form data
   const changes = useMemo(() => {
@@ -194,6 +208,33 @@ export default function EditLoanPanel({
       });
     }
 
+    // Roll-up length
+    if (parseInt(formData.roll_up_length) !== parseInt(loan.roll_up_length || 0)) {
+      changeList.push({
+        field: 'Roll-Up Period',
+        from: `${loan.roll_up_length || 0} months`,
+        to: `${formData.roll_up_length || 0} months`
+      });
+    }
+
+    // Roll-up amount
+    if (parseFloat(formData.roll_up_amount) !== parseFloat(loan.roll_up_amount || 0)) {
+      changeList.push({
+        field: 'Roll-Up Amount',
+        from: formatCurrency(loan.roll_up_amount),
+        to: formatCurrency(formData.roll_up_amount)
+      });
+    }
+
+    // Additional deducted fees
+    if (parseFloat(formData.additional_deducted_fees) !== parseFloat(loan.additional_deducted_fees || 0)) {
+      changeList.push({
+        field: 'Additional Deducted Fees',
+        from: formatCurrency(loan.additional_deducted_fees),
+        to: formatCurrency(formData.additional_deducted_fees)
+      });
+    }
+
     return changeList;
   }, [formData, loan, products]);
 
@@ -291,25 +332,31 @@ export default function EditLoanPanel({
       };
     }
 
-    // Standard loan handling
+    // Standard loan handling (including Roll-Up & Serviced)
     const effectiveRate = formData.override_interest_rate && formData.overridden_rate
       ? parseFloat(formData.overridden_rate)
       : parseFloat(formData.interest_rate);
+
+    const additionalDeductedFees = parseFloat(formData.additional_deducted_fees) || 0;
+    const arrangementFee = parseFloat(formData.arrangement_fee) || 0;
+    const principalAmount = parseFloat(formData.principal_amount);
 
     return {
       product_id: formData.product_id,
       product_name: product?.name || loan.product_name,
       product_type: product?.product_type || 'Standard',
-      principal_amount: parseFloat(formData.principal_amount),
-      arrangement_fee: parseFloat(formData.arrangement_fee) || 0,
+      principal_amount: principalAmount,
+      arrangement_fee: arrangementFee,
       exit_fee: parseFloat(formData.exit_fee) || 0,
+      additional_deducted_fees: additionalDeductedFees,
+      additional_deducted_fees_note: formData.additional_deducted_fees_note || '',
       interest_rate: effectiveRate,
       interest_type: formData.interest_type,
       period: formData.period,
       interest_only_period: parseInt(formData.interest_only_period) || 0,
       duration: parseInt(formData.duration),
       start_date: formData.start_date,
-      net_disbursed: parseFloat(formData.principal_amount) - (parseFloat(formData.arrangement_fee) || 0),
+      net_disbursed: principalAmount - arrangementFee - additionalDeductedFees,
       description: formData.description,
       // Interest rate override tracking
       override_interest_rate: formData.override_interest_rate,
@@ -317,7 +364,10 @@ export default function EditLoanPanel({
       // Penalty rate fields
       has_penalty_rate: formData.has_penalty_rate,
       penalty_rate: formData.has_penalty_rate ? parseFloat(formData.penalty_rate) || null : null,
-      penalty_rate_from: formData.has_penalty_rate ? formData.penalty_rate_from || null : null
+      penalty_rate_from: formData.has_penalty_rate ? formData.penalty_rate_from || null : null,
+      // Roll-Up & Serviced fields
+      roll_up_length: formData.roll_up_length ? parseInt(formData.roll_up_length) : null,
+      roll_up_amount: formData.roll_up_amount ? parseFloat(formData.roll_up_amount) : null
     };
   };
 
@@ -351,7 +401,29 @@ export default function EditLoanPanel({
   };
 
   const handleChange = (field, value) => {
-    setFormData(prev => ({ ...prev, [field]: value }));
+    setFormData(prev => {
+      const updated = { ...prev, [field]: value };
+
+      // Auto-recalculate roll-up amount when dependencies change
+      // Uses shared utility - principal IS the gross amount (no additional fees added)
+      if (['principal_amount', 'interest_rate', 'overridden_rate', 'roll_up_length', 'override_interest_rate'].includes(field)) {
+        const product = products.find(p => p.id === updated.product_id);
+        const productIsRollUp = product?.product_type === 'Roll-Up & Serviced' || updated.product_type === 'Roll-Up & Serviced';
+
+        if (productIsRollUp && updated.roll_up_length) {
+          const effectiveRate = updated.override_interest_rate && updated.overridden_rate
+            ? updated.overridden_rate
+            : updated.interest_rate;
+          updated.roll_up_amount = calculateRollUpAmount(
+            updated.principal_amount,
+            effectiveRate,
+            updated.roll_up_length
+          );
+        }
+      }
+
+      return updated;
+    });
   };
 
   const handleProductChange = (productId) => {
@@ -492,7 +564,9 @@ export default function EditLoanPanel({
                         ? '(Irregular Income)'
                         : product.product_type === 'Rent'
                           ? '(Rent)'
-                          : `- ${product.interest_rate}% (${product.interest_type})`}
+                          : product.product_type === 'Roll-Up & Serviced'
+                            ? `- ${product.interest_rate}% (Roll-Up & Serviced)`
+                            : `- ${product.interest_rate}% (${product.interest_type})`}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -519,6 +593,16 @@ export default function EditLoanPanel({
             </Alert>
           )}
 
+          {/* Roll-Up & Serviced Alert */}
+          {isRollUpServiced && (
+            <Alert className="border-indigo-200 bg-indigo-50">
+              <TrendingUp className="w-4 h-4 text-indigo-600" />
+              <AlertDescription className="text-indigo-800">
+                <strong>Roll-Up & Serviced:</strong> Interest rolls up during an initial period, then monthly serviced payments begin.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Fixed Charge: Monthly Charge instead of Principal */}
           {isFixedCharge ? (
             <div className="space-y-2">
@@ -536,42 +620,122 @@ export default function EditLoanPanel({
             </div>
           ) : (
             /* Standard and Irregular Income: Principal Amount */
-            <div className="grid grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label htmlFor="principal_amount">Principal Amount *</Label>
-                <Input
-                  id="principal_amount"
-                  type="number"
-                  value={formData.principal_amount}
-                  onChange={(e) => handleChange('principal_amount', e.target.value)}
-                  step="0.01"
-                  required
-                />
-              </div>
-
-              {/* Interest Rate - only for standard loans */}
-              {!isSpecialType && (
+            <>
+              <div className="grid grid-cols-2 gap-4">
                 <div className="space-y-2">
-                  <Label htmlFor="interest_rate">
-                    Product Rate (%)
-                    {formData.override_interest_rate && <span className="text-slate-400 ml-1">(overridden)</span>}
-                  </Label>
+                  <Label htmlFor="principal_amount">Principal (Gross) *</Label>
                   <Input
-                    id="interest_rate"
+                    id="principal_amount"
                     type="number"
-                    value={formData.interest_rate}
-                    onChange={(e) => handleChange('interest_rate', e.target.value)}
+                    value={formData.principal_amount}
+                    onChange={(e) => handleChange('principal_amount', e.target.value)}
                     step="0.01"
-                    disabled={formData.override_interest_rate}
-                    className={formData.override_interest_rate ? 'bg-slate-100 text-slate-500' : ''}
+                    required
                   />
                 </div>
+                <div className="space-y-2">
+                  <Label>Net Disbursed</Label>
+                  <Input
+                    type="text"
+                    value={formData.principal_amount ? formatCurrency(
+                      parseFloat(formData.principal_amount) -
+                      (parseFloat(formData.arrangement_fee) || 0) -
+                      (parseFloat(formData.additional_deducted_fees) || 0)
+                    ) : '—'}
+                    disabled
+                    className="bg-slate-50 text-slate-600"
+                  />
+                  <p className="text-xs text-slate-500">Gross minus fees</p>
+                </div>
+              </div>
+
+              {/* Interest Rate - only for standard loans and Roll-Up & Serviced */}
+              {(!isSpecialType || isRollUpServiced) && (
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="interest_rate">
+                      Product Rate (%)
+                      {formData.override_interest_rate && <span className="text-slate-400 ml-1">(overridden)</span>}
+                    </Label>
+                    <Input
+                      id="interest_rate"
+                      type="number"
+                      value={formData.interest_rate}
+                      onChange={(e) => handleChange('interest_rate', e.target.value)}
+                      step="0.01"
+                      disabled={formData.override_interest_rate}
+                      className={formData.override_interest_rate ? 'bg-slate-100 text-slate-500' : ''}
+                    />
+                  </div>
+                </div>
               )}
+            </>
+          )}
+
+          {/* Roll-Up & Serviced Configuration */}
+          {isRollUpServiced && (
+            <div className="space-y-4 p-4 bg-indigo-50 rounded-lg">
+              <h4 className="font-medium text-indigo-900">Roll-Up Configuration</h4>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <Label htmlFor="roll_up_length">Roll-Up Period (Months) *</Label>
+                  <Input
+                    id="roll_up_length"
+                    type="number"
+                    value={formData.roll_up_length}
+                    onChange={(e) => handleChange('roll_up_length', e.target.value)}
+                    placeholder="e.g. 6"
+                    min={1}
+                    max={120}
+                    required
+                  />
+                  <p className="text-xs text-slate-500">Interest rolls up for this period</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="roll_up_amount">Roll-Up Amount</Label>
+                  <Input
+                    id="roll_up_amount"
+                    type="number"
+                    value={formData.roll_up_amount}
+                    onChange={(e) => handleChange('roll_up_amount', e.target.value)}
+                    placeholder="Auto-calculated"
+                    step="0.01"
+                  />
+                  <p className="text-xs text-slate-500">Auto-calculated, edit to override</p>
+                </div>
+              </div>
             </div>
           )}
 
-          {/* Interest Rate Override Section - only for standard loans */}
-          {!isFixedCharge && (
+          {/* Additional Deducted Fees */}
+          {(!isSpecialType || isRollUpServiced) && (
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="additional_deducted_fees">Additional Deducted Fees</Label>
+                <Input
+                  id="additional_deducted_fees"
+                  type="number"
+                  value={formData.additional_deducted_fees}
+                  onChange={(e) => handleChange('additional_deducted_fees', e.target.value)}
+                  placeholder="0.00"
+                  step="0.01"
+                />
+                <p className="text-xs text-slate-500">Added to gross principal but not disbursed</p>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="additional_deducted_fees_note">Fees Note</Label>
+                <Input
+                  id="additional_deducted_fees_note"
+                  value={formData.additional_deducted_fees_note}
+                  onChange={(e) => handleChange('additional_deducted_fees_note', e.target.value)}
+                  placeholder="e.g. Broker fee"
+                />
+              </div>
+            </div>
+          )}
+
+          {/* Interest Rate Override Section - only for standard loans and Roll-Up & Serviced */}
+          {(!isFixedCharge || isRollUpServiced) && (
             <div className="p-4 border border-slate-200 rounded-lg space-y-4 bg-slate-50/50">
               <div className="flex items-center justify-between">
                 <div className="flex items-center gap-2">

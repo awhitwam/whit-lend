@@ -247,7 +247,9 @@ export class BaseScheduler {
         status: row.status || 'Pending',
         calculation_days: calcDays,
         calculation_principal_start: calcPrincipalStart,
-        is_extension_period: row.is_extension_period || false
+        is_extension_period: row.is_extension_period || false,
+        is_roll_up_period: row.is_roll_up_period || false,
+        is_serviced_period: row.is_serviced_period || false
       };
     });
 

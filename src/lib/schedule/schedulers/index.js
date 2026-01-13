@@ -13,6 +13,7 @@ import './InterestOnlyScheduler.js';
 import './FlatRateScheduler.js';
 import './ReducingBalanceScheduler.js';
 import './RentScheduler.js';
+import './RollUpServicedScheduler.js';
 
 // Re-export scheduler classes for direct access if needed
 export { IrregularIncomeScheduler } from './IrregularIncomeScheduler.js';
@@ -22,3 +23,4 @@ export { InterestOnlyScheduler } from './InterestOnlyScheduler.js';
 export { FlatRateScheduler } from './FlatRateScheduler.js';
 export { ReducingBalanceScheduler } from './ReducingBalanceScheduler.js';
 export { RentScheduler } from './RentScheduler.js';
+export { RollUpServicedScheduler } from './RollUpServicedScheduler.js';

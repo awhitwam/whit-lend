@@ -43,7 +43,8 @@ import {
   ArrowRight,
   Landmark,
   Layers,
-  ShieldCheck
+  ShieldCheck,
+  Plus
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -64,6 +65,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
+import DisbursementModal from '@/components/loan/DisbursementModal';
 import EditLoanPanel from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
 import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions, exportScheduleCalculationData, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger, queueBalanceCacheUpdate } from '@/components/loan/LoanCalculator';
@@ -104,6 +106,7 @@ export default function LoanDetails() {
   const [selectedDisbursements, setSelectedDisbursements] = useState(new Set());
   const [deleteDisbursementsDialogOpen, setDeleteDisbursementsDialogOpen] = useState(false);
   const [isDeletingDisbursements, setIsDeletingDisbursements] = useState(false);
+  const [deleteDisbursementReason, setDeleteDisbursementReason] = useState('');
   const [editReceiptDialogOpen, setEditReceiptDialogOpen] = useState(false);
   const [editReceiptTarget, setEditReceiptTarget] = useState(null);
   const [editReceiptValues, setEditReceiptValues] = useState({ principal: 0, interest: 0, fees: 0, amount: 0, date: '', reference: '' });
@@ -118,6 +121,7 @@ export default function LoanDetails() {
     notes: ''
   });
   const [isSavingDisbursement, setIsSavingDisbursement] = useState(false);
+  const [isAddDisbursementOpen, setIsAddDisbursementOpen] = useState(false);
   const [convertingExpense, setConvertingExpense] = useState(null);
   const [isConvertingExpense, setIsConvertingExpense] = useState(false);
   const queryClient = useQueryClient();
@@ -302,38 +306,72 @@ export default function LoanDetails() {
         interest_paid: totalInterestPaid
       });
 
-      // Update initial disbursement transaction if principal or arrangement fee changed
+      // Update initial disbursement transaction if principal, arrangement fee, or additional fees changed
       const newPrincipal = updatedData.principal_amount ?? loan.principal_amount;
       const newArrangementFee = updatedData.arrangement_fee ?? loan.arrangement_fee ?? 0;
-      const newNetDisbursed = updatedData.net_disbursed ?? (newPrincipal - newArrangementFee);
-      const oldNetDisbursed = loan.net_disbursed ?? (loan.principal_amount - (loan.arrangement_fee || 0));
+      const additionalFees = updatedData.additional_deducted_fees ?? loan.additional_deducted_fees ?? 0;
+      const newNetDisbursed = updatedData.net_disbursed ?? (newPrincipal - newArrangementFee - additionalFees);
+      const oldNetDisbursed = loan.net_disbursed ?? (loan.principal_amount - (loan.arrangement_fee || 0) - (loan.additional_deducted_fees || 0));
+
+      console.log('=== DISBURSEMENT UPDATE DEBUG ===');
+      console.log('newPrincipal:', newPrincipal);
+      console.log('newArrangementFee:', newArrangementFee);
+      console.log('additionalFees:', additionalFees);
+      console.log('loan.principal_amount:', loan.principal_amount);
+      console.log('loan.arrangement_fee:', loan.arrangement_fee);
+      console.log('loan.additional_deducted_fees:', loan.additional_deducted_fees);
 
       // Check if any disbursement-related fields changed
       const principalChanged = Math.abs(newPrincipal - loan.principal_amount) > 0.01;
       const feeChanged = Math.abs(newArrangementFee - (loan.arrangement_fee || 0)) > 0.01;
+      const additionalFeesChanged = Math.abs(additionalFees - (loan.additional_deducted_fees || 0)) > 0.01;
 
-      if (principalChanged || feeChanged) {
-        // Find and update the initial disbursement transaction
-        const allTx = await api.entities.Transaction.filter({ loan_id: loanId });
-        const disbursementTx = allTx.find(t => t.type === 'Disbursement' && !t.is_deleted);
+      console.log('principalChanged:', principalChanged);
+      console.log('feeChanged:', feeChanged);
+      console.log('additionalFeesChanged:', additionalFeesChanged);
 
-        if (disbursementTx) {
-          // Preserve existing deducted_interest if any
-          const existingDeductedInterest = disbursementTx.deducted_interest || 0;
-          const netAmount = newPrincipal - newArrangementFee - existingDeductedInterest;
+      // Find the disbursement transaction to check if it needs fixing
+      const allTx = await api.entities.Transaction.filter({ loan_id: loanId });
+      const disbursementTx = allTx.find(t => t.type === 'Disbursement' && !t.is_deleted);
+
+      if (disbursementTx) {
+        console.log('=== DISBURSEMENT TX DEBUG ===');
+        console.log('disbursementTx.gross_amount:', disbursementTx.gross_amount);
+        console.log('disbursementTx.amount:', disbursementTx.amount);
+        console.log('disbursementTx.deducted_fee:', disbursementTx.deducted_fee);
+        console.log('disbursementTx.deducted_interest:', disbursementTx.deducted_interest);
+
+        // Calculate what the correct net should be
+        const existingDeductedInterest = disbursementTx.deducted_interest || 0;
+        const correctNetAmount = newPrincipal - newArrangementFee - existingDeductedInterest - additionalFees;
+        const currentTxAmount = disbursementTx.amount || 0;
+        const amountNeedsFix = Math.abs(currentTxAmount - correctNetAmount) > 0.01;
+
+        console.log('correctNetAmount:', correctNetAmount);
+        console.log('currentTxAmount:', currentTxAmount);
+        console.log('amountNeedsFix:', amountNeedsFix);
+
+        // Update if any field changed OR if the transaction amount is wrong (legacy fix)
+        if (principalChanged || feeChanged || additionalFeesChanged || amountNeedsFix) {
+          console.log('>>> UPDATING DISBURSEMENT TRANSACTION <<<');
 
           await api.entities.Transaction.update(disbursementTx.id, {
             gross_amount: newPrincipal,
             deducted_fee: newArrangementFee,
             deducted_interest: existingDeductedInterest,
-            amount: netAmount,
+            amount: correctNetAmount,
             principal_applied: newPrincipal,  // Full gross amount
             fees_applied: newArrangementFee,
             interest_applied: existingDeductedInterest
           });
-          console.log(`Updated disbursement: gross=${newPrincipal}, fee=${newArrangementFee}, net=${netAmount}`);
+          console.log(`Updated disbursement: gross=${newPrincipal}, fee=${newArrangementFee}, additionalFees=${additionalFees}, net=${correctNetAmount}`);
+        } else {
+          console.log('>>> NO UPDATE NEEDED - all values correct <<<');
         }
+      } else {
+        console.log('>>> NO DISBURSEMENT TRANSACTION FOUND <<<');
       }
+      console.log('=== END DISBURSEMENT UPDATE DEBUG ===')
     },
     onSuccess: async () => {
       setProcessingMessage('Refreshing data...');
@@ -1094,11 +1132,13 @@ export default function LoanDetails() {
       const newPrincipalPaid = (loan.principal_paid || 0) + totalPrincipalApplied;
       const newInterestPaid = (loan.interest_paid || 0) + totalInterestApplied;
 
-      // Calculate total principal including disbursements
-      const disbursementTotal = transactions
+      // Calculate total principal including further advances (disbursements after the first)
+      const furtherAdvanceTotal = transactions
         .filter(t => !t.is_deleted && t.type === 'Disbursement')
+        .sort((a, b) => new Date(a.date) - new Date(b.date))
+        .slice(1) // Skip first disbursement (initial principal is in loan.principal_amount)
         .reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
-      const loanTotalPrincipal = loan.principal_amount + disbursementTotal;
+      const loanTotalPrincipal = loan.principal_amount + furtherAdvanceTotal;
 
       const updateData = {
         principal_paid: newPrincipalPaid,
@@ -1141,6 +1181,67 @@ export default function LoanDetails() {
     onError: () => {
       setIsProcessing(false);
       toast.error('Failed to record payment', { id: 'payment' });
+    }
+  });
+
+  // Mutation for adding new disbursements
+  const addDisbursementMutation = useMutation({
+    mutationFn: async (disbursementData) => {
+      toast.loading('Adding disbursement...', { id: 'disbursement' });
+
+      // Create the disbursement transaction
+      const disbursement = await api.entities.Transaction.create(disbursementData);
+
+      // If there's deducted interest, create a linked repayment transaction
+      if (disbursementData.deducted_interest > 0) {
+        await api.entities.Transaction.create({
+          loan_id: disbursementData.loan_id,
+          borrower_id: disbursementData.borrower_id,
+          date: disbursementData.date,
+          type: 'Repayment',
+          amount: disbursementData.deducted_interest,
+          principal_applied: 0,
+          interest_applied: disbursementData.deducted_interest,
+          fees_applied: 0,
+          linked_disbursement_id: disbursement.id,
+          notes: 'Advance interest deducted from disbursement'
+        });
+      }
+
+      // Log disbursement to audit trail
+      await logTransactionEvent(AuditAction.TRANSACTION_CREATE, {
+        id: disbursement?.id || 'unknown',
+        type: 'Disbursement',
+        amount: disbursementData.amount
+      }, loan, {
+        gross_amount: disbursementData.gross_amount,
+        deducted_fee: disbursementData.deducted_fee || 0,
+        deducted_interest: disbursementData.deducted_interest || 0,
+        net_amount: disbursementData.amount
+      });
+
+      return disbursement;
+    },
+    onSuccess: async (disbursement, disbursementData) => {
+      // Regenerate schedule after capital change
+      await maybeRegenerateScheduleAfterCapitalChange(loanId, {
+        type: 'Disbursement',
+        gross_amount: disbursementData.gross_amount,
+        date: disbursementData.date
+      }, 'create');
+
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
+      queueBalanceCacheUpdate(loanId);
+      toast.success('Disbursement added successfully', { id: 'disbursement' });
+      setIsAddDisbursementOpen(false);
+    },
+    onError: () => {
+      toast.error('Failed to add disbursement', { id: 'disbursement' });
     }
   });
 
@@ -1205,7 +1306,8 @@ export default function LoanDetails() {
   const furtherAdvances = allDisbursements.slice(1); // Skip the first disbursement (initial principal)
   const totalFurtherAdvances = furtherAdvances.reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
 
-  // Total principal = initial amount + further advances only (not the initial disbursement again)
+  // Total principal = initial amount (from loan record) + further advances only
+  // loan.principal_amount is updated when the first disbursement is edited
   const totalPrincipal = loan.principal_amount + totalFurtherAdvances;
 
   // Calculate total net disbursed (actual cash paid out) from all disbursements
@@ -1438,13 +1540,13 @@ export default function LoanDetails() {
                             <span className="text-slate-400 text-sm font-normal ml-1" title={`Penalty rate from ${format(new Date(loan.penalty_rate_from), 'dd/MM/yy')}`}>
                               (was {loan.override_interest_rate && loan.overridden_rate != null ? loan.overridden_rate : loan.interest_rate}%)
                             </span>
-                            {' '}{loan.interest_type}
+                            {' '}{loan.product_type === 'Roll-Up & Serviced' || loan.interest_type === 'Roll-Up & Serviced' ? 'Roll-Up' : loan.interest_type}
                           </>
                         ) : (
                           <>
                             {loan.override_interest_rate && loan.overridden_rate != null
                               ? loan.overridden_rate
-                              : loan.interest_rate}% {loan.interest_type}
+                              : loan.interest_rate}% {loan.product_type === 'Roll-Up & Serviced' || loan.interest_type === 'Roll-Up & Serviced' ? 'Roll-Up' : loan.interest_type}
                           </>
                         )}
                       </p>
@@ -1468,6 +1570,15 @@ export default function LoanDetails() {
                         <p className="text-xs text-amber-600">Auto Extend</p>
                       )}
                     </div>
+                    {(loan.product_type === 'Roll-Up & Serviced' || loan.interest_type === 'Roll-Up & Serviced') && loan.roll_up_length && (
+                      <div>
+                        <span className="text-slate-500 text-xs">Roll-Up Period</span>
+                        <p className="font-bold text-lg text-indigo-600">{loan.roll_up_length}m</p>
+                        {loan.roll_up_amount && (
+                          <p className="text-xs text-indigo-500">{formatCurrency(loan.roll_up_amount)} accrued</p>
+                        )}
+                      </div>
+                    )}
                     <div>
                       <span className="text-slate-500 text-xs">Start Date</span>
                       <p className="font-bold text-lg">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
@@ -1898,6 +2009,13 @@ export default function LoanDetails() {
                 <div className="flex items-center justify-between">
                   <CardTitle>Disbursements</CardTitle>
                   <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => setIsAddDisbursementOpen(true)}
+                    >
+                      <Plus className="w-4 h-4 mr-1" />
+                      Add Disbursement
+                    </Button>
                     {selectedDisbursements.size > 0 && (
                       <Button
                         variant="destructive"
@@ -1934,17 +2052,32 @@ export default function LoanDetails() {
 
                   // Build entries from disbursement transactions only
                   // First disbursement is "Initial Disbursement", rest are "Additional Drawdown"
-                  const disbursementEntries = disbursementTransactions.map((t, index) => ({
-                    id: t.id,
-                    date: new Date(t.date),
-                    description: index === 0 ? 'Initial Disbursement' : 'Additional Drawdown',
-                    gross_amount: t.gross_amount ?? t.amount,  // Gross amount (or amount for legacy)
-                    deducted_fee: t.deducted_fee || 0,
-                    deducted_interest: t.deducted_interest || 0,
-                    amount: t.amount,  // Net amount (cash paid)
-                    notes: t.notes || (index === 0 ? 'Loan originated' : ''),
-                    hasDeductions: (t.deducted_fee || 0) > 0 || (t.deducted_interest || 0) > 0
-                  }));
+                  // For initial disbursement, include additional_deducted_fees from loan record
+                  const disbursementEntries = disbursementTransactions.map((t, index) => {
+                    const isInitial = index === 0;
+                    const deductedFee = t.deducted_fee || 0;
+                    const deductedInterest = t.deducted_interest || 0;
+                    // For initial disbursement, get additional fees from loan record
+                    const additionalFees = isInitial ? (loan?.additional_deducted_fees || 0) : 0;
+                    const additionalFeesNote = isInitial ? (loan?.additional_deducted_fees_note || '') : '';
+                    const totalDeductions = deductedFee + deductedInterest + additionalFees;
+
+                    return {
+                      id: t.id,
+                      date: new Date(t.date),
+                      description: isInitial ? 'Initial Disbursement' : 'Additional Drawdown',
+                      gross_amount: t.gross_amount ?? t.amount,  // Gross amount (or amount for legacy)
+                      deducted_fee: deductedFee,
+                      deducted_interest: deductedInterest,
+                      additional_fees: additionalFees,
+                      additional_fees_note: additionalFeesNote,
+                      total_deductions: totalDeductions,
+                      // Calculate net dynamically: gross - all deductions (handles legacy data where t.amount was wrong)
+                      amount: (t.gross_amount ?? t.amount) - deductedFee - deductedInterest - additionalFees,
+                      notes: t.notes || (isInitial ? 'Loan originated' : ''),
+                      hasDeductions: totalDeductions > 0
+                    };
+                  });
 
                   // Sort based on selection
                   const sortedEntries = [...disbursementEntries].sort((a, b) => {
@@ -1968,7 +2101,11 @@ export default function LoanDetails() {
 
                   const totalGross = disbursementEntries.reduce((sum, e) => sum + e.gross_amount, 0);
                   const totalNet = disbursementEntries.reduce((sum, e) => sum + e.amount, 0);
-                  const totalDeductions = totalGross - totalNet;
+                  const totalDeductions = disbursementEntries.reduce((sum, e) => sum + e.total_deductions, 0);
+                  const totalArrangementFees = disbursementEntries.reduce((sum, e) => sum + e.deducted_fee, 0);
+                  const totalAdditionalFees = disbursementEntries.reduce((sum, e) => sum + e.additional_fees, 0);
+                  const totalAdvanceInterest = disbursementEntries.reduce((sum, e) => sum + e.deducted_interest, 0);
+                  const hasDeductionBreakdown = totalArrangementFees > 0 || totalAdditionalFees > 0 || totalAdvanceInterest > 0;
 
                   // Toggle select all
                   const allSelected = disbursementEntries.length > 0 && disbursementEntries.every(e => selectedDisbursements.has(e.id));
@@ -2001,7 +2138,35 @@ export default function LoanDetails() {
                         </div>
                         <div>
                           <p className="text-[10px] text-slate-500 mb-0.5">Deductions</p>
-                          <p className="text-sm font-bold text-amber-600">{totalDeductions > 0 ? `-${formatCurrency(totalDeductions)}` : '-'}</p>
+                          {hasDeductionBreakdown ? (
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <p className="text-sm font-bold text-amber-600 cursor-help">
+                                  {totalDeductions > 0 ? `-${formatCurrency(totalDeductions)}` : '-'}
+                                </p>
+                              </TooltipTrigger>
+                              <TooltipContent side="bottom">
+                                <div className="text-xs space-y-1">
+                                  {totalArrangementFees > 0 && (
+                                    <p>Arrangement Fees: {formatCurrency(totalArrangementFees)}</p>
+                                  )}
+                                  {totalAdditionalFees > 0 && (
+                                    <p>
+                                      Additional Fees: {formatCurrency(totalAdditionalFees)}
+                                      {loan?.additional_deducted_fees_note && (
+                                        <span className="text-slate-400 block">({loan.additional_deducted_fees_note})</span>
+                                      )}
+                                    </p>
+                                  )}
+                                  {totalAdvanceInterest > 0 && (
+                                    <p>Advance Interest: {formatCurrency(totalAdvanceInterest)}</p>
+                                  )}
+                                </div>
+                              </TooltipContent>
+                            </Tooltip>
+                          ) : (
+                            <p className="text-sm font-bold text-amber-600">{totalDeductions > 0 ? `-${formatCurrency(totalDeductions)}` : '-'}</p>
+                          )}
                         </div>
                         <div>
                           <p className="text-[10px] text-slate-500 mb-0.5">Net Paid Out</p>
@@ -2075,16 +2240,24 @@ export default function LoanDetails() {
                                       <Tooltip>
                                         <TooltipTrigger asChild>
                                           <span className="text-amber-600 cursor-help">
-                                            -{formatCurrency(entry.deducted_fee + entry.deducted_interest)}
+                                            -{formatCurrency(entry.total_deductions)}
                                           </span>
                                         </TooltipTrigger>
                                         <TooltipContent side="left">
                                           <div className="text-xs space-y-1">
                                             {entry.deducted_fee > 0 && (
-                                              <p>Fee: {formatCurrency(entry.deducted_fee)}</p>
+                                              <p>Arrangement Fee: {formatCurrency(entry.deducted_fee)}</p>
+                                            )}
+                                            {entry.additional_fees > 0 && (
+                                              <p>
+                                                Additional Fees: {formatCurrency(entry.additional_fees)}
+                                                {entry.additional_fees_note && (
+                                                  <span className="text-slate-400 ml-1">({entry.additional_fees_note})</span>
+                                                )}
+                                              </p>
                                             )}
                                             {entry.deducted_interest > 0 && (
-                                              <p>Interest: {formatCurrency(entry.deducted_interest)}</p>
+                                              <p>Advance Interest: {formatCurrency(entry.deducted_interest)}</p>
                                             )}
                                           </div>
                                         </TooltipContent>
@@ -2174,6 +2347,17 @@ export default function LoanDetails() {
                                         >
                                           <Edit className="w-4 h-4 mr-2" />
                                           Edit Disbursement
+                                        </DropdownMenuItem>
+                                        <DropdownMenuItem
+                                          className="text-red-600 focus:text-red-600"
+                                          onClick={() => {
+                                            // Select just this disbursement and open delete dialog
+                                            setSelectedDisbursements(new Set([entry.id]));
+                                            setDeleteDisbursementsDialogOpen(true);
+                                          }}
+                                        >
+                                          <Trash2 className="w-4 h-4 mr-2" />
+                                          Delete Disbursement
                                         </DropdownMenuItem>
                                       </DropdownMenuContent>
                                     </DropdownMenu>
@@ -2268,7 +2452,14 @@ export default function LoanDetails() {
           isLoading={paymentMutation.isPending}
         />
 
-
+        {/* Disbursement Modal */}
+        <DisbursementModal
+          isOpen={isAddDisbursementOpen}
+          onClose={() => setIsAddDisbursementOpen(false)}
+          loan={loan}
+          onSubmit={(data) => addDisbursementMutation.mutate(data)}
+          isLoading={addDisbursementMutation.isPending}
+        />
 
         {/* Receipt Entry Panel */}
         <ReceiptEntryPanel
@@ -2558,6 +2749,7 @@ export default function LoanDetails() {
           setDeleteDisbursementsDialogOpen(open);
           if (!open) {
             setIsDeletingDisbursements(false);
+            setDeleteDisbursementReason('');
           }
         }}>
           <AlertDialogContent>
@@ -2567,11 +2759,11 @@ export default function LoanDetails() {
                 Delete {selectedDisbursements.size} Disbursement{selectedDisbursements.size !== 1 ? 's' : ''}
               </AlertDialogTitle>
               <AlertDialogDescription>
-                This will permanently delete the selected disbursement transactions. This action cannot be undone.
+                This will mark the selected disbursement transactions as deleted. This action is logged in the audit trail.
               </AlertDialogDescription>
             </AlertDialogHeader>
 
-            <div className="py-2">
+            <div className="py-2 space-y-4">
               <div className="bg-amber-50 border border-amber-200 rounded-lg p-3">
                 <div className="flex items-start gap-2">
                   <AlertTriangle className="w-4 h-4 text-amber-600 mt-0.5 flex-shrink-0" />
@@ -2583,19 +2775,78 @@ export default function LoanDetails() {
                   </div>
                 </div>
               </div>
+
+              <div className="space-y-2">
+                <Label htmlFor="delete-disbursement-reason">Reason for deletion *</Label>
+                <Input
+                  id="delete-disbursement-reason"
+                  value={deleteDisbursementReason}
+                  onChange={(e) => setDeleteDisbursementReason(e.target.value)}
+                  placeholder="Enter reason for deleting disbursement(s)..."
+                  disabled={isDeletingDisbursements}
+                />
+              </div>
             </div>
 
             <AlertDialogFooter>
               <AlertDialogCancel disabled={isDeletingDisbursements}>Cancel</AlertDialogCancel>
               <AlertDialogAction
                 onClick={async () => {
+                  if (!deleteDisbursementReason.trim()) {
+                    toast.error('Please provide a reason for deletion');
+                    return;
+                  }
+
                   setIsDeletingDisbursements(true);
                   toast.loading(`Deleting ${selectedDisbursements.size} disbursement(s)...`, { id: 'delete-disbursements' });
 
                   try {
-                    // Delete each selected disbursement
+                    const reason = deleteDisbursementReason.trim();
+
+                    // Soft delete each selected disbursement with audit logging
                     for (const txId of selectedDisbursements) {
-                      await api.entities.Transaction.delete(txId);
+                      const disbursement = transactions.find(t => t.id === txId);
+                      if (!disbursement) continue;
+
+                      // Mark disbursement as deleted (soft delete with audit trail)
+                      await api.entities.Transaction.update(txId, {
+                        is_deleted: true,
+                        deleted_by: user?.email || 'unknown',
+                        deleted_date: new Date().toISOString(),
+                        deleted_reason: reason
+                      });
+
+                      // Log disbursement deletion to audit trail
+                      await logTransactionEvent(AuditAction.TRANSACTION_DELETE, disbursement, loan, {
+                        transaction_type: 'Disbursement',
+                        transaction_date: disbursement.date,
+                        gross_amount: disbursement.gross_amount || disbursement.amount,
+                        net_amount: disbursement.amount,
+                        deducted_fee: disbursement.deducted_fee || 0,
+                        deducted_interest: disbursement.deducted_interest || 0,
+                        reason
+                      });
+
+                      // Also delete any linked repayment transactions (advance interest deductions)
+                      const linkedRepayments = transactions.filter(t => t.linked_disbursement_id === txId && !t.is_deleted);
+                      for (const linkedTx of linkedRepayments) {
+                        await api.entities.Transaction.update(linkedTx.id, {
+                          is_deleted: true,
+                          deleted_by: user?.email || 'unknown',
+                          deleted_date: new Date().toISOString(),
+                          deleted_reason: `Parent disbursement deleted: ${reason}`
+                        });
+
+                        // Log linked repayment deletion
+                        await logTransactionEvent(AuditAction.TRANSACTION_DELETE, linkedTx, loan, {
+                          transaction_type: 'Linked Repayment (Advance Interest)',
+                          transaction_date: linkedTx.date,
+                          amount: linkedTx.amount,
+                          interest_applied: linkedTx.interest_applied,
+                          linked_to_disbursement: txId,
+                          reason: `Parent disbursement deleted: ${reason}`
+                        });
+                      }
                     }
 
                     // Refresh data
@@ -2611,6 +2862,7 @@ export default function LoanDetails() {
                     toast.success(`Deleted ${selectedDisbursements.size} disbursement(s)`, { id: 'delete-disbursements' });
                     setSelectedDisbursements(new Set());
                     setDeleteDisbursementsDialogOpen(false);
+                    setDeleteDisbursementReason('');
                   } catch (error) {
                     console.error('Failed to delete disbursements:', error);
                     toast.error('Failed to delete disbursements', { id: 'delete-disbursements' });
@@ -2618,7 +2870,7 @@ export default function LoanDetails() {
                     setIsDeletingDisbursements(false);
                   }
                 }}
-                disabled={isDeletingDisbursements}
+                disabled={isDeletingDisbursements || !deleteDisbursementReason.trim()}
                 className="bg-red-600 hover:bg-red-700 disabled:opacity-50"
               >
                 {isDeletingDisbursements ? (
@@ -3182,6 +3434,19 @@ export default function LoanDetails() {
                       });
                     }
 
+                    // Check if this is the FIRST disbursement (initial principal)
+                    // If so, update loan.principal_amount to match the new gross
+                    const isFirstDisbursement = allDisbursements.length > 0 &&
+                      allDisbursements[0].id === editDisbursementTarget.id;
+
+                    if (isFirstDisbursement && newGross !== oldGross) {
+                      // Update loan.principal_amount to reflect the corrected initial principal
+                      await api.entities.Loan.update(loan.id, {
+                        principal_amount: newGross
+                      });
+                      console.log(`[LoanDetails] Updated loan.principal_amount from ${oldGross} to ${newGross}`);
+                    }
+
                     // Log the change with full details
                     await logTransactionEvent(
                       AuditAction.TRANSACTION_UPDATE,
@@ -3189,6 +3454,7 @@ export default function LoanDetails() {
                       { loan_number: loan.loan_number },
                       {
                         action: 'edit_disbursement',
+                        is_initial_disbursement: isFirstDisbursement,
                         previous_gross: oldGross,
                         new_gross: newGross,
                         previous_deducted_fee: oldFee,

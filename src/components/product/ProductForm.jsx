@@ -19,6 +19,7 @@ const deriveSchedulerType = (data) => {
   if (data.product_type === 'Fixed Charge') return 'fixed_charge';
   if (data.product_type === 'Irregular Income') return 'irregular_income';
   if (data.product_type === 'Rent') return 'rent';
+  if (data.product_type === 'Roll-Up & Serviced') return 'roll_up_serviced';
   switch (data.interest_type) {
     case 'Rolled-Up': return 'rolled_up';
     case 'Interest-Only': return 'interest_only';
@@ -35,7 +36,8 @@ const buildSchedulerConfig = (data) => ({
   interest_alignment: data.interest_alignment || 'period_based',
   interest_paid_in_advance: data.interest_paid_in_advance || false,
   extend_for_full_period: data.extend_for_full_period || false,
-  interest_only_period: data.interest_only_period || null
+  interest_only_period: data.interest_only_period || null,
+  compound_after_rollup: data.compound_after_rollup || false
 });
 
 export default function ProductForm({ product, onSubmit, onCancel, isLoading }) {
@@ -50,12 +52,16 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
     interest_alignment: product?.interest_alignment || 'period_based',
     extend_for_full_period: product?.extend_for_full_period || false,
     interest_paid_in_advance: product?.interest_paid_in_advance || false,
-    interest_only_period: product?.interest_only_period || ''
+    interest_only_period: product?.interest_only_period || '',
+    compound_after_rollup: product?.compound_after_rollup || false,
+    default_additional_fees: product?.default_additional_fees || '',
+    default_additional_fees_note: product?.default_additional_fees_note || ''
   });
 
   const isFixedCharge = formData.product_type === 'Fixed Charge';
   const isIrregularIncome = formData.product_type === 'Irregular Income';
   const isRent = formData.product_type === 'Rent';
+  const isRollUpServiced = formData.product_type === 'Roll-Up & Serviced';
   const isSpecialType = isFixedCharge || isIrregularIncome || isRent;
 
   const handleSubmit = (e) => {
@@ -64,6 +70,7 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
       ...formData,
       interest_rate: formData.interest_rate ? parseFloat(formData.interest_rate) : 0,
       interest_only_period: formData.interest_only_period ? parseInt(formData.interest_only_period) : null,
+      default_additional_fees: formData.default_additional_fees ? parseFloat(formData.default_additional_fees) : 0,
       // Auto-derive scheduler_type and scheduler_config from form fields
       scheduler_type: deriveSchedulerType(formData),
       scheduler_config: buildSchedulerConfig(formData)
@@ -131,6 +138,7 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="Standard">Standard Loan</SelectItem>
+              <SelectItem value="Roll-Up & Serviced">Roll-Up & Serviced</SelectItem>
               <SelectItem value="Fixed Charge">Fixed Charge Facility</SelectItem>
               <SelectItem value="Irregular Income">Irregular Income</SelectItem>
               <SelectItem value="Rent">Rent (Quarterly)</SelectItem>
@@ -169,7 +177,18 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
         </Alert>
       )}
 
-      {!isSpecialType && (
+      {isRollUpServiced && (
+        <Alert className="border-indigo-200 bg-indigo-50">
+          <Info className="w-4 h-4 text-indigo-600" />
+          <AlertDescription className="text-indigo-800">
+            <strong>Roll-Up & Serviced:</strong> Interest rolls up (accrues without payment) during an initial period.
+            After the roll-up period ends, monthly serviced interest payments begin calculated on (principal + rolled-up interest).
+            The rolled-up amount is tracked separately and not capitalised to principal.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {(!isSpecialType || isRollUpServiced) && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div className="space-y-2">
             <Label htmlFor="interest_rate">Interest Rate (% per year) *</Label>
@@ -185,27 +204,29 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
               required
             />
           </div>
-          <div className="space-y-2">
-            <Label htmlFor="interest_type">Interest Type *</Label>
-            <Select
-              value={formData.interest_type}
-              onValueChange={(value) => handleChange('interest_type', value)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select type" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="Flat">Flat Rate</SelectItem>
-                <SelectItem value="Reducing">Reducing Balance</SelectItem>
-                <SelectItem value="Interest-Only">Interest-Only</SelectItem>
-                <SelectItem value="Rolled-Up">Rolled-Up / Capitalized</SelectItem>
-              </SelectContent>
-            </Select>
-          </div>
+          {!isRollUpServiced && (
+            <div className="space-y-2">
+              <Label htmlFor="interest_type">Interest Type *</Label>
+              <Select
+                value={formData.interest_type}
+                onValueChange={(value) => handleChange('interest_type', value)}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Select type" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="Flat">Flat Rate</SelectItem>
+                  <SelectItem value="Reducing">Reducing Balance</SelectItem>
+                  <SelectItem value="Interest-Only">Interest-Only</SelectItem>
+                  <SelectItem value="Rolled-Up">Rolled-Up / Capitalized</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          )}
         </div>
       )}
 
-      {!isSpecialType && (
+      {(!isSpecialType || isRollUpServiced) && (
         <>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
@@ -246,8 +267,8 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
             </div>
           </div>
 
-          {/* Interest Timing - Simplified dropdown (Monthly only, non-Rolled-Up) */}
-          {formData.interest_type !== 'Rolled-Up' && formData.period === 'Monthly' && (
+          {/* Interest Timing - Simplified dropdown (Monthly only, non-Rolled-Up, non-Roll-Up & Serviced) */}
+          {formData.interest_type !== 'Rolled-Up' && formData.period === 'Monthly' && !isRollUpServiced && (
             <div className="space-y-2">
               <Label htmlFor="interest_timing">Interest Timing</Label>
               <Select
@@ -280,7 +301,7 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
             </div>
           )}
 
-          {formData.interest_type !== 'Rolled-Up' && (
+          {formData.interest_type !== 'Rolled-Up' && !isRollUpServiced && (
             <div className="flex items-center space-x-2">
               <input
                 type="checkbox"
@@ -295,7 +316,7 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
             </div>
           )}
 
-          {formData.interest_type === 'Interest-Only' && (
+          {formData.interest_type === 'Interest-Only' && !isRollUpServiced && (
             <div className="space-y-2">
               <Label htmlFor="interest_only_period">Interest-Only Period (periods)</Label>
               <Input
@@ -310,6 +331,54 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
             </div>
           )}
 
+          {/* Roll-Up & Serviced specific options */}
+          {isRollUpServiced && (
+            <div className="space-y-4 p-4 bg-indigo-50 rounded-lg">
+              <h4 className="font-medium text-indigo-900">Roll-Up & Serviced Options</h4>
+              <div className="flex items-center space-x-2">
+                <input
+                  type="checkbox"
+                  id="compound_after_rollup"
+                  checked={formData.compound_after_rollup}
+                  onChange={(e) => handleChange('compound_after_rollup', e.target.checked)}
+                  className="rounded border-slate-300"
+                />
+                <Label htmlFor="compound_after_rollup" className="font-normal cursor-pointer">
+                  Compound interest after roll-up period
+                </Label>
+              </div>
+              <p className="text-xs text-slate-500">
+                If enabled, serviced interest is calculated on (principal + roll-up + any unpaid accrued interest).
+                If disabled, serviced interest is calculated on (principal + roll-up amount) only.
+              </p>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+                <div className="space-y-2">
+                  <Label htmlFor="default_additional_fees">Default Additional Deducted Fees</Label>
+                  <Input
+                    id="default_additional_fees"
+                    type="number"
+                    value={formData.default_additional_fees}
+                    onChange={(e) => handleChange('default_additional_fees', e.target.value)}
+                    placeholder="0.00"
+                    step="0.01"
+                    min={0}
+                  />
+                  <p className="text-xs text-slate-500">Fees added to gross principal but not disbursed</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="default_additional_fees_note">Fees Note</Label>
+                  <Input
+                    id="default_additional_fees_note"
+                    value={formData.default_additional_fees_note}
+                    onChange={(e) => handleChange('default_additional_fees_note', e.target.value)}
+                    placeholder="e.g. Broker fee, Legal costs"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
+
+          {!isRollUpServiced && (
           <div className="p-4 bg-blue-50 rounded-lg">
             <h4 className="font-medium text-blue-900 mb-2">Interest Calculation Methods</h4>
             <div className="text-sm text-blue-800 space-y-2">
@@ -319,6 +388,7 @@ export default function ProductForm({ product, onSubmit, onCancel, isLoading }) 
               <p><strong>Rolled-Up / Capitalized:</strong> No monthly payments. Interest compounds and is added to the loan balance. Everything paid at the end. Common for bridging loans and property development.</p>
             </div>
           </div>
+          )}
         </>
       )}
 

@@ -111,6 +111,8 @@ const AuthenticatedApp = () => {
   const { isLoadingOrgs, currentOrganization } = useOrganization();
   const location = useLocation();
 
+  console.log('[App] AuthenticatedApp render - isLoadingAuth:', isLoadingAuth, 'isAuthenticated:', isAuthenticated, 'path:', location.pathname);
+
   // Check for password recovery token in URL hash FIRST, before anything else
   // This prevents the app from redirecting to login before Supabase can process the token
   const hashParams = new URLSearchParams(window.location.hash.substring(1));
@@ -179,6 +181,7 @@ const AuthenticatedApp = () => {
 
   // If not authenticated and not on a public route, redirect to Login
   if (!isAuthenticated && !isPublicRoute) {
+    console.log('[App] NOT AUTHENTICATED - redirecting to /Login from', location.pathname);
     return <Navigate to="/Login" replace />;
   }
 

@@ -4,11 +4,24 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
-import { Loader2 } from 'lucide-react';
+import { Loader2, AlertTriangle } from 'lucide-react';
 import { format } from 'date-fns';
 
-export default function InvestorTransactionForm({ investor, transaction, onSubmit, onCancel, isLoading }) {
+// Map itemType + type to a unified transaction type for the form
+const getUnifiedType = (transaction) => {
+  if (!transaction) return 'capital_in';
+  if (transaction.itemType === 'interest') {
+    return transaction.type === 'credit' ? 'interest_credit' : 'interest_debit';
+  }
+  return transaction.type || 'capital_in';
+};
+
+// Check if this is an interest type
+const isInterestType = (type) => type === 'interest_credit' || type === 'interest_debit';
+
+export default function InvestorTransactionForm({ investor, transaction, onSubmit, onCancel, isLoading, allowTypeConversion = false }) {
   const isEditing = !!transaction;
+  const originalType = transaction ? getUnifiedType(transaction) : null;
 
   const [formData, setFormData] = useState({
     type: 'capital_in',
@@ -23,21 +36,32 @@ export default function InvestorTransactionForm({ investor, transaction, onSubmi
   useEffect(() => {
     if (transaction) {
       setFormData({
-        type: transaction.type || 'capital_in',
+        type: getUnifiedType(transaction),
         amount: transaction.amount?.toString() || '',
         date: transaction.date || format(new Date(), 'yyyy-MM-dd'),
         reference: transaction.reference || '',
         notes: transaction.notes || '',
-        description: transaction.description || ''
+        description: transaction.description || transaction.notes || ''
       });
     }
   }, [transaction]);
+
+  // Determine if this is a type conversion (changing between capital and interest)
+  const isTypeConversion = isEditing && originalType && (
+    (isInterestType(originalType) && !isInterestType(formData.type)) ||
+    (!isInterestType(originalType) && isInterestType(formData.type))
+  );
 
   const handleSubmit = (e) => {
     e.preventDefault();
     onSubmit({
       ...formData,
-      amount: parseFloat(formData.amount)
+      amount: parseFloat(formData.amount),
+      // Include conversion metadata
+      isTypeConversion,
+      originalType,
+      originalItemType: transaction?.itemType,
+      originalId: transaction?.id
     });
   };
 
@@ -55,12 +79,34 @@ export default function InvestorTransactionForm({ investor, transaction, onSubmi
           <SelectContent>
             <SelectItem value="capital_in">Capital In</SelectItem>
             <SelectItem value="capital_out">Capital Out</SelectItem>
+            {(allowTypeConversion || isInterestType(formData.type)) && (
+              <>
+                <SelectItem value="interest_credit">Interest Credit</SelectItem>
+                <SelectItem value="interest_debit">Interest Debit (Withdrawn)</SelectItem>
+              </>
+            )}
           </SelectContent>
         </Select>
-        <p className="text-xs text-slate-500">
-          Note: Interest transactions are managed separately via the Interest Ledger.
-        </p>
+        {!allowTypeConversion && !isEditing && (
+          <p className="text-xs text-slate-500">
+            Note: Interest transactions are managed separately via the Interest Ledger.
+          </p>
+        )}
       </div>
+
+      {/* Warning when converting between types */}
+      {isTypeConversion && (
+        <div className="flex items-start gap-2 p-3 bg-amber-50 border border-amber-200 rounded-md">
+          <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 mt-0.5" />
+          <div className="text-sm text-amber-800">
+            <p className="font-medium">Type Conversion</p>
+            <p className="text-amber-700">
+              This will convert the transaction from {isInterestType(originalType) ? 'an interest entry' : 'a capital transaction'} to {isInterestType(formData.type) ? 'an interest entry' : 'a capital transaction'}.
+              The original record will be deleted and a new one created.
+            </p>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-2">
         <Label htmlFor="amount">Amount *</Label>

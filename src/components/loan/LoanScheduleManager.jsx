@@ -43,22 +43,28 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     product_type: product.product_type,
     scheduler_type: product.scheduler_type
   });
+  console.log('Loan product_type:', loan.product_type);
 
   // NEW SCHEDULER SYSTEM: If product has scheduler_type, use the new scheduler-based system
   // This provides a clean migration path - products with scheduler_type use new code,
   // products without it continue using the legacy code below
   // Also check product_type as a fallback for products that haven't been re-saved
   let effectiveSchedulerType = product.scheduler_type;
-  if (!effectiveSchedulerType && product.product_type) {
+
+  // Check product_type from both product and loan (loan may have it even if product doesn't)
+  const effectiveProductType = product.product_type || loan.product_type;
+
+  if (!effectiveSchedulerType && effectiveProductType) {
     // Derive scheduler_type from product_type for unmigrated products
     const typeMap = {
       'Fixed Charge': 'fixed_charge',
       'Irregular Income': 'irregular_income',
-      'Rent': 'rent'
+      'Rent': 'rent',
+      'Roll-Up & Serviced': 'roll_up_serviced'
     };
-    effectiveSchedulerType = typeMap[product.product_type];
+    effectiveSchedulerType = typeMap[effectiveProductType];
     if (effectiveSchedulerType) {
-      console.log(`Derived scheduler_type '${effectiveSchedulerType}' from product_type '${product.product_type}'`);
+      console.log(`Derived scheduler_type '${effectiveSchedulerType}' from product_type '${effectiveProductType}'`);
     }
   }
 
@@ -66,21 +72,17 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     console.log('=== SCHEDULE ENGINE: Using New Scheduler System ===');
     console.log('Scheduler type:', effectiveSchedulerType);
 
-    try {
-      const { getScheduler, createScheduler } = await import('@/lib/schedule');
-      const SchedulerClass = getScheduler(effectiveSchedulerType);
+    const { getScheduler, createScheduler } = await import('@/lib/schedule');
+    const SchedulerClass = getScheduler(effectiveSchedulerType);
 
-      if (SchedulerClass) {
-        const scheduler = createScheduler(effectiveSchedulerType, product.scheduler_config || {});
-        const result = await scheduler.generateSchedule({ loan, product, options });
-        console.log('=== SCHEDULE ENGINE: New Scheduler Complete ===');
-        return result;
-      } else {
-        console.warn(`Scheduler not found: ${effectiveSchedulerType}, falling back to legacy`);
-      }
-    } catch (err) {
-      console.error('Error using new scheduler system, falling back to legacy:', err);
+    if (!SchedulerClass) {
+      throw new Error(`Scheduler not found: ${effectiveSchedulerType}. Check that the scheduler is registered.`);
     }
+
+    const scheduler = createScheduler(effectiveSchedulerType, product.scheduler_config || {});
+    const result = await scheduler.generateSchedule({ loan, product, options });
+    console.log('=== SCHEDULE ENGINE: New Scheduler Complete ===');
+    return result;
   }
 
   // ============ LEGACY CODE BELOW ============

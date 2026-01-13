@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ArrowLeft, FileText, AlertCircle } from 'lucide-react';
 import LoanApplicationForm from '@/components/loan/LoanApplicationForm';
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 
 export default function NewLoan() {
   const navigate = useNavigate();
@@ -31,9 +32,62 @@ export default function NewLoan() {
 
   const createLoanMutation = useMutation({
     mutationFn: async ({ loanData, schedule }) => {
+      // DEBUG: Log the loan data being sent to the database
+      console.log('=== LOAN CREATE DEBUG ===');
+      console.log('Full loanData:', JSON.stringify(loanData, null, 2));
+      console.log('Fields with empty strings:');
+      Object.entries(loanData).forEach(([key, value]) => {
+        if (value === '') console.log(`  ${key}: "" (empty string)`);
+        if (value === null) console.log(`  ${key}: null`);
+        if (value === undefined) console.log(`  ${key}: undefined`);
+      });
+      console.log('=========================');
+
       const loan = await api.entities.Loan.create(loanData);
 
-      // Create repayment schedule entries
+      // For Roll-Up & Serviced loans, use the scheduler system to generate the schedule
+      // This ensures proper roll-up interest calculation and schedule structure
+      const isRollUpServiced = loanData.product_type === 'Roll-Up & Serviced';
+
+      if (isRollUpServiced) {
+        console.log('=== Roll-Up & Serviced: Using scheduler system ===');
+        // Create disbursement first so scheduler has transaction data
+        if (loan.start_date && loan.status !== 'Pending') {
+          const grossAmount = loan.principal_amount;
+          const deductedFee = loan.arrangement_fee || 0;
+          const additionalFees = loan.additional_deducted_fees || 0;
+          const netAmount = loan.net_disbursed || (grossAmount - deductedFee - additionalFees);
+
+          if (netAmount >= 0) {
+            const deductionParts = [];
+            if (deductedFee > 0) deductionParts.push(`£${deductedFee.toFixed(2)} arrangement fee`);
+            if (additionalFees > 0) deductionParts.push(`£${additionalFees.toFixed(2)} additional fees`);
+            const disbursementNotes = deductionParts.length > 0
+              ? `Initial loan disbursement (${deductionParts.join(' + ')} deducted)`
+              : 'Initial loan disbursement';
+
+            await api.entities.Transaction.create({
+              loan_id: loan.id,
+              borrower_id: loan.borrower_id,
+              date: loan.start_date,
+              type: 'Disbursement',
+              gross_amount: grossAmount,
+              deducted_fee: deductedFee,
+              amount: netAmount,
+              principal_applied: grossAmount,
+              interest_applied: 0,
+              fees_applied: deductedFee,
+              notes: disbursementNotes
+            });
+          }
+        }
+
+        // Now generate the schedule using the scheduler system
+        await regenerateLoanSchedule(loan.id);
+        return loan;
+      }
+
+      // Standard loan flow - create schedule from preview
       const scheduleWithLoanId = schedule.map(row => ({
         ...row,
         loan_id: loan.id
@@ -93,8 +147,12 @@ export default function NewLoan() {
       return loan;
     },
     onSuccess: (loan) => {
+      console.log('=== Loan created successfully ===', loan.id);
       queryClient.invalidateQueries({ queryKey: ['loans'] });
       navigate(createPageUrl(`LoanDetails?id=${loan.id}`));
+    },
+    onError: (error) => {
+      console.error('=== Loan creation failed ===', error);
     }
   });
 

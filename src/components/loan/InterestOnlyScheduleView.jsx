@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import { format, differenceInDays } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from './LoanCalculator';
-import { CalendarClock, ArrowRightCircle, ArrowLeftCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUp, ArrowDown, TrendingUp } from 'lucide-react';
+import { CalendarClock, ArrowRightCircle, ArrowLeftCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUp, ArrowDown, TrendingUp, RefreshCcw } from 'lucide-react';
 
 /**
  * Build a unified timeline from transactions and schedule entries
@@ -40,6 +40,34 @@ function buildTimeline({ loan, product, schedule, transactions }) {
     .forEach(tx => {
       const dateKey = getDateKey(tx.date);
       const grossAmount = tx.gross_amount ?? tx.amount;
+      const netAmount = tx.amount || grossAmount;
+      const hasDeductions = grossAmount !== netAmount;
+
+      // Build calculation breakdown for disbursements with deductions
+      let calcBreakdown = null;
+      if (hasDeductions) {
+        const deductedFee = tx.deducted_fee || 0;
+        const deductedInterest = tx.deducted_interest || 0;
+        const otherDeductions = grossAmount - netAmount - deductedFee - deductedInterest;
+
+        // Build the working string
+        const parts = [`£${grossAmount.toLocaleString('en-GB', { minimumFractionDigits: 2 })}`];
+        if (deductedFee > 0) parts.push(`- £${deductedFee.toLocaleString('en-GB', { minimumFractionDigits: 2 })} fee`);
+        if (deductedInterest > 0) parts.push(`- £${deductedInterest.toLocaleString('en-GB', { minimumFractionDigits: 2 })} int`);
+        if (otherDeductions > 0.01) parts.push(`- £${otherDeductions.toLocaleString('en-GB', { minimumFractionDigits: 2 })} other`);
+        parts.push(`= £${netAmount.toLocaleString('en-GB', { minimumFractionDigits: 2 })} net`);
+
+        calcBreakdown = {
+          isDisbursement: true,
+          breakdown: parts.join(' '),
+          grossAmount,
+          netAmount,
+          deductedFee,
+          deductedInterest,
+          otherDeductions
+        };
+      }
+
       rows.push({
         id: `tx-${tx.id}`,
         date: dateKey,
@@ -52,7 +80,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         expectedInterest: 0,
         isDueDate: false,
         scheduleEntry: null,
-        calculationBreakdown: null
+        calculationBreakdown: calcBreakdown
       });
     });
 
@@ -190,14 +218,31 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         const displayPrincipal = scheduleEntry.calculation_principal_start || principalForCalc;
         const displayDailyRate = displayPrincipal * (effectiveRate / 100 / 365);
 
+        // Build breakdown string with roll-up prefix if applicable
+        const isRollUpPeriod = scheduleEntry.is_roll_up_period;
+        const isServicedPeriod = scheduleEntry.is_serviced_period;
+        let breakdownStr = '';
+        if (days > 0 && displayDailyRate > 0) {
+          const calcStr = `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`;
+          if (isRollUpPeriod) {
+            // Show roll-up period length in months (approximate from days)
+            const rollUpMonths = Math.round(days / 30.44);
+            breakdownStr = `Roll-up (${rollUpMonths}m): ${calcStr}`;
+          } else if (isServicedPeriod) {
+            breakdownStr = `Serviced: ${calcStr}`;
+          } else {
+            breakdownStr = calcStr;
+          }
+        } else {
+          breakdownStr = storedInterest === 0 ? 'Prepaid' : `${days}d`;
+        }
+
         row.calculationBreakdown = {
           days,
           dailyRate: displayDailyRate,
           principal: displayPrincipal,
           effectiveRate,
-          breakdown: days > 0 && displayDailyRate > 0
-            ? `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`
-            : storedInterest === 0 ? 'Prepaid' : `${days}d`
+          breakdown: breakdownStr
         };
         // Use stored interest amount from schedule
         row.expectedInterest = storedInterest;
@@ -331,7 +376,8 @@ function groupRowsByMonth(rows) {
           interestRepayments: 0,
           capitalRepayments: 0,
           adjustments: 0,
-          rateChanges: 0
+          rateChanges: 0,
+          rollUpPeriods: 0
         }
       });
     }
@@ -352,6 +398,8 @@ function groupRowsByMonth(rows) {
       group.typeCounts.adjustments++;
     } else if (row.primaryType === 'rate_change') {
       group.typeCounts.rateChanges++;
+    } else if (row.primaryType === 'due_date' && row.scheduleEntry?.is_roll_up_period) {
+      group.typeCounts.rollUpPeriods++;
     }
   });
 
@@ -478,8 +526,17 @@ function TypeIcon({ row }) {
       break;
     case 'due_date':
       icon = <CalendarClock className="w-4 h-4" />;
-      tooltip = 'Interest due date';
-      colorClass = 'text-blue-600';
+      // Check if this is a roll-up due date
+      if (row.scheduleEntry?.is_roll_up_period) {
+        tooltip = 'Roll-up period end - interest accumulated';
+        colorClass = 'text-indigo-600';
+      } else if (row.scheduleEntry?.is_serviced_period) {
+        tooltip = 'Serviced interest due';
+        colorClass = 'text-blue-600';
+      } else {
+        tooltip = 'Interest due date';
+        colorClass = 'text-blue-600';
+      }
       break;
     case 'disbursement':
       icon = <ArrowRightCircle className="w-4 h-4" />;
@@ -553,6 +610,13 @@ function GroupTypeIcons({ typeCounts }) {
   for (let i = 0; i < (typeCounts.rateChanges || 0); i++) {
     icons.push(
       <TrendingUp key={`rate-${i}`} className="w-4 h-4 text-orange-600" />
+    );
+  }
+
+  // Roll-up periods (purple circular arrow)
+  for (let i = 0; i < (typeCounts.rollUpPeriods || 0); i++) {
+    icons.push(
+      <RefreshCcw key={`rollup-${i}`} className="w-4 h-4 text-purple-600" />
     );
   }
 
@@ -720,6 +784,8 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
   const isDueDate = row.isDueDate;
   const isToday = row.isToday;
   const isRateChange = row.primaryType === 'rate_change';
+  const isRollUpPeriod = row.scheduleEntry?.is_roll_up_period;
+  const isServicedPeriod = row.scheduleEntry?.is_serviced_period;
 
   // Green for negative (ahead), default for positive/zero
   const balanceColorClass = row.interestBalance < -0.01 ? 'text-emerald-600' : '';
@@ -777,7 +843,9 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
     <TableRow className={cn(
       isDueDate && 'bg-slate-50/50',
       isFuture && 'opacity-60',
-      isToday && 'bg-amber-50 border-y-2 border-amber-300'
+      isToday && 'bg-amber-50 border-y-2 border-amber-300',
+      isRollUpPeriod && 'bg-indigo-50 border-y border-indigo-200',
+      isServicedPeriod && 'bg-blue-50/30'
     )}>
       {/* Date */}
       <TableCell className={cn(
@@ -821,17 +889,47 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
           <div className="flex items-center justify-end gap-1">
             <Tooltip>
               <TooltipTrigger asChild>
-                <span className={cn('cursor-help', row.primaryType === 'adjustment' ? 'text-amber-600' : (isFuture ? 'text-slate-400' : 'text-blue-600'))}>
+                <span className={cn(
+                  'cursor-help',
+                  row.primaryType === 'adjustment' ? 'text-amber-600' :
+                  isRollUpPeriod ? 'text-indigo-600' :
+                  (isFuture ? 'text-slate-400' : 'text-blue-600')
+                )}>
                   {row.primaryType === 'adjustment' ? <CircleDot className="w-3.5 h-3.5" /> : <CalendarClock className="w-3.5 h-3.5" />}
                 </span>
               </TooltipTrigger>
               <TooltipContent>
-                <p>{row.primaryType === 'adjustment' ? 'Schedule adjustment' : 'Interest due date'}</p>
+                <p>
+                  {row.primaryType === 'adjustment' ? 'Schedule adjustment' :
+                   isRollUpPeriod ? 'Roll-up period end - interest accumulated' :
+                   isServicedPeriod ? 'Serviced interest due' :
+                   'Interest due date'}
+                </p>
+                {isRollUpPeriod && row.scheduleEntry?.rolled_up_interest && (
+                  <p className="text-xs mt-1">Rolled-up interest: {formatCurrency(row.scheduleEntry.rolled_up_interest)}</p>
+                )}
               </TooltipContent>
             </Tooltip>
-            <span className={isFuture ? 'text-slate-400' : (row.primaryType === 'adjustment' ? 'text-amber-600' : 'text-blue-600')}>
+            <span className={
+              isFuture ? 'text-slate-400' :
+              row.primaryType === 'adjustment' ? 'text-amber-600' :
+              isRollUpPeriod ? 'text-indigo-600 font-medium' :
+              'text-blue-600'
+            }>
               {formatCurrency(row.expectedInterest)}
             </span>
+            {isRollUpPeriod && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-purple-600 cursor-help ml-1">
+                    <RefreshCcw className="w-3.5 h-3.5" />
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent>
+                  <p>Roll-up interest (accrued, not paid)</p>
+                </TooltipContent>
+              </Tooltip>
+            )}
           </div>
         ) : (
           <span className="text-slate-300">—</span>
@@ -967,6 +1065,28 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
               <p className="text-xs text-slate-300">Daily: {formatCurrency(row.calculationBreakdown.principal)} × {row.calculationBreakdown.effectiveRate}% ÷ 365 = {formatCurrency(row.calculationBreakdown.dailyRate)}/day</p>
               <p className="text-xs text-slate-300">{row.calculationBreakdown.days} days × {formatCurrency(row.calculationBreakdown.dailyRate)} = {formatCurrency(Math.abs(row.expectedInterest))}</p>
               <p className="font-medium mt-1">Interest {row.expectedInterest < 0 ? 'credit' : 'due'}: {formatCurrency(Math.abs(row.expectedInterest))}</p>
+            </TooltipContent>
+          </Tooltip>
+        ) : row.calculationBreakdown?.isDisbursement ? (
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span className="cursor-help text-slate-500">
+                {row.calculationBreakdown.breakdown}
+              </span>
+            </TooltipTrigger>
+            <TooltipContent className="space-y-1">
+              <p className="font-medium">Disbursement with deductions</p>
+              <p className="text-xs text-slate-300">Gross: {formatCurrency(row.calculationBreakdown.grossAmount)}</p>
+              {row.calculationBreakdown.deductedFee > 0 && (
+                <p className="text-xs text-slate-300">Arrangement fee: -{formatCurrency(row.calculationBreakdown.deductedFee)}</p>
+              )}
+              {row.calculationBreakdown.deductedInterest > 0 && (
+                <p className="text-xs text-slate-300">Deducted interest: -{formatCurrency(row.calculationBreakdown.deductedInterest)}</p>
+              )}
+              {row.calculationBreakdown.otherDeductions > 0.01 && (
+                <p className="text-xs text-slate-300">Other deductions: -{formatCurrency(row.calculationBreakdown.otherDeductions)}</p>
+              )}
+              <p className="font-medium mt-1">Net disbursed: {formatCurrency(row.calculationBreakdown.netAmount)}</p>
             </TooltipContent>
           </Tooltip>
         ) : row.calculationBreakdown ? (
@@ -1273,7 +1393,7 @@ export default function InterestOnlyScheduleView({
                 )}
               </div>
             </TableHead>
-            <TableHead className="text-xs py-0.5 w-full">Calculation</TableHead>
+            <TableHead className="text-xs py-0.5 w-full">Note</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>

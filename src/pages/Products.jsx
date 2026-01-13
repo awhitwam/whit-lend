@@ -17,7 +17,8 @@ const schedulerDisplayNames = {
   'rolled_up': 'Rolled-Up',
   'fixed_charge': 'Fixed Charge',
   'irregular_income': 'Irregular Income',
-  'rent': 'Rent (Quarterly)'
+  'rent': 'Rent (Quarterly)',
+  'roll_up_serviced': 'Roll-Up & Serviced'
 };
 import ProductForm from '@/components/product/ProductForm';
 import EmptyState from '@/components/ui/EmptyState';
@@ -163,6 +164,7 @@ export default function Products() {
               const isFixedCharge = product.product_type === 'Fixed Charge';
               const isIrregularIncome = product.product_type === 'Irregular Income';
               const isRent = product.product_type === 'Rent';
+              const isRollUpServiced = product.product_type === 'Roll-Up & Serviced';
               const isSpecialType = isFixedCharge || isIrregularIncome || isRent;
 
               return (
@@ -193,6 +195,14 @@ export default function Products() {
                         >
                           <Home className="w-3 h-3 mr-1" />
                           Rent (Quarterly)
+                        </Badge>
+                      ) : isRollUpServiced ? (
+                        <Badge
+                          variant="outline"
+                          className="bg-indigo-50 text-indigo-700 border-indigo-200 mt-2"
+                        >
+                          <TrendingUp className="w-3 h-3 mr-1" />
+                          Roll-Up & Serviced
                         </Badge>
                       ) : (
                         <Badge
@@ -258,6 +268,39 @@ export default function Products() {
                       <div className="text-sm text-slate-600">
                         <p>Periodic rent income with pattern detection.</p>
                         <p className="mt-2 text-xs text-slate-500">Analyzes payment history to predict next rent due.</p>
+                        {product.scheduler_type && (
+                          <div className="flex items-center gap-1.5 mt-3 pt-2 border-t text-xs text-slate-500">
+                            <Calculator className="w-3 h-3" />
+                            <span>Scheduler: {schedulerDisplayNames[product.scheduler_type] || product.scheduler_type}</span>
+                          </div>
+                        )}
+                      </div>
+                    ) : isRollUpServiced ? (
+                      <div className="text-sm text-slate-600">
+                        <div className="grid grid-cols-2 gap-4 mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 rounded-lg bg-indigo-100">
+                              <TrendingUp className="w-4 h-4 text-indigo-600" />
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-500">Interest</p>
+                              <p className="font-semibold">{product.interest_rate}% p.a.</p>
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <div className="p-2 rounded-lg bg-indigo-100">
+                              <Clock className="w-4 h-4 text-indigo-600" />
+                            </div>
+                            <div>
+                              <p className="text-xs text-slate-500">Period</p>
+                              <p className="font-semibold">{product.period}</p>
+                            </div>
+                          </div>
+                        </div>
+                        <p className="text-xs text-slate-500">Interest rolls up initially, then serviced monthly on (principal + roll-up).</p>
+                        {product.compound_after_rollup && (
+                          <p className="text-xs text-indigo-600 mt-1">Compounding after roll-up enabled</p>
+                        )}
                         {product.scheduler_type && (
                           <div className="flex items-center gap-1.5 mt-3 pt-2 border-t text-xs text-slate-500">
                             <Calculator className="w-3 h-3" />

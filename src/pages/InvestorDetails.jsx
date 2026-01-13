@@ -168,50 +168,80 @@ export default function InvestorDetails() {
   });
 
   const updateTransactionMutation = useMutation({
-    mutationFn: async (/** @type {{type: string, amount: number, date: string, notes?: string}} */ data) => {
-      const oldTransaction = transactions.find(t => t.id === editingTransaction.id);
+    mutationFn: async (data) => {
+      const { type, amount, date, description, reference, notes } = data;
+      const isInterestType = type === 'interest_credit' || type === 'interest_debit';
 
-      await api.entities.InvestorTransaction.update(editingTransaction.id, {
-        ...data,
-        investor_id: investorId,
-        investor_name: investor.name
-      });
-
-      let capitalChange = 0;
-      if (oldTransaction.type === 'capital_in') {
-        capitalChange -= oldTransaction.amount;
-      } else if (oldTransaction.type === 'capital_out') {
-        capitalChange += oldTransaction.amount;
-      }
-
-      if (data.type === 'capital_in') {
-        capitalChange += data.amount;
-      } else if (data.type === 'capital_out') {
-        capitalChange -= data.amount;
-      }
-
-      if (capitalChange !== 0 || oldTransaction.type !== data.type) {
-        const oldCapitalIn = oldTransaction.type === 'capital_in' ? oldTransaction.amount : 0;
-        const newCapitalIn = data.type === 'capital_in' ? data.amount : 0;
-        const contributedChange = newCapitalIn - oldCapitalIn;
-
-        await api.entities.Investor.update(investorId, {
-          current_capital_balance: (investor.current_capital_balance || 0) + capitalChange,
-          total_capital_contributed: (investor.total_capital_contributed || 0) + contributedChange
+      if (isInterestType) {
+        // Update interest entry
+        const interestType = type === 'interest_credit' ? 'credit' : 'debit';
+        await api.entities.InvestorInterest.update(editingTransaction.id, {
+          type: interestType,
+          amount,
+          date,
+          description: description || notes,
+          reference
         });
-      }
 
-      // Log the update with before/after values
-      logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_UPDATE,
-        { id: editingTransaction.id, investor_id: investorId, type: data.type, amount: data.amount, date: data.date },
-        { name: investor?.name },
-        { new_type: data.type, new_amount: data.amount, new_date: data.date },
-        { old_type: oldTransaction.type, old_amount: oldTransaction.amount, old_date: oldTransaction.date }
-      );
+        // Log the update
+        logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_UPDATE,
+          { id: editingTransaction.id, investor_id: investorId, type, amount, date },
+          { name: investor?.name },
+          { new_type: type, new_amount: amount, new_date: date },
+          { old_type: editingTransaction.type, old_amount: editingTransaction.amount, old_date: editingTransaction.date }
+        );
+      } else {
+        // Update capital transaction
+        const oldTransaction = transactions.find(t => t.id === editingTransaction.id);
+
+        await api.entities.InvestorTransaction.update(editingTransaction.id, {
+          type,
+          amount,
+          date,
+          description,
+          reference,
+          notes,
+          investor_id: investorId,
+          investor_name: investor.name
+        });
+
+        let capitalChange = 0;
+        if (oldTransaction.type === 'capital_in') {
+          capitalChange -= oldTransaction.amount;
+        } else if (oldTransaction.type === 'capital_out') {
+          capitalChange += oldTransaction.amount;
+        }
+
+        if (type === 'capital_in') {
+          capitalChange += amount;
+        } else if (type === 'capital_out') {
+          capitalChange -= amount;
+        }
+
+        if (capitalChange !== 0 || oldTransaction.type !== type) {
+          const oldCapitalIn = oldTransaction.type === 'capital_in' ? oldTransaction.amount : 0;
+          const newCapitalIn = type === 'capital_in' ? amount : 0;
+          const contributedChange = newCapitalIn - oldCapitalIn;
+
+          await api.entities.Investor.update(investorId, {
+            current_capital_balance: (investor.current_capital_balance || 0) + capitalChange,
+            total_capital_contributed: (investor.total_capital_contributed || 0) + contributedChange
+          });
+        }
+
+        // Log the update with before/after values
+        logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_UPDATE,
+          { id: editingTransaction.id, investor_id: investorId, type, amount, date },
+          { name: investor?.name },
+          { new_type: type, new_amount: amount, new_date: date },
+          { old_type: oldTransaction.type, old_amount: oldTransaction.amount, old_date: oldTransaction.date }
+        );
+      }
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
       queryClient.invalidateQueries({ queryKey: ['investor-transactions', investorId] });
+      queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
       queryClient.invalidateQueries({ queryKey: ['investors'] });
       setIsTransactionOpen(false);
       setEditingTransaction(null);
@@ -287,6 +317,93 @@ export default function InvestorDetails() {
     }
   });
 
+  // Convert transaction between capital and interest types
+  const convertTransactionMutation = useMutation({
+    mutationFn: async (data) => {
+      const { type, amount, date, description, reference, notes, originalItemType, originalId } = data;
+      const isConvertingToInterest = type === 'interest_credit' || type === 'interest_debit';
+
+      // Step 1: Delete the original record
+      if (originalItemType === 'interest') {
+        // Was an interest entry, delete from investor_interest
+        await api.entities.InvestorInterest.delete(originalId);
+      } else {
+        // Was a capital transaction, delete and update investor balance
+        const oldTransaction = transactions.find(t => t.id === originalId);
+        await api.entities.InvestorTransaction.delete(originalId);
+
+        // Reverse the balance impact of the deleted capital transaction
+        if (oldTransaction) {
+          let capitalChange = 0;
+          if (oldTransaction.type === 'capital_in') {
+            capitalChange = -oldTransaction.amount;
+          } else if (oldTransaction.type === 'capital_out') {
+            capitalChange = oldTransaction.amount;
+          }
+
+          if (capitalChange !== 0) {
+            await api.entities.Investor.update(investorId, {
+              current_capital_balance: (investor.current_capital_balance || 0) + capitalChange,
+              total_capital_contributed: oldTransaction.type === 'capital_in'
+                ? (investor.total_capital_contributed || 0) - oldTransaction.amount
+                : investor.total_capital_contributed
+            });
+          }
+        }
+      }
+
+      // Step 2: Create the new record
+      if (isConvertingToInterest) {
+        // Create interest entry
+        await api.entities.InvestorInterest.create({
+          investor_id: investorId,
+          type: type === 'interest_credit' ? 'credit' : 'debit',
+          amount,
+          date,
+          description: description || notes,
+          reference
+        });
+      } else {
+        // Create capital transaction
+        const capitalType = type; // 'capital_in' or 'capital_out'
+        await api.entities.InvestorTransaction.create({
+          investor_id: investorId,
+          investor_name: investor.name,
+          type: capitalType,
+          amount,
+          date,
+          description,
+          reference,
+          notes
+        });
+
+        // Update investor balance for the new capital transaction
+        let capitalChange = capitalType === 'capital_in' ? amount : -amount;
+        await api.entities.Investor.update(investorId, {
+          current_capital_balance: (investor.current_capital_balance || 0) + capitalChange,
+          total_capital_contributed: capitalType === 'capital_in'
+            ? (investor.total_capital_contributed || 0) + amount
+            : investor.total_capital_contributed
+        });
+      }
+
+      // Log the conversion
+      logInvestorTransactionEvent(AuditAction.INVESTOR_TRANSACTION_UPDATE,
+        { id: originalId, investor_id: investorId, type: data.originalType, amount },
+        { name: investor?.name },
+        { converted_to: type, new_amount: amount }
+      );
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['investor', investorId] });
+      queryClient.invalidateQueries({ queryKey: ['investor-transactions', investorId] });
+      queryClient.invalidateQueries({ queryKey: ['investor-interest', investorId] });
+      queryClient.invalidateQueries({ queryKey: ['investors'] });
+      setIsTransactionOpen(false);
+      setEditingTransaction(null);
+    }
+  });
+
   // Recalculate balance from transactions
   const recalculateBalanceMutation = useMutation({
     mutationFn: async () => {
@@ -317,25 +434,60 @@ export default function InvestorDetails() {
   // Merge capital transactions and interest entries for unified display
   // Sort by date descending, and for same date interest entries, debits appear before credits
   // (so credit appears as earlier transaction when reading top-to-bottom)
-  const mergedItems = useMemo(() => [
-    ...capitalTransactions.map(t => ({
-      ...t,
-      itemType: 'capital',
-      sortDate: new Date(t.date).getTime(),
-      sortOrder: 0 // Capital transactions have neutral order
-    })),
-    ...interestEntries.map(e => ({
-      ...e,
-      itemType: 'interest',
-      sortDate: new Date(e.date).getTime(),
-      sortOrder: e.type === 'credit' ? 1 : -1 // Debits before credits (so credit is "earlier" when newest first)
-    }))
-  ].sort((a, b) => {
-    // First sort by date descending (newest first)
-    if (b.sortDate !== a.sortDate) return b.sortDate - a.sortDate;
-    // For same date, sort by sortOrder (debits first, so credit appears below/earlier)
-    return a.sortOrder - b.sortOrder;
-  }), [capitalTransactions, interestEntries]);
+  const mergedItems = useMemo(() => {
+    const items = [
+      ...capitalTransactions.map(t => ({
+        ...t,
+        itemType: 'capital',
+        sortDate: new Date(t.date).getTime(),
+        sortOrder: 0 // Capital transactions have neutral order
+      })),
+      ...interestEntries.map(e => ({
+        ...e,
+        itemType: 'interest',
+        sortDate: new Date(e.date).getTime(),
+        sortOrder: e.type === 'credit' ? 1 : -1 // Debits before credits (so credit is "earlier" when newest first)
+      }))
+    ];
+
+    // First sort ascending by date (oldest first) to calculate running balances
+    items.sort((a, b) => {
+      if (a.sortDate !== b.sortDate) return a.sortDate - b.sortDate;
+      return b.sortOrder - a.sortOrder; // Credits before debits when ascending
+    });
+
+    // Calculate running balances (capital and interest separately)
+    let runningCapitalBalance = 0;
+    let runningInterestBalance = 0;
+    items.forEach(item => {
+      if (item.itemType === 'capital') {
+        if (item.type === 'capital_in') {
+          runningCapitalBalance += item.amount;
+        } else if (item.type === 'capital_out') {
+          runningCapitalBalance -= item.amount;
+        }
+        item.runningCapitalBalance = runningCapitalBalance;
+        item.runningInterestBalance = runningInterestBalance;
+      } else {
+        // Interest entry
+        if (item.type === 'credit') {
+          runningInterestBalance += item.amount;
+        } else if (item.type === 'debit') {
+          runningInterestBalance -= item.amount;
+        }
+        item.runningCapitalBalance = runningCapitalBalance;
+        item.runningInterestBalance = runningInterestBalance;
+      }
+    });
+
+    // Now sort descending by date (newest first) for display
+    items.sort((a, b) => {
+      if (b.sortDate !== a.sortDate) return b.sortDate - a.sortDate;
+      return a.sortOrder - b.sortOrder;
+    });
+
+    return items;
+  }, [capitalTransactions, interestEntries]);
 
   // Calculate which interest entries should be struck out (matched credit/debit pairs in same month)
   const struckOutIds = useMemo(() => {
@@ -717,6 +869,8 @@ export default function InvestorDetails() {
                   <div className="flex-1 min-w-0">Details</div>
                   <div className="w-20 shrink-0 text-right">Debit</div>
                   <div className="w-20 shrink-0 text-right">Credit</div>
+                  <div className="w-24 shrink-0 text-right">Capital Bal</div>
+                  <div className="w-24 shrink-0 text-right">Interest Bal</div>
                   <div className="w-16 shrink-0"></div>
                 </div>
 
@@ -775,6 +929,16 @@ export default function InvestorDetails() {
                           </span>
                         )}
                       </div>
+                      <div className="w-24 shrink-0 text-right">
+                        <span className="text-sm font-medium text-purple-600">
+                          {formatCurrency(item.runningCapitalBalance)}
+                        </span>
+                      </div>
+                      <div className="w-24 shrink-0 text-right">
+                        <span className={`text-sm font-medium ${item.runningInterestBalance >= 0 ? 'text-amber-600' : 'text-red-600'}`}>
+                          {formatCurrency(item.runningInterestBalance)}
+                        </span>
+                      </div>
                       <div className="w-16 shrink-0 flex justify-end gap-1">
                         {/* Bank reconciliation indicator */}
                         {isReconciled ? (
@@ -828,12 +992,9 @@ export default function InvestorDetails() {
                           size="icon"
                           className="h-6 w-6 text-slate-500 hover:text-slate-700 hover:bg-slate-100"
                           onClick={() => {
-                            if (isInterest) {
-                              openInterestDialog(item);
-                            } else {
-                              setEditingTransaction(item);
-                              setIsTransactionOpen(true);
-                            }
+                            // Use unified form for both capital and interest transactions
+                            setEditingTransaction(item);
+                            setIsTransactionOpen(true);
                           }}
                         >
                           <Pencil className="w-3.5 h-3.5" />
@@ -871,6 +1032,12 @@ export default function InvestorDetails() {
                   <div className="w-20 shrink-0 text-right font-bold text-emerald-600">
                     {formatCurrency(capitalIn + interestCredits)}
                   </div>
+                  <div className="w-24 shrink-0 text-right font-bold text-purple-600">
+                    {formatCurrency(capitalIn - capitalOut)}
+                  </div>
+                  <div className="w-24 shrink-0 text-right font-bold text-amber-600">
+                    {formatCurrency(interestCredits - interestDebits)}
+                  </div>
                   <div className="w-16 shrink-0"></div>
                 </div>
               </div>
@@ -903,9 +1070,14 @@ export default function InvestorDetails() {
             <InvestorTransactionForm
               investor={investor}
               transaction={editingTransaction}
+              allowTypeConversion={!!editingTransaction}
               onSubmit={(data) => {
                 if (editingTransaction) {
-                  updateTransactionMutation.mutate(data);
+                  if (data.isTypeConversion) {
+                    convertTransactionMutation.mutate(data);
+                  } else {
+                    updateTransactionMutation.mutate(data);
+                  }
                 } else {
                   createTransactionMutation.mutate(data);
                 }
@@ -914,7 +1086,9 @@ export default function InvestorDetails() {
                 setIsTransactionOpen(false);
                 setEditingTransaction(null);
               }}
-              isLoading={editingTransaction ? updateTransactionMutation.isPending : createTransactionMutation.isPending}
+              isLoading={editingTransaction
+                ? (updateTransactionMutation.isPending || convertTransactionMutation.isPending)
+                : createTransactionMutation.isPending}
             />
           </DialogContent>
         </Dialog>
