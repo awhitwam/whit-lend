@@ -18,6 +18,7 @@ import {
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
+import { CURRENT_SCHEMA_VERSION } from '@/lib/backupSchema';
 import { toast } from 'sonner';
 import {
   Wallet,
@@ -541,6 +542,7 @@ export default function Dashboard() {
 
     const backup = {
       version: '1.0',
+      schemaVersion: CURRENT_SCHEMA_VERSION,
       exportDate: new Date().toISOString(),
       organizationId: currentOrganization.id,
       organizationName: currentOrganization.name,
@@ -556,7 +558,7 @@ export default function Dashboard() {
       'value_history', 'bank_statements', 'other_income',
       'borrower_loan_preferences', 'receipt_drafts',
       'reconciliation_patterns', 'reconciliation_entries',
-      'accepted_orphans', 'audit_logs'
+      'accepted_orphans', 'audit_logs', 'nightly_job_runs', 'organization_summary'
     ];
 
     try {

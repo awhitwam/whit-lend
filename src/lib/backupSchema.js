@@ -1,7 +1,7 @@
 // Schema definitions for backup/restore compatibility
 // Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
 
-export const CURRENT_SCHEMA_VERSION = 59;
+export const CURRENT_SCHEMA_VERSION = 63;
 
 // Define columns and defaults for each table
 // When adding new columns to tables, add them here with appropriate defaults
@@ -10,14 +10,28 @@ export const tableSchemas = {
     columns: ['id', 'organization_id', 'name', 'description', 'interest_rate',
               'interest_type', 'min_term', 'max_term', 'min_amount', 'max_amount',
               'arrangement_fee', 'exit_fee', 'default_rate', 'is_active',
-              'created_at', 'updated_at'],
-    defaults: { is_active: true }
+              'created_at', 'updated_at', 'product_type', 'period', 'interest_calculation_method',
+              'interest_alignment', 'interest_paid_in_advance', 'extend_for_full_period',
+              'interest_only_period', 'abbreviation', 'scheduler_type', 'scheduler_config',
+              'compound_after_rollup', 'default_additional_fees', 'default_additional_fees_note'],
+    defaults: {
+      is_active: true,
+      scheduler_type: 'reducing_balance',
+      scheduler_config: {},
+      compound_after_rollup: false,
+      default_additional_fees: 0
+    }
   },
 
   investor_products: {
     columns: ['id', 'organization_id', 'name', 'description', 'interest_rate',
-              'min_investment', 'max_investment', 'is_active', 'created_at'],
-    defaults: { is_active: true }
+              'min_investment', 'max_investment', 'is_active', 'created_at',
+              'interest_calculation_type', 'interest_posting_day'],
+    defaults: {
+      is_active: true,
+      interest_calculation_type: 'automatic',
+      interest_posting_day: 1
+    }
   },
 
   expense_types: {
@@ -34,8 +48,9 @@ export const tableSchemas = {
   borrowers: {
     columns: ['id', 'organization_id', 'unique_number', 'full_name', 'first_name',
               'last_name', 'email', 'phone', 'mobile', 'landline', 'address',
-              'city', 'zipcode', 'country', 'status', 'notes', 'created_at', 'updated_at'],
-    defaults: { status: 'Active' }
+              'city', 'zipcode', 'country', 'status', 'notes', 'created_at', 'updated_at',
+              'contact_email', 'keywords'],
+    defaults: { status: 'Active', keywords: [] }
   },
 
   properties: {
@@ -48,8 +63,14 @@ export const tableSchemas = {
   Investor: {
     columns: ['id', 'organization_id', 'name', 'business_name', 'email', 'phone',
               'address', 'account_number', 'sort_code', 'bank_name', 'notes',
-              'status', 'product_id', 'created_at', 'updated_at'],
-    defaults: { status: 'Active' }
+              'status', 'product_id', 'created_at', 'updated_at',
+              'investor_product_id', 'investor_number', 'first_name', 'last_name',
+              'accrued_interest', 'last_accrual_date', 'total_interest_paid'],
+    defaults: {
+      status: 'Active',
+      accrued_interest: 0,
+      total_interest_paid: 0
+    }
   },
 
   loans: {
@@ -61,7 +82,12 @@ export const tableSchemas = {
               'redemption_date', 'restructured', 'restructured_from_loan_id',
               'auto_extend', 'rolled_interest', 'scheduler_type',
               'principal_outstanding', 'interest_outstanding', 'fees_outstanding',
-              'balance_updated_at', 'created_at', 'updated_at'],
+              'balance_updated_at', 'created_at', 'updated_at',
+              'product_type', 'period', 'product_name', 'description',
+              'principal_remaining', 'interest_remaining', 'has_penalty_rate',
+              'penalty_rate', 'penalty_rate_from', 'total_interest', 'total_repayable',
+              'roll_up_length', 'roll_up_amount', 'roll_up_amount_override',
+              'additional_deducted_fees', 'additional_deducted_fees_note'],
     defaults: {
       status: 'Live',
       restructured: false,
@@ -70,14 +96,17 @@ export const tableSchemas = {
       rolled_interest: 0,
       principal_outstanding: null,
       interest_outstanding: null,
-      fees_outstanding: null
+      fees_outstanding: null,
+      roll_up_amount_override: false,
+      additional_deducted_fees: 0
     }
   },
 
   InvestorTransaction: {
     columns: ['id', 'organization_id', 'investor_id', 'type', 'amount', 'date',
-              'reference', 'notes', 'created_at'],
-    defaults: {}
+              'reference', 'notes', 'created_at', 'transaction_id', 'description',
+              'bank_account', 'is_auto_generated', 'accrual_period_start', 'accrual_period_end'],
+    defaults: { is_auto_generated: false }
   },
 
   investor_interest: {
@@ -89,14 +118,24 @@ export const tableSchemas = {
   transactions: {
     columns: ['id', 'organization_id', 'loan_id', 'borrower_id', 'borrower_name',
               'type', 'date', 'amount', 'principal_applied', 'interest_applied',
-              'fees_applied', 'reference', 'notes', 'is_deleted', 'created_at'],
-    defaults: { is_deleted: false }
+              'fees_applied', 'reference', 'notes', 'is_deleted', 'created_at',
+              'gross_amount', 'deducted_fee', 'deducted_interest', 'linked_disbursement_id'],
+    defaults: { is_deleted: false, deducted_fee: 0, deducted_interest: 0 }
   },
 
   repayment_schedules: {
     columns: ['id', 'organization_id', 'loan_id', 'due_date', 'principal_due',
-              'interest_due', 'fees_due', 'is_paid', 'paid_date', 'created_at'],
-    defaults: { is_paid: false }
+              'interest_due', 'fees_due', 'is_paid', 'paid_date', 'created_at',
+              'installment_number', 'principal_amount', 'interest_amount', 'total_due',
+              'balance', 'calculation_days', 'calculation_principal_start',
+              'is_extension_period', 'is_roll_up_period', 'is_serviced_period',
+              'rolled_up_interest'],
+    defaults: {
+      is_paid: false,
+      is_extension_period: false,
+      is_roll_up_period: false,
+      is_serviced_period: false
+    }
   },
 
   loan_properties: {
@@ -120,8 +159,10 @@ export const tableSchemas = {
   bank_statements: {
     columns: ['id', 'organization_id', 'statement_date', 'description', 'amount',
               'balance', 'bank_source', 'transaction_type', 'is_reconciled',
-              'created_at'],
-    defaults: { is_reconciled: false }
+              'created_at', 'suggested_match_type', 'suggested_loan_id',
+              'suggested_investor_id', 'suggested_expense_type_id',
+              'suggestion_confidence', 'suggestion_reason', 'pattern_id', 'was_created'],
+    defaults: { is_reconciled: false, was_created: false }
   },
 
   other_income: {
@@ -153,8 +194,8 @@ export const tableSchemas = {
   reconciliation_entries: {
     columns: ['id', 'organization_id', 'bank_statement_id', 'loan_transaction_id',
               'investor_transaction_id', 'interest_id', 'expense_id', 'other_income_id',
-              'reconciliation_type', 'notes', 'created_at'],
-    defaults: {}
+              'reconciliation_type', 'notes', 'created_at', 'was_created'],
+    defaults: { was_created: false }
   },
 
   accepted_orphans: {
@@ -187,6 +228,23 @@ export const tableSchemas = {
               'live_loan_count', 'settled_loan_count', 'arrears_amount',
               'investor_capital_balance', 'investor_interest_owed', 'updated_at'],
     defaults: {}
+  },
+
+  app_settings: {
+    columns: ['key', 'value', 'description', 'updated_at', 'updated_by'],
+    defaults: {}
+  },
+
+  organizations: {
+    columns: ['id', 'name', 'created_at', 'updated_at', 'address_line1', 'address_line2',
+              'city', 'postcode', 'country', 'phone', 'email', 'website'],
+    defaults: {}
+  },
+
+  user_profiles: {
+    columns: ['id', 'email', 'full_name', 'role', 'organization_id', 'created_at',
+              'updated_at', 'is_super_admin', 'default_organization_id'],
+    defaults: { is_super_admin: false }
   }
 };
 
