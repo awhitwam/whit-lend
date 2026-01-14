@@ -11,17 +11,19 @@ import { generateRepaymentSchedule, calculateLoanSummary, formatCurrency } from 
 import { format, addMonths } from 'date-fns';
 import { calculateRollUpAmount } from '@/lib/loanCalculations';
 
-export default function LoanApplicationForm({ 
-  borrowers, 
-  products, 
-  onSubmit, 
+export default function LoanApplicationForm({
+  borrowers,
+  products,
+  onSubmit,
   onPreview,
   isLoading,
-  preselectedBorrowerId 
+  preselectedBorrowerId,
+  suggestedLoanNumber
 }) {
   const [formData, setFormData] = useState({
     borrower_id: preselectedBorrowerId || '',
     product_id: '',
+    loan_number: suggestedLoanNumber || '',
     principal_amount: '',
     monthly_charge: '',
     arrangement_fee: '',
@@ -282,6 +284,7 @@ export default function LoanApplicationForm({
 
       onSubmit({
         ...formData,
+        loan_number: formData.loan_number || null,
         principal_amount: 0,
         monthly_charge: monthlyCharge,
         arrangement_fee: arrangementFee,
@@ -311,6 +314,7 @@ export default function LoanApplicationForm({
 
       onSubmit({
         ...formData,
+        loan_number: formData.loan_number || null,
         principal_amount: principalAmount,
         arrangement_fee: arrangementFee,
         exit_fee: exitFee,
@@ -342,6 +346,7 @@ export default function LoanApplicationForm({
     onSubmit({
       borrower_id: formData.borrower_id,
       product_id: formData.product_id,
+      loan_number: formData.loan_number || null,
       start_date: formData.start_date,
       status: formData.status,
       description: formData.description || null,
@@ -376,9 +381,20 @@ export default function LoanApplicationForm({
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         <div className="space-y-4">
           <div className="space-y-2">
+            <Label htmlFor="loan_number">Loan Number</Label>
+            <Input
+              id="loan_number"
+              value={formData.loan_number}
+              onChange={(e) => handleChange('loan_number', e.target.value)}
+              placeholder="Auto-generated"
+            />
+            <p className="text-xs text-slate-500">Auto-generated, edit to override</p>
+          </div>
+
+          <div className="space-y-2">
             <Label htmlFor="borrower">Borrower *</Label>
-            <Select 
-              value={formData.borrower_id} 
+            <Select
+              value={formData.borrower_id}
               onValueChange={(value) => handleChange('borrower_id', value)}
             >
               <SelectTrigger>

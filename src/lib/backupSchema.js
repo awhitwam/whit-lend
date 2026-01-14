@@ -237,8 +237,8 @@ export const tableSchemas = {
 
   organizations: {
     columns: ['id', 'name', 'created_at', 'updated_at', 'address_line1', 'address_line2',
-              'city', 'postcode', 'country', 'phone', 'email', 'website'],
-    defaults: {}
+              'city', 'postcode', 'country', 'phone', 'email', 'website', 'settings'],
+    defaults: { settings: {} }
   },
 
   user_profiles: {

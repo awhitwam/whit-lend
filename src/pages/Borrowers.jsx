@@ -1,5 +1,6 @@
 import { useState, useMemo } from 'react';
 import { api } from '@/api/dataClient';
+import { supabase } from '@/lib/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
@@ -37,6 +38,9 @@ export default function Borrowers() {
     queryFn: () => api.entities.Transaction.listAll(),
     enabled: !!currentOrganization
   });
+
+  // Get suggested borrower number from organization settings
+  const suggestedBorrowerNumber = String(currentOrganization?.settings?.next_borrower_number || 1000001);
 
   // Calculate loan counts and financial metrics per borrower
   const borrowerMetrics = useMemo(() => {
@@ -157,7 +161,7 @@ export default function Borrowers() {
 
   const createMutation = useMutation({
     mutationFn: (data) => api.entities.Borrower.create(data),
-    onSuccess: (newBorrower, variables) => {
+    onSuccess: async (newBorrower, variables) => {
       logBorrowerEvent(AuditAction.BORROWER_CREATE, newBorrower || { id: null, name: variables.full_name }, {
         full_name: variables.full_name,
         business: variables.business,
@@ -165,6 +169,21 @@ export default function Borrowers() {
         phone: variables.phone,
         unique_number: variables.unique_number
       });
+
+      // Update organization settings with next borrower number
+      if (variables.unique_number) {
+        const nextNumber = parseInt(variables.unique_number) + 1;
+        await supabase
+          .from('organizations')
+          .update({
+            settings: {
+              ...currentOrganization.settings,
+              next_borrower_number: nextNumber
+            }
+          })
+          .eq('id', currentOrganization.id);
+      }
+
       queryClient.invalidateQueries({ queryKey: ['borrowers'] });
       setIsFormOpen(false);
     }
@@ -190,12 +209,19 @@ export default function Borrowers() {
     } else {
       // Auto-generate unique_number if not provided
       if (!data.unique_number) {
-        const allBorrowers = await api.entities.Borrower.list();
-        const highestNumber = allBorrowers.reduce((max, b) => {
-          const num = parseInt(b.unique_number) || 0;
-          return num > max ? num : max;
-        }, 1000000);
-        data.unique_number = (highestNumber + 1).toString();
+        let borrowerNumber = currentOrganization?.settings?.next_borrower_number || 1000001;
+
+        // Check for uniqueness
+        const { data: existingBorrowers } = await supabase
+          .from('borrowers')
+          .select('unique_number')
+          .eq('organization_id', currentOrganization.id);
+        const usedNumbers = new Set(existingBorrowers?.map(b => b.unique_number) || []);
+
+        while (usedNumbers.has(String(borrowerNumber))) {
+          borrowerNumber++;
+        }
+        data.unique_number = String(borrowerNumber);
       }
       // Set full_name as business name if available, otherwise first + last name
       data.full_name = data.business || `${data.first_name} ${data.last_name}`;
@@ -271,6 +297,7 @@ export default function Borrowers() {
               onSubmit={handleSubmit}
               onCancel={handleClose}
               isLoading={createMutation.isPending || updateMutation.isPending}
+              suggestedBorrowerNumber={suggestedBorrowerNumber}
             />
           </DialogContent>
         </Dialog>

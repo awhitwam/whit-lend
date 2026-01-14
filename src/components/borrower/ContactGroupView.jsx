@@ -123,14 +123,22 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
     return filtered;
   }, [groupedBorrowers, searchTerm]);
 
-  // Sort groups by total outstanding (highest first), then by number of borrowers
+  // Sort groups by most loans (live loans first, then total), then by outstanding
+  // Exclude the "No Contact" group (borrowers without contact_email)
   const sortedGroups = useMemo(() => {
     return Object.entries(filteredGroups)
+      .filter(([key]) => key !== '__no_contact__')
       .sort(([, a], [, b]) => {
-        if (b.totalOutstanding !== a.totalOutstanding) {
-          return b.totalOutstanding - a.totalOutstanding;
+        // First sort by live loans
+        if (b.liveLoans !== a.liveLoans) {
+          return b.liveLoans - a.liveLoans;
         }
-        return b.borrowers.length - a.borrowers.length;
+        // Then by total loans
+        if (b.totalLoans !== a.totalLoans) {
+          return b.totalLoans - a.totalLoans;
+        }
+        // Then by total outstanding
+        return b.totalOutstanding - a.totalOutstanding;
       });
   }, [filteredGroups]);
 

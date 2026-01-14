@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
+import { supabase } from '@/lib/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
@@ -30,8 +31,26 @@ export default function NewLoan() {
     enabled: !!currentOrganization
   });
 
+  // Get suggested loan number from organization settings
+  const suggestedLoanNumber = String(currentOrganization?.settings?.next_loan_number || 1001);
+
   const createLoanMutation = useMutation({
     mutationFn: async ({ loanData, schedule }) => {
+      // Ensure loan number is unique - if not, find next available
+      if (loanData.loan_number) {
+        let loanNumber = parseInt(loanData.loan_number);
+        const { data: allLoans } = await supabase
+          .from('loans')
+          .select('loan_number')
+          .eq('organization_id', currentOrganization.id);
+        const usedNumbers = new Set(allLoans?.map(l => l.loan_number) || []);
+
+        while (usedNumbers.has(String(loanNumber))) {
+          loanNumber++;
+        }
+        loanData.loan_number = String(loanNumber);
+      }
+
       // DEBUG: Log the loan data being sent to the database
       console.log('=== LOAN CREATE DEBUG ===');
       console.log('Full loanData:', JSON.stringify(loanData, null, 2));
@@ -146,8 +165,23 @@ export default function NewLoan() {
 
       return loan;
     },
-    onSuccess: (loan) => {
+    onSuccess: async (loan) => {
       console.log('=== Loan created successfully ===', loan.id);
+
+      // Update organization settings with next loan number
+      if (loan.loan_number) {
+        const nextNumber = parseInt(loan.loan_number) + 1;
+        await supabase
+          .from('organizations')
+          .update({
+            settings: {
+              ...currentOrganization.settings,
+              next_loan_number: nextNumber
+            }
+          })
+          .eq('id', currentOrganization.id);
+      }
+
       queryClient.invalidateQueries({ queryKey: ['loans'] });
       navigate(createPageUrl(`LoanDetails?id=${loan.id}`));
     },
@@ -219,6 +253,7 @@ export default function NewLoan() {
                 onSubmit={handleSubmit}
                 isLoading={createLoanMutation.isPending}
                 preselectedBorrowerId={preselectedBorrowerId}
+                suggestedLoanNumber={suggestedLoanNumber}
               />
             )}
           </CardContent>

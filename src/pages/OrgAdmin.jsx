@@ -50,7 +50,9 @@ export default function OrgAdmin() {
     country: '',
     phone: '',
     email: '',
-    website: ''
+    website: '',
+    next_loan_number: '',
+    next_borrower_number: ''
   });
   const [orgDetailsChanged, setOrgDetailsChanged] = useState(false);
 
@@ -84,7 +86,9 @@ export default function OrgAdmin() {
         country: currentOrganization.country || '',
         phone: currentOrganization.phone || '',
         email: currentOrganization.email || '',
-        website: currentOrganization.website || ''
+        website: currentOrganization.website || '',
+        next_loan_number: currentOrganization.settings?.next_loan_number || '',
+        next_borrower_number: currentOrganization.settings?.next_borrower_number || ''
       });
       setOrgDetailsChanged(false);
     }
@@ -105,7 +109,12 @@ export default function OrgAdmin() {
           country: details.country || null,
           phone: details.phone || null,
           email: details.email || null,
-          website: details.website || null
+          website: details.website || null,
+          settings: {
+            ...currentOrganization.settings,
+            next_loan_number: details.next_loan_number ? parseInt(details.next_loan_number) : null,
+            next_borrower_number: details.next_borrower_number ? parseInt(details.next_borrower_number) : null
+          }
         })
         .eq('id', currentOrganization.id);
 
@@ -1126,6 +1135,7 @@ export default function OrgAdmin() {
       exportDate: new Date().toISOString(),
       organizationId: currentOrganization.id,
       organizationName: currentOrganization.name,
+      organizationSettings: currentOrganization.settings || {},
       tables: {},
       metadata: { recordCounts: {} }
     };
@@ -1438,10 +1448,30 @@ export default function OrgAdmin() {
         }
       }
 
+      // Restore organization settings if present in backup
+      if (restorePreview.organizationSettings && Object.keys(restorePreview.organizationSettings).length > 0) {
+        addLog('  Restoring organization settings...');
+        try {
+          await supabase
+            .from('organizations')
+            .update({
+              settings: {
+                ...currentOrganization.settings,
+                ...restorePreview.organizationSettings
+              }
+            })
+            .eq('id', currentOrganization.id);
+          addLog('    Organization settings restored (next_loan_number, next_borrower_number, etc.)');
+        } catch (err) {
+          addLog(`    Warning: Could not restore organization settings: ${err.message}`);
+        }
+      }
+
       // Step 3: Refresh queries
       addLog('Step 3: Refreshing application data...');
       setRestoreProgress({ current: 3, total: 3, step: 'Refreshing data...' });
       queryClient.invalidateQueries();
+      refreshOrganizations(); // Refresh org context to pick up restored settings
 
       // Log audit
       await logAudit({
@@ -1571,6 +1601,28 @@ export default function OrgAdmin() {
                     onChange={(e) => handleOrgDetailsChange('website', e.target.value)}
                     placeholder="https://example.com"
                   />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-next-loan-number">Next Loan Number</Label>
+                  <Input
+                    id="org-next-loan-number"
+                    type="number"
+                    value={orgDetails.next_loan_number}
+                    onChange={(e) => handleOrgDetailsChange('next_loan_number', e.target.value)}
+                    placeholder="1001"
+                  />
+                  <p className="text-xs text-slate-500">The next loan created will be assigned this number (then auto-increments)</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-next-borrower-number">Next Borrower Number</Label>
+                  <Input
+                    id="org-next-borrower-number"
+                    type="number"
+                    value={orgDetails.next_borrower_number}
+                    onChange={(e) => handleOrgDetailsChange('next_borrower_number', e.target.value)}
+                    placeholder="1000001"
+                  />
+                  <p className="text-xs text-slate-500">The next borrower created will be assigned this number (then auto-increments)</p>
                 </div>
               </div>
 
@@ -1792,6 +1844,9 @@ export default function OrgAdmin() {
                       <p><strong>Organization:</strong> {restorePreview.organizationName}</p>
                       <p><strong>Backup Date:</strong> {format(new Date(restorePreview.exportDate), 'PPpp')}</p>
                       <p><strong>Total Records:</strong> {restorePreview.totalRecords.toLocaleString()}</p>
+                      {restorePreview.organizationSettings && Object.keys(restorePreview.organizationSettings).length > 0 && (
+                        <p><strong>Settings:</strong> Will restore org settings (next loan/borrower numbers)</p>
+                      )}
                     </div>
 
                     {/* Record counts breakdown */}

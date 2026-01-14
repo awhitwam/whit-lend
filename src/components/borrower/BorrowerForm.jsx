@@ -7,7 +7,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Loader2, X, Plus } from 'lucide-react';
 
-export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }) {
+export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading, suggestedBorrowerNumber }) {
   const [formData, setFormData] = useState({
     first_name: borrower?.first_name || '',
     last_name: borrower?.last_name || '',
@@ -61,8 +61,26 @@ export default function BorrowerForm({ borrower, onSubmit, onCancel, isLoading }
     }
   };
 
+  // Display the borrower number (existing or suggested for new)
+  const displayBorrowerNumber = borrower?.unique_number || suggestedBorrowerNumber;
+
   return (
     <form onSubmit={handleSubmit} className="space-y-6">
+      {displayBorrowerNumber && (
+        <div className="space-y-2">
+          <Label htmlFor="borrower_number">Borrower Number</Label>
+          <Input
+            id="borrower_number"
+            value={`#${displayBorrowerNumber}`}
+            disabled
+            className="bg-slate-50 text-slate-600 font-mono"
+          />
+          <p className="text-xs text-slate-500">
+            {borrower ? 'Existing borrower number' : 'Auto-assigned on creation'}
+          </p>
+        </div>
+      )}
+
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="space-y-2">
           <Label htmlFor="first_name">First Name *</Label>

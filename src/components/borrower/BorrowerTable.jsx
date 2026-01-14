@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -6,10 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { Search, MoreHorizontal, Eye, Edit, Phone, Mail, User, FileText } from 'lucide-react';
+import { Search, MoreHorizontal, Eye, Edit, Phone, Mail, User, FileText, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts = {} }) {
   const [searchTerm, setSearchTerm] = useState('');
+  const [sortField, setSortField] = useState(() => localStorage.getItem('borrowers-sort-field') || 'name');
+  const [sortDirection, setSortDirection] = useState(() => localStorage.getItem('borrowers-sort-direction') || 'asc');
 
   const filteredBorrowers = borrowers.filter(b => {
     const displayName = (b.business || `${b.first_name} ${b.last_name}`).toLowerCase();
@@ -23,6 +25,49 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
            b.contact_email?.toLowerCase().includes(search) ||
            keywordMatch;
   });
+
+  const sortedBorrowers = useMemo(() => {
+    return [...filteredBorrowers].sort((a, b) => {
+      let aVal, bVal;
+
+      switch (sortField) {
+        case 'id':
+          aVal = parseInt(a.unique_number) || 0;
+          bVal = parseInt(b.unique_number) || 0;
+          break;
+        case 'name':
+          aVal = (a.business || `${a.first_name || ''} ${a.last_name || ''}`).trim().toLowerCase();
+          bVal = (b.business || `${b.first_name || ''} ${b.last_name || ''}`).trim().toLowerCase();
+          break;
+        default:
+          return 0;
+      }
+
+      if (aVal < bVal) return sortDirection === 'asc' ? -1 : 1;
+      if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [filteredBorrowers, sortField, sortDirection]);
+
+  const handleSort = (field) => {
+    if (sortField === field) {
+      const newDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+      setSortDirection(newDirection);
+      localStorage.setItem('borrowers-sort-direction', newDirection);
+    } else {
+      setSortField(field);
+      setSortDirection('asc');
+      localStorage.setItem('borrowers-sort-field', field);
+      localStorage.setItem('borrowers-sort-direction', 'asc');
+    }
+  };
+
+  const SortIcon = ({ field }) => {
+    if (sortField !== field) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-50" />;
+    return sortDirection === 'asc'
+      ? <ArrowUp className="w-3 h-3 ml-1" />
+      : <ArrowDown className="w-3 h-3 ml-1" />;
+  };
 
   return (
     <div className="space-y-4">
@@ -40,8 +85,22 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
         <Table>
           <TableHeader>
             <TableRow className="bg-slate-50/50">
-              <TableHead className="font-semibold">ID</TableHead>
-              <TableHead className="font-semibold">Name / Business</TableHead>
+              <TableHead className="font-semibold">
+                <button
+                  onClick={() => handleSort('id')}
+                  className="flex items-center hover:text-slate-900"
+                >
+                  ID <SortIcon field="id" />
+                </button>
+              </TableHead>
+              <TableHead className="font-semibold">
+                <button
+                  onClick={() => handleSort('name')}
+                  className="flex items-center hover:text-slate-900"
+                >
+                  Name / Business <SortIcon field="name" />
+                </button>
+              </TableHead>
               <TableHead className="font-semibold">Contact</TableHead>
               <TableHead className="font-semibold">Loans</TableHead>
               <TableHead className="font-semibold">Status</TableHead>
@@ -57,14 +116,14 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
                   </TableCell>
                 </TableRow>
               ))
-            ) : filteredBorrowers.length === 0 ? (
+            ) : sortedBorrowers.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center py-12 text-slate-500">
                   {searchTerm ? 'No borrowers match your search' : 'No borrowers found'}
                 </TableCell>
               </TableRow>
             ) : (
-              filteredBorrowers.map((borrower) => {
+              sortedBorrowers.map((borrower) => {
                 const displayName = borrower.business || `${borrower.first_name} ${borrower.last_name}`;
                 const counts = loanCounts[borrower.id] || { total: 0, live: 0, settled: 0, pending: 0, defaulted: 0 };
                 return (
