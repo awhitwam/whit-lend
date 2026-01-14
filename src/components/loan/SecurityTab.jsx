@@ -338,30 +338,34 @@ export default function SecurityTab({ loan }) {
       </AlertDialog>
 
       {/* Modals */}
-      <PropertyModal
-        isOpen={isPropertyModalOpen}
-        onClose={() => {
-          setIsPropertyModalOpen(false);
-          setSelectedLoanProperty(null);
-        }}
-        loan={loan}
-        existingLoanProperty={selectedLoanProperty}
-        onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ['loan-properties', loan.id] });
-        }}
-      />
+      {isPropertyModalOpen && (
+        <PropertyModal
+          isOpen={isPropertyModalOpen}
+          onClose={() => {
+            setIsPropertyModalOpen(false);
+            setSelectedLoanProperty(null);
+          }}
+          loan={loan}
+          existingLoanProperty={selectedLoanProperty}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['loan-properties', loan.id] });
+          }}
+        />
+      )}
 
-      <ValuationHistoryModal
-        isOpen={isValuationModalOpen}
-        onClose={() => {
-          setIsValuationModalOpen(false);
-          setSelectedLoanProperty(null);
-        }}
-        loanProperty={selectedLoanProperty}
-        onSuccess={() => {
-          queryClient.invalidateQueries({ queryKey: ['loan-properties', loan.id] });
-        }}
-      />
+      {isValuationModalOpen && (
+        <ValuationHistoryModal
+          isOpen={isValuationModalOpen}
+          onClose={() => {
+            setIsValuationModalOpen(false);
+            setSelectedLoanProperty(null);
+          }}
+          loanProperty={selectedLoanProperty}
+          onSuccess={() => {
+            queryClient.invalidateQueries({ queryKey: ['loan-properties', loan.id] });
+          }}
+        />
+      )}
     </div>
   );
 }

@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -123,12 +123,10 @@ export default function ValuationHistoryModal({
             <History className="w-5 h-5 text-blue-600" />
             Valuation History
           </DialogTitle>
-          {loanProperty?.property && (
-            <p className="text-sm text-slate-500 flex items-center gap-1">
-              <Building2 className="w-4 h-4" />
-              {loanProperty.property.address}
-            </p>
-          )}
+          <DialogDescription className="flex items-center gap-1">
+            <Building2 className="w-4 h-4" />
+            {loanProperty?.property?.address || 'View and add property valuations'}
+          </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-4">

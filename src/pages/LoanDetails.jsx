@@ -162,6 +162,13 @@ export default function LoanDetails() {
     enabled: !!loanId
   });
 
+  // Fetch loan properties count for the Security tab badge
+  const { data: loanProperties = [] } = useQuery({
+    queryKey: ['loan-properties-count', loanId],
+    queryFn: () => api.entities.LoanProperty.filter({ loan_id: loanId, status: 'Active' }),
+    enabled: !!loanId
+  });
+
   // Fetch reconciliation entries to show which transactions are matched to bank statements
   const { data: reconciliationEntries = [] } = useQuery({
     queryKey: ['loan-reconciliation-entries', loanId],
@@ -1749,6 +1756,11 @@ export default function LoanDetails() {
                     >
                       <Shield className="w-3 h-3" />
                       Security
+                      {loanProperties.length > 0 && (
+                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                          {loanProperties.length}
+                        </Badge>
+                      )}
                     </Button>
                     <Button
                       variant={activeTab === 'expenses' ? "default" : "ghost"}

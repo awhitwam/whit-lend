@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -56,10 +56,11 @@ export default function PropertyModal({
   });
 
   // Get already linked properties to exclude from selection
+  // Use a different query key to avoid overwriting the enriched data in SecurityTab
   const { data: linkedProperties = [] } = useQuery({
-    queryKey: ['loan-properties', loan?.id],
+    queryKey: ['loan-properties-ids', loan?.id],
     queryFn: () => api.entities.LoanProperty.filter({ loan_id: loan.id, status: 'Active' }),
-    enabled: isOpen && !!loan?.id
+    enabled: isOpen && !!loan?.id && mode === 'existing'
   });
 
   const linkedPropertyIds = linkedProperties.map(lp => lp.property_id);
@@ -114,8 +115,23 @@ export default function PropertyModal({
         };
 
         if (isEdit && existingLoanProperty?.property_id) {
+          const oldValue = existingLoanProperty.property?.current_value;
+          const newValue = parseFloat(formData.current_value) || 0;
+
           property = await api.entities.Property.update(existingLoanProperty.property_id, propertyData);
           propertyId = existingLoanProperty.property_id;
+
+          // If the value changed, create a new valuation history record
+          if (oldValue !== newValue) {
+            await api.entities.ValueHistory.create({
+              property_id: propertyId,
+              value_type: 'Property Valuation',
+              value: newValue,
+              effective_date: format(new Date(), 'yyyy-MM-dd'),
+              notes: 'Updated via property edit'
+            });
+          }
+
           await logPropertyEvent(AuditAction.PROPERTY_UPDATE, property);
         } else {
           property = await api.entities.Property.create(propertyData);
@@ -159,16 +175,22 @@ export default function PropertyModal({
         await logLoanPropertyEvent(AuditAction.LOAN_PROPERTY_LINK, loanProperty, loan, property);
       }
 
-      // If second charge and we have a balance, create initial balance record
-      if (formData.charge_type === 'Second Charge' && formData.first_charge_balance && !isEdit) {
-        await api.entities.ValueHistory.create({
-          property_id: propertyId,
-          loan_property_id: loanProperty.id,
-          value_type: 'First Charge Balance',
-          value: parseFloat(formData.first_charge_balance),
-          effective_date: format(new Date(), 'yyyy-MM-dd'),
-          notes: 'Initial first charge balance'
-        });
+      // Handle first charge balance history for second charges
+      if (formData.charge_type === 'Second Charge' && formData.first_charge_balance) {
+        const newBalance = parseFloat(formData.first_charge_balance);
+        const oldBalance = existingLoanProperty?.first_charge_balance;
+
+        // Create history record if this is new or the balance changed
+        if (!isEdit || oldBalance !== newBalance) {
+          await api.entities.ValueHistory.create({
+            property_id: propertyId,
+            loan_property_id: loanProperty.id,
+            value_type: 'First Charge Balance',
+            value: newBalance,
+            effective_date: format(new Date(), 'yyyy-MM-dd'),
+            notes: isEdit ? 'Updated via property edit' : 'Initial first charge balance'
+          });
+        }
       }
 
       return { property, loanProperty };
@@ -210,6 +232,9 @@ export default function PropertyModal({
               <Building2 className="w-5 h-5 text-blue-600" />
               {isEdit ? 'Edit Property' : 'Add Property Security'}
             </DialogTitle>
+            <DialogDescription>
+              {isEdit ? 'Update property details and charge information.' : 'Add a property as security for this loan.'}
+            </DialogDescription>
           </DialogHeader>
 
           <form onSubmit={handleSubmit} className="space-y-4">
