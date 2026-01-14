@@ -14,7 +14,8 @@ import {
   Home,
   Building,
   TreePine,
-  Warehouse
+  Warehouse,
+  TrendingUp
 } from 'lucide-react';
 import {
   DropdownMenu,
@@ -27,6 +28,7 @@ export default function PropertyCard({
   loanProperty,
   lastValuationDate,
   onEdit,
+  onUpdateValuation,
   onViewHistory,
   onRemove
 }) {
@@ -99,6 +101,10 @@ export default function PropertyCard({
               <DropdownMenuItem onClick={onEdit}>
                 <Edit className="w-4 h-4 mr-2" />
                 Edit
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={onUpdateValuation}>
+                <TrendingUp className="w-4 h-4 mr-2" />
+                Update Valuation
               </DropdownMenuItem>
               <DropdownMenuItem onClick={onViewHistory}>
                 <History className="w-4 h-4 mr-2" />

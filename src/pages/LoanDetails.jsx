@@ -162,12 +162,66 @@ export default function LoanDetails() {
     enabled: !!loanId
   });
 
-  // Fetch loan properties count for the Security tab badge
+  // Fetch loan properties with property data and valuations for Security tab badge and LTV calculation
   const { data: loanProperties = [] } = useQuery({
-    queryKey: ['loan-properties-count', loanId],
-    queryFn: () => api.entities.LoanProperty.filter({ loan_id: loanId, status: 'Active' }),
+    queryKey: ['loan-properties-with-data', loanId],
+    queryFn: async () => {
+      const links = await api.entities.LoanProperty.filter({ loan_id: loanId, status: 'Active' });
+      // Fetch property data and valuations for each link
+      const enrichedLinks = await Promise.all(links.map(async (link) => {
+        const [properties, valuations] = await Promise.all([
+          api.entities.Property.filter({ id: link.property_id }),
+          api.entities.ValueHistory.filter({ property_id: link.property_id, value_type: 'Property Valuation' }, '-effective_date')
+        ]);
+        const latestValuation = valuations[0];
+        return {
+          ...link,
+          property: properties[0],
+          latestValuationDate: latestValuation?.effective_date
+        };
+      }));
+      return enrichedLinks;
+    },
     enabled: !!loanId
   });
+
+  // Calculate LTV and oldest valuation age based on total outstanding vs total security value
+  const ltvMetrics = (() => {
+    if (loanProperties.length === 0) return { ltv: null, totalSecurityValue: 0, oldestValuationAge: null };
+
+    let totalSecurityValue = 0;
+    let oldestValuationDate = null;
+
+    loanProperties.forEach(lp => {
+      if (!lp.property) return;
+      const propertyValue = lp.property.current_value || 0;
+      const securityValue = lp.charge_type === 'Second Charge'
+        ? Math.max(0, propertyValue - (lp.first_charge_balance || 0))
+        : propertyValue;
+      totalSecurityValue += securityValue;
+
+      // Track oldest valuation date
+      if (lp.latestValuationDate) {
+        if (!oldestValuationDate || new Date(lp.latestValuationDate) < new Date(oldestValuationDate)) {
+          oldestValuationDate = lp.latestValuationDate;
+        }
+      }
+    });
+
+    if (totalSecurityValue === 0) return { ltv: null, totalSecurityValue: 0, oldestValuationAge: null };
+
+    // Use principal_remaining and interest_remaining for total outstanding
+    const totalOutstanding = (loan?.principal_remaining ?? loan?.principal_amount ?? 0)
+      + (loan?.interest_remaining ?? 0);
+    const ltv = (totalOutstanding / totalSecurityValue) * 100;
+
+    // Calculate oldest valuation age in months
+    const oldestValuationAge = oldestValuationDate
+      ? Math.floor((new Date() - new Date(oldestValuationDate)) / (1000 * 60 * 60 * 24 * 30))
+      : null;
+
+    return { ltv, totalSecurityValue, oldestValuationAge };
+  })();
 
   // Fetch reconciliation entries to show which transactions are matched to bank statements
   const { data: reconciliationEntries = [] } = useQuery({
@@ -1666,6 +1720,32 @@ export default function LoanDetails() {
                               ? `Int overpaid ${formatCurrency(Math.abs(settlementInterestOwed))}`
                               : `Inc. ${formatCurrency(settlementInterestOwed)} int`}
                           </p>
+                        </div>
+                      );
+                    })()}
+                    {ltvMetrics.ltv !== null && (() => {
+                      const ltvColor = ltvMetrics.ltv > 80
+                        ? { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-600', value: 'text-red-900' }
+                        : ltvMetrics.ltv > 70
+                          ? { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', value: 'text-amber-900' }
+                          : { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600', value: 'text-emerald-900' };
+
+                      // Age color: green <12m, amber 12-24m, red >24m
+                      const ageMonths = ltvMetrics.oldestValuationAge;
+                      const ageColor = ageMonths === null ? 'text-slate-400'
+                        : ageMonths < 12 ? 'text-emerald-600'
+                        : ageMonths < 24 ? 'text-amber-600'
+                        : 'text-red-600';
+
+                      return (
+                        <div className={`${ltvColor.bg} border ${ltvColor.border} rounded-lg px-3 py-2 min-w-[80px]`}>
+                          <p className={`text-xs font-medium ${ltvColor.text}`}>LTV</p>
+                          <div className="flex items-baseline gap-1">
+                            <p className={`text-xl font-bold ${ltvColor.value}`}>{ltvMetrics.ltv.toFixed(1)}%</p>
+                            {ageMonths !== null && (
+                              <span className={`text-sm font-medium ${ageColor}`}>{ageMonths}m</span>
+                            )}
+                          </div>
                         </div>
                       );
                     })()}

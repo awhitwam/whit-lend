@@ -136,7 +136,7 @@ export default function Loans() {
   });
 
   // Column configuration - order and widths
-  const defaultColumnOrder = ['loan_number', 'description', 'date', 'borrower', 'product', 'principal_bal', 'interest_os', 'arr_fee', 'exit_fee', 'last_payment', 'next_due', 'status'];
+  const defaultColumnOrder = ['loan_number', 'description', 'date', 'borrower', 'product', 'principal_bal', 'interest_os', 'ltv', 'arr_fee', 'exit_fee', 'last_payment', 'next_due'];
   const defaultColumnWidths = {
     loan_number: 80,
     description: 150,
@@ -145,11 +145,11 @@ export default function Loans() {
     product: 85,
     principal_bal: 95,
     interest_os: 85,
+    ltv: 60,
     arr_fee: 75,
     exit_fee: 75,
     last_payment: 80,
     next_due: 80,
-    status: 70,
   };
 
   const [columnOrder, setColumnOrder] = useState(() => {
@@ -255,6 +255,82 @@ export default function Loans() {
     queryFn: () => api.entities.LoanProduct.list(),
     enabled: !!currentOrganization
   });
+
+  // Fetch loan properties and properties for LTV calculation
+  const { data: allLoanProperties = [] } = useQuery({
+    queryKey: ['all-loan-properties', currentOrganization?.id],
+    queryFn: () => api.entities.LoanProperty.filter({ status: 'Active' }),
+    enabled: !!currentOrganization
+  });
+
+  const { data: allProperties = [] } = useQuery({
+    queryKey: ['all-properties', currentOrganization?.id],
+    queryFn: () => api.entities.Property.list(),
+    enabled: !!currentOrganization
+  });
+
+  // Fetch value history for valuation age calculation
+  const { data: allValueHistory = [] } = useQuery({
+    queryKey: ['all-value-history', currentOrganization?.id],
+    queryFn: () => api.entities.ValueHistory.filter({ value_type: 'Property Valuation' }),
+    enabled: !!currentOrganization
+  });
+
+  // Create a map of property_id -> property for quick lookup
+  const propertyMap = useMemo(() => {
+    const map = new Map();
+    allProperties.forEach(p => map.set(p.id, p));
+    return map;
+  }, [allProperties]);
+
+  // Calculate LTV for a loan based on its linked properties
+  const calculateLoanLtv = (loan) => {
+    const loanProps = allLoanProperties.filter(lp => lp.loan_id === loan.id);
+    if (loanProps.length === 0) return null;
+
+    let totalSecurityValue = 0;
+    loanProps.forEach(lp => {
+      const property = propertyMap.get(lp.property_id);
+      if (!property) return;
+      const propertyValue = property.current_value || 0;
+      const securityValue = lp.charge_type === 'Second Charge'
+        ? Math.max(0, propertyValue - (lp.first_charge_balance || 0))
+        : propertyValue;
+      totalSecurityValue += securityValue;
+    });
+
+    if (totalSecurityValue === 0) return null;
+
+    const totalOutstanding = (loan.principal_remaining ?? loan.principal_amount ?? 0)
+      + (loan.interest_remaining ?? 0);
+    return (totalOutstanding / totalSecurityValue) * 100;
+  };
+
+  // Get the oldest valuation age (in months) among all properties linked to a loan
+  // Returns the age of the oldest "most recent valuation" - i.e., the property that most needs revaluation
+  const getOldestValuationAge = (loan) => {
+    const loanProps = allLoanProperties.filter(lp => lp.loan_id === loan.id);
+    if (loanProps.length === 0) return null;
+
+    let oldestDate = null;
+    loanProps.forEach(lp => {
+      // Find most recent valuation for this property
+      const valuations = allValueHistory
+        .filter(v => v.property_id === lp.property_id)
+        .sort((a, b) => new Date(b.effective_date) - new Date(a.effective_date));
+
+      const latestVal = valuations[0];
+      if (latestVal) {
+        // Track the oldest "latest valuation" date across all properties
+        if (!oldestDate || new Date(latestVal.effective_date) < new Date(oldestDate)) {
+          oldestDate = latestVal.effective_date;
+        }
+      }
+    });
+
+    if (!oldestDate) return null;
+    return Math.floor((new Date() - new Date(oldestDate)) / (1000 * 60 * 60 * 24 * 30));
+  };
 
   // Create a map of product_id -> abbreviation for quick lookup
   const productAbbreviations = useMemo(() => {
@@ -480,10 +556,6 @@ export default function Loans() {
           aVal = aNextDue ? new Date(aNextDue.due_date) : new Date('9999-12-31');
           bVal = bNextDue ? new Date(bNextDue.due_date) : new Date('9999-12-31');
           break;
-        case 'status':
-          aVal = a.status || '';
-          bVal = b.status || '';
-          break;
         case 'interest_os':
           // Use cached interest_remaining values for sorting
           // For Fixed Charge loans, still need to calculate from transactions
@@ -516,6 +588,11 @@ export default function Loans() {
             bVal = b.interest_remaining ?? 0;
           }
           break;
+        case 'ltv':
+          // Calculate LTV for sorting - null values sort to end
+          aVal = calculateLoanLtv(a) ?? Infinity;
+          bVal = calculateLoanLtv(b) ?? Infinity;
+          break;
         case 'created_date':
         default:
           aVal = new Date(a.created_date);
@@ -526,7 +603,7 @@ export default function Loans() {
       if (aVal > bVal) return sortDirection === 'asc' ? 1 : -1;
       return 0;
     });
-  }, [filteredLoans, sortField, sortDirection, allTransactions, allSchedules]);
+  }, [filteredLoans, sortField, sortDirection, allTransactions, allSchedules, allLoanProperties, propertyMap]);
 
   const handleSort = (field) => {
     if (sortField === field) {
@@ -539,28 +616,6 @@ export default function Loans() {
       localStorage.setItem('loans-sort-field', field);
       localStorage.setItem('loans-sort-direction', 'asc');
     }
-  };
-
-  const getStatusColor = (status) => {
-    const colors = {
-      'Pending': 'bg-slate-100 text-slate-700',
-      'Live': 'bg-emerald-100 text-emerald-700',
-      'Active': 'bg-emerald-100 text-emerald-700',
-      'Closed': 'bg-purple-100 text-purple-700',
-      'Fully Paid': 'bg-purple-100 text-purple-700',
-      'Restructured': 'bg-amber-100 text-amber-700',
-      'Defaulted': 'bg-red-100 text-red-700',
-      'Default': 'bg-red-100 text-red-700'
-    };
-    return colors[status] || colors['Pending'];
-  };
-
-  const getStatusLabel = (status) => {
-    if (status === 'Closed' || status === 'Fully Paid') return 'Settled';
-    if (status === 'Restructured') return 'Restruct';
-    if (status === 'Defaulted' || status === 'Default') return 'Default';
-    if (status === 'Active') return 'Live';
-    return status;
   };
 
   const statusCounts = {
@@ -846,6 +901,40 @@ export default function Loans() {
         );
       }
     },
+    ltv: {
+      header: 'LTV',
+      sortKey: 'ltv',
+      align: 'right',
+      render: (loan, { loanLtv, valuationAgeMonths }) => {
+        if (loanLtv === null) {
+          return <span className="text-sm text-slate-400">-</span>;
+        }
+        const ltvColor = loanLtv > 80
+          ? 'text-red-600'
+          : loanLtv > 70
+            ? 'text-amber-600'
+            : 'text-emerald-600';
+
+        // Age color: green <12m, amber 12-24m, red >24m
+        const ageColor = valuationAgeMonths === null ? 'text-slate-400'
+          : valuationAgeMonths < 12 ? 'text-emerald-500'
+          : valuationAgeMonths < 24 ? 'text-amber-500'
+          : 'text-red-500';
+
+        return (
+          <div className="flex items-center justify-end gap-1">
+            <span className={`font-mono text-sm font-semibold ${ltvColor}`}>
+              {loanLtv.toFixed(0)}%
+            </span>
+            {valuationAgeMonths !== null && (
+              <span className={`text-xs ${ageColor}`}>
+                {valuationAgeMonths}m
+              </span>
+            )}
+          </div>
+        );
+      }
+    },
     arr_fee: {
       header: 'Arr Fee',
       sortKey: 'arrangement_fee',
@@ -892,16 +981,6 @@ export default function Loans() {
         )
       )
     },
-    status: {
-      header: 'Status',
-      sortKey: 'status',
-      align: 'left',
-      render: (loan) => (
-        <Badge className={`${getStatusColor(loan.status)} text-sm px-1.5 py-0 h-5`}>
-          {getStatusLabel(loan.status)}
-        </Badge>
-      )
-    }
   };
 
   return (
@@ -1123,20 +1202,20 @@ export default function Loans() {
                 />
               </div>
               <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full md:w-auto">
-                <TabsList className="grid grid-cols-5 w-full md:w-auto h-8">
-                  <TabsTrigger value="Live" className="text-xs h-7 px-2">
+                <TabsList className="grid grid-cols-5 w-full md:w-auto h-8 bg-slate-100">
+                  <TabsTrigger value="Live" className="text-xs h-7 px-2 data-[state=active]:bg-emerald-600 data-[state=active]:text-white data-[state=active]:font-semibold">
                     Live ({statusCounts.Live})
                   </TabsTrigger>
-                  <TabsTrigger value="Closed" className="text-xs h-7 px-2">
+                  <TabsTrigger value="Closed" className="text-xs h-7 px-2 data-[state=active]:bg-purple-600 data-[state=active]:text-white data-[state=active]:font-semibold">
                     Settled ({statusCounts.Settled})
                   </TabsTrigger>
-                  <TabsTrigger value="all" className="text-xs h-7 px-2">
+                  <TabsTrigger value="all" className="text-xs h-7 px-2 data-[state=active]:bg-slate-700 data-[state=active]:text-white data-[state=active]:font-semibold">
                     All ({statusCounts.all})
                   </TabsTrigger>
-                  <TabsTrigger value="Pending" className="text-xs h-7 px-2">
+                  <TabsTrigger value="Pending" className="text-xs h-7 px-2 data-[state=active]:bg-amber-500 data-[state=active]:text-white data-[state=active]:font-semibold">
                     Pend ({statusCounts.Pending})
                   </TabsTrigger>
-                  <TabsTrigger value="Defaulted" className="text-xs h-7 px-2">
+                  <TabsTrigger value="Defaulted" className="text-xs h-7 px-2 data-[state=active]:bg-red-600 data-[state=active]:text-white data-[state=active]:font-semibold">
                     Def ({statusCounts.Defaulted})
                   </TabsTrigger>
                 </TabsList>
@@ -1234,8 +1313,10 @@ export default function Loans() {
                         // Use product abbreviation from join, otherwise generate from product name
                         const productAbbr = productAbbreviations.get(loan.product_id) || getProductAbbreviation(loan.product_name);
                         const borrower = borrowerMap.get(loan.borrower_id);
+                        const loanLtv = calculateLoanLtv(loan);
+                        const valuationAgeMonths = getOldestValuationAge(loan);
 
-                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr, borrower };
+                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr, borrower, loanLtv, valuationAgeMonths };
 
                         return (
                           <tr

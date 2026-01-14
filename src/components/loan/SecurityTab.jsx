@@ -35,6 +35,7 @@ export default function SecurityTab({ loan }) {
   const [isPropertyModalOpen, setIsPropertyModalOpen] = useState(false);
   const [selectedLoanProperty, setSelectedLoanProperty] = useState(null);
   const [isValuationModalOpen, setIsValuationModalOpen] = useState(false);
+  const [showAddFormOnOpen, setShowAddFormOnOpen] = useState(false);
   const [propertyToRemove, setPropertyToRemove] = useState(null);
   const [activeTab, setActiveTab] = useState('active');
   const queryClient = useQueryClient();
@@ -130,13 +131,22 @@ export default function SecurityTab({ loan }) {
       }
     });
 
-    const outstandingPrincipal = (loan.principal_amount || 0) - (loan.principal_paid || 0);
+    // Initial LTV - based on original loan amount
+    const initialLtv = totalSecurityValue > 0
+      ? ((loan.principal_amount || 0) / totalSecurityValue) * 100
+      : 0;
+
+    // Current LTV - based on total outstanding (principal + interest)
+    // Use principal_remaining and interest_remaining fields (populated by nightly jobs/balance cache)
+    const totalOutstanding = (loan.principal_remaining ?? loan.principal_amount ?? 0)
+      + (loan.interest_remaining ?? 0);
     const ltv = totalSecurityValue > 0
-      ? (outstandingPrincipal / totalSecurityValue) * 100
+      ? (totalOutstanding / totalSecurityValue) * 100
       : 0;
 
     return {
       totalSecurityValue,
+      initialLtv,
       ltv,
       propertyCount: activeProperties.length,
       staleValuations
@@ -151,12 +161,13 @@ export default function SecurityTab({ loan }) {
     return { bg: 'from-emerald-50 to-emerald-100/50', border: 'border-emerald-200', text: 'text-emerald-600', value: 'text-emerald-900' };
   };
 
+  const initialLtvColors = getLtvColor(metrics.initialLtv);
   const ltvColors = getLtvColor(metrics.ltv);
 
   return (
     <div className="space-y-4">
       {/* Summary Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+      <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
         <Card className="bg-gradient-to-br from-blue-50 to-blue-100/50 border-blue-200">
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
@@ -169,11 +180,23 @@ export default function SecurityTab({ loan }) {
           </CardContent>
         </Card>
 
+        <Card className={`bg-gradient-to-br ${initialLtvColors.bg} ${initialLtvColors.border}`}>
+          <CardContent className="p-4">
+            <div className="flex items-center gap-2 mb-2">
+              <TrendingUp className={`w-4 h-4 ${initialLtvColors.text}`} />
+              <span className={`text-sm font-medium ${initialLtvColors.text}`}>Initial LTV</span>
+            </div>
+            <p className={`text-2xl font-bold ${initialLtvColors.value}`}>
+              {metrics.propertyCount > 0 ? `${metrics.initialLtv.toFixed(1)}%` : 'N/A'}
+            </p>
+          </CardContent>
+        </Card>
+
         <Card className={`bg-gradient-to-br ${ltvColors.bg} ${ltvColors.border}`}>
           <CardContent className="p-4">
             <div className="flex items-center gap-2 mb-2">
               <TrendingUp className={`w-4 h-4 ${ltvColors.text}`} />
-              <span className={`text-sm font-medium ${ltvColors.text}`}>LTV Ratio</span>
+              <span className={`text-sm font-medium ${ltvColors.text}`}>LTV</span>
             </div>
             <p className={`text-2xl font-bold ${ltvColors.value}`}>
               {metrics.propertyCount > 0 ? `${metrics.ltv.toFixed(1)}%` : 'N/A'}
@@ -259,8 +282,14 @@ export default function SecurityTab({ loan }) {
                     setSelectedLoanProperty(lp);
                     setIsPropertyModalOpen(true);
                   }}
+                  onUpdateValuation={() => {
+                    setSelectedLoanProperty(lp);
+                    setShowAddFormOnOpen(true);
+                    setIsValuationModalOpen(true);
+                  }}
                   onViewHistory={() => {
                     setSelectedLoanProperty(lp);
+                    setShowAddFormOnOpen(false);
                     setIsValuationModalOpen(true);
                   }}
                   onRemove={() => setPropertyToRemove(lp)}
@@ -359,8 +388,10 @@ export default function SecurityTab({ loan }) {
           onClose={() => {
             setIsValuationModalOpen(false);
             setSelectedLoanProperty(null);
+            setShowAddFormOnOpen(false);
           }}
           loanProperty={selectedLoanProperty}
+          initialShowAddForm={showAddFormOnOpen}
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['loan-properties', loan.id] });
           }}

@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -19,10 +19,17 @@ export default function ValuationHistoryModal({
   isOpen,
   onClose,
   loanProperty,
+  initialShowAddForm = false,
   onSuccess
 }) {
   const queryClient = useQueryClient();
-  const [showAddForm, setShowAddForm] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(initialShowAddForm);
+
+  // Sync showAddForm when initialShowAddForm prop changes (e.g., opening via "Update Valuation")
+  useEffect(() => {
+    setShowAddForm(initialShowAddForm);
+  }, [initialShowAddForm]);
+
   const [newValuation, setNewValuation] = useState({
     value_type: 'Property Valuation',
     value: '',
