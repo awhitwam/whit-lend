@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -22,11 +23,13 @@ import {
   TrendingUp,
   Shield,
   Loader2,
-  Trash2
+  Trash2,
+  Mail
 } from 'lucide-react';
 import PropertyCard from './PropertyCard';
 import PropertyModal from './PropertyModal';
 import ValuationHistoryModal from './ValuationHistoryModal';
+import ValuationRequestLetterModal from './ValuationRequestLetterModal';
 import { toast } from 'sonner';
 import { logLoanPropertyEvent, AuditAction } from '@/lib/auditLog';
 import { format } from 'date-fns';
@@ -38,7 +41,9 @@ export default function SecurityTab({ loan }) {
   const [showAddFormOnOpen, setShowAddFormOnOpen] = useState(false);
   const [propertyToRemove, setPropertyToRemove] = useState(null);
   const [activeTab, setActiveTab] = useState('active');
+  const [isLetterModalOpen, setIsLetterModalOpen] = useState(false);
   const queryClient = useQueryClient();
+  const { currentOrganization } = useOrganization();
 
   // Query for loan properties with related data
   const { data: loanProperties = [], isLoading } = useQuery({
@@ -58,18 +63,31 @@ export default function SecurityTab({ loan }) {
 
         // Get most recent property valuation date
         const lastPropertyValuation = valuations.find(v => v.value_type === 'Property Valuation');
+        // Get most recent first charge balance date (for second charges)
+        const lastFirstChargeBalance = valuations.find(v => v.value_type === 'First Charge Balance');
 
         return {
           ...link,
           property: properties[0],
           firstChargeHolder: firstChargeHolders[0],
-          lastValuationDate: lastPropertyValuation?.effective_date
+          lastValuationDate: lastPropertyValuation?.effective_date,
+          lastFirstChargeBalanceDate: lastFirstChargeBalance?.effective_date
         };
       }));
 
       return enrichedLinks;
     },
     enabled: !!loan.id
+  });
+
+  // Fetch borrower for letter modal
+  const { data: borrower } = useQuery({
+    queryKey: ['borrower', loan?.borrower_id],
+    queryFn: async () => {
+      const borrowers = await api.entities.Borrower.filter({ id: loan.borrower_id });
+      return borrowers[0];
+    },
+    enabled: !!loan?.borrower_id
   });
 
   // Separate active and removed properties
@@ -106,7 +124,9 @@ export default function SecurityTab({ loan }) {
   const calculateSecurityMetrics = () => {
     let totalSecurityValue = 0;
     let staleValuations = 0;
-    const STALE_MONTHS = 12;
+    let staleFirstChargeBalances = 0;
+    const STALE_VALUATION_MONTHS = 12;
+    const STALE_BALANCE_MONTHS = 6;
 
     activeProperties.forEach(lp => {
       if (!lp.property) return;
@@ -123,11 +143,26 @@ export default function SecurityTab({ loan }) {
         const monthsSinceValuation = Math.floor(
           (new Date() - new Date(lp.lastValuationDate)) / (1000 * 60 * 60 * 24 * 30)
         );
-        if (monthsSinceValuation >= STALE_MONTHS) {
+        if (monthsSinceValuation >= STALE_VALUATION_MONTHS) {
           staleValuations++;
         }
       } else {
         staleValuations++;
+      }
+
+      // Check for stale first charge balances (only for second charges)
+      if (lp.charge_type === 'Second Charge') {
+        if (lp.lastFirstChargeBalanceDate) {
+          const monthsSinceBalance = Math.floor(
+            (new Date() - new Date(lp.lastFirstChargeBalanceDate)) / (1000 * 60 * 60 * 24 * 30)
+          );
+          if (monthsSinceBalance >= STALE_BALANCE_MONTHS) {
+            staleFirstChargeBalances++;
+          }
+        } else if (lp.first_charge_balance) {
+          // Has a balance but no history record - consider it stale
+          staleFirstChargeBalances++;
+        }
       }
     });
 
@@ -149,7 +184,8 @@ export default function SecurityTab({ loan }) {
       initialLtv,
       ltv,
       propertyCount: activeProperties.length,
-      staleValuations
+      staleValuations,
+      staleFirstChargeBalances
     };
   };
 
@@ -230,6 +266,22 @@ export default function SecurityTab({ loan }) {
             </Button>
           </CardContent>
         </Card>
+
+        {/* Request Valuation Letter - shows when valuations are stale */}
+        {metrics.staleValuations > 0 && (
+          <Card className="bg-gradient-to-br from-amber-50 to-amber-100/50 border-amber-200">
+            <CardContent className="p-4 flex items-center justify-center">
+              <Button
+                variant="outline"
+                className="border-amber-300 text-amber-700 hover:bg-amber-100"
+                onClick={() => setIsLetterModalOpen(true)}
+              >
+                <Mail className="w-4 h-4 mr-2" />
+                Request Valuation
+              </Button>
+            </CardContent>
+          </Card>
+        )}
       </div>
 
       {/* Property Tabs */}
@@ -278,6 +330,7 @@ export default function SecurityTab({ loan }) {
                   key={lp.id}
                   loanProperty={lp}
                   lastValuationDate={lp.lastValuationDate}
+                  lastFirstChargeBalanceDate={lp.lastFirstChargeBalanceDate}
                   onEdit={() => {
                     setSelectedLoanProperty(lp);
                     setIsPropertyModalOpen(true);
@@ -395,6 +448,18 @@ export default function SecurityTab({ loan }) {
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['loan-properties', loan.id] });
           }}
+        />
+      )}
+
+      {isLetterModalOpen && (
+        <ValuationRequestLetterModal
+          isOpen={isLetterModalOpen}
+          onClose={() => setIsLetterModalOpen(false)}
+          loan={loan}
+          loanProperties={activeProperties}
+          borrower={borrower}
+          organization={currentOrganization}
+          ltvMetrics={metrics}
         />
       )}
     </div>

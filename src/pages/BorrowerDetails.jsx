@@ -735,6 +735,9 @@ export default function BorrowerDetails() {
                   <User className="w-8 h-8" />
                 </div>
                 <div>
+                  {borrower.business && (
+                    <p className="text-lg font-semibold text-slate-200">{borrower.business}</p>
+                  )}
                   <h1 className="text-2xl font-bold">{borrower.first_name} {borrower.last_name}</h1>
                   <p className="text-slate-300">#{borrower.unique_number || 'N/A'}</p>
                 </div>
@@ -816,14 +819,24 @@ export default function BorrowerDetails() {
                   </div>
                 </div>
               )}
-              {borrower.address && (
-                <div className="flex items-center gap-3">
+              {(borrower.address || borrower.city || borrower.zipcode) && (
+                <div className="flex items-start gap-3">
                   <div className="p-2 rounded-lg bg-slate-100">
                     <MapPin className="w-4 h-4 text-slate-600" />
                   </div>
                   <div>
                     <p className="text-xs text-slate-500">Address</p>
-                    <p className="font-medium text-sm">{borrower.address}</p>
+                    <div className="font-medium text-sm">
+                      {borrower.address && <p>{borrower.address}</p>}
+                      {(borrower.city || borrower.zipcode) && (
+                        <p className="text-slate-600">
+                          {[borrower.city, borrower.zipcode].filter(Boolean).join(', ')}
+                        </p>
+                      )}
+                      {borrower.country && (
+                        <p className="text-slate-500">{borrower.country}</p>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}

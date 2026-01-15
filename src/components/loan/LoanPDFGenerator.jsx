@@ -2033,3 +2033,233 @@ export function generateContactStatementsPDF({
   const safeContactEmail = contactEmail.replace(/[^a-zA-Z0-9]/g, '_').slice(0, 30);
   doc.save(`combined-statements-${safeContactEmail}-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
 }
+
+/**
+ * Generate a valuation request letter PDF
+ * Used to request updated property valuations from borrowers when valuations are stale
+ */
+export function generateValuationRequestPDF({
+  loan,
+  loanProperties,
+  borrower,
+  organization,
+  headerText,
+  footerText,
+  ltvMetrics = null
+}) {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const leftMargin = 20;
+  const rightMargin = pageWidth - 20;
+  const contentWidth = rightMargin - leftMargin;
+  let y = 20;
+
+  // Organization Header
+  if (organization) {
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(organization.name || '', pageWidth / 2, y, { align: 'center' });
+    y += 6;
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+
+    const addressParts = [];
+    if (organization.address_line1) addressParts.push(organization.address_line1);
+    if (organization.address_line2) addressParts.push(organization.address_line2);
+    const cityPostcode = [organization.city, organization.postcode].filter(Boolean).join(' ');
+    if (cityPostcode) addressParts.push(cityPostcode);
+
+    for (const line of addressParts) {
+      doc.text(line, pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    const contactParts = [];
+    if (organization.phone) contactParts.push(`Tel: ${organization.phone}`);
+    if (organization.email) contactParts.push(`Email: ${organization.email}`);
+    if (contactParts.length > 0) {
+      doc.setFontSize(8);
+      doc.text(contactParts.join('  |  '), pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    // Separator line
+    y += 4;
+    doc.setDrawColor(180, 180, 180);
+    doc.line(leftMargin, y, rightMargin, y);
+    y += 12;
+  }
+
+  // Date
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+  doc.text(format(new Date(), 'dd MMMM yyyy'), leftMargin, y);
+  y += 12;
+
+  // Recipient Address
+  const borrowerName = borrower?.business || `${borrower?.first_name || ''} ${borrower?.last_name || ''}`.trim() || 'The Borrower';
+  doc.setFont(undefined, 'bold');
+  doc.text(borrowerName, leftMargin, y);
+  y += 5;
+  doc.setFont(undefined, 'normal');
+
+  if (borrower?.address) {
+    const addressLines = borrower.address.split('\n');
+    for (const line of addressLines) {
+      doc.text(line.trim(), leftMargin, y);
+      y += 5;
+    }
+  }
+  if (borrower?.city || borrower?.zipcode) {
+    const cityLine = [borrower.city, borrower.zipcode].filter(Boolean).join(' ');
+    doc.text(cityLine, leftMargin, y);
+    y += 5;
+  }
+
+  y += 8;
+
+  // Header Text (customizable)
+  doc.setFontSize(10);
+  // Replace placeholder with actual name
+  const processedHeaderText = headerText.replace(/{borrowerName}/g, borrowerName);
+  const headerLines = doc.splitTextToSize(processedHeaderText, contentWidth);
+  for (const line of headerLines) {
+    if (line.startsWith('Re:') || line.startsWith('RE:')) {
+      doc.setFont(undefined, 'bold');
+    } else if (line.startsWith('Dear')) {
+      doc.setFont(undefined, 'normal');
+    }
+    doc.text(line, leftMargin, y);
+    y += 5;
+    doc.setFont(undefined, 'normal');
+  }
+
+  y += 8;
+
+  // Loan Details Section
+  doc.setFontSize(11);
+  doc.setFont(undefined, 'bold');
+  doc.text('LOAN DETAILS', leftMargin, y);
+  y += 2;
+  doc.setDrawColor(100, 100, 100);
+  doc.line(leftMargin, y, leftMargin + 40, y);
+  y += 6;
+
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+
+  const loanDetails = [
+    ['Loan Reference:', `#${loan.loan_number || loan.id?.slice(0, 8) || 'N/A'}`],
+    ['Principal Amount:', formatCurrency(loan.principal_amount || 0)],
+    ['Status:', loan.status || 'N/A']
+  ];
+
+  if (ltvMetrics?.ltv != null) {
+    loanDetails.push(['Current LTV:', `${ltvMetrics.ltv.toFixed(1)}%`]);
+  }
+
+  for (const [label, value] of loanDetails) {
+    doc.setFont(undefined, 'normal');
+    doc.text(label, leftMargin, y);
+    doc.text(value, leftMargin + 45, y);
+    y += 5;
+  }
+
+  y += 8;
+
+  // Security Details Section
+  doc.setFontSize(11);
+  doc.setFont(undefined, 'bold');
+  doc.text('SECURITY DETAILS', leftMargin, y);
+  y += 2;
+  doc.setDrawColor(100, 100, 100);
+  doc.line(leftMargin, y, leftMargin + 50, y);
+  y += 6;
+
+  if (loanProperties && loanProperties.length > 0) {
+    // Table header
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'bold');
+    doc.setFillColor(240, 240, 240);
+    doc.rect(leftMargin, y - 3, contentWidth, 6, 'F');
+
+    const colWidths = [75, 25, 30, 40];
+    let x = leftMargin + 2;
+
+    doc.text('Property Address', x, y);
+    x += colWidths[0];
+    doc.text('Type', x, y);
+    x += colWidths[1];
+    doc.text('Charge', x, y);
+    x += colWidths[2];
+    doc.text('Value / Age', x, y);
+
+    y += 6;
+
+    // Table rows
+    doc.setFont(undefined, 'normal');
+    for (const lp of loanProperties) {
+      const property = lp.property || lp;
+      const address = property?.address || 'Unknown';
+      const type = property?.property_type || 'N/A';
+      const chargeType = lp.charge_type === 'Second Charge' ? '2nd' : '1st';
+      const value = formatCurrency(property?.current_value || 0);
+
+      // Calculate valuation age
+      let ageText = 'No valuation';
+      if (lp.lastValuationDate) {
+        const months = Math.floor((new Date() - new Date(lp.lastValuationDate)) / (1000 * 60 * 60 * 24 * 30));
+        ageText = `${months} mths`;
+      }
+
+      x = leftMargin + 2;
+
+      // Truncate address if too long
+      const truncatedAddress = address.length > 35 ? address.slice(0, 32) + '...' : address;
+      doc.text(truncatedAddress, x, y);
+      x += colWidths[0];
+      doc.text(type.slice(0, 10), x, y);
+      x += colWidths[1];
+      doc.text(chargeType, x, y);
+      x += colWidths[2];
+      doc.text(`${value}`, x, y);
+      y += 5;
+      // Age on second line
+      doc.setTextColor(100, 100, 100);
+      doc.text(`(${ageText})`, x, y);
+      doc.setTextColor(0, 0, 0);
+      y += 6;
+
+      // Add row separator
+      doc.setDrawColor(220, 220, 220);
+      doc.line(leftMargin, y - 2, rightMargin, y - 2);
+    }
+  } else {
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'italic');
+    doc.text('No properties linked to this loan.', leftMargin, y);
+    y += 6;
+  }
+
+  y += 8;
+
+  // Footer Text (customizable)
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+  const footerLines = doc.splitTextToSize(footerText, contentWidth);
+  for (const line of footerLines) {
+    doc.text(line, leftMargin, y);
+    y += 5;
+  }
+
+  y += 10;
+
+  // Organization signature
+  if (organization?.name) {
+    doc.setFont(undefined, 'bold');
+    doc.text(organization.name, leftMargin, y);
+  }
+
+  return doc;
+}

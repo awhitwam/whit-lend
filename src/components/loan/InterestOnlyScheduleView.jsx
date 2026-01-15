@@ -697,7 +697,7 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
 
       {/* Note - combine all child notes */}
       <TableCell className={cn(
-        "py-0.5 text-slate-500",
+        "py-0.5 text-slate-500 whitespace-nowrap",
         group.rows.length === 1 ? "text-base" : "text-xs"
       )}>
         {(() => {
@@ -740,11 +740,12 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
             return notesData[0].breakdown;
           }
 
-          // Multiple rows - combine with separator, smaller font
+          // Multiple rows - combine with separator on single line
           return (
-            <div className="space-y-0.5">
+            <span>
               {notesData.map((note, idx) => (
-                <div key={idx} className="truncate max-w-[300px]">
+                <span key={idx}>
+                  {idx > 0 && <span className="text-slate-300 mx-1">|</span>}
                   {note.isDisbursement ? (
                     <Tooltip>
                       <TooltipTrigger asChild>
@@ -768,9 +769,9 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
                   ) : (
                     note.breakdown
                   )}
-                </div>
+                </span>
               ))}
-            </div>
+            </span>
           );
         })()}
       </TableCell>
@@ -1112,7 +1113,7 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
       </TableCell>
 
       {/* Calculation (last column, fills remaining space, left-justified) */}
-      <TableCell className={cn("text-base py-0.5", isToday ? "text-amber-600" : "text-slate-500")}>
+      <TableCell className={cn("text-base py-0.5 whitespace-nowrap", isToday ? "text-amber-600" : "text-slate-500")}>
         {isToday && row.accruedInterest > 0.01 ? (
           <Tooltip>
             <TooltipTrigger asChild>

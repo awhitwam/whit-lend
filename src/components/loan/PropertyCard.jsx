@@ -27,13 +27,15 @@ import {
 export default function PropertyCard({
   loanProperty,
   lastValuationDate,
+  lastFirstChargeBalanceDate,
   onEdit,
   onUpdateValuation,
   onViewHistory,
   onRemove
 }) {
   const { property, firstChargeHolder } = loanProperty;
-  const STALE_MONTHS = 12;
+  const STALE_VALUATION_MONTHS = 12;
+  const STALE_BALANCE_MONTHS = 6;
 
   // Calculate security value
   const propertyValue = property?.current_value || 0;
@@ -43,8 +45,32 @@ export default function PropertyCard({
 
   // Check if valuation is stale
   const isStale = lastValuationDate
-    ? differenceInMonths(new Date(), new Date(lastValuationDate)) >= STALE_MONTHS
+    ? differenceInMonths(new Date(), new Date(lastValuationDate)) >= STALE_VALUATION_MONTHS
     : true;
+
+  // Calculate first charge balance age (for second charges)
+  const balanceAgeMonths = lastFirstChargeBalanceDate
+    ? differenceInMonths(new Date(), new Date(lastFirstChargeBalanceDate))
+    : null;
+
+  const isBalanceStale = loanProperty.charge_type === 'Second Charge' &&
+    (balanceAgeMonths === null || balanceAgeMonths >= STALE_BALANCE_MONTHS);
+
+  // Calculate valuation age in months
+  const valuationAgeMonths = lastValuationDate
+    ? differenceInMonths(new Date(), new Date(lastValuationDate))
+    : null;
+
+  // Get colors for age card: returns bg, border, text colors
+  const getAgeColors = (months, staleThreshold) => {
+    if (months === null) return { bg: 'bg-slate-100', border: 'border-slate-200', text: 'text-slate-500', value: 'text-slate-600' };
+    if (months < staleThreshold) return { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600', value: 'text-emerald-700' };
+    if (months < staleThreshold * 2) return { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', value: 'text-amber-700' };
+    return { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-600', value: 'text-red-700' };
+  };
+
+  const valuationColors = getAgeColors(valuationAgeMonths, STALE_VALUATION_MONTHS);
+  const balanceColors = getAgeColors(balanceAgeMonths, STALE_BALANCE_MONTHS);
 
   const getPropertyTypeIcon = (type) => {
     switch (type) {
@@ -79,6 +105,7 @@ export default function PropertyCard({
   return (
     <Card className="hover:shadow-md transition-shadow">
       <CardContent className="p-4">
+        {/* Header with address and menu */}
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-start gap-3">
             <div className={`p-2 rounded-lg ${getPropertyTypeColor(property?.property_type)}`}>
@@ -118,53 +145,68 @@ export default function PropertyCard({
           </DropdownMenu>
         </div>
 
-        <div className="grid grid-cols-2 gap-3 mb-3">
-          <div>
-            <p className="text-xs text-slate-500">Current Value</p>
-            <p className="font-semibold">{formatCurrency(propertyValue)}</p>
-          </div>
-          <div>
-            <p className="text-xs text-slate-500">Security Value</p>
-            <p className="font-semibold text-emerald-600">{formatCurrency(securityValue)}</p>
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          <Badge className={`${
-            loanProperty.charge_type === 'First Charge'
-              ? 'bg-emerald-100 text-emerald-700'
-              : 'bg-amber-100 text-amber-700'
-          }`}>
-            {loanProperty.charge_type}
-          </Badge>
-          <Badge variant="outline">{property?.property_type}</Badge>
-          {isStale && (
-            <Badge className="bg-red-100 text-red-700">
-              <AlertTriangle className="w-3 h-3 mr-1" />
-              Valuation Due
-            </Badge>
-          )}
-        </div>
-
-        {loanProperty.charge_type === 'Second Charge' && (
-          <div className="mt-3 p-2 bg-slate-50 rounded-lg">
-            <div className="flex items-center gap-2 text-sm">
-              <Landmark className="w-4 h-4 text-slate-400" />
-              <span className="text-slate-600">
-                First Charge: <span className="font-medium">{firstChargeHolder?.name || 'Unknown'}</span>
-              </span>
+        {/* Main content: Values on left, Age cards on right */}
+        <div className="flex gap-3">
+          {/* Left side: Values and badges */}
+          <div className="flex-1">
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              <div>
+                <p className="text-xs text-slate-500">Current Value</p>
+                <p className="font-semibold">{formatCurrency(propertyValue)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-slate-500">Security Value</p>
+                <p className="font-semibold text-emerald-600">{formatCurrency(securityValue)}</p>
+              </div>
             </div>
-            <p className="text-sm text-slate-500 ml-6">
-              Balance: {formatCurrency(loanProperty.first_charge_balance || 0)}
-            </p>
-          </div>
-        )}
 
-        {lastValuationDate && (
-          <div className="mt-2 text-xs text-slate-400">
-            Last valued: {format(new Date(lastValuationDate), 'dd MMM yyyy')}
+            <div className="flex items-center gap-2 flex-wrap">
+              <Badge className={`${
+                loanProperty.charge_type === 'First Charge'
+                  ? 'bg-emerald-100 text-emerald-700'
+                  : 'bg-amber-100 text-amber-700'
+              }`}>
+                {loanProperty.charge_type}
+              </Badge>
+              <Badge variant="outline">{property?.property_type}</Badge>
+            </div>
+
+            {/* First Charge holder info for second charges */}
+            {loanProperty.charge_type === 'Second Charge' && (
+              <div className="mt-3 flex items-center gap-2 text-sm">
+                <Landmark className="w-4 h-4 text-slate-400" />
+                <span className="text-slate-600">
+                  {firstChargeHolder?.name || 'Unknown Lender'}
+                </span>
+              </div>
+            )}
           </div>
-        )}
+
+          {/* Right side: Age indicator cards */}
+          <div className="flex flex-col gap-2">
+            {/* Valuation Age Card */}
+            <div className={`px-3 py-2 rounded-lg border ${valuationColors.bg} ${valuationColors.border} text-center min-w-[80px]`}>
+              <p className={`text-xs ${valuationColors.text} font-medium`}>Valuation</p>
+              <p className={`text-xl font-bold ${valuationColors.value}`}>
+                {valuationAgeMonths !== null ? `${valuationAgeMonths}m` : '?'}
+              </p>
+              {isStale && <AlertTriangle className={`w-4 h-4 mx-auto ${valuationColors.text}`} />}
+            </div>
+
+            {/* First Charge Balance Age Card (for second charges only) */}
+            {loanProperty.charge_type === 'Second Charge' && (
+              <div className={`px-3 py-2 rounded-lg border ${balanceColors.bg} ${balanceColors.border} text-center min-w-[80px]`}>
+                <p className={`text-xs ${balanceColors.text} font-medium`}>1st Chg Bal</p>
+                <p className={`text-xl font-bold ${balanceColors.value}`}>
+                  {balanceAgeMonths !== null ? `${balanceAgeMonths}m` : '?'}
+                </p>
+                <p className={`text-xs ${balanceColors.text}`}>
+                  {formatCurrency(loanProperty.first_charge_balance || 0)}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
       </CardContent>
     </Card>
   );

@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, FileText, Shield, Receipt, Banknote, Coins } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, FileText, Shield, Receipt, Banknote, Coins, MessageSquare } from 'lucide-react';
 import { formatCurrency, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from './LoanCalculator';
 import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 import RentScheduleView from './RentScheduleView';
@@ -31,7 +31,7 @@ const getDisplayRate = (loan, date) => {
   return loan?.interest_rate || 0;
 };
 
-export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product, tabs = [], activeTab = 'schedule', onTabChange, expenses = [] }) {
+export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product, tabs = [], activeTab = 'schedule', onTabChange, expenses = [], securityCount = 0, commentCount = 0 }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('nested'); // 'nested', 'ledger'
@@ -586,6 +586,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
               >
                 <Shield className="w-3 h-3" />
                 Security
+                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                  {securityCount}
+                </Badge>
               </Button>
               <Button
                 variant={activeTab === 'expenses' ? "default" : "ghost"}
@@ -597,6 +600,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 Expenses
                 <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
                   {expenses.length}
+                </Badge>
+              </Button>
+              <Button
+                variant={activeTab === 'comments' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => onTabChange?.('comments')}
+                className="gap-1 h-6 text-xs px-2"
+              >
+                <MessageSquare className="w-3 h-3" />
+                Comments
+                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                  {commentCount}
                 </Badge>
               </Button>
             </div>
@@ -973,7 +988,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             <TableCell className={`text-right font-mono font-semibold ${cumulativeVariance >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                               {cumulativeVariance >= 0 ? '+' : ''}{formatCurrency(cumulativeVariance)}
                             </TableCell>
-                            <TableCell className="text-slate-600 text-xs">
+                            <TableCell className="text-slate-600 text-xs whitespace-nowrap">
                               <div className="flex items-center gap-1.5">
                                 {hasPenaltyRate ? (
                                   <TooltipProvider>
@@ -1190,7 +1205,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                           <TableCell className={`text-right font-mono font-semibold py-1.5 ${varianceColor}`}>
                             {variance >= 0 ? '+' : ''}{formatCurrency(variance)}
                           </TableCell>
-                          <TableCell className="text-slate-600 text-xs py-1.5">
+                          <TableCell className="text-slate-600 text-xs py-1.5 whitespace-nowrap">
                             <div className="flex items-center gap-1.5">
                               {hasPenaltyRate ? (
                                 <TooltipProvider>

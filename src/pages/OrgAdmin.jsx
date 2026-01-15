@@ -1101,6 +1101,7 @@ export default function OrgAdmin() {
       'properties': 'Property',
       'Investor': 'Investor',
       'loans': 'Loan',
+      'loan_comments': 'LoanComment',
       'InvestorTransaction': 'InvestorTransaction',
       'investor_interest': 'InvestorInterest',
       'transactions': 'Transaction',
@@ -1144,7 +1145,7 @@ export default function OrgAdmin() {
     const tables = [
       'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
       'borrowers', 'properties', 'Investor',
-      'loans', 'InvestorTransaction', 'investor_interest',
+      'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
       'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
       'value_history', 'bank_statements', 'other_income',
       'borrower_loan_preferences', 'receipt_drafts',
@@ -1270,7 +1271,7 @@ export default function OrgAdmin() {
       const restoreOrder = [
         'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
         'borrowers', 'properties', 'Investor',
-        'loans', 'InvestorTransaction', 'investor_interest',
+        'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
         'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
         'value_history', 'bank_statements', 'other_income',
         'borrower_loan_preferences', 'receipt_drafts',
@@ -1307,6 +1308,7 @@ export default function OrgAdmin() {
       // Note: loans.restructured_from_loan_id is handled specially (two-pass) since it's self-referential
       const fkFieldMap = {
         'loans': ['borrower_id', 'product_id'],  // restructured_from_loan_id handled in second pass
+        'loan_comments': ['loan_id', 'user_id'],  // user_id may be null for imported comments
         'InvestorTransaction': ['investor_id', 'investor_product_id'],
         'investor_interest': ['investor_id'],
         'transactions': ['loan_id', 'borrower_id'],

@@ -37,7 +37,8 @@ import {
   DollarSign,
   Coins,
   Info,
-  Crown
+  Crown,
+  MessageSquare
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
@@ -102,6 +103,7 @@ const navigation = [
         children: [
           { name: 'Loandisc Import', href: 'ImportLoandisc', icon: FileSpreadsheet },
           { name: 'Loandisc Expenses', href: 'ImportExpenses', icon: Receipt },
+          { name: 'Import Comments', href: 'ImportComments', icon: MessageSquare },
           { name: 'Historical Disbursements', href: 'ImportHistoricalDisbursements', icon: FileSpreadsheet },
           { name: 'Import Investors', href: 'ImportInvestors', icon: TrendingUp },
           { name: 'Import Investor Txns', href: 'ImportInvestorTransactions', icon: CreditCard },
@@ -165,7 +167,7 @@ export default function Layout({ children, currentPageName }) {
   const filteredNavigation = getFilteredNavigation(canAdmin(), isSuperAdmin);
 
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'OrphanedEntries', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'OrphanedEntries', 'Expenses', 'OtherIncome', 'Products', 'Config', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportComments', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
   const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
 
   useEffect(() => {

@@ -44,7 +44,8 @@ import {
   Landmark,
   Layers,
   ShieldCheck,
-  Plus
+  Plus,
+  MessageSquare
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -72,6 +73,7 @@ import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiv
 import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
+import LoanCommentsPanel from '@/components/loan/LoanCommentsPanel';
 import { getScheduler } from '@/lib/schedule';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import { format } from 'date-fns';
@@ -162,7 +164,22 @@ export default function LoanDetails() {
     enabled: !!loanId
   });
 
-  // Fetch loan properties with property data and valuations for Security tab badge and LTV calculation
+  // Fetch loan properties (basic) for Security tab badge count
+  // This uses the same query key as SecurityTab so they share cache
+  const { data: loanPropertiesBasic = [] } = useQuery({
+    queryKey: ['loan-properties', loanId],
+    queryFn: () => api.entities.LoanProperty.filter({ loan_id: loanId, status: 'Active' }),
+    enabled: !!loanId
+  });
+
+  // Fetch comment count for Comments tab badge
+  const { data: loanComments = [] } = useQuery({
+    queryKey: ['loan-comments', loanId],
+    queryFn: () => api.entities.LoanComment.filter({ loan_id: loanId }),
+    enabled: !!loanId
+  });
+
+  // Fetch enriched loan properties with property data and valuations for LTV calculation
   const { data: loanProperties = [] } = useQuery({
     queryKey: ['loan-properties-with-data', loanId],
     queryFn: async () => {
@@ -1404,7 +1421,13 @@ export default function LoanDetails() {
                   )}
                   {loan.description && <span className="font-normal text-slate-300"> - {loan.description}</span>}
                   <span className="font-normal text-slate-400">, </span>
-                  <span className="font-normal">{loan.borrower_name}</span>
+                  <Link
+                    to={createPageUrl(`BorrowerDetails?id=${loan.borrower_id}`)}
+                    className="font-normal hover:text-blue-300 hover:underline transition-colors"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    {loan.borrower_name}
+                  </Link>
                 </h1>
               </div>
               <div className="flex items-center gap-2">
@@ -1675,6 +1698,19 @@ export default function LoanDetails() {
                       <p className="text-xl font-bold text-amber-900">{formatCurrency(Math.max(0, ((loan.monthly_charge || 0) * (loan.duration || 0)) - transactions.filter(t => !t.is_deleted && t.type === 'Repayment').reduce((sum, t) => sum + t.amount, 0)))}</p>
                       <p className="text-xs text-slate-500">{schedule.filter(s => s.status === 'Pending').length} remaining</p>
                     </div>
+                    {expenses.length > 0 && (() => {
+                      const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+                      return (
+                        <div
+                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
+                          onClick={() => setActiveTab('expenses')}
+                        >
+                          <p className="text-xs text-red-600 font-medium">Expenses</p>
+                          <p className="text-xl font-bold text-red-900">{formatCurrency(totalExpenses)}</p>
+                          <p className="text-xs text-slate-500">{expenses.length} item{expenses.length !== 1 ? 's' : ''}</p>
+                        </div>
+                      );
+                    })()}
                   </>
                 )}
 
@@ -1691,6 +1727,19 @@ export default function LoanDetails() {
                       <p className="text-xl font-bold text-emerald-900">{formatCurrency(actualPrincipalPaid)}</p>
                       <p className="text-xs text-slate-500">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length} payments</p>
                     </div>
+                    {expenses.length > 0 && (() => {
+                      const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+                      return (
+                        <div
+                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
+                          onClick={() => setActiveTab('expenses')}
+                        >
+                          <p className="text-xs text-red-600 font-medium">Expenses</p>
+                          <p className="text-xl font-bold text-red-900">{formatCurrency(totalExpenses)}</p>
+                          <p className="text-xs text-slate-500">{expenses.length} item{expenses.length !== 1 ? 's' : ''}</p>
+                        </div>
+                      );
+                    })()}
                   </>
                 )}
 
@@ -1749,6 +1798,19 @@ export default function LoanDetails() {
                         </div>
                       );
                     })()}
+                    {expenses.length > 0 && (() => {
+                      const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+                      return (
+                        <div
+                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
+                          onClick={() => setActiveTab('expenses')}
+                        >
+                          <p className="text-xs text-red-600 font-medium">Expenses</p>
+                          <p className="text-xl font-bold text-red-900">{formatCurrency(totalExpenses)}</p>
+                          <p className="text-xs text-slate-500">{expenses.length} item{expenses.length !== 1 ? 's' : ''}</p>
+                        </div>
+                      );
+                    })()}
                   </>
                 )}
               </div>
@@ -1769,6 +1831,8 @@ export default function LoanDetails() {
               activeTab={activeTab}
               onTabChange={setActiveTab}
               expenses={expenses}
+              securityCount={loanPropertiesBasic.length}
+              commentCount={loanComments.length}
             />
           )}
 
@@ -1836,11 +1900,9 @@ export default function LoanDetails() {
                     >
                       <Shield className="w-3 h-3" />
                       Security
-                      {loanProperties.length > 0 && (
-                        <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
-                          {loanProperties.length}
-                        </Badge>
-                      )}
+                      <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                        {loanPropertiesBasic.length}
+                      </Badge>
                     </Button>
                     <Button
                       variant={activeTab === 'expenses' ? "default" : "ghost"}
@@ -1852,6 +1914,18 @@ export default function LoanDetails() {
                       Expenses
                       <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
                         {expenses.length}
+                      </Badge>
+                    </Button>
+                    <Button
+                      variant={activeTab === 'comments' ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab('comments')}
+                      className="gap-1 h-6 text-xs px-2"
+                    >
+                      <MessageSquare className="w-3 h-3" />
+                      Comments
+                      <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                        {loanComments.length}
                       </Badge>
                     </Button>
                   </div>
@@ -2493,6 +2567,10 @@ export default function LoanDetails() {
                 )}
               </CardContent>
             </Card>
+          )}
+
+          {activeTab === 'comments' && (
+            <LoanCommentsPanel loan={loan} />
           )}
 
               </div>

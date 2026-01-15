@@ -121,7 +121,9 @@ export default function Loans() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [isRecalculating, setIsRecalculating] = useState(false);
   const [recalcProgress, setRecalcProgress] = useState({ current: 0, total: 0 });
-  const [searchTerm, setSearchTerm] = useState('');
+  const [searchTerm, setSearchTerm] = useState(() => {
+    return localStorage.getItem('loans-search-term') || '';
+  });
   const borrowerFilter = searchParams.get('borrower') || null;
   const contactEmailFilter = searchParams.get('contact_email') || null;
   const [statusFilter, setStatusFilter] = useState(
@@ -1197,9 +1199,24 @@ export default function Loans() {
                 <Input
                   placeholder="Search..."
                   value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                  className="pl-8 h-8 text-sm"
+                  onChange={(e) => {
+                    const value = e.target.value;
+                    setSearchTerm(value);
+                    localStorage.setItem('loans-search-term', value);
+                  }}
+                  className="pl-8 pr-8 h-8 text-sm"
                 />
+                {searchTerm && (
+                  <button
+                    onClick={() => {
+                      setSearchTerm('');
+                      localStorage.setItem('loans-search-term', '');
+                    }}
+                    className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded-full hover:bg-slate-200 text-slate-400 hover:text-slate-600 transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                )}
               </div>
               <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full md:w-auto">
                 <TabsList className="grid grid-cols-5 w-full md:w-auto h-8 bg-slate-100">

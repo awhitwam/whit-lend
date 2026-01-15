@@ -46,7 +46,9 @@ const tableMap = {
   // Accepted orphans (unreconciled entries marked as intentional)
   AcceptedOrphan: 'accepted_orphans',
   // Organization summary (cached aggregates)
-  OrganizationSummary: 'organization_summary'
+  OrganizationSummary: 'organization_summary',
+  // Loan comments
+  LoanComment: 'loan_comments'
 };
 
 // Tables that should have organization_id filter applied
@@ -83,7 +85,9 @@ const orgScopedTables = [
   // Accepted orphans
   'accepted_orphans',
   // Nightly job runs (nullable org_id, but should be filtered when present)
-  'nightly_job_runs'
+  'nightly_job_runs',
+  // Loan comments
+  'loan_comments'
 ];
 
 // Map column names that differ between code and database

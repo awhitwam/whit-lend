@@ -1,7 +1,7 @@
 // Schema definitions for backup/restore compatibility
 // Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
 
-export const CURRENT_SCHEMA_VERSION = 63;
+export const CURRENT_SCHEMA_VERSION = 66;
 
 // Define columns and defaults for each table
 // When adding new columns to tables, add them here with appropriate defaults
@@ -245,6 +245,12 @@ export const tableSchemas = {
     columns: ['id', 'email', 'full_name', 'role', 'organization_id', 'created_at',
               'updated_at', 'is_super_admin', 'default_organization_id'],
     defaults: { is_super_admin: false }
+  },
+
+  loan_comments: {
+    columns: ['id', 'organization_id', 'loan_id', 'user_id', 'user_name',
+              'comment', 'created_at'],
+    defaults: {}
   }
 };
 
