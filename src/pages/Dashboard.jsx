@@ -619,38 +619,49 @@ export default function Dashboard() {
               <h1 className="text-3xl font-bold text-slate-900 tracking-tight">
                 {currentOrganization?.name || 'Dashboard'}
               </h1>
-              {backupNeeded && (
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={handleBackupNow}
-                        disabled={isBackingUp}
-                        className={`p-1.5 rounded-lg transition-colors ${
-                          isBackingUp
-                            ? 'bg-slate-100 text-slate-400'
-                            : 'bg-amber-100 hover:bg-amber-200 text-amber-600'
-                        }`}
-                      >
-                        {isBackingUp ? (
-                          <Loader2 className="w-5 h-5 animate-spin" />
-                        ) : (
-                          <HardDrive className="w-5 h-5" />
-                        )}
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent side="right" className="max-w-xs">
-                      <p className="font-medium">Backup Recommended</p>
-                      <p className="text-xs text-slate-400 mt-1">
-                        {daysSinceLastBackup === null
-                          ? 'No backup on record'
-                          : `Last backup: ${daysSinceLastBackup} days ago`}
-                      </p>
-                      <p className="text-xs text-slate-400">Click to backup now</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-              )}
+              <TooltipProvider>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={handleBackupNow}
+                      disabled={isBackingUp}
+                      className={`p-1.5 rounded-lg transition-colors ${
+                        isBackingUp
+                          ? 'bg-slate-100 text-slate-400'
+                          : backupNeeded
+                            ? 'bg-amber-100 hover:bg-amber-200 text-amber-600'
+                            : 'bg-slate-100 hover:bg-slate-200 text-slate-500'
+                      }`}
+                    >
+                      {isBackingUp ? (
+                        <Loader2 className="w-5 h-5 animate-spin" />
+                      ) : (
+                        <HardDrive className="w-5 h-5" />
+                      )}
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-xs">
+                    {backupNeeded ? (
+                      <>
+                        <p className="font-medium text-amber-600">Backup Recommended</p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          {daysSinceLastBackup === null
+                            ? 'No backup on record'
+                            : `Last backup: ${daysSinceLastBackup} days ago`}
+                        </p>
+                      </>
+                    ) : (
+                      <>
+                        <p className="font-medium">Backup Data</p>
+                        <p className="text-xs text-slate-400 mt-1">
+                          Last backup: {daysSinceLastBackup} days ago
+                        </p>
+                      </>
+                    )}
+                    <p className="text-xs text-slate-400">Click to backup now</p>
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             </div>
             <p className="text-slate-500 mt-1">
               {format(today, 'EEEE, d MMMM yyyy')}

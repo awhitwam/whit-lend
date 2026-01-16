@@ -178,6 +178,11 @@ export default function PropertyCard({
                 <span className="text-slate-600">
                   {firstChargeHolder?.name || 'Unknown Lender'}
                 </span>
+                {loanProperty.first_charge_balance > 0 && (
+                  <span className="text-slate-500">
+                    ({formatCurrency(loanProperty.first_charge_balance)})
+                  </span>
+                )}
               </div>
             )}
           </div>
