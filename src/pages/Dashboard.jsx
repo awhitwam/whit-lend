@@ -229,18 +229,20 @@ export default function Dashboard() {
 
     // Gross = what borrower owes (principal remaining)
     // Net = what cash we actually paid out that's still outstanding
-    // The difference is the arrangement fee that was deducted at source
+    // The difference is the fees that were deducted at source (arrangement + additional)
     const arrangementFee = loan.arrangement_fee || 0;
+    const additionalFees = loan.additional_deducted_fees || 0;
+    const totalDeductions = arrangementFee + additionalFees;
 
     // If principal is fully repaid, net is also 0
-    // Otherwise, net = gross - fee (but not less than 0)
+    // Otherwise, net = gross - fees (but not less than 0)
     const grossOutstanding = Math.max(0, currentPrincipalBalance);
-    const netOutstanding = Math.max(0, currentPrincipalBalance - arrangementFee);
+    const netOutstanding = Math.max(0, currentPrincipalBalance - totalDeductions);
 
     return {
       grossDisbursed: acc.grossDisbursed + grossOutstanding,
       netDisbursed: acc.netDisbursed + netOutstanding,
-      feesDeducted: acc.feesDeducted + arrangementFee
+      feesDeducted: acc.feesDeducted + totalDeductions
     };
   }, { grossDisbursed: 0, netDisbursed: 0, feesDeducted: 0 });
 
@@ -295,7 +297,8 @@ export default function Dashboard() {
       .filter(m => m.principalRemaining > 0)
       .map(m => {
         const fee = m.loan.arrangement_fee || 0;
-        return { loan: m.loan, value: Math.max(0, m.principalRemaining - fee) };
+        const additionalFees = m.loan.additional_deducted_fees || 0;
+        return { loan: m.loan, value: Math.max(0, m.principalRemaining - fee - additionalFees) };
       })
       .filter(d => d.value > 0)
       .sort((a, b) => b.value - a.value),

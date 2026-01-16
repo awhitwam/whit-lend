@@ -266,7 +266,7 @@ export default function SettleLoanModal({
       organization: currentOrganization || null,
       borrower: borrower || null
     };
-    generateSettlementStatementPDF(loan, settlementData);
+    generateSettlementStatementPDF(loan, settlementData, schedule, transactions, product);
   };
 
   if (!isOpen || !loan) return null;

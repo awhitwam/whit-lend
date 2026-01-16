@@ -38,7 +38,8 @@ export default function PropertyModal({
     current_value: '',
     charge_type: 'First Charge',
     first_charge_holder_id: '',
-    first_charge_balance: ''
+    first_charge_balance: '',
+    valuation_date: format(new Date(), 'yyyy-MM-dd')
   });
 
   // Load existing properties for selection
@@ -78,7 +79,8 @@ export default function PropertyModal({
         current_value: existingLoanProperty.property.current_value || '',
         charge_type: existingLoanProperty.charge_type || 'First Charge',
         first_charge_holder_id: existingLoanProperty.first_charge_holder_id || '',
-        first_charge_balance: existingLoanProperty.first_charge_balance || ''
+        first_charge_balance: existingLoanProperty.first_charge_balance || '',
+        valuation_date: format(new Date(), 'yyyy-MM-dd')
       });
     } else {
       // Reset form for new property
@@ -91,7 +93,8 @@ export default function PropertyModal({
         current_value: '',
         charge_type: 'First Charge',
         first_charge_holder_id: '',
-        first_charge_balance: ''
+        first_charge_balance: '',
+        valuation_date: format(new Date(), 'yyyy-MM-dd')
       });
       setSelectedPropertyId('');
       setMode('new');
@@ -127,7 +130,7 @@ export default function PropertyModal({
               property_id: propertyId,
               value_type: 'Property Valuation',
               value: newValue,
-              effective_date: format(new Date(), 'yyyy-MM-dd'),
+              effective_date: formData.valuation_date || format(new Date(), 'yyyy-MM-dd'),
               notes: 'Updated via property edit'
             });
           }
@@ -142,7 +145,7 @@ export default function PropertyModal({
             property_id: propertyId,
             value_type: 'Property Valuation',
             value: parseFloat(formData.current_value) || 0,
-            effective_date: format(new Date(), 'yyyy-MM-dd'),
+            effective_date: formData.valuation_date || format(new Date(), 'yyyy-MM-dd'),
             notes: 'Initial valuation'
           });
 
@@ -187,7 +190,7 @@ export default function PropertyModal({
             loan_property_id: loanProperty.id,
             value_type: 'First Charge Balance',
             value: newBalance,
-            effective_date: format(new Date(), 'yyyy-MM-dd'),
+            effective_date: formData.valuation_date || format(new Date(), 'yyyy-MM-dd'),
             notes: isEdit ? 'Updated via property edit' : 'Initial first charge balance'
           });
         }
@@ -341,6 +344,16 @@ export default function PropertyModal({
                       required
                     />
                   </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="valuation_date">Valuation Date</Label>
+                  <Input
+                    id="valuation_date"
+                    type="date"
+                    value={formData.valuation_date}
+                    onChange={(e) => handleChange('valuation_date', e.target.value)}
+                  />
                 </div>
               </>
             )}

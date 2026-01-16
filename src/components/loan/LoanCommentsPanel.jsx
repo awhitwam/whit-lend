@@ -345,11 +345,11 @@ export default function LoanCommentsPanel({ loan }) {
             <p className="text-sm">Add a comment to keep track of important notes about this loan.</p>
           </div>
         ) : (
-          <div className="space-y-3">
+          <div className="space-y-1.5">
             {sortedComments.map((comment) => (
               <div
                 key={comment.id}
-                className="p-3 bg-slate-50 border border-slate-200 rounded-lg"
+                className="px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg"
               >
                 {editingComment?.id === comment.id ? (
                   // Edit mode

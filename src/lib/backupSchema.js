@@ -140,8 +140,9 @@ export const tableSchemas = {
 
   loan_properties: {
     columns: ['id', 'organization_id', 'loan_id', 'property_id', 'charge_type',
-              'charge_position', 'notes', 'created_at'],
-    defaults: {}
+              'charge_position', 'notes', 'created_at',
+              'first_charge_holder_id', 'first_charge_balance', 'status'],
+    defaults: { status: 'Active' }
   },
 
   expenses: {
