@@ -48,7 +48,10 @@ const tableMap = {
   // Organization summary (cached aggregates)
   OrganizationSummary: 'organization_summary',
   // Loan comments
-  LoanComment: 'loan_comments'
+  LoanComment: 'loan_comments',
+  // Letter templates
+  LetterTemplate: 'letter_templates',
+  GeneratedLetter: 'generated_letters'
 };
 
 // Tables that should have organization_id filter applied
@@ -87,7 +90,10 @@ const orgScopedTables = [
   // Nightly job runs (nullable org_id, but should be filtered when present)
   'nightly_job_runs',
   // Loan comments
-  'loan_comments'
+  'loan_comments',
+  // Letter templates
+  'letter_templates',
+  'generated_letters'
 ];
 
 // Map column names that differ between code and database

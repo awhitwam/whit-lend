@@ -34,6 +34,8 @@ import OrphanedEntries from './pages/OrphanedEntries';
 import Receipts from './pages/Receipts';
 import About from './pages/About';
 import UpdatePassword from './pages/UpdatePassword';
+import LetterTemplateEditor from './components/letters/LetterTemplateEditor';
+import LetterTemplates from './pages/LetterTemplates';
 import __Layout from './Layout.jsx';
 
 
@@ -74,6 +76,8 @@ export const PAGES = {
     "Receipts": Receipts,
     "About": About,
     "UpdatePassword": UpdatePassword,
+    "LetterTemplateEditor": LetterTemplateEditor,
+    "LetterTemplates": LetterTemplates,
 }
 
 export const pagesConfig = {

@@ -1,6 +1,6 @@
 
 import jsPDF from 'jspdf';
-import { format, differenceInDays } from 'date-fns';
+import { format, differenceInDays, isValid } from 'date-fns';
 import { formatCurrency } from './LoanCalculator';
 
 /**
@@ -993,7 +993,229 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
   doc.save(`loan-statement-${loan.id}-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
 }
 
+/**
+ * Generate loan statement PDF and return as ArrayBuffer (for merging)
+ * Same as generateLoanStatementPDF but returns bytes instead of downloading
+ */
+export function generateLoanStatementPDFBytes(loan, schedule, transactions, product = null, interestCalc = null, organization = null) {
+  const doc = new jsPDF();
+  const pageWidth = doc.internal.pageSize.getWidth();
+  let y = 15;
+
+  // Organization Details (if available)
+  if (organization) {
+    doc.setFontSize(14);
+    doc.setFont(undefined, 'bold');
+    doc.text(organization.name || '', pageWidth / 2, y, { align: 'center' });
+    y += 6;
+
+    doc.setFontSize(9);
+    doc.setFont(undefined, 'normal');
+
+    const addressParts = [];
+    if (organization.address_line1) addressParts.push(organization.address_line1);
+    if (organization.address_line2) addressParts.push(organization.address_line2);
+
+    const cityPostcode = [organization.city, organization.postcode].filter(Boolean).join(' ');
+    if (cityPostcode) addressParts.push(cityPostcode);
+    if (organization.country) addressParts.push(organization.country);
+
+    for (const line of addressParts) {
+      doc.text(line, pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    const contactParts = [];
+    if (organization.phone) contactParts.push(`Tel: ${organization.phone}`);
+    if (organization.email) contactParts.push(`Email: ${organization.email}`);
+    if (organization.website) contactParts.push(organization.website);
+
+    if (contactParts.length > 0) {
+      doc.setFontSize(8);
+      doc.text(contactParts.join('  |  '), pageWidth / 2, y, { align: 'center' });
+      y += 4;
+    }
+
+    y += 2;
+    doc.setDrawColor(200, 200, 200);
+    doc.line(40, y, pageWidth - 40, y);
+    y += 8;
+  }
+
+  // Header
+  doc.setFontSize(20);
+  doc.setFont(undefined, 'bold');
+  doc.text('LOAN STATEMENT', pageWidth / 2, y, { align: 'center' });
+
+  y += 12;
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+  doc.text(`Generated: ${format(new Date(), 'dd MMM yyyy HH:mm')}`, pageWidth / 2, y, { align: 'center' });
+
+  // Borrower Info
+  y += 12;
+  doc.setFontSize(12);
+  doc.setFont(undefined, 'bold');
+  doc.text('Borrower Information', 15, y);
+
+  y += 7;
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+  doc.text(`Name: ${loan.borrower_name}`, 15, y);
+  y += 5;
+  doc.text(`Loan Reference: #${loan.loan_number || loan.id.slice(0, 8)}`, 15, y);
+  if (loan.description) {
+    y += 5;
+    doc.text(`Description: ${loan.description}`, 15, y);
+  }
+
+  // Loan Details
+  y += 10;
+  doc.setFontSize(12);
+  doc.setFont(undefined, 'bold');
+  doc.text('Loan Details', 15, y);
+
+  y += 7;
+  doc.setFontSize(10);
+  doc.setFont(undefined, 'normal');
+  doc.text(`Principal Amount: ${formatCurrency(loan.principal_amount)}`, 15, y);
+  y += 5;
+  doc.text(`Interest Rate: ${loan.interest_rate}%`, 15, y);
+  y += 5;
+  doc.text(`Start Date: ${format(new Date(loan.start_date), 'dd MMM yyyy')}`, 15, y);
+  y += 5;
+  doc.text(`Maturity Date: ${format(new Date(loan.maturity_date), 'dd MMM yyyy')}`, 15, y);
+
+  // Interest Summary from calculations
+  if (interestCalc) {
+    y += 10;
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text('Interest Summary', 15, y);
+
+    y += 7;
+    doc.setFontSize(10);
+    doc.setFont(undefined, 'normal');
+    doc.text(`Interest Accrued: ${formatCurrency(interestCalc.accruedInterest || 0)}`, 15, y);
+    y += 5;
+    doc.text(`Interest Paid: ${formatCurrency(interestCalc.interestPaid || 0)}`, 15, y);
+    y += 5;
+    doc.text(`Interest Balance: ${formatCurrency(interestCalc.interestBalance || 0)}`, 15, y);
+  }
+
+  // Transaction History
+  const activeTransactions = (transactions || []).filter(t => !t.is_deleted);
+  if (activeTransactions.length > 0) {
+    y += 10;
+    doc.setFontSize(12);
+    doc.setFont(undefined, 'bold');
+    doc.text('Transaction History', 15, y);
+
+    y += 7;
+    doc.setFontSize(8);
+    doc.setFont(undefined, 'bold');
+    doc.text('Date', 17, y);
+    doc.text('Type', 45, y);
+    doc.text('Amount', 120, y, { align: 'right' });
+    doc.text('Interest', 145, y, { align: 'right' });
+    doc.text('Principal', 170, y, { align: 'right' });
+
+    y += 2;
+    doc.setDrawColor(200, 200, 200);
+    doc.line(15, y, 195, y);
+    y += 4;
+
+    let totalAmount = 0;
+    let totalInterestPaid = 0;
+    let totalPrincipalPaid = 0;
+    let totalDisbursed = 0;
+
+    doc.setFont(undefined, 'normal');
+    for (const tx of activeTransactions) {
+      if (y > 270) {
+        doc.addPage();
+        y = 20;
+      }
+
+      const txDate = format(new Date(tx.date), 'dd MMM yy');
+      const amount = tx.gross_amount ?? tx.amount ?? 0;
+
+      doc.text(txDate, 17, y);
+      doc.text(tx.type, 45, y);
+      doc.text(formatCurrency(amount), 120, y, { align: 'right' });
+
+      if (tx.type === 'Repayment') {
+        doc.text(formatCurrency(tx.interest_applied || 0), 145, y, { align: 'right' });
+        doc.text(formatCurrency(tx.principal_applied || 0), 170, y, { align: 'right' });
+        totalInterestPaid += tx.interest_applied || 0;
+        totalPrincipalPaid += tx.principal_applied || 0;
+        totalAmount += amount;
+      } else if (tx.type === 'Disbursement') {
+        totalDisbursed += amount;
+        doc.text('-', 145, y, { align: 'right' });
+        doc.text('-', 170, y, { align: 'right' });
+      }
+
+      y += 5;
+    }
+
+    y += 2;
+    doc.setDrawColor(100, 100, 100);
+    doc.line(15, y, 195, y);
+    y += 5;
+
+    doc.setFont(undefined, 'bold');
+    doc.setFontSize(8);
+    doc.text('TOTALS', 17, y);
+    doc.text(formatCurrency(totalAmount), 120, y, { align: 'right' });
+    doc.text(formatCurrency(totalInterestPaid), 145, y, { align: 'right' });
+    doc.text(formatCurrency(totalPrincipalPaid), 170, y, { align: 'right' });
+
+    y += 8;
+    doc.setFont(undefined, 'normal');
+    doc.text(`Disbursed: ${formatCurrency(totalDisbursed)}  |  Interest Received: ${formatCurrency(totalInterestPaid)}`, 17, y);
+  }
+
+  // Return as ArrayBuffer (no page numbers - will be added during merge)
+  return doc.output('arraybuffer');
+}
+
 export function generateSettlementStatementPDF(loan, settlementData, schedule = [], transactions = [], product = null) {
+  // Use shared rendering function to generate the document
+  const doc = renderSettlementStatementToDoc(loan, settlementData, schedule, transactions, product);
+
+  // Build filename using borrower name (business or first+last)
+  const filenameBorrower = settlementData.borrower;
+  const borrowerNameForFile = filenameBorrower?.business
+    || filenameBorrower?.full_name
+    || `${filenameBorrower?.first_name || ''} ${filenameBorrower?.last_name || ''}`.trim()
+    || loan.borrower_name
+    || 'Unknown';
+  // Sanitize name for filename (remove special characters)
+  const safeBorrowerName = borrowerNameForFile.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
+  const productionDate = format(new Date(), 'yyyy-MM-dd');
+  const redemptionDate = format(new Date(settlementData.settlementDate), 'yyyy-MM-dd');
+
+  doc.save(`${safeBorrowerName}_${productionDate}_Redemption-to-${redemptionDate}.pdf`);
+}
+
+/**
+ * Generate settlement statement PDF and return as ArrayBuffer (for merging)
+ * Uses the same full logic as generateSettlementStatementPDF
+ */
+export function generateSettlementStatementPDFBytes(loan, settlementData, schedule = [], transactions = [], product = null) {
+  // Use shared rendering function
+  const doc = renderSettlementStatementToDoc(loan, settlementData, schedule, transactions, product);
+
+  // Return as ArrayBuffer (page numbers will be added during merge if needed)
+  return doc.output('arraybuffer');
+}
+
+/**
+ * Internal shared function that renders settlement statement to a jsPDF document
+ * Used by both generateSettlementStatementPDF (downloads) and generateSettlementStatementPDFBytes (returns bytes)
+ */
+function renderSettlementStatementToDoc(loan, settlementData, schedule = [], transactions = [], product = null) {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
   let y = 15;
@@ -1144,49 +1366,49 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
   doc.setFontSize(12);
   doc.setFont(undefined, 'bold');
   doc.text('Settlement Breakdown', 15, y);
-  
+
   y += 10;
   doc.setFontSize(10);
   doc.setFont(undefined, 'normal');
-  
+
   // Draw table header
   doc.setFillColor(240, 240, 240);
   doc.rect(15, y - 5, 180, 8, 'F');
   doc.setFont(undefined, 'bold');
   doc.text('Description', 20, y);
   doc.text('Amount', 160, y, { align: 'right' });
-  
+
   y += 10;
   doc.setFont(undefined, 'normal');
-  
+
   // Principal Remaining
   doc.text('Principal Remaining', 20, y);
   doc.text(formatCurrency(settlementData.principalRemaining), 160, y, { align: 'right' });
   y += 8;
-  
+
   // Interest Due
   doc.text('Interest Due (up to settlement date)', 20, y);
   doc.text(formatCurrency(settlementData.interestDue), 160, y, { align: 'right' });
   y += 8;
-  
+
   // Exit Fee
   if (settlementData.exitFee > 0) {
     doc.text('Exit Fee', 20, y);
     doc.text(formatCurrency(settlementData.exitFee), 160, y, { align: 'right' });
     y += 8;
   }
-  
+
   // Line separator
   y += 2;
   doc.line(15, y, 195, y);
   y += 8;
-  
+
   // Total Settlement Amount
   doc.setFontSize(12);
   doc.setFont(undefined, 'bold');
   doc.text('TOTAL SETTLEMENT AMOUNT', 20, y);
   doc.text(formatCurrency(settlementData.totalSettlement), 160, y, { align: 'right' });
-  
+
   // Payment Instructions
   y += 15;
   if (y > 250) {
@@ -1292,89 +1514,79 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
 
     if (isRollUpLoan && scheduleEntries.length > 0) {
       // Build display periods from schedule entries for roll-up loans
-      let prevDueDate = new Date(loan.start_date);
-      for (const entry of scheduleEntries) {
-        if (entry.installment_number === 0) continue; // Skip adjustment entries
+      // Note: scheduler creates entries with due_date (end) and calculation_days
+      let runningPrincipal = loan.principal_amount;
+      let runningRolledUpInterest = 0;
+      let prevDueDate = loan.start_date; // Track previous due date to calculate period start
 
-        const dueDate = new Date(entry.due_date);
-        const days = entry.calculation_days || 0;
-        const calculationBasis = entry.calculation_principal_start || loan.principal_amount;
-        const interest = entry.interest_amount || 0;
+      for (const entry of scheduleEntries) {
+        const periodInterest = entry.interest_amount || entry.rolled_up_interest || 0;
+        // Use calculation_principal_start from scheduler, or calculate based on period type
+        const calculationBasis = entry.calculation_principal_start || (entry.is_serviced_period
+          ? runningPrincipal + runningRolledUpInterest
+          : runningPrincipal);
+
+        // Use due_date as period end (from scheduler), fallback to period_end/date
+        const endDate = entry.due_date || entry.period_end || entry.date;
+        // Use calculation_days from scheduler, fallback to days_in_period
+        const days = entry.calculation_days || entry.days_in_period || 0;
 
         displayPeriods.push({
           startDate: prevDueDate,
-          endDate: dueDate,
-          days,
-          calculationBasis,
-          interest,
-          isRollUpPeriod: entry.is_roll_up_period || false,
-          isServicedPeriod: entry.is_serviced_period || false,
-          rolledUpInterest: entry.rolled_up_interest || 0
+          endDate: endDate,
+          days: days,
+          calculationBasis: calculationBasis,
+          interest: periodInterest,
+          principalPayment: entry.principal_payment || entry.principal_amount || 0,
+          isRollUpPeriod: entry.is_roll_up_period,
+          isServicedPeriod: entry.is_serviced_period,
+          isAccrualToSettlement: false
         });
 
-        prevDueDate = dueDate;
-      }
+        // Update prev due date for next period's start
+        prevDueDate = endDate;
 
-      // Add accrued-to-settlement period if settlement date is after last schedule date
-      if (displayPeriods.length > 0 && settlementData.settlementDate) {
-        const lastPeriod = displayPeriods[displayPeriods.length - 1];
-        const settlementDate = new Date(settlementData.settlementDate);
-        settlementDate.setHours(0, 0, 0, 0);
-
-        const lastEndDate = new Date(lastPeriod.endDate);
-        lastEndDate.setHours(0, 0, 0, 0);
-
-        // If settlement is after the last scheduled period
-        if (settlementDate > lastEndDate) {
-          const accrualDays = Math.ceil((settlementDate - lastEndDate) / (1000 * 60 * 60 * 24));
-          // For roll-up loans, use the compounded basis from the last serviced period
-          const calculationBasis = lastPeriod.calculationBasis;
-          const accrualInterest = calculationBasis * dailyRateVal * accrualDays;
-
-          displayPeriods.push({
-            startDate: lastEndDate,
-            endDate: settlementDate,
-            days: accrualDays,
-            calculationBasis,
-            interest: accrualInterest,
-            isRollUpPeriod: false,
-            isServicedPeriod: false,
-            isAccrualToSettlement: true
-          });
+        // Track rolled-up interest for next period calculation basis
+        if (entry.is_roll_up_period) {
+          runningRolledUpInterest += periodInterest;
+        }
+        if (entry.principal_payment || entry.principal_amount) {
+          runningPrincipal -= (entry.principal_payment || entry.principal_amount || 0);
         }
       }
-    } else {
-      // Use original interest periods for non-roll-up loans
-      const periodInterestSum = settlementData.interestPeriods.reduce((sum, p) => sum + (p.periodInterest || 0), 0);
-      const hasDifference = Math.abs(authoritativeInterest - periodInterestSum) > 0.01;
-      const scaleFactor = periodInterestSum > 0 ? authoritativeInterest / periodInterestSum : 1;
 
-      for (const period of settlementData.interestPeriods) {
-        const displayInterest = hasDifference ? (period.periodInterest * scaleFactor) : period.periodInterest;
+      // Add accrual to settlement if needed
+      if (settlementData.accrualToSettlement && settlementData.accrualToSettlement > 0) {
+        const lastScheduleDate = scheduleEntries[scheduleEntries.length - 1]?.due_date ||
+                                  scheduleEntries[scheduleEntries.length - 1]?.period_end;
         displayPeriods.push({
-          startDate: period.startDate,
-          endDate: period.endDate,
-          days: period.days,
-          calculationBasis: period.openingPrincipal,
-          interest: displayInterest,
+          startDate: lastScheduleDate,
+          endDate: settlementData.settlementDate,
+          days: settlementData.daysToSettlement || 0,
+          calculationBasis: runningPrincipal + runningRolledUpInterest,
+          interest: settlementData.accrualToSettlement,
+          principalPayment: 0,
           isRollUpPeriod: false,
           isServicedPeriod: false,
-          principalPayment: period.principalPayment
+          isAccrualToSettlement: true
         });
       }
+    } else {
+      displayPeriods = settlementData.interestPeriods || [];
     }
 
     let runningInterestTotal = 0;
     let showedCapitalizationNote = false;
 
-    for (let i = 0; i < displayPeriods.length; i++) {
-      const period = displayPeriods[i];
-
+    for (const period of displayPeriods) {
       y += 6;
+
+      // Check if we need a new page
       if (y > 270) {
         doc.addPage();
         y = 20;
-        // Repeat header on new page
+
+        // Re-add header on new page
         doc.setFillColor(240, 240, 240);
         doc.rect(15, y - 4, 180, 7, 'F');
         doc.setFontSize(8);
@@ -1386,29 +1598,25 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
         doc.text('Payment', 190, y, { align: 'right' });
         y += 6;
         doc.line(15, y, 195, y);
-        y += 6;
         doc.setFont(undefined, 'normal');
+        y += 6;
       }
 
-      // Row background for roll-up vs serviced vs accrual
-      if (period.isRollUpPeriod) {
-        doc.setFillColor(245, 235, 255); // Light purple for roll-up
-        doc.rect(15, y - 4, 180, 5.5, 'F');
-      } else if (period.isServicedPeriod) {
-        doc.setFillColor(235, 245, 255); // Light blue for serviced
-        doc.rect(15, y - 4, 180, 5.5, 'F');
-      } else if (period.isAccrualToSettlement) {
-        doc.setFillColor(235, 255, 235); // Light green for accrual to settlement
-        doc.rect(15, y - 4, 180, 5.5, 'F');
-      }
-
-      const startStr = format(period.startDate, 'dd/MM/yy');
-      const endStr = format(period.endDate, 'dd/MM/yy');
+      // Period date range
+      const startStr = period.startDate ? format(new Date(period.startDate), 'dd/MM/yy') : '-';
+      const endStr = period.endDate ? format(new Date(period.endDate), 'dd/MM/yy') : '-';
       doc.text(`${startStr} - ${endStr}`, 17, y);
+
+      // Days
       doc.text(String(period.days), 55, y, { align: 'right' });
+
+      // Calculation basis
       doc.text(formatCurrency(period.calculationBasis), 110, y, { align: 'right' });
+
+      // Interest accrued
       doc.text(formatCurrency(period.interest), 160, y, { align: 'right' });
 
+      // Payment (if any)
       if (period.principalPayment > 0) {
         doc.setTextColor(0, 128, 0);
         doc.text(`-${formatCurrency(period.principalPayment)}`, 190, y, { align: 'right' });
@@ -1513,15 +1721,18 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
 
     y += 6;
     doc.line(15, y, 195, y);
-
+    y += 2;
     doc.setFont(undefined, 'normal');
 
     for (const tx of settlementData.transactionHistory) {
       y += 6;
-      if (y > 275) {
+
+      // Check if we need a new page
+      if (y > 270) {
         doc.addPage();
         y = 20;
-        // Repeat header on new page
+
+        // Re-add header on new page
         doc.setFillColor(240, 240, 240);
         doc.rect(15, y - 4, 180, 7, 'F');
         doc.setFontSize(8);
@@ -1535,30 +1746,19 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
         doc.text('Balance', 193, y, { align: 'right' });
         y += 6;
         doc.line(15, y, 195, y);
-        y += 6;
         doc.setFont(undefined, 'normal');
+        y += 6;
       }
 
-      // Set row background color based on type
-      if (tx.type === 'Disbursement') {
-        doc.setFillColor(239, 246, 255); // Light blue
-        doc.rect(15, y - 4, 180, 6, 'F');
-      } else if (tx.type === 'Repayment') {
-        doc.setFillColor(240, 253, 244); // Light green
-        doc.rect(15, y - 4, 180, 6, 'F');
-      }
+      // Date
+      doc.text(format(new Date(tx.date), 'dd/MM/yy'), 17, y);
 
-      doc.text(format(tx.date, 'dd/MM/yyyy'), 17, y);
+      // Type
+      doc.text(tx.type || '', 42, y);
 
-      // Truncate type if too long
-      const typeStr = tx.type || '-';
-      const truncatedType = typeStr.length > 12 ? typeStr.slice(0, 10) + '..' : typeStr;
-      doc.text(truncatedType, 42, y);
-
-      // Truncate description - limit to fit before Amount column (max ~12 chars at font size 8)
-      const desc = tx.description || '-';
-      const truncatedDesc = desc.length > 12 ? desc.slice(0, 10) + '..' : desc;
-      doc.text(truncatedDesc, 70, y);
+      // Description (truncate if too long)
+      const desc = (tx.description || '').substring(0, 25);
+      doc.text(desc, 70, y);
 
       // Amount with color
       if (tx.type === 'Disbursement') {
@@ -1611,205 +1811,127 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     doc.setFont(undefined, 'bold');
     doc.text('LOAN LEDGER', pageWidth / 2, y, { align: 'center' });
 
-    y += 8;
+    y += 10;
     doc.setFontSize(10);
     doc.setFont(undefined, 'normal');
     doc.text(`Loan: #${loan.loan_number || loan.id.slice(0, 8)} - ${loan.borrower_name}`, pageWidth / 2, y, { align: 'center' });
 
-    y += 10;
+    y += 12;
 
-    // Build timeline for ledger display
-    const timelineRows = buildPDFTimeline(loan, schedule, transactions, product);
-
-    // Column positions (A4 = 210mm, margins = 10mm each side = 190mm usable)
+    // Define column positions - more compact
     const cols = {
-      date: 12,
-      intReceived: 55,
-      expected: 85,
-      intBal: 115,
-      principal: 150,
-      prinBal: 190
+      date: 17,
+      period: 55,
+      expected: 100,
+      intBal: 130,
+      principal: 160,
+      prinBal: 193
     };
 
-    // Ledger table header
-    const drawTimelineHeader = (yPos) => {
-      doc.setFillColor(240, 240, 240);
-      doc.rect(10, yPos - 4, 190, 7, 'F');
-      doc.setFontSize(8);
-      doc.setFont(undefined, 'bold');
-      doc.text('Date', cols.date, yPos);
-      doc.text('Int Received', cols.intReceived, yPos, { align: 'right' });
-      doc.text('Expected', cols.expected, yPos, { align: 'right' });
-      doc.text('Int Bal', cols.intBal, yPos, { align: 'right' });
-      doc.text('Principal', cols.principal, yPos, { align: 'right' });
-      doc.text('Prin Bal', cols.prinBal, yPos, { align: 'right' });
-      return yPos + 5;
-    };
+    // Table header
+    doc.setFillColor(240, 240, 240);
+    doc.rect(15, y - 4, 180, 7, 'F');
+    doc.setFontSize(7);
+    doc.setFont(undefined, 'bold');
+    doc.text('Date', cols.date, y);
+    doc.text('Period', cols.period, y, { align: 'right' });
+    doc.text('Int Expected', cols.expected, y, { align: 'right' });
+    doc.text('Int Balance', cols.intBal, y, { align: 'right' });
+    doc.text('Principal', cols.principal, y, { align: 'right' });
+    doc.text('Prin Balance', cols.prinBal, y, { align: 'right' });
 
-    y = drawTimelineHeader(y);
-    doc.line(10, y, 200, y);
-    y += 1;
-
+    y += 6;
+    doc.line(15, y, 195, y);
+    y += 2;
     doc.setFont(undefined, 'normal');
-    doc.setFontSize(8);
 
-    timelineRows.forEach((row, idx) => {
-      // Check for page break
-      if (y > 275) {
-        doc.addPage();
-        y = 20;
-        y = drawTimelineHeader(y);
-        doc.line(10, y, 200, y);
-        y += 1;
-        doc.setFont(undefined, 'normal');
-        doc.setFontSize(8);
+    let totalExpected = 0;
+    let finalInterestBalance = 0;
+    let finalPrincipalBalance = loan.principal_amount;
+
+    for (const entry of schedule) {
+      // Skip entries with invalid dates
+      // Schedule entries may have due_date (from scheduler), period_end, or date
+      const endDate = entry.due_date || entry.period_end || entry.date;
+      if (!endDate || !isValid(new Date(endDate))) {
+        continue;
       }
 
       y += 5;
 
-      // Row background color based on type
-      if (row.primaryType === 'disbursement') {
-        doc.setFillColor(255, 235, 235); // Light red
-        doc.rect(10, y - 4, 190, 5.5, 'F');
-      } else if (row.primaryType === 'repayment') {
-        doc.setFillColor(235, 255, 235); // Light green
-        doc.rect(10, y - 4, 190, 5.5, 'F');
-      } else if (row.primaryType === 'due_date') {
-        if (row.isRollUpPeriod) {
-          doc.setFillColor(245, 235, 255); // Light purple for roll-up
-        } else if (row.isServicedPeriod) {
-          doc.setFillColor(235, 245, 255); // Light blue for serviced
-        } else {
-          doc.setFillColor(235, 245, 255); // Light blue default
-        }
-        doc.rect(10, y - 4, 190, 5.5, 'F');
-      } else if (row.primaryType === 'adjustment') {
-        doc.setFillColor(255, 250, 235); // Light amber
-        doc.rect(10, y - 4, 190, 5.5, 'F');
-      } else if (row.primaryType === 'rate_change') {
-        doc.setFillColor(255, 243, 220); // Light orange
-        doc.rect(10, y - 4, 190, 5.5, 'F');
+      // Check if we need a new page
+      if (y > 275) {
+        doc.addPage();
+        y = 20;
+
+        // Re-add header on new page
+        doc.setFillColor(240, 240, 240);
+        doc.rect(15, y - 4, 180, 7, 'F');
+        doc.setFontSize(7);
+        doc.setFont(undefined, 'bold');
+        doc.text('Date', cols.date, y);
+        doc.text('Period', cols.period, y, { align: 'right' });
+        doc.text('Int Expected', cols.expected, y, { align: 'right' });
+        doc.text('Int Balance', cols.intBal, y, { align: 'right' });
+        doc.text('Principal', cols.principal, y, { align: 'right' });
+        doc.text('Prin Balance', cols.prinBal, y, { align: 'right' });
+        y += 6;
+        doc.line(15, y, 195, y);
+        doc.setFont(undefined, 'normal');
+        y += 5;
       }
 
       // Date
-      doc.text(format(new Date(row.date), 'dd/MM/yy'), cols.date, y);
+      doc.text(format(new Date(endDate), 'dd/MM/yy'), cols.date, y);
 
-      // Interest Received (green for payments)
-      if (row.interestPaid > 0.01) {
-        doc.setTextColor(22, 163, 74); // Green
-        doc.text(`-${formatCurrency(row.interestPaid)}`, cols.intReceived, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
-      } else {
-        doc.setTextColor(180, 180, 180);
-        doc.text('-', cols.intReceived, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
+      // Period type
+      let periodType = 'Regular';
+      if (entry.is_roll_up_period) {
+        doc.setTextColor(102, 51, 153); // Purple
+        periodType = 'Roll-up';
+      } else if (entry.is_serviced_period) {
+        doc.setTextColor(37, 99, 235); // Blue
+        periodType = 'Serviced';
       }
+      doc.text(periodType, cols.period, y, { align: 'right' });
+      doc.setTextColor(0, 0, 0);
 
-      // Expected Interest (purple for roll-up, blue for serviced/due dates, amber for adjustments)
-      if (row.expectedInterest > 0.01 || row.expectedInterest < -0.01) {
-        if (row.primaryType === 'adjustment') {
-          doc.setTextColor(180, 83, 9); // Amber
-        } else if (row.isRollUpPeriod) {
-          doc.setTextColor(102, 51, 153); // Purple for roll-up
-        } else {
-          doc.setTextColor(37, 99, 235); // Blue
-        }
-        doc.text(formatCurrency(row.expectedInterest), cols.expected, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
-      } else {
-        doc.setTextColor(180, 180, 180);
-        doc.text('-', cols.expected, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
+      // Interest expected
+      const interestExpected = entry.interest_amount || entry.rolled_up_interest || 0;
+      totalExpected += interestExpected;
+      doc.text(formatCurrency(interestExpected), cols.expected, y, { align: 'right' });
+
+      // Interest balance (cumulative)
+      finalInterestBalance = entry.interest_balance ?? (finalInterestBalance + interestExpected - (entry.interest_payment || 0));
+      if (entry.interest_payment > 0) {
+        doc.setTextColor(22, 163, 74); // Green for paid
       }
+      doc.text(formatCurrency(Math.abs(finalInterestBalance)), cols.intBal, y, { align: 'right' });
+      doc.setTextColor(0, 0, 0);
 
-      // Interest Balance
-      if (Math.abs(row.interestBalance) < 0.01) {
-        doc.text(formatCurrency(0), cols.intBal, y, { align: 'right' });
-      } else if (row.interestBalance > 0) {
-        doc.text(formatCurrency(row.interestBalance), cols.intBal, y, { align: 'right' });
-      } else {
-        doc.text(`-${formatCurrency(Math.abs(row.interestBalance))}`, cols.intBal, y, { align: 'right' });
-      }
-
-      // Principal Change (red for disbursements, blue for repayments)
-      if (Math.abs(row.principalChange) > 0.01) {
-        if (row.principalChange > 0) {
-          doc.setTextColor(220, 38, 38); // Red for disbursement
-          doc.text(`+${formatCurrency(row.principalChange)}`, cols.principal, y, { align: 'right' });
-        } else {
-          doc.setTextColor(37, 99, 235); // Blue for capital repayment
-          doc.text(formatCurrency(row.principalChange), cols.principal, y, { align: 'right' });
-        }
+      // Principal payment
+      if (entry.principal_payment > 0) {
+        doc.setTextColor(22, 163, 74);
+        doc.text(`-${formatCurrency(entry.principal_payment)}`, cols.principal, y, { align: 'right' });
         doc.setTextColor(0, 0, 0);
-      } else if (row.primaryType === 'rate_change') {
-        doc.setTextColor(180, 83, 9); // Amber
-        doc.text(`${row.previousRate}%→${row.newRate}%`, cols.principal, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
+        finalPrincipalBalance -= entry.principal_payment;
       } else {
-        doc.setTextColor(180, 180, 180);
         doc.text('-', cols.principal, y, { align: 'right' });
-        doc.setTextColor(0, 0, 0);
       }
 
-      // Principal Balance
-      doc.setFont(undefined, 'bold');
-      doc.text(formatCurrency(row.principalBalance), cols.prinBal, y, { align: 'right' });
-      doc.setFont(undefined, 'normal');
-
-      // Add note line with calculation breakdown for all applicable row types
-      if (row.calculationBreakdown) {
-        y += 4;
-        doc.setFontSize(7);
-        doc.setTextColor(120, 120, 120);
-
-        let noteText = '';
-        if (row.primaryType === 'adjustment') {
-          // Adjustment rows
-          noteText = row.calculationBreakdown.isCredit
-            ? `Interest credit: ${row.calculationBreakdown.breakdown} (mid-period capital change)`
-            : `Interest debit: ${row.calculationBreakdown.breakdown} (mid-period capital change)`;
-        } else if (row.primaryType === 'disbursement' && row.calculationBreakdown.isDisbursement) {
-          // Disbursement with deductions
-          noteText = `Disbursement: ${row.calculationBreakdown.breakdown}`;
-        } else if (row.primaryType === 'due_date') {
-          // Schedule due dates - show calculation breakdown
-          if (row.isRollUpPeriod) {
-            doc.setTextColor(102, 51, 153); // Purple for roll-up
-          } else if (row.isServicedPeriod) {
-            doc.setTextColor(37, 99, 235); // Blue for serviced
-          }
-          noteText = row.calculationBreakdown.breakdown;
-        }
-
-        if (noteText) {
-          doc.text(noteText, cols.date + 2, y);
-        }
-        doc.setTextColor(0, 0, 0);
-        doc.setFontSize(8);
-      }
-    });
+      // Principal balance
+      const prinBalance = entry.principal_balance ?? finalPrincipalBalance;
+      finalPrincipalBalance = prinBalance;
+      doc.text(formatCurrency(prinBalance), cols.prinBal, y, { align: 'right' });
+    }
 
     // Totals row
-    y += 4;
-    doc.line(10, y, 200, y);
+    y += 6;
+    doc.line(15, y, 195, y);
     y += 6;
 
-    const lastRow = timelineRows.length > 0 ? timelineRows[timelineRows.length - 1] : null;
-    const totalInterestPaid = lastRow?.totalPaidToDate || 0;
-    const totalExpected = lastRow?.totalExpectedToDate || 0;
-    const finalInterestBalance = lastRow?.interestBalance || 0;
-    const finalPrincipalBalance = lastRow?.principalBalance || 0;
-
-    doc.setFillColor(240, 240, 240);
-    doc.rect(10, y - 4, 190, 7, 'F');
     doc.setFont(undefined, 'bold');
-    doc.setFontSize(8);
     doc.text('TOTALS', cols.date, y);
-
-    doc.setTextColor(22, 163, 74);
-    doc.text(`-${formatCurrency(totalInterestPaid)}`, cols.intReceived, y, { align: 'right' });
-    doc.setTextColor(0, 0, 0);
-
     doc.text(formatCurrency(totalExpected), cols.expected, y, { align: 'right' });
     doc.text(formatCurrency(Math.abs(finalInterestBalance)), cols.intBal, y, { align: 'right' });
     doc.text('', cols.principal, y, { align: 'right' });
@@ -1834,31 +1956,7 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     }
   }
 
-  // Add page numbers to all pages
-  const pageCount = doc.internal.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    doc.setFontSize(8);
-    doc.setFont(undefined, 'normal');
-    doc.setTextColor(128, 128, 128);
-    doc.text(`Page ${i} of ${pageCount}`, pageWidth / 2, 290, { align: 'center' });
-    doc.setTextColor(0, 0, 0);
-  }
-
-  // Build filename using borrower name (business or first+last)
-  // Note: 'borrower' variable already defined earlier from settlementData.borrower
-  const filenameBorrower = settlementData.borrower;
-  const borrowerNameForFile = filenameBorrower?.business
-    || filenameBorrower?.full_name
-    || `${filenameBorrower?.first_name || ''} ${filenameBorrower?.last_name || ''}`.trim()
-    || loan.borrower_name
-    || 'Unknown';
-  // Sanitize name for filename (remove special characters)
-  const safeBorrowerName = borrowerNameForFile.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
-  const productionDate = format(new Date(), 'yyyy-MM-dd');
-  const redemptionDate = format(new Date(settlementData.settlementDate), 'yyyy-MM-dd');
-
-  doc.save(`${safeBorrowerName}_${productionDate}_Redemption-to-${redemptionDate}.pdf`);
+  return doc;
 }
 
 /**

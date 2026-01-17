@@ -76,6 +76,7 @@ import SecurityTab from '@/components/loan/SecurityTab';
 import LoanCommentsPanel from '@/components/loan/LoanCommentsPanel';
 import { getScheduler } from '@/lib/schedule';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
+import LetterGeneratorModal from '@/components/letters/LetterGeneratorModal';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
@@ -105,6 +106,7 @@ export default function LoanDetails() {
   const [deleteTransactionDialogOpen, setDeleteTransactionDialogOpen] = useState(false);
   const [deleteTransactionTarget, setDeleteTransactionTarget] = useState(null);
   const [deleteTransactionReason, setDeleteTransactionReason] = useState('');
+  const [isLetterModalOpen, setIsLetterModalOpen] = useState(false);
   const [selectedDisbursements, setSelectedDisbursements] = useState(new Set());
   const [deleteDisbursementsDialogOpen, setDeleteDisbursementsDialogOpen] = useState(false);
   const [isDeletingDisbursements, setIsDeletingDisbursements] = useState(false);
@@ -1486,6 +1488,10 @@ export default function LoanDetails() {
                       <Download className="w-4 h-4 mr-2" />
                       Download Statement
                     </DropdownMenuItem>
+                    <DropdownMenuItem onClick={() => setIsLetterModalOpen(true)}>
+                      <FileText className="w-4 h-4 mr-2" />
+                      Generate Letter
+                    </DropdownMenuItem>
                     <DropdownMenuItem onClick={handleExportScheduleCSV}>
                       <Download className="w-4 h-4 mr-2" />
                       Export Schedule CSV
@@ -2615,6 +2621,20 @@ export default function LoanDetails() {
             queueBalanceCacheUpdate(loanId);
             setIsReceiptDialogOpen(false);
           }}
+        />
+
+        {/* Letter Generator Modal */}
+        <LetterGeneratorModal
+          isOpen={isLetterModalOpen}
+          onClose={() => setIsLetterModalOpen(false)}
+          loan={loan}
+          borrower={borrower}
+          organization={currentOrganization}
+          schedule={schedule}
+          transactions={transactions}
+          product={product}
+          loanProperties={loanProperties}
+          interestCalc={liveInterestCalc}
         />
 
         {/* Regenerate Schedule Dialog */}

@@ -5,234 +5,11 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Calculator, Calendar, TrendingDown, FileText, Download, ChevronDown, ArrowRight, Receipt, X } from 'lucide-react';
-import { formatCurrency, calculateAccruedInterestWithTransactions } from './LoanCalculator';
+import { formatCurrency, calculateSettlementAmount, buildSettlementData } from './LoanCalculator';
 import { generateSettlementStatementPDF } from './LoanPDFGenerator';
-import { format, differenceInDays, isValid } from 'date-fns';
+import { format, isValid } from 'date-fns';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { cn } from '@/lib/utils';
-
-function calculateSettlementAmount(loan, settlementDate, transactions = [], schedule = [], product = null) {
-  const startDate = new Date(loan.start_date);
-  const settleDate = new Date(settlementDate);
-
-  // Return null if dates are invalid (e.g., while user is typing)
-  if (!isValid(settleDate) || !isValid(startDate)) {
-    return null;
-  }
-
-  settleDate.setHours(0, 0, 0, 0);
-  startDate.setHours(0, 0, 0, 0);
-
-  // Add 1 to include the settlement day itself in the interest calculation
-  // Interest accrues up to and including the settlement date
-  const daysElapsed = Math.max(0, differenceInDays(settleDate, startDate) + 1);
-  const principal = loan.principal_amount;
-
-  // Handle penalty rates - use effective rate at settlement date
-  const hasPenaltyRate = loan.has_penalty_rate && loan.penalty_rate && loan.penalty_rate_from;
-  const penaltyRateFrom = hasPenaltyRate ? new Date(loan.penalty_rate_from) : null;
-  if (penaltyRateFrom) penaltyRateFrom.setHours(0, 0, 0, 0);
-  const baseRate = loan.interest_rate;
-  const effectiveRate = (hasPenaltyRate && penaltyRateFrom && settleDate >= penaltyRateFrom)
-    ? loan.penalty_rate
-    : baseRate;
-  const annualRate = effectiveRate / 100;
-  const dailyRate = annualRate / 365;
-
-  // Use the shared calculation function for accurate interest calculation
-  // Pass schedule and product to enable penalty rate support
-  const liveCalc = calculateAccruedInterestWithTransactions(loan, transactions, settleDate, schedule, product);
-
-  // Get repayment transactions sorted by date
-  const repayments = transactions
-    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
-    .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-  // Get disbursement transactions (further advances) - exclude initial disbursement on start date
-  const startDateKey = startDate.toISOString().split('T')[0];
-  const disbursements = transactions
-    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
-    .filter(tx => {
-      const txDate = new Date(tx.date);
-      txDate.setHours(0, 0, 0, 0);
-      return txDate.toISOString().split('T')[0] !== startDateKey;
-    })
-    .sort((a, b) => new Date(a.date) - new Date(b.date));
-
-  // Use authoritative values from the shared calculation
-  const totalInterestAccrued = liveCalc.interestAccrued;
-  const totalInterestPaid = liveCalc.interestPaid;
-  const principalRemaining = liveCalc.principalRemaining;
-
-  // Calculate totals for reference
-  const totalPrincipalPaid = repayments.reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
-
-  // Build detailed interest periods for display purposes
-  const interestPeriods = [];
-  let runningPrincipal = principal;
-  let periodStartDate = startDate;
-
-  // Get all dates where principal changed (payments with principal applied OR further advances)
-  const principalChangeEvents = [
-    // Repayments reduce principal
-    ...repayments
-      .filter(tx => tx.principal_applied > 0)
-      .map(tx => ({
-        date: new Date(tx.date),
-        principalApplied: tx.principal_applied,
-        disbursementAmount: 0,
-        interestApplied: tx.interest_applied || 0,
-        amount: tx.amount,
-        reference: tx.reference || tx.description || '',
-        type: 'repayment'
-      })),
-    // Further advances increase principal
-    ...disbursements.map(tx => ({
-      date: new Date(tx.date),
-      principalApplied: 0,
-      disbursementAmount: tx.amount,
-      interestApplied: 0,
-      amount: tx.amount,
-      reference: tx.reference || tx.description || '',
-      type: 'disbursement'
-    }))
-  ].sort((a, b) => a.date - b.date);
-
-  // The calculation end date is the day AFTER settlement (to include settlement day's interest)
-  // This matches how calculateAccruedInterestWithTransactions works
-  const calculationEndDate = new Date(settleDate);
-  calculationEndDate.setDate(calculationEndDate.getDate() + 1);
-
-  // Build interest periods for display (principal changes BEFORE daily interest calculation)
-  let eventIndex = 0;
-  while (periodStartDate < calculationEndDate) {
-    // Find the end of this period (next principal change or end date)
-    let periodEndDate;
-    let principalPayment = 0;
-    let disbursementAmount = 0;
-    let eventDetails = null;
-
-    if (eventIndex < principalChangeEvents.length) {
-      const nextEvent = principalChangeEvents[eventIndex];
-      if (nextEvent.date <= settleDate) {
-        periodEndDate = nextEvent.date;
-        principalPayment = nextEvent.principalApplied || 0;
-        disbursementAmount = nextEvent.disbursementAmount || 0;
-        eventDetails = nextEvent;
-        eventIndex++;
-      } else {
-        periodEndDate = calculationEndDate;
-      }
-    } else {
-      periodEndDate = calculationEndDate;
-    }
-
-    // Calculate days in this period
-    const daysInPeriod = differenceInDays(periodEndDate, periodStartDate);
-
-    if (daysInPeriod > 0) {
-      // Calculate interest for this period (for display purposes)
-      const periodInterest = runningPrincipal * dailyRate * daysInPeriod;
-
-      // Principal change: add disbursements first, then subtract repayments (matching LoanCalculator order)
-      const principalChange = disbursementAmount - principalPayment;
-
-      interestPeriods.push({
-        startDate: new Date(periodStartDate),
-        endDate: new Date(periodEndDate),
-        days: daysInPeriod,
-        openingPrincipal: runningPrincipal,
-        dailyRate,
-        periodInterest,
-        principalPayment,
-        disbursementAmount,
-        closingPrincipal: runningPrincipal + principalChange,
-        eventDetails
-      });
-
-      // Update principal for next period
-      runningPrincipal = Math.max(0, runningPrincipal + principalChange);
-    }
-
-    periodStartDate = periodEndDate;
-  }
-
-  // Build transaction summary with running balances
-  const transactionHistory = [];
-  let runningPrincipalBal = principal;
-
-  // Add initial disbursement
-  transactionHistory.push({
-    date: startDate,
-    type: 'Disbursement',
-    description: 'Loan disbursement',
-    amount: principal,
-    principalApplied: 0,
-    interestApplied: 0,
-    principalBalance: principal
-  });
-
-  // Combine repayments and further advances, sorted by date
-  const allTransactions = [
-    ...repayments.map(tx => ({ ...tx, txType: 'repayment' })),
-    ...disbursements.map(tx => ({ ...tx, txType: 'disbursement' }))
-  ].sort((a, b) => new Date(a.date) - new Date(b.date));
-
-  // Process each transaction
-  for (const tx of allTransactions) {
-    const txDate = new Date(tx.date);
-
-    if (tx.txType === 'repayment') {
-      // Repayment reduces principal
-      runningPrincipalBal -= (tx.principal_applied || 0);
-
-      transactionHistory.push({
-        date: txDate,
-        type: tx.type,
-        description: tx.reference || tx.description || 'Payment',
-        amount: tx.amount,
-        principalApplied: tx.principal_applied || 0,
-        interestApplied: tx.interest_applied || 0,
-        principalBalance: Math.max(0, runningPrincipalBal)
-      });
-    } else {
-      // Further advance increases principal
-      runningPrincipalBal += tx.amount;
-
-      transactionHistory.push({
-        date: txDate,
-        type: 'Disbursement',
-        description: tx.reference || tx.description || 'Further advance',
-        amount: tx.amount,
-        principalApplied: 0,
-        interestApplied: 0,
-        principalBalance: runningPrincipalBal
-      });
-    }
-  }
-
-  const interestRemaining = Math.max(0, totalInterestAccrued - totalInterestPaid);
-  const exitFee = loan.exit_fee || 0;
-  const settlementAmount = principalRemaining + interestRemaining + exitFee;
-
-  return {
-    originalPrincipal: principal,
-    principalPaid: totalPrincipalPaid,
-    principalRemaining,
-    interestAccrued: totalInterestAccrued,
-    interestPaid: totalInterestPaid,
-    interestRemaining,
-    exitFee,
-    settlementAmount,
-    daysElapsed,
-    dailyRate,
-    annualRate,
-    interestPeriods,
-    transactionHistory,
-    repaymentCount: repayments.length,
-    schedule // Include schedule for roll-up/compounding display
-  };
-}
 
 export default function SettleLoanModal({
   isOpen,
@@ -251,25 +28,19 @@ export default function SettleLoanModal({
   const settlement = loan ? calculateSettlementAmount(loan, settlementDate, transactions, schedule, product) : null;
 
   const handleDownloadPDF = () => {
-    const settlementData = {
-      settlementDate: settlementDate,
-      principalRemaining: settlement.principalRemaining,
-      interestAccrued: settlement.interestAccrued,
-      interestPaid: settlement.interestPaid,
-      interestDue: settlement.interestRemaining,
-      interestRemaining: settlement.interestRemaining,
-      exitFee: settlement.exitFee,
-      totalSettlement: settlement.settlementAmount,
-      interestPeriods: settlement.interestPeriods,
-      transactionHistory: settlement.transactionHistory,
-      daysElapsed: settlement.daysElapsed,
-      dailyRate: settlement.dailyRate,
-      annualRate: settlement.annualRate,
-      organization: currentOrganization || null,
-      borrower: borrower || null,
-      schedule: schedule // Include schedule for roll-up/compounding display
-    };
-    generateSettlementStatementPDF(loan, settlementData, schedule, transactions, product);
+    // Use shared buildSettlementData for consistent PDF generation
+    const settlementData = buildSettlementData(
+      loan,
+      settlementDate,
+      transactions,
+      schedule,
+      product,
+      currentOrganization,
+      borrower
+    );
+    if (settlementData) {
+      generateSettlementStatementPDF(loan, settlementData, schedule, transactions, product);
+    }
   };
 
   if (!isOpen || !loan) return null;

@@ -6,7 +6,8 @@ import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, Save, MapPin, Phone, Mail, Globe, Download, Upload, HardDrive } from 'lucide-react';
+import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, Save, MapPin, Phone, Mail, Globe, Download, Upload, HardDrive, Image } from 'lucide-react';
+import { useRef } from 'react';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
@@ -55,6 +56,10 @@ export default function OrgAdmin() {
     next_borrower_number: ''
   });
   const [orgDetailsChanged, setOrgDetailsChanged] = useState(false);
+
+  // Logo upload state
+  const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+  const logoFileInputRef = useRef(null);
 
   // Backup/Restore state
   const [isExporting, setIsExporting] = useState(false);
@@ -141,6 +146,84 @@ export default function OrgAdmin() {
       return;
     }
     updateOrgDetailsMutation.mutate(orgDetails);
+  };
+
+  // Logo upload handler
+  const handleLogoUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+
+    // Validate file size (max 2MB)
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error('Image must be less than 2MB');
+      return;
+    }
+
+    setIsUploadingLogo(true);
+    try {
+      // Create a unique filename
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${currentOrganization.id}-logo-${Date.now()}.${fileExt}`;
+      const filePath = `logos/${fileName}`;
+
+      // Upload to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('organization-assets')
+        .upload(filePath, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('organization-assets')
+        .getPublicUrl(filePath);
+
+      // Update organization record
+      const { error: updateError } = await supabase
+        .from('organizations')
+        .update({ logo_url: publicUrl })
+        .eq('id', currentOrganization.id);
+
+      if (updateError) throw updateError;
+
+      await refreshOrganizations();
+      toast.success('Logo uploaded successfully');
+    } catch (err) {
+      console.error('Error uploading logo:', err);
+      toast.error('Failed to upload logo: ' + err.message);
+    } finally {
+      setIsUploadingLogo(false);
+      // Reset the file input
+      if (logoFileInputRef.current) {
+        logoFileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleRemoveLogo = async () => {
+    if (!confirm('Are you sure you want to remove the logo?')) return;
+
+    try {
+      // Update organization record to remove logo_url
+      const { error } = await supabase
+        .from('organizations')
+        .update({ logo_url: null })
+        .eq('id', currentOrganization.id);
+
+      if (error) throw error;
+
+      await refreshOrganizations();
+      toast.success('Logo removed');
+    } catch (err) {
+      console.error('Error removing logo:', err);
+      toast.error('Failed to remove logo');
+    }
   };
 
   // Regenerate all loan schedules for current org
@@ -1697,6 +1780,83 @@ export default function OrgAdmin() {
                 )}
                 Save Details
               </Button>
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* Organization Logo */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Image className="w-5 h-5 text-blue-600" />
+              Organization Logo
+            </CardTitle>
+            <CardDescription>
+              Upload a logo to appear on letter headers and PDF documents
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-start gap-6">
+              {/* Logo Preview */}
+              <div className="flex-shrink-0">
+                {currentOrganization?.logo_url ? (
+                  <div className="relative group">
+                    <img
+                      src={currentOrganization.logo_url}
+                      alt={`${currentOrganization.name} logo`}
+                      className="h-20 w-auto max-w-[160px] object-contain border rounded-lg p-2 bg-white"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-20 w-32 border-2 border-dashed rounded-lg flex items-center justify-center bg-slate-50">
+                    <Image className="w-8 h-8 text-slate-300" />
+                  </div>
+                )}
+              </div>
+
+              {/* Upload Controls */}
+              <div className="flex-1 space-y-3">
+                <div className="flex items-center gap-2">
+                  <input
+                    ref={logoFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleLogoUpload}
+                    className="hidden"
+                    id="logo-upload"
+                  />
+                  <Button
+                    variant="outline"
+                    onClick={() => logoFileInputRef.current?.click()}
+                    disabled={isUploadingLogo}
+                  >
+                    {isUploadingLogo ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Uploading...
+                      </>
+                    ) : (
+                      <>
+                        <Upload className="w-4 h-4 mr-2" />
+                        {currentOrganization?.logo_url ? 'Change Logo' : 'Upload Logo'}
+                      </>
+                    )}
+                  </Button>
+                  {currentOrganization?.logo_url && (
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleRemoveLogo}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500">
+                  Recommended: PNG or JPG, max 2MB. Logo will appear on letter headers.
+                </p>
+              </div>
             </div>
           </CardContent>
         </Card>
