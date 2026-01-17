@@ -1202,7 +1202,9 @@ export default function OrgAdmin() {
       'audit_logs': 'AuditLog',
       'invitations': 'Invitation',
       'nightly_job_runs': 'NightlyJobRun',
-      'organization_summary': 'OrganizationSummary'
+      'organization_summary': 'OrganizationSummary',
+      'letter_templates': 'LetterTemplate',
+      'generated_letters': 'GeneratedLetter'
     };
     return map[tableName] || tableName;
   };
@@ -1237,7 +1239,9 @@ export default function OrgAdmin() {
       'audit_logs',
       'invitations',  // Pending org invitations
       'nightly_job_runs',  // Job execution history
-      'organization_summary'  // Cached aggregates (can be regenerated but good to have)
+      'organization_summary',  // Cached aggregates (can be regenerated but good to have)
+      'letter_templates',  // Letter templates
+      'generated_letters'  // Generated letter history
     ];
 
     try {
@@ -1362,7 +1366,9 @@ export default function OrgAdmin() {
         'accepted_orphans',
         'invitations',  // Pending org invitations
         'nightly_job_runs',  // Job execution history
-        'organization_summary'  // Cached aggregates
+        'organization_summary',  // Cached aggregates
+        'letter_templates',  // Letter templates (no FKs to other tables except org)
+        'generated_letters'  // Generated letters (FKs to templates, loans, borrowers)
       ];
 
       let restoredCount = 0;
@@ -1404,7 +1410,9 @@ export default function OrgAdmin() {
         'receipt_drafts': ['loan_id', 'borrower_id'],
         'reconciliation_entries': ['bank_statement_id', 'loan_transaction_id', 'investor_transaction_id', 'expense_id', 'other_income_id', 'interest_id'],
         'accepted_orphans': ['entity_id'],  // entity_id is polymorphic, handled specially
-        'organization_summary': []  // Uses organization_id as PK, handled specially
+        'organization_summary': [],  // Uses organization_id as PK, handled specially
+        'letter_templates': ['created_by'],  // created_by is user_id, may be null
+        'generated_letters': ['template_id', 'loan_id', 'borrower_id', 'created_by']  // FKs to templates, loans, borrowers
       };
 
       // Track loans with restructure references for second pass
