@@ -291,6 +291,7 @@ export default function LoanApplicationForm({
         exit_fee: exitFee,
         net_disbursed: 0,
         duration: duration,
+        original_term: duration,
         borrower_name: borrower.business || `${borrower.first_name} ${borrower.last_name}`,
         product_name: selectedProduct.name,
         product_type: 'Fixed Charge',
@@ -320,6 +321,7 @@ export default function LoanApplicationForm({
         exit_fee: exitFee,
         net_disbursed: principalAmount - arrangementFee,
         duration: null,
+        original_term: null,
         borrower_name: borrower.business || `${borrower.first_name} ${borrower.last_name}`,
         product_name: selectedProduct.name,
         product_type: 'Irregular Income',
@@ -343,6 +345,7 @@ export default function LoanApplicationForm({
     const netDisbursed = principalAmount - arrangementFee - additionalDeductedFees;
 
     // Build clean loan data object (don't spread formData to avoid empty strings)
+    const loanDuration = parseInt(formData.duration);
     onSubmit({
       borrower_id: formData.borrower_id,
       product_id: formData.product_id,
@@ -356,7 +359,8 @@ export default function LoanApplicationForm({
       additional_deducted_fees: additionalDeductedFees,
       additional_deducted_fees_note: formData.additional_deducted_fees_note || null,
       net_disbursed: netDisbursed,
-      duration: parseInt(formData.duration),
+      duration: loanDuration,
+      original_term: loanDuration,
       borrower_name: borrower.business || `${borrower.first_name} ${borrower.last_name}`,
       product_name: selectedProduct.name,
       product_type: selectedProduct.product_type || 'Standard',

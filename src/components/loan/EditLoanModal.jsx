@@ -30,6 +30,7 @@ export default function EditLoanPanel({
     period: loan?.period || '',
     interest_only_period: loan?.interest_only_period || 0,
     duration: loan?.duration || '',
+    original_term: loan?.original_term || '',
     start_date: loan?.start_date || '',
     description: loan?.description || '',
     // Interest rate override fields
@@ -355,6 +356,7 @@ export default function EditLoanPanel({
       period: formData.period,
       interest_only_period: parseInt(formData.interest_only_period) || 0,
       duration: parseInt(formData.duration),
+      original_term: formData.original_term ? parseInt(formData.original_term) : null,
       start_date: formData.start_date,
       net_disbursed: principalAmount - arrangementFee - additionalDeductedFees,
       description: formData.description,
@@ -874,6 +876,30 @@ export default function EditLoanPanel({
                   required
                 />
               </div>
+            </div>
+          )}
+
+          {/* Original Term - shows warning when changed */}
+          {!isIrregularIncome && (
+            <div className="space-y-2">
+              <Label htmlFor="original_term">
+                Original Term ({isFixedCharge ? 'Months' : selectedProduct?.period || 'Periods'})
+              </Label>
+              <Input
+                id="original_term"
+                type="number"
+                value={formData.original_term}
+                onChange={(e) => handleChange('original_term', e.target.value)}
+                min="1"
+                placeholder={loan?.original_term ? '' : 'Not set'}
+              />
+              {formData.original_term && loan?.original_term && parseInt(formData.original_term) !== loan.original_term && (
+                <p className="text-xs text-amber-600 flex items-center gap-1">
+                  <AlertTriangle className="h-3 w-3" />
+                  Warning: This changes the original contractual term
+                </p>
+              )}
+              <p className="text-xs text-slate-500">The original contractual loan term (preserved for reporting)</p>
             </div>
           )}
 

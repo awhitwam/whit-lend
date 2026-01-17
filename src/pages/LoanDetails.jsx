@@ -1540,6 +1540,12 @@ export default function LoanDetails() {
                       <span className="text-slate-500 text-xs">Duration</span>
                       <p className="font-bold text-lg">{loan.duration} months</p>
                     </div>
+                    {loan.original_term && loan.original_term !== loan.duration && (
+                      <div>
+                        <span className="text-slate-500 text-xs">Original Term</span>
+                        <p className="font-bold text-lg text-slate-600">{loan.original_term} months</p>
+                      </div>
+                    )}
                     <div>
                       <span className="text-slate-500 text-xs">Start Date</span>
                       <p className="font-bold text-lg">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
@@ -1628,6 +1634,24 @@ export default function LoanDetails() {
                         <p className="text-xs text-amber-600">Auto Extend</p>
                       )}
                     </div>
+                    {loan.original_term && loan.original_term !== loan.duration && (
+                      <div>
+                        <span className="text-slate-500 text-xs">Original Term</span>
+                        <p className="font-bold text-lg text-slate-600">
+                          {loan.period === 'Monthly' ? (
+                            loan.original_term >= 12 ? (
+                              <>
+                                {Math.floor(loan.original_term / 12)}y{loan.original_term % 12 > 0 && ` ${loan.original_term % 12}m`}
+                              </>
+                            ) : (
+                              `${loan.original_term}m`
+                            )
+                          ) : (
+                            `${loan.original_term}w`
+                          )}
+                        </p>
+                      </div>
+                    )}
                     {(loan.product_type === 'Roll-Up & Serviced' || loan.interest_type === 'Roll-Up & Serviced') && loan.roll_up_length && (
                       <div>
                         <span className="text-slate-500 text-xs">Roll-Up Period</span>
