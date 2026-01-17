@@ -300,7 +300,16 @@ function buildTimeline({ loan, product, schedule, transactions }) {
 
     // Use the effective rate for today's date
     const todayEffectiveRate = getEffectiveRateForDate(todayKey);
-    const dailyRate = previousRow.principalBalance * (todayEffectiveRate / 100 / 365);
+
+    // For roll-up loans, use the compounded calculation basis from the last schedule entry
+    // This ensures interest accrues on principal + rolled-up interest
+    const lastScheduleEntry = lastDueDateRow?.scheduleEntry;
+    const isRollUpLoan = (schedule || []).some(s => s.is_roll_up_period || s.is_serviced_period);
+    const calculationBasis = isRollUpLoan && lastScheduleEntry?.calculation_principal_start
+      ? lastScheduleEntry.calculation_principal_start
+      : previousRow.principalBalance;
+
+    const dailyRate = calculationBasis * (todayEffectiveRate / 100 / 365);
     const accruedSinceLastDue = isInterestInAdvance ? 0 : dailyRate * daysSinceLastDue;
     const todayInterestBalance = previousRow.interestBalance + accruedSinceLastDue;
 
@@ -318,7 +327,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       calculationBreakdown: accruedSinceLastDue > 0 ? {
         days: daysSinceLastDue,
         dailyRate,
-        principal: previousRow.principalBalance,
+        principal: calculationBasis,
         effectiveRate: todayEffectiveRate,
         breakdown: `${daysSinceLastDue}d × ${formatCurrency(dailyRate)}/day (${todayEffectiveRate}% pa) accrued`
       } : null,
