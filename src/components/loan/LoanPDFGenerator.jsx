@@ -407,7 +407,7 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
           const calcStr = `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}%)`;
           if (row.isRollUpPeriod) {
             const rollUpMonths = Math.round(days / 30.44);
-            breakdownStr = `Roll-up (${rollUpMonths}m): ${calcStr}`;
+            breakdownStr = `Roll-up (${rollUpMonths}m) now capitalised: ${calcStr}`;
           } else if (row.isServicedPeriod) {
             breakdownStr = `Serviced: ${calcStr}`;
           } else {
@@ -1060,7 +1060,7 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
   doc.setFont(undefined, 'normal');
   doc.text(`Settlement Date: ${format(new Date(settlementData.settlementDate), 'MMM dd, yyyy')}`, pageWidth / 2, y, { align: 'center' });
   y += 5;
-  doc.text(`Generated: ${format(new Date(), 'MMM dd, yyyy HH:mm')}`, pageWidth / 2, y, { align: 'center' });
+  doc.text(`Generated: ${format(new Date(), 'MMM dd, yyyy')}`, pageWidth / 2, y, { align: 'center' });
 
   // Borrower Info
   y += 12;
@@ -1221,6 +1221,12 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     doc.setFont(undefined, 'normal');
     doc.text(`Loan: #${loan.loan_number || loan.id.slice(0, 8)} - ${loan.borrower_name}`, pageWidth / 2, y, { align: 'center' });
 
+    // Check if this is a roll-up loan by examining the schedule
+    const scheduleEntries = settlementData.schedule || [];
+    const isRollUpLoan = scheduleEntries.some(s => s.is_roll_up_period || s.is_serviced_period);
+    const rollUpEntry = scheduleEntries.find(s => s.is_roll_up_period);
+    const rolledUpInterest = rollUpEntry?.interest_amount || rollUpEntry?.rolled_up_interest || 0;
+
     // Calculation Formula
     y += 12;
     doc.setFontSize(11);
@@ -1236,7 +1242,22 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     y += 5;
     doc.text(`Daily Interest Rate: ${(annualRate * 100).toFixed(2)}% ÷ 365 = ${(dailyRateVal * 100).toFixed(6)}%`, 15, y);
     y += 5;
-    doc.text(`Formula: Daily Interest = Principal Balance × Daily Rate`, 15, y);
+    doc.text(`Formula: Daily Interest = Calculation Basis × Daily Rate`, 15, y);
+
+    // Add roll-up explanation if applicable
+    if (isRollUpLoan && rolledUpInterest > 0) {
+      y += 8;
+      doc.setFontSize(9);
+      doc.setFont(undefined, 'bold');
+      doc.setTextColor(102, 51, 153); // Purple
+      doc.text('Roll-Up & Serviced Loan:', 15, y);
+      doc.setFont(undefined, 'normal');
+      y += 5;
+      doc.text(`Initial roll-up interest (${formatCurrency(rolledUpInterest)}) is capitalised for subsequent period calculations.`, 15, y);
+      y += 4;
+      doc.text('Serviced periods calculate interest on: Principal + Rolled-Up Interest (compounded basis).', 15, y);
+      doc.setTextColor(0, 0, 0);
+    }
 
     // Interest Periods Table
     y += 12;
@@ -1246,14 +1267,14 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
 
     y += 8;
 
-    // Table header
+    // Table header - use different columns for roll-up loans
     doc.setFillColor(240, 240, 240);
     doc.rect(15, y - 4, 180, 7, 'F');
     doc.setFontSize(8);
     doc.setFont(undefined, 'bold');
     doc.text('Period', 17, y);
-    doc.text('Days', 70, y, { align: 'right' });
-    doc.text('Principal Balance', 115, y, { align: 'right' });
+    doc.text('Days', 55, y, { align: 'right' });
+    doc.text('Calculation Basis', 110, y, { align: 'right' });
     doc.text('Interest Accrued', 160, y, { align: 'right' });
     doc.text('Payment', 190, y, { align: 'right' });
 
@@ -1261,11 +1282,96 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     doc.line(15, y, 195, y);
 
     doc.setFont(undefined, 'normal');
-    let runningInterestTotal = 0;
 
-    for (const period of settlementData.interestPeriods) {
+    // Use the authoritative interest accrued value from the schedule-based calculation
+    const authoritativeInterest = settlementData.interestAccrued || 0;
+
+    // For roll-up loans, use schedule entries directly for accurate display
+    // For other loans, use the interestPeriods from settlement calculation
+    let displayPeriods = [];
+
+    if (isRollUpLoan && scheduleEntries.length > 0) {
+      // Build display periods from schedule entries for roll-up loans
+      let prevDueDate = new Date(loan.start_date);
+      for (const entry of scheduleEntries) {
+        if (entry.installment_number === 0) continue; // Skip adjustment entries
+
+        const dueDate = new Date(entry.due_date);
+        const days = entry.calculation_days || 0;
+        const calculationBasis = entry.calculation_principal_start || loan.principal_amount;
+        const interest = entry.interest_amount || 0;
+
+        displayPeriods.push({
+          startDate: prevDueDate,
+          endDate: dueDate,
+          days,
+          calculationBasis,
+          interest,
+          isRollUpPeriod: entry.is_roll_up_period || false,
+          isServicedPeriod: entry.is_serviced_period || false,
+          rolledUpInterest: entry.rolled_up_interest || 0
+        });
+
+        prevDueDate = dueDate;
+      }
+
+      // Add accrued-to-settlement period if settlement date is after last schedule date
+      if (displayPeriods.length > 0 && settlementData.settlementDate) {
+        const lastPeriod = displayPeriods[displayPeriods.length - 1];
+        const settlementDate = new Date(settlementData.settlementDate);
+        settlementDate.setHours(0, 0, 0, 0);
+
+        const lastEndDate = new Date(lastPeriod.endDate);
+        lastEndDate.setHours(0, 0, 0, 0);
+
+        // If settlement is after the last scheduled period
+        if (settlementDate > lastEndDate) {
+          const accrualDays = Math.ceil((settlementDate - lastEndDate) / (1000 * 60 * 60 * 24));
+          // For roll-up loans, use the compounded basis from the last serviced period
+          const calculationBasis = lastPeriod.calculationBasis;
+          const accrualInterest = calculationBasis * dailyRateVal * accrualDays;
+
+          displayPeriods.push({
+            startDate: lastEndDate,
+            endDate: settlementDate,
+            days: accrualDays,
+            calculationBasis,
+            interest: accrualInterest,
+            isRollUpPeriod: false,
+            isServicedPeriod: false,
+            isAccrualToSettlement: true
+          });
+        }
+      }
+    } else {
+      // Use original interest periods for non-roll-up loans
+      const periodInterestSum = settlementData.interestPeriods.reduce((sum, p) => sum + (p.periodInterest || 0), 0);
+      const hasDifference = Math.abs(authoritativeInterest - periodInterestSum) > 0.01;
+      const scaleFactor = periodInterestSum > 0 ? authoritativeInterest / periodInterestSum : 1;
+
+      for (const period of settlementData.interestPeriods) {
+        const displayInterest = hasDifference ? (period.periodInterest * scaleFactor) : period.periodInterest;
+        displayPeriods.push({
+          startDate: period.startDate,
+          endDate: period.endDate,
+          days: period.days,
+          calculationBasis: period.openingPrincipal,
+          interest: displayInterest,
+          isRollUpPeriod: false,
+          isServicedPeriod: false,
+          principalPayment: period.principalPayment
+        });
+      }
+    }
+
+    let runningInterestTotal = 0;
+    let showedCapitalizationNote = false;
+
+    for (let i = 0; i < displayPeriods.length; i++) {
+      const period = displayPeriods[i];
+
       y += 6;
-      if (y > 275) {
+      if (y > 270) {
         doc.addPage();
         y = 20;
         // Repeat header on new page
@@ -1274,8 +1380,8 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
         doc.setFontSize(8);
         doc.setFont(undefined, 'bold');
         doc.text('Period', 17, y);
-        doc.text('Days', 70, y, { align: 'right' });
-        doc.text('Principal Balance', 115, y, { align: 'right' });
+        doc.text('Days', 55, y, { align: 'right' });
+        doc.text('Calculation Basis', 110, y, { align: 'right' });
         doc.text('Interest Accrued', 160, y, { align: 'right' });
         doc.text('Payment', 190, y, { align: 'right' });
         y += 6;
@@ -1284,12 +1390,24 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
         doc.setFont(undefined, 'normal');
       }
 
+      // Row background for roll-up vs serviced vs accrual
+      if (period.isRollUpPeriod) {
+        doc.setFillColor(245, 235, 255); // Light purple for roll-up
+        doc.rect(15, y - 4, 180, 5.5, 'F');
+      } else if (period.isServicedPeriod) {
+        doc.setFillColor(235, 245, 255); // Light blue for serviced
+        doc.rect(15, y - 4, 180, 5.5, 'F');
+      } else if (period.isAccrualToSettlement) {
+        doc.setFillColor(235, 255, 235); // Light green for accrual to settlement
+        doc.rect(15, y - 4, 180, 5.5, 'F');
+      }
+
       const startStr = format(period.startDate, 'dd/MM/yy');
       const endStr = format(period.endDate, 'dd/MM/yy');
       doc.text(`${startStr} - ${endStr}`, 17, y);
-      doc.text(String(period.days), 70, y, { align: 'right' });
-      doc.text(formatCurrency(period.openingPrincipal), 115, y, { align: 'right' });
-      doc.text(formatCurrency(period.periodInterest), 160, y, { align: 'right' });
+      doc.text(String(period.days), 55, y, { align: 'right' });
+      doc.text(formatCurrency(period.calculationBasis), 110, y, { align: 'right' });
+      doc.text(formatCurrency(period.interest), 160, y, { align: 'right' });
 
       if (period.principalPayment > 0) {
         doc.setTextColor(0, 128, 0);
@@ -1299,7 +1417,41 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
         doc.text('-', 190, y, { align: 'right' });
       }
 
-      runningInterestTotal += period.periodInterest;
+      runningInterestTotal += period.interest;
+
+      // Add period type annotation
+      if (period.isRollUpPeriod || period.isServicedPeriod || period.isAccrualToSettlement) {
+        y += 4;
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        if (period.isRollUpPeriod) {
+          doc.setTextColor(102, 51, 153); // Purple
+          doc.text(`Roll-up period: ${period.days}d × ${formatCurrency(period.calculationBasis * dailyRateVal)}/day`, 19, y);
+        } else if (period.isServicedPeriod) {
+          doc.setTextColor(37, 99, 235); // Blue
+          doc.text(`Serviced: ${period.days}d × ${formatCurrency(period.calculationBasis * dailyRateVal)}/day (compounded basis)`, 19, y);
+        } else if (period.isAccrualToSettlement) {
+          doc.setTextColor(34, 139, 34); // Forest green
+          doc.text(`Accrued to settlement: ${period.days}d × ${formatCurrency(period.calculationBasis * dailyRateVal)}/day`, 19, y);
+        }
+        doc.setTextColor(0, 0, 0);
+        doc.setFontSize(8);
+      }
+
+      // Show capitalization annotation after roll-up period
+      if (period.isRollUpPeriod && !showedCapitalizationNote && rolledUpInterest > 0) {
+        y += 6;
+        doc.setFillColor(255, 250, 235); // Light amber
+        doc.rect(15, y - 4, 180, 6, 'F');
+        doc.setFontSize(7);
+        doc.setFont(undefined, 'bold');
+        doc.setTextColor(180, 83, 9); // Amber
+        doc.text(`↳ Interest capitalised: ${formatCurrency(rolledUpInterest)} added to calculation basis for serviced periods`, 19, y);
+        doc.setTextColor(0, 0, 0);
+        doc.setFont(undefined, 'normal');
+        doc.setFontSize(8);
+        showedCapitalizationNote = true;
+      }
     }
 
     // Totals section
@@ -1309,9 +1461,9 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
 
     doc.setFont(undefined, 'bold');
     doc.text('Total Interest Accrued', 17, y);
-    doc.text(String(settlementData.daysElapsed), 70, y, { align: 'right' });
-    doc.text('', 115, y, { align: 'right' });
-    doc.text(formatCurrency(settlementData.interestAccrued || runningInterestTotal), 160, y, { align: 'right' });
+    doc.text(String(settlementData.daysElapsed), 55, y, { align: 'right' });
+    doc.text('', 110, y, { align: 'right' });
+    doc.text(formatCurrency(authoritativeInterest), 160, y, { align: 'right' });
 
     y += 6;
     doc.setTextColor(0, 128, 0);
@@ -1324,7 +1476,7 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     doc.rect(15, y - 4, 180, 7, 'F');
     doc.setFont(undefined, 'bold');
     doc.text('Interest Outstanding', 17, y);
-    doc.text(formatCurrency(settlementData.interestDue), 160, y, { align: 'right' });
+    doc.text(formatCurrency(settlementData.interestRemaining || settlementData.interestDue), 160, y, { align: 'right' });
   }
 
   // ============================================
@@ -1346,18 +1498,18 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
 
     y += 12;
 
-    // Table header
+    // Table header - adjusted column positions to prevent overlap
     doc.setFillColor(240, 240, 240);
     doc.rect(15, y - 4, 180, 7, 'F');
     doc.setFontSize(8);
     doc.setFont(undefined, 'bold');
     doc.text('Date', 17, y);
-    doc.text('Type', 45, y);
-    doc.text('Description', 75, y);
-    doc.text('Amount', 115, y, { align: 'right' });
-    doc.text('Principal', 140, y, { align: 'right' });
-    doc.text('Interest', 165, y, { align: 'right' });
-    doc.text('Balance', 190, y, { align: 'right' });
+    doc.text('Type', 42, y);
+    doc.text('Description', 70, y);
+    doc.text('Amount', 120, y, { align: 'right' });
+    doc.text('Principal', 145, y, { align: 'right' });
+    doc.text('Interest', 168, y, { align: 'right' });
+    doc.text('Balance', 193, y, { align: 'right' });
 
     y += 6;
     doc.line(15, y, 195, y);
@@ -1375,12 +1527,12 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
         doc.setFontSize(8);
         doc.setFont(undefined, 'bold');
         doc.text('Date', 17, y);
-        doc.text('Type', 45, y);
-        doc.text('Description', 75, y);
-        doc.text('Amount', 115, y, { align: 'right' });
-        doc.text('Principal', 140, y, { align: 'right' });
-        doc.text('Interest', 165, y, { align: 'right' });
-        doc.text('Balance', 190, y, { align: 'right' });
+        doc.text('Type', 42, y);
+        doc.text('Description', 70, y);
+        doc.text('Amount', 120, y, { align: 'right' });
+        doc.text('Principal', 145, y, { align: 'right' });
+        doc.text('Interest', 168, y, { align: 'right' });
+        doc.text('Balance', 193, y, { align: 'right' });
         y += 6;
         doc.line(15, y, 195, y);
         y += 6;
@@ -1397,12 +1549,16 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
       }
 
       doc.text(format(tx.date, 'dd/MM/yyyy'), 17, y);
-      doc.text(tx.type, 45, y);
 
-      // Truncate description if too long
+      // Truncate type if too long
+      const typeStr = tx.type || '-';
+      const truncatedType = typeStr.length > 12 ? typeStr.slice(0, 10) + '..' : typeStr;
+      doc.text(truncatedType, 42, y);
+
+      // Truncate description - limit to fit before Amount column (max ~12 chars at font size 8)
       const desc = tx.description || '-';
-      const truncatedDesc = desc.length > 18 ? desc.slice(0, 16) + '...' : desc;
-      doc.text(truncatedDesc, 75, y);
+      const truncatedDesc = desc.length > 12 ? desc.slice(0, 10) + '..' : desc;
+      doc.text(truncatedDesc, 70, y);
 
       // Amount with color
       if (tx.type === 'Disbursement') {
@@ -1410,27 +1566,27 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
       } else {
         doc.setTextColor(22, 163, 74); // Green
       }
-      doc.text(formatCurrency(tx.amount), 115, y, { align: 'right' });
+      doc.text(formatCurrency(tx.amount), 120, y, { align: 'right' });
       doc.setTextColor(0, 0, 0);
 
       // Principal and interest applied
       if (tx.principalApplied > 0) {
         doc.setTextColor(22, 163, 74);
-        doc.text(`-${formatCurrency(tx.principalApplied)}`, 140, y, { align: 'right' });
+        doc.text(`-${formatCurrency(tx.principalApplied)}`, 145, y, { align: 'right' });
         doc.setTextColor(0, 0, 0);
       } else {
-        doc.text('-', 140, y, { align: 'right' });
+        doc.text('-', 145, y, { align: 'right' });
       }
 
       if (tx.interestApplied > 0) {
         doc.setTextColor(217, 119, 6); // Amber
-        doc.text(`-${formatCurrency(tx.interestApplied)}`, 165, y, { align: 'right' });
+        doc.text(`-${formatCurrency(tx.interestApplied)}`, 168, y, { align: 'right' });
         doc.setTextColor(0, 0, 0);
       } else {
-        doc.text('-', 165, y, { align: 'right' });
+        doc.text('-', 168, y, { align: 'right' });
       }
 
-      doc.text(formatCurrency(tx.principalBalance), 190, y, { align: 'right' });
+      doc.text(formatCurrency(tx.principalBalance), 193, y, { align: 'right' });
     }
 
     // Summary
@@ -1658,6 +1814,24 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     doc.text(formatCurrency(Math.abs(finalInterestBalance)), cols.intBal, y, { align: 'right' });
     doc.text('', cols.principal, y, { align: 'right' });
     doc.text(formatCurrency(finalPrincipalBalance), cols.prinBal, y, { align: 'right' });
+
+    // Add explanatory note about difference between ledger and settlement interest
+    const settlementInterest = settlementData?.interestAccrued || 0;
+    const ledgerToSettlementDiff = settlementInterest - totalExpected;
+
+    if (Math.abs(ledgerToSettlementDiff) > 0.01) {
+      y += 12;
+      doc.setFontSize(8);
+      doc.setFont(undefined, 'italic');
+      doc.setTextColor(100, 100, 100);
+      doc.text('Note: The ledger shows interest accrued per scheduled periods. The settlement statement', cols.date, y);
+      y += 4;
+      doc.text(`includes an additional ${formatCurrency(ledgerToSettlementDiff)} accrued from the last scheduled date to the settlement date.`, cols.date, y);
+      y += 4;
+      doc.text(`Total interest to settlement: ${formatCurrency(settlementInterest)}`, cols.date, y);
+      doc.setTextColor(0, 0, 0);
+      doc.setFont(undefined, 'normal');
+    }
   }
 
   // Add page numbers to all pages
@@ -1671,7 +1845,20 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     doc.setTextColor(0, 0, 0);
   }
 
-  doc.save(`settlement-statement-${loan.id}-${format(new Date(settlementData.settlementDate), 'yyyy-MM-dd')}.pdf`);
+  // Build filename using borrower name (business or first+last)
+  // Note: 'borrower' variable already defined earlier from settlementData.borrower
+  const filenameBorrower = settlementData.borrower;
+  const borrowerNameForFile = filenameBorrower?.business
+    || filenameBorrower?.full_name
+    || `${filenameBorrower?.first_name || ''} ${filenameBorrower?.last_name || ''}`.trim()
+    || loan.borrower_name
+    || 'Unknown';
+  // Sanitize name for filename (remove special characters)
+  const safeBorrowerName = borrowerNameForFile.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
+  const productionDate = format(new Date(), 'yyyy-MM-dd');
+  const redemptionDate = format(new Date(settlementData.settlementDate), 'yyyy-MM-dd');
+
+  doc.save(`${safeBorrowerName}_${productionDate}_Redemption-to-${redemptionDate}.pdf`);
 }
 
 /**

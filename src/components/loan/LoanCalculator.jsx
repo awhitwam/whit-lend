@@ -1530,7 +1530,16 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
       if (daysSinceLastDue > 0) {
         // Use getEffectiveRate to respect penalty rates
         const effectiveRate = getEffectiveRate(loan, today);
-        const dailyRate = runningPrincipalBalance * (effectiveRate / 100 / 365);
+
+        // For roll-up loans, use the compounded calculation basis from the last schedule entry
+        // This ensures interest accrues on principal + rolled-up interest
+        const lastScheduleRow = lastProcessedRow?.scheduleRow;
+        const isRollUpLoan = sortedSchedule.some(s => s.is_roll_up_period || s.is_serviced_period);
+        const calculationBasis = isRollUpLoan && lastScheduleRow?.calculation_principal_start
+          ? lastScheduleRow.calculation_principal_start
+          : runningPrincipalBalance;
+
+        const dailyRate = calculationBasis * (effectiveRate / 100 / 365);
         accruedSinceLastDue = dailyRate * daysSinceLastDue;
       }
     }

@@ -227,7 +227,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
           if (isRollUpPeriod) {
             // Show roll-up period length in months (approximate from days)
             const rollUpMonths = Math.round(days / 30.44);
-            breakdownStr = `Roll-up (${rollUpMonths}m): ${calcStr}`;
+            breakdownStr = `Roll-up (${rollUpMonths}m) now capitalised: ${calcStr}`;
           } else if (isServicedPeriod) {
             breakdownStr = `Serviced: ${calcStr}`;
           } else {

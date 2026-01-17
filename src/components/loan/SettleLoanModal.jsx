@@ -229,7 +229,8 @@ function calculateSettlementAmount(loan, settlementDate, transactions = [], sche
     annualRate,
     interestPeriods,
     transactionHistory,
-    repaymentCount: repayments.length
+    repaymentCount: repayments.length,
+    schedule // Include schedule for roll-up/compounding display
   };
 }
 
@@ -256,6 +257,7 @@ export default function SettleLoanModal({
       interestAccrued: settlement.interestAccrued,
       interestPaid: settlement.interestPaid,
       interestDue: settlement.interestRemaining,
+      interestRemaining: settlement.interestRemaining,
       exitFee: settlement.exitFee,
       totalSettlement: settlement.settlementAmount,
       interestPeriods: settlement.interestPeriods,
@@ -264,7 +266,8 @@ export default function SettleLoanModal({
       dailyRate: settlement.dailyRate,
       annualRate: settlement.annualRate,
       organization: currentOrganization || null,
-      borrower: borrower || null
+      borrower: borrower || null,
+      schedule: schedule // Include schedule for roll-up/compounding display
     };
     generateSettlementStatementPDF(loan, settlementData, schedule, transactions, product);
   };
