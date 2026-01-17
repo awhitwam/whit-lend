@@ -1,7 +1,7 @@
 // Schema definitions for backup/restore compatibility
 // Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
 
-export const CURRENT_SCHEMA_VERSION = 66;
+export const CURRENT_SCHEMA_VERSION = 68;
 
 // Define columns and defaults for each table
 // When adding new columns to tables, add them here with appropriate defaults
@@ -252,6 +252,28 @@ export const tableSchemas = {
     columns: ['id', 'organization_id', 'loan_id', 'user_id', 'user_name',
               'comment', 'created_at'],
     defaults: {}
+  },
+
+  letter_templates: {
+    columns: ['id', 'organization_id', 'name', 'description', 'category',
+              'subject_template', 'body_template', 'available_placeholders',
+              'default_attachments', 'is_active', 'created_at', 'updated_at', 'created_by'],
+    defaults: {
+      category: 'General',
+      available_placeholders: [],
+      default_attachments: [],
+      is_active: true
+    }
+  },
+
+  generated_letters: {
+    columns: ['id', 'organization_id', 'template_id', 'loan_id', 'borrower_id',
+              'subject', 'body_rendered', 'placeholder_values', 'attached_reports',
+              'settlement_date', 'pdf_storage_path', 'created_by', 'created_at'],
+    defaults: {
+      placeholder_values: {},
+      attached_reports: []
+    }
   }
 };
 
