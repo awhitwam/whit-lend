@@ -36,6 +36,7 @@ import About from './pages/About';
 import UpdatePassword from './pages/UpdatePassword';
 import LetterTemplateEditor from './components/letters/LetterTemplateEditor';
 import LetterTemplates from './pages/LetterTemplates';
+import GoogleDriveCallback from './pages/GoogleDriveCallback';
 import __Layout from './Layout.jsx';
 
 
@@ -78,6 +79,7 @@ export const PAGES = {
     "UpdatePassword": UpdatePassword,
     "LetterTemplateEditor": LetterTemplateEditor,
     "LetterTemplates": LetterTemplates,
+    "GoogleDriveCallback": GoogleDriveCallback,
 }
 
 export const pagesConfig = {

@@ -1,12 +1,14 @@
 import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { CheckCircle2, Palette, PenLine, Loader2, Trash2, Upload } from 'lucide-react';
+import { CheckCircle2, Palette, PenLine, Loader2, Trash2, Upload, Cloud, FolderOpen, Link2Off } from 'lucide-react';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useAuth } from '@/lib/AuthContext';
 import { getThemeOptions } from '@/lib/organizationThemes';
 import { supabase } from '@/lib/supabaseClient';
 import { toast } from 'sonner';
+import { useGoogleDrive } from '@/hooks/useGoogleDrive';
+import GoogleDriveFolderPicker from '@/components/settings/GoogleDriveFolderPicker';
 
 export default function Config() {
   const { canAdmin, currentOrganization, refreshOrganizations, currentTheme } = useOrganization();
@@ -15,6 +17,19 @@ export default function Config() {
   const [isUploadingSignature, setIsUploadingSignature] = useState(false);
   const [isLoadingSignature, setIsLoadingSignature] = useState(true);
   const signatureFileInputRef = useRef(null);
+
+  // Google Drive integration
+  const {
+    isConnected: googleDriveConnected,
+    email: googleDriveEmail,
+    baseFolderPath: googleDriveBasePath,
+    isLoading: googleDriveLoading,
+    initiateOAuth: connectGoogleDrive,
+    disconnect: disconnectGoogleDrive,
+    refresh: refreshGoogleDrive
+  } = useGoogleDrive();
+  const [folderPickerOpen, setFolderPickerOpen] = useState(false);
+  const [isDisconnecting, setIsDisconnecting] = useState(false);
 
   // Load current user's signature
   useEffect(() => {
@@ -121,6 +136,19 @@ export default function Config() {
     }
   };
 
+  const handleDisconnectGoogleDrive = async () => {
+    setIsDisconnecting(true);
+    try {
+      await disconnectGoogleDrive();
+      toast.success('Google Drive disconnected');
+    } catch (err) {
+      console.error('Error disconnecting Google Drive:', err);
+      toast.error('Failed to disconnect: ' + err.message);
+    } finally {
+      setIsDisconnecting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       <div className="p-4 md:p-6 space-y-6">
@@ -205,6 +233,92 @@ export default function Config() {
             </div>
           </CardContent>
         </Card>
+
+        {/* Google Drive Integration Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Cloud className="w-5 h-5 text-blue-600" />
+              Google Drive Integration
+            </CardTitle>
+            <CardDescription>
+              Save generated letters directly to Google Drive with automatic folder organization by borrower and loan.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            {googleDriveLoading ? (
+              <div className="flex items-center gap-2 text-slate-500">
+                <Loader2 className="w-4 h-4 animate-spin" />
+                Loading...
+              </div>
+            ) : !googleDriveConnected ? (
+              <div className="space-y-4">
+                <p className="text-sm text-slate-600">
+                  Connect your Google account to save correspondence directly to Google Drive.
+                  Files will be organized in folders by borrower and loan.
+                </p>
+                <Button onClick={connectGoogleDrive}>
+                  <Cloud className="w-4 h-4 mr-2" />
+                  Connect Google Drive
+                </Button>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Connected status */}
+                <div className="flex items-center gap-2 text-green-700 bg-green-50 px-3 py-2 rounded-md">
+                  <CheckCircle2 className="w-5 h-5" />
+                  <span>Connected as <strong>{googleDriveEmail}</strong></span>
+                </div>
+
+                {/* Base folder selection */}
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-slate-700">Base Folder</label>
+                  <div className="flex gap-2">
+                    <div className="flex-1 px-3 py-2 bg-slate-50 border rounded-md text-sm">
+                      {googleDriveBasePath || (
+                        <span className="text-slate-400 italic">No folder selected</span>
+                      )}
+                    </div>
+                    <Button variant="outline" onClick={() => setFolderPickerOpen(true)}>
+                      <FolderOpen className="w-4 h-4 mr-2" />
+                      Browse
+                    </Button>
+                  </div>
+                  <p className="text-xs text-slate-500">
+                    Letters will be saved to: <code className="bg-slate-100 px-1 rounded">{'{base folder}'}/{'{borrower_id} {name}'}/{'{loan_id} {description}'}/</code>
+                  </p>
+                </div>
+
+                {/* Disconnect button */}
+                <div className="pt-2 border-t">
+                  <Button
+                    variant="ghost"
+                    className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    onClick={handleDisconnectGoogleDrive}
+                    disabled={isDisconnecting}
+                  >
+                    {isDisconnecting ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Link2Off className="w-4 h-4 mr-2" />
+                    )}
+                    Disconnect Google Drive
+                  </Button>
+                </div>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Folder Picker Modal */}
+        <GoogleDriveFolderPicker
+          open={folderPickerOpen}
+          onClose={() => setFolderPickerOpen(false)}
+          onSelect={() => {
+            refreshGoogleDrive();
+            setFolderPickerOpen(false);
+          }}
+        />
 
         {/* Organization Theme Selector */}
         {canAdmin() && currentOrganization && (

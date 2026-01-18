@@ -39,9 +39,11 @@ import {
   Paperclip,
   Calendar,
   FileCheck,
-  AlertCircle
+  AlertCircle,
+  Cloud
 } from 'lucide-react';
 import { toast } from 'sonner';
+import { useGoogleDrive } from '@/hooks/useGoogleDrive';
 
 /**
  * Multi-step modal for generating letters with attached reports
@@ -65,6 +67,7 @@ export default function LetterGeneratorModal({
   interestCalc = null
 }) {
   const { user } = useAuth();
+  const { isConnected: googleDriveConnected, uploadFile: uploadToGoogleDrive } = useGoogleDrive();
 
   // Step management
   const [step, setStep] = useState(1);
@@ -109,6 +112,7 @@ export default function LetterGeneratorModal({
   // Generation state
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedPdfUrl, setGeneratedPdfUrl] = useState(null);
+  const [isSavingToDrive, setIsSavingToDrive] = useState(false);
 
   // Fetch templates
   const { data: templates = [], isLoading: templatesLoading } = useQuery({
@@ -344,6 +348,52 @@ export default function LetterGeneratorModal({
 
       downloadPDF(window._generatedLetterPdf, filename);
       toast.success('Letter downloaded');
+    }
+  };
+
+  // Save to Google Drive
+  const handleSaveToGoogleDrive = async () => {
+    if (!window._generatedLetterPdf) {
+      toast.error('No PDF to save');
+      return;
+    }
+
+    setIsSavingToDrive(true);
+    try {
+      // Build filename
+      const borrowerName = borrower?.business ||
+        `${borrower?.first_name || ''} ${borrower?.last_name || ''}`.trim() ||
+        loan.borrower_name || 'Borrower';
+      const safeName = borrowerName.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
+      const filename = `${safeName}-Letter-${format(new Date(), 'yyyy-MM-dd')}.pdf`;
+
+      // Convert PDF bytes to base64
+      const pdfBytes = window._generatedLetterPdf;
+      const base64 = btoa(
+        new Uint8Array(pdfBytes).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+
+      // Upload to Google Drive
+      const result = await uploadToGoogleDrive({
+        fileName: filename,
+        fileContent: base64,
+        mimeType: 'application/pdf',
+        borrowerId: borrower?.unique_number || borrower?.id?.toString() || 'unknown',
+        borrowerDescription: borrowerName,
+        loanId: loan?.loan_number || loan?.id?.toString() || 'unknown',
+        loanDescription: loan?.description || ''
+      });
+
+      if (result.success) {
+        toast.success(`Saved to Google Drive: ${result.folderPath}`);
+      } else {
+        throw new Error(result.error || 'Upload failed');
+      }
+    } catch (err) {
+      console.error('Error saving to Google Drive:', err);
+      toast.error('Failed to save to Google Drive: ' + err.message);
+    } finally {
+      setIsSavingToDrive(false);
     }
   };
 
@@ -731,12 +781,27 @@ export default function LetterGeneratorModal({
                   </CardContent>
                 </Card>
 
-                {/* Download button */}
+                {/* Download and Google Drive buttons */}
                 <div className="flex justify-center gap-4">
                   <Button onClick={handleDownload} size="lg">
                     <Download className="w-4 h-4 mr-2" />
                     Download PDF
                   </Button>
+                  {googleDriveConnected && (
+                    <Button
+                      onClick={handleSaveToGoogleDrive}
+                      variant="outline"
+                      size="lg"
+                      disabled={isSavingToDrive}
+                    >
+                      {isSavingToDrive ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Cloud className="w-4 h-4 mr-2" />
+                      )}
+                      {isSavingToDrive ? 'Saving...' : 'Save to Google Drive'}
+                    </Button>
+                  )}
                 </div>
 
                 {/* Summary */}
