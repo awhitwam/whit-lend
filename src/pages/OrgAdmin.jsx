@@ -1328,7 +1328,8 @@ export default function OrgAdmin() {
       'nightly_job_runs',  // Job execution history
       'organization_summary',  // Cached aggregates (can be regenerated but good to have)
       'letter_templates',  // Letter templates
-      'generated_letters'  // Generated letter history
+      'generated_letters',  // Generated letter history
+      'user_profiles'  // User profiles (Google Drive settings backed up, but tokens are NOT backed up for security)
     ];
 
     try {

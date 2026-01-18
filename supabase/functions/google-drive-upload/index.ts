@@ -1,8 +1,12 @@
 // Supabase Edge Function: Google Drive Upload
 // Uploads files to Google Drive with automatic folder creation
 //
-// Folder structure: {base_folder}/{borrower_id} {description}/{loan_id} {description}/
+// Folder structure: {base_folder}/{borrower_id} {description}/{loan_id} {description}/Letters/
 // Smart matching: Finds existing folders by ID prefix even if description changed
+//
+// Actions:
+//   - upload (default): Upload a file to the Letters folder
+//   - create-folders: Create folder structure only (no file upload)
 //
 // Deployment:
 //   supabase functions deploy google-drive-upload
@@ -86,7 +90,23 @@ async function createFolder(accessToken: string, parentId: string, name: string)
   return data.id
 }
 
-// Find or create folder by ID prefix
+// Rename a folder
+async function renameFolder(accessToken: string, folderId: string, newName: string): Promise<void> {
+  const response = await fetch(`https://www.googleapis.com/drive/v3/files/${folderId}?supportsAllDrives=true`, {
+    method: 'PATCH',
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify({ name: newName })
+  })
+  const data = await response.json()
+  if (data.error) {
+    throw new Error(data.error.message)
+  }
+}
+
+// Find or create folder by ID prefix, rename if description changed
 async function findOrCreateFolder(
   accessToken: string,
   parentId: string,
@@ -98,6 +118,13 @@ async function findOrCreateFolder(
 
   if (existing) {
     console.log(`[GoogleDriveUpload] Found existing folder: ${existing.name} (${existing.id})`)
+
+    // Rename folder if the name has changed (but not for static folders like "Letters")
+    if (existing.name !== fullName && idPrefix !== fullName) {
+      console.log(`[GoogleDriveUpload] Renaming folder from "${existing.name}" to "${fullName}"`)
+      await renameFolder(accessToken, existing.id, fullName)
+    }
+
     return existing.id
   }
 
@@ -240,6 +267,7 @@ Deno.serve(async (req) => {
     // Parse request
     const body = await req.json()
     const {
+      action = 'upload',  // 'upload' or 'create-folders'
       fileName,
       fileContent,  // base64
       mimeType = 'application/pdf',
@@ -249,16 +277,35 @@ Deno.serve(async (req) => {
       loanDescription
     } = body
 
-    if (!fileName || !fileContent || !borrowerId || !loanId) {
+    // Validate required fields based on action
+    if (action === 'upload') {
+      if (!fileName || !fileContent || !borrowerId || !loanId) {
+        return new Response(JSON.stringify({
+          error: 'Missing required fields: fileName, fileContent, borrowerId, loanId'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      console.log('[GoogleDriveUpload] Upload request:', { fileName, borrowerId, loanId })
+    } else if (action === 'create-folders') {
+      if (!borrowerId || !loanId) {
+        return new Response(JSON.stringify({
+          error: 'Missing required fields: borrowerId, loanId'
+        }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+      console.log('[GoogleDriveUpload] Create folders request:', { borrowerId, loanId })
+    } else {
       return new Response(JSON.stringify({
-        error: 'Missing required fields: fileName, fileContent, borrowerId, loanId'
+        error: 'Invalid action. Use "upload" or "create-folders"'
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
-
-    console.log('[GoogleDriveUpload] Upload request:', { fileName, borrowerId, loanId })
 
     // Get user's Google Drive settings and tokens
     const { data: profile, error: profileError } = await supabaseAdmin
@@ -323,8 +370,48 @@ Deno.serve(async (req) => {
       loanFolderName
     )
 
-    // Upload file
-    const result = await uploadFile(accessToken, loanFolderId, fileName, fileContent, mimeType)
+    // Find or create subfolders within loan folder
+    const lettersFolderId = await findOrCreateFolder(
+      accessToken,
+      loanFolderId,
+      'Letters',
+      'Letters'
+    )
+
+    // For create-folders action, also create DD and Legal subfolders
+    if (action === 'create-folders') {
+      const ddFolderId = await findOrCreateFolder(
+        accessToken,
+        loanFolderId,
+        'DD',
+        'DD'
+      )
+      const legalFolderId = await findOrCreateFolder(
+        accessToken,
+        loanFolderId,
+        'Legal',
+        'Legal'
+      )
+
+      const folderPath = `${borrowerFolderName}/${loanFolderName}`
+      console.log('[GoogleDriveUpload] Folders created successfully:', folderPath)
+      return new Response(JSON.stringify({
+        success: true,
+        folderPath,
+        borrowerFolderId,
+        loanFolderId,
+        lettersFolderId,
+        ddFolderId,
+        legalFolderId
+      }), {
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
+
+    const folderPath = `${borrowerFolderName}/${loanFolderName}/Letters`
+
+    // Upload file to Letters folder
+    const result = await uploadFile(accessToken, lettersFolderId, fileName, fileContent, mimeType)
 
     console.log('[GoogleDriveUpload] File uploaded successfully:', result.id)
 
@@ -332,7 +419,7 @@ Deno.serve(async (req) => {
       success: true,
       fileId: result.id,
       fileUrl: result.webViewLink,
-      folderPath: `${borrowerFolderName}/${loanFolderName}`
+      folderPath
     }), {
       headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })

@@ -1,7 +1,7 @@
 // Schema definitions for backup/restore compatibility
 // Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
 
-export const CURRENT_SCHEMA_VERSION = 69;
+export const CURRENT_SCHEMA_VERSION = 72;
 
 // Define columns and defaults for each table
 // When adding new columns to tables, add them here with appropriate defaults
@@ -244,8 +244,13 @@ export const tableSchemas = {
 
   user_profiles: {
     columns: ['id', 'email', 'full_name', 'role', 'organization_id', 'created_at',
-              'updated_at', 'is_super_admin', 'default_organization_id'],
-    defaults: { is_super_admin: false }
+              'updated_at', 'is_super_admin', 'default_organization_id',
+              'google_drive_connected', 'google_drive_email',
+              'google_drive_base_folder_id', 'google_drive_base_folder_path'],
+    defaults: {
+      is_super_admin: false,
+      google_drive_connected: false
+    }
   },
 
   loan_comments: {
@@ -274,6 +279,12 @@ export const tableSchemas = {
       placeholder_values: {},
       attached_reports: []
     }
+  },
+
+  google_drive_tokens: {
+    columns: ['id', 'user_id', 'access_token_encrypted', 'refresh_token_encrypted',
+              'token_expiry', 'created_at', 'updated_at'],
+    defaults: {}
   }
 };
 

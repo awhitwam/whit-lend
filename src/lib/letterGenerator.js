@@ -245,8 +245,12 @@ async function loadImageAsBase64(url) {
   if (!url) return null;
 
   try {
-    const response = await fetch(url);
-    if (!response.ok) return null;
+    console.log('[letterGenerator] Loading image from:', url);
+    const response = await fetch(url, { mode: 'cors' });
+    if (!response.ok) {
+      console.error('[letterGenerator] Failed to fetch image, status:', response.status);
+      return null;
+    }
 
     const blob = await response.blob();
     const reader = new FileReader();
@@ -259,13 +263,17 @@ async function loadImageAsBase64(url) {
         if (base64.includes('image/jpeg') || base64.includes('image/jpg')) {
           format = 'JPEG';
         }
+        console.log('[letterGenerator] Image loaded successfully, format:', format);
         resolve({ data: base64, format });
       };
-      reader.onerror = () => resolve(null);
+      reader.onerror = (err) => {
+        console.error('[letterGenerator] FileReader error:', err);
+        resolve(null);
+      };
       reader.readAsDataURL(blob);
     });
   } catch (err) {
-    console.error('Failed to load logo:', err);
+    console.error('[letterGenerator] Failed to load image:', err);
     return null;
   }
 }
@@ -368,14 +376,19 @@ export async function generateLetterPDF({
   // Pre-load any images in the body (e.g., signature images)
   const imageCache = {};
   const imgMatches = body.match(/<img[^>]+src="([^"]+)"[^>]*>/g) || [];
+  console.log('[letterGenerator] Found image tags in body:', imgMatches.length);
   for (const imgTag of imgMatches) {
     const srcMatch = imgTag.match(/src="([^"]+)"/);
     if (srcMatch && srcMatch[1]) {
       const imgUrl = srcMatch[1];
+      console.log('[letterGenerator] Pre-loading image:', imgUrl);
       if (!imageCache[imgUrl]) {
         const imgData = await loadImageAsBase64(imgUrl);
         if (imgData) {
           imageCache[imgUrl] = imgData;
+          console.log('[letterGenerator] Image cached successfully');
+        } else {
+          console.warn('[letterGenerator] Failed to cache image:', imgUrl);
         }
       }
     }
@@ -421,6 +434,8 @@ function renderHtmlToPdf(doc, html, margin, startY, contentWidth, pageHeight, im
     if (node.nodeType !== Node.ELEMENT_NODE) return false;
     const tag = node.tagName.toLowerCase();
     if (tag !== 'p' && tag !== 'div') return false;
+    // Not empty if it contains an image
+    if (node.querySelector('img')) return false;
     // Empty if no text content, or only contains <br>
     const text = node.textContent?.trim();
     if (!text) return true;
@@ -524,7 +539,10 @@ function renderHtmlToPdf(doc, html, margin, startY, contentWidth, pageHeight, im
       case 'img':
         // Handle image elements (e.g., signature images)
         const imgSrc = node.getAttribute('src');
+        console.log('[letterGenerator] Processing IMG tag, src:', imgSrc);
+        console.log('[letterGenerator] imageCache keys:', Object.keys(imageCache));
         if (imgSrc && imageCache[imgSrc]) {
+          console.log('[letterGenerator] Found image in cache, adding to PDF at y:', y);
           if (pendingParagraphBreak) {
             y += 5;
             pendingParagraphBreak = false;
@@ -549,9 +567,12 @@ function renderHtmlToPdf(doc, html, margin, startY, contentWidth, pageHeight, im
               'FAST'
             );
             y += imgHeight + 3; // Space after image
+            console.log('[letterGenerator] Image added successfully, new y:', y);
           } catch (err) {
-            console.error('Failed to add image to PDF:', err);
+            console.error('[letterGenerator] Failed to add image to PDF:', err);
           }
+        } else {
+          console.warn('[letterGenerator] Image not found in cache:', imgSrc);
         }
         return;
       case 'ul':

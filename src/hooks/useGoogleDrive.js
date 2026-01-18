@@ -212,6 +212,52 @@ export function useGoogleDrive() {
   }, [isConnected, baseFolderId]);
 
   /**
+   * Create folder structure in Google Drive (without uploading a file)
+   */
+  const createFolderStructure = useCallback(async ({
+    borrowerId,
+    borrowerDescription,
+    loanId,
+    loanDescription
+  }) => {
+    const accessToken = await getAccessToken();
+
+    if (!isConnected) {
+      throw new Error('Google Drive not connected');
+    }
+
+    if (!baseFolderId) {
+      throw new Error('No base folder configured. Please select a base folder in Settings.');
+    }
+
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-upload`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action: 'create-folders',
+          borrowerId,
+          borrowerDescription,
+          loanId,
+          loanDescription
+        })
+      }
+    );
+
+    const result = await response.json();
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result;
+  }, [isConnected, baseFolderId]);
+
+  /**
    * List shared drives
    */
   const listSharedDrives = useCallback(async () => {
@@ -305,6 +351,7 @@ export function useGoogleDrive() {
     exchangeCode,
     disconnect,
     uploadFile,
+    createFolderStructure,
     listSharedDrives,
     listFolders,
     saveBaseFolder,

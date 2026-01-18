@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
+import { useGoogleDrive } from '@/hooks/useGoogleDrive';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { logLoanEvent, logTransactionEvent, AuditAction } from '@/lib/auditLog';
@@ -45,7 +46,8 @@ import {
   Layers,
   ShieldCheck,
   Plus,
-  MessageSquare
+  MessageSquare,
+  FolderPlus
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -85,8 +87,9 @@ export default function LoanDetails() {
   const urlParams = new URLSearchParams(window.location.search);
   const loanId = urlParams.get('id');
   const navigate = useNavigate();
-  const { user } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
   const { currentOrganization } = useOrganization();
+  const googleDrive = useGoogleDrive();
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
@@ -107,6 +110,7 @@ export default function LoanDetails() {
   const [deleteTransactionTarget, setDeleteTransactionTarget] = useState(null);
   const [deleteTransactionReason, setDeleteTransactionReason] = useState('');
   const [isLetterModalOpen, setIsLetterModalOpen] = useState(false);
+  const [isCreatingGoogleDriveFolders, setIsCreatingGoogleDriveFolders] = useState(false);
   const [selectedDisbursements, setSelectedDisbursements] = useState(new Set());
   const [deleteDisbursementsDialogOpen, setDeleteDisbursementsDialogOpen] = useState(false);
   const [isDeletingDisbursements, setIsDeletingDisbursements] = useState(false);
@@ -695,6 +699,50 @@ export default function LoanDetails() {
     // Calculate schedule-based interest at the time of generation
     const interestCalc = calculateAccruedInterestWithTransactions(loan, transactions, new Date(), schedule, product);
     generateLoanStatementPDF(loan, schedule, transactions, product, interestCalc, currentOrganization);
+  };
+
+  const handleCreateGoogleDriveFolders = async () => {
+    console.log('[CreateGDriveFolders] Starting...');
+    console.log('[CreateGDriveFolders] googleDrive state:', {
+      isConnected: googleDrive.isConnected,
+      baseFolderId: googleDrive.baseFolderId,
+      isLoading: googleDrive.isLoading
+    });
+    console.log('[CreateGDriveFolders] borrower:', borrower);
+    console.log('[CreateGDriveFolders] loan:', { loan_number: loan?.loan_number, description: loan?.description });
+
+    if (!googleDrive.isConnected) {
+      toast.error('Google Drive not connected. Please connect in Settings.');
+      return;
+    }
+    if (!googleDrive.baseFolderId) {
+      toast.error('No base folder configured. Please select a base folder in Settings.');
+      return;
+    }
+    if (!borrower) {
+      toast.error('Borrower data not loaded');
+      return;
+    }
+
+    const params = {
+      borrowerId: borrower.unique_number,
+      borrowerDescription: borrower.business || borrower.full_name,
+      loanId: loan.loan_number,
+      loanDescription: loan.description || ''
+    };
+    console.log('[CreateGDriveFolders] Calling createFolderStructure with:', params);
+
+    setIsCreatingGoogleDriveFolders(true);
+    try {
+      const result = await googleDrive.createFolderStructure(params);
+      console.log('[CreateGDriveFolders] Success result:', result);
+      toast.success(`Folders created: ${result.folderPath}`);
+    } catch (err) {
+      console.error('[CreateGDriveFolders] Error:', err);
+      toast.error('Failed to create folders: ' + err.message);
+    } finally {
+      setIsCreatingGoogleDriveFolders(false);
+    }
   };
 
   const handleExportScheduleCSV = () => {
@@ -1496,6 +1544,19 @@ export default function LoanDetails() {
                       <Download className="w-4 h-4 mr-2" />
                       Export Schedule CSV
                     </DropdownMenuItem>
+                    {isSuperAdmin && googleDrive.isConnected && (
+                      <DropdownMenuItem
+                        onClick={handleCreateGoogleDriveFolders}
+                        disabled={isCreatingGoogleDriveFolders}
+                      >
+                        {isCreatingGoogleDriveFolders ? (
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        ) : (
+                          <FolderPlus className="w-4 h-4 mr-2" />
+                        )}
+                        Create Google Drive Folders
+                      </DropdownMenuItem>
+                    )}
                     {loan.status !== 'Closed' && (
                       <>
                         <DropdownMenuItem
