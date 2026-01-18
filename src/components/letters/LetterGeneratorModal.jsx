@@ -26,6 +26,8 @@ import {
   ATTACHABLE_REPORTS
 } from '@/lib/letterGenerator';
 import { api } from '@/api/dataClient';
+import { useAuth } from '@/lib/AuthContext';
+import { supabase } from '@/lib/supabaseClient';
 import {
   FileText,
   Download,
@@ -62,12 +64,30 @@ export default function LetterGeneratorModal({
   loanProperties = [],
   interestCalc = null
 }) {
+  const { user } = useAuth();
+
   // Step management
   const [step, setStep] = useState(1);
   const STEPS = ['template', 'content', 'attachments', 'delivery'];
 
   // Template selection
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+
+  // User profile (for signature)
+  const { data: userProfile } = useQuery({
+    queryKey: ['user-profile', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('signature_image_url')
+        .eq('id', user.id)
+        .single();
+      if (error) return null;
+      return data;
+    },
+    enabled: !!user?.id && isOpen
+  });
 
   // Letter content
   const [subject, setSubject] = useState('');
@@ -146,14 +166,15 @@ export default function LetterGeneratorModal({
       product,
       settlementData,
       interestBalance: interestCalc?.interestBalance,
-      liveSettlement
+      liveSettlement,
+      userProfile
     });
     // Override free text fields with user input (if provided)
     if (freeTextFields.free_text_1) data.free_text_1 = freeTextFields.free_text_1;
     if (freeTextFields.free_text_2) data.free_text_2 = freeTextFields.free_text_2;
     if (freeTextFields.free_text_3) data.free_text_3 = freeTextFields.free_text_3;
     return data;
-  }, [loan, borrower, organization, loanProperties, product, settlementData, interestCalc, liveSettlement, freeTextFields]);
+  }, [loan, borrower, organization, loanProperties, product, settlementData, interestCalc, liveSettlement, freeTextFields, userProfile]);
 
   // Rendered content with placeholders substituted
   const renderedSubject = useMemo(() => {
@@ -599,6 +620,12 @@ export default function LetterGeneratorModal({
                     }
                     .letter-preview-body li {
                       margin: 0.25em 0;
+                    }
+                    .letter-preview-body img.signature-image {
+                      max-height: 60px;
+                      max-width: 200px;
+                      display: block;
+                      margin: 8px 0;
                     }
                   `}</style>
 

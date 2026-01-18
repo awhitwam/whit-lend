@@ -25,6 +25,8 @@ import {
 import { toast } from 'sonner';
 import { api } from '@/api/dataClient';
 import { useOrganization } from '@/lib/OrganizationContext';
+import { useAuth } from '@/lib/AuthContext';
+import { supabase } from '@/lib/supabaseClient';
 import { ATTACHABLE_REPORTS, renderTemplate, buildPlaceholderData } from '@/lib/letterGenerator';
 import { format } from 'date-fns';
 import { formatCurrency, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
@@ -97,6 +99,12 @@ const PLACEHOLDER_GROUPS = [
       { key: 'free_text_3', description: 'Custom text field 3 (enter at merge time)', example: '[Enter at merge]' },
     ]
   },
+  {
+    name: 'Signature',
+    placeholders: [
+      { key: 'signature', description: 'Your signature image (upload in Settings → General)', example: '[Signature Image]' },
+    ]
+  },
 ];
 
 export default function LetterTemplateEditor() {
@@ -107,6 +115,23 @@ export default function LetterTemplateEditor() {
 
   const queryClient = useQueryClient();
   const { currentOrganization } = useOrganization();
+  const { user } = useAuth();
+
+  // Fetch user profile for signature
+  const { data: userProfile } = useQuery({
+    queryKey: ['user-profile', user?.id],
+    queryFn: async () => {
+      if (!user?.id) return null;
+      const { data, error } = await supabase
+        .from('user_profiles')
+        .select('signature_image_url')
+        .eq('id', user.id)
+        .single();
+      if (error) return null;
+      return data;
+    },
+    enabled: !!user?.id
+  });
 
   const [activeTab, setActiveTab] = useState('edit');
   const [previewLoanId, setPreviewLoanId] = useState('');
@@ -321,6 +346,7 @@ export default function LetterTemplateEditor() {
       free_text_1: '[Enter at merge]',
       free_text_2: '[Enter at merge]',
       free_text_3: '[Enter at merge]',
+      signature: '[Signature Image]',
     };
 
     // If a loan is selected, use real data
@@ -351,12 +377,19 @@ export default function LetterTemplateEditor() {
         product,
         settlementData: null,
         interestBalance: 0,
-        liveSettlement
+        liveSettlement,
+        userProfile
       });
     }
 
+    // For sample data, add the real signature if available
+    if (userProfile?.signature_image_url) {
+      sampleData.signature = userProfile.signature_image_url;
+      sampleData.signature_image_url = userProfile.signature_image_url;
+    }
+
     return sampleData;
-  }, [selectedLoanData, currentOrganization]);
+  }, [selectedLoanData, currentOrganization, userProfile]);
 
   const renderedSubject = useMemo(() => {
     return renderTemplate(formData.subject_template, previewData);
@@ -380,7 +413,7 @@ export default function LetterTemplateEditor() {
         {/* Header */}
         <div className="flex items-center justify-between mb-6">
           <div className="flex items-center gap-4">
-            <Button variant="ghost" size="sm" onClick={() => navigate('/Config')}>
+            <Button variant="ghost" size="sm" onClick={() => navigate('/LetterTemplates')}>
               <ArrowLeft className="w-4 h-4 mr-1" />
               Back
             </Button>
@@ -640,6 +673,12 @@ Yours sincerely,
                         }
                         .template-preview-body li {
                           margin: 0.25em 0;
+                        }
+                        .template-preview-body img.signature-image {
+                          max-height: 60px;
+                          max-width: 200px;
+                          display: block;
+                          margin: 8px 0;
                         }
                       `}</style>
                     </div>

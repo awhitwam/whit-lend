@@ -1,20 +1,210 @@
+import { useState, useEffect, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
-import { CheckCircle2, Palette } from 'lucide-react';
+import { Button } from "@/components/ui/button";
+import { CheckCircle2, Palette, PenLine, Loader2, Trash2, Upload } from 'lucide-react';
 import { useOrganization } from '@/lib/OrganizationContext';
+import { useAuth } from '@/lib/AuthContext';
 import { getThemeOptions } from '@/lib/organizationThemes';
 import { supabase } from '@/lib/supabaseClient';
 import { toast } from 'sonner';
 
 export default function Config() {
   const { canAdmin, currentOrganization, refreshOrganizations, currentTheme } = useOrganization();
+  const { user } = useAuth();
+  const [signatureUrl, setSignatureUrl] = useState(null);
+  const [isUploadingSignature, setIsUploadingSignature] = useState(false);
+  const [isLoadingSignature, setIsLoadingSignature] = useState(true);
+  const signatureFileInputRef = useRef(null);
+
+  // Load current user's signature
+  useEffect(() => {
+    const loadSignature = async () => {
+      if (!user?.id) return;
+
+      try {
+        const { data, error } = await supabase
+          .from('user_profiles')
+          .select('signature_image_url')
+          .eq('id', user.id)
+          .single();
+
+        if (error && error.code !== 'PGRST116') {
+          console.error('Error loading signature:', error);
+        }
+
+        setSignatureUrl(data?.signature_image_url || null);
+      } catch (err) {
+        console.error('Error loading signature:', err);
+      } finally {
+        setIsLoadingSignature(false);
+      }
+    };
+
+    loadSignature();
+  }, [user?.id]);
+
+  const handleSignatureUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.type.startsWith('image/')) {
+      toast.error('Please select an image file');
+      return;
+    }
+
+    // Validate file size (max 1MB)
+    if (file.size > 1 * 1024 * 1024) {
+      toast.error('Image must be less than 1MB');
+      return;
+    }
+
+    setIsUploadingSignature(true);
+    try {
+      // Create a unique filename
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${user.id}-signature-${Date.now()}.${fileExt}`;
+      const filePath = `signatures/${fileName}`;
+
+      // Upload to Supabase Storage
+      const { error: uploadError } = await supabase.storage
+        .from('organization-assets')
+        .upload(filePath, file, { upsert: true });
+
+      if (uploadError) throw uploadError;
+
+      // Get public URL
+      const { data: { publicUrl } } = supabase.storage
+        .from('organization-assets')
+        .getPublicUrl(filePath);
+
+      // Update user profile
+      const { error: updateError } = await supabase
+        .from('user_profiles')
+        .update({ signature_image_url: publicUrl })
+        .eq('id', user.id);
+
+      if (updateError) throw updateError;
+
+      setSignatureUrl(publicUrl);
+      toast.success('Signature uploaded successfully');
+    } catch (err) {
+      console.error('Error uploading signature:', err);
+      toast.error('Failed to upload signature');
+    } finally {
+      setIsUploadingSignature(false);
+      // Reset file input
+      if (signatureFileInputRef.current) {
+        signatureFileInputRef.current.value = '';
+      }
+    }
+  };
+
+  const handleRemoveSignature = async () => {
+    setIsUploadingSignature(true);
+    try {
+      // Update user profile to remove signature URL
+      const { error } = await supabase
+        .from('user_profiles')
+        .update({ signature_image_url: null })
+        .eq('id', user.id);
+
+      if (error) throw error;
+
+      setSignatureUrl(null);
+      toast.success('Signature removed');
+    } catch (err) {
+      console.error('Error removing signature:', err);
+      toast.error('Failed to remove signature');
+    } finally {
+      setIsUploadingSignature(false);
+    }
+  };
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
       <div className="p-4 md:p-6 space-y-6">
         <div>
           <h1 className="text-3xl font-bold text-slate-900">General Settings</h1>
-          <p className="text-slate-500 mt-1">Configure your organization settings</p>
+          <p className="text-slate-500 mt-1">Configure your personal and organization settings</p>
         </div>
+
+        {/* My Signature Card - Available to all users */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <PenLine className="w-5 h-5 text-blue-600" />
+              My Signature
+            </CardTitle>
+            <CardDescription>
+              Upload your signature image to use in letter templates. Use a transparent PNG for best results.
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="flex items-start gap-6">
+              {/* Signature Preview */}
+              <div className="flex-shrink-0">
+                {isLoadingSignature ? (
+                  <div className="h-20 w-48 border rounded-lg flex items-center justify-center bg-slate-50">
+                    <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                  </div>
+                ) : signatureUrl ? (
+                  <div className="relative group">
+                    <img
+                      src={signatureUrl}
+                      alt="Your signature"
+                      className="h-20 w-auto max-w-[200px] object-contain border rounded-lg p-2 bg-white"
+                    />
+                  </div>
+                ) : (
+                  <div className="h-20 w-48 border-2 border-dashed rounded-lg flex items-center justify-center bg-slate-50">
+                    <PenLine className="w-8 h-8 text-slate-300" />
+                  </div>
+                )}
+              </div>
+
+              {/* Upload Controls */}
+              <div className="flex-1 space-y-3">
+                <input
+                  ref={signatureFileInputRef}
+                  type="file"
+                  accept="image/*"
+                  onChange={handleSignatureUpload}
+                  className="hidden"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => signatureFileInputRef.current?.click()}
+                    disabled={isUploadingSignature}
+                  >
+                    {isUploadingSignature ? (
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    ) : (
+                      <Upload className="w-4 h-4 mr-2" />
+                    )}
+                    {signatureUrl ? 'Replace Signature' : 'Upload Signature'}
+                  </Button>
+                  {signatureUrl && (
+                    <Button
+                      variant="ghost"
+                      onClick={handleRemoveSignature}
+                      disabled={isUploadingSignature}
+                      className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Remove
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500">
+                  Recommended: PNG with transparent background, max 1MB.
+                  Use the <code className="bg-slate-100 px-1 rounded">{'{{signature}}'}</code> placeholder in letter templates.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
 
         {/* Organization Theme Selector */}
         {canAdmin() && currentOrganization && (

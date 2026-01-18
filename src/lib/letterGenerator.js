@@ -16,6 +16,9 @@ import { format, addMonths } from 'date-fns';
  * Render a template by substituting placeholders with values
  * Supports {{placeholder}} syntax
  *
+ * Special handling for signature placeholder:
+ * - If signature_image_url is provided, renders as <img> tag
+ *
  * @param {string} template - Template string with {{placeholders}}
  * @param {Object} data - Key-value pairs for substitution
  * @returns {string} - Rendered template
@@ -24,6 +27,16 @@ export function renderTemplate(template, data) {
   if (!template) return '';
 
   return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+    // Special handling for signature - render as image if URL is provided
+    if (key === 'signature') {
+      const signatureUrl = data.signature_image_url || data.signature;
+      if (signatureUrl && signatureUrl.startsWith('http')) {
+        // Render as image tag for HTML/PDF rendering
+        return `<img src="${signatureUrl}" alt="Signature" style="max-height: 60px; max-width: 200px;" class="signature-image" />`;
+      }
+      return ''; // No signature available
+    }
+
     const value = data[key];
     if (value !== undefined && value !== null) {
       return String(value);
@@ -56,6 +69,7 @@ export function extractPlaceholders(template) {
  * @param {Object} params.product - Loan product
  * @param {Object} params.settlementData - Optional settlement data (for future date)
  * @param {Object} params.liveSettlement - Live settlement figures (as of today)
+ * @param {Object} params.userProfile - Current user profile with signature_image_url
  * @returns {Object} - Placeholder key-value pairs
  */
 export function buildPlaceholderData({
@@ -66,7 +80,8 @@ export function buildPlaceholderData({
   product,
   settlementData,
   interestBalance,
-  liveSettlement
+  liveSettlement,
+  userProfile
 }) {
   // Build borrower display name
   const borrowerName = borrower?.business
@@ -116,6 +131,12 @@ export function buildPlaceholderData({
 
     // Date fields
     today_date: format(new Date(), 'dd MMMM yyyy'),
+
+    // Signature - stored as image URL, rendered as image in PDF
+    // The placeholder will be replaced with an <img> tag for HTML preview
+    // and handled specially during PDF generation
+    signature: userProfile?.signature_image_url || '',
+    signature_image_url: userProfile?.signature_image_url || '',
   };
 
   // Add interest balance if provided
@@ -344,9 +365,25 @@ export async function generateLetterPDF({
   // {{today_date}}, {{borrower_name}}, {{borrower_address}}, etc.
   // This gives full control over formatting in the template.
 
+  // Pre-load any images in the body (e.g., signature images)
+  const imageCache = {};
+  const imgMatches = body.match(/<img[^>]+src="([^"]+)"[^>]*>/g) || [];
+  for (const imgTag of imgMatches) {
+    const srcMatch = imgTag.match(/src="([^"]+)"/);
+    if (srcMatch && srcMatch[1]) {
+      const imgUrl = srcMatch[1];
+      if (!imageCache[imgUrl]) {
+        const imgData = await loadImageAsBase64(imgUrl);
+        if (imgData) {
+          imageCache[imgUrl] = imgData;
+        }
+      }
+    }
+  }
+
   // Body text - parse HTML content (includes all letter content from template)
   doc.setFontSize(11);
-  y = renderHtmlToPdf(doc, body, margin, y, contentWidth, pageHeight);
+  y = renderHtmlToPdf(doc, body, margin, y, contentWidth, pageHeight, imageCache);
 
   // Return as ArrayBuffer
   return doc.output('arraybuffer');
@@ -354,7 +391,7 @@ export async function generateLetterPDF({
 
 /**
  * Render HTML content to PDF with basic formatting support
- * Supports: bold, italic, underline, headers, lists, paragraphs
+ * Supports: bold, italic, underline, headers, lists, paragraphs, images
  *
  * Paragraph spacing logic:
  * - Consecutive lines of text (each in their own <p>) render as single-spaced lines
@@ -367,9 +404,10 @@ export async function generateLetterPDF({
  * @param {number} startY - Starting Y position
  * @param {number} contentWidth - Available content width
  * @param {number} pageHeight - Page height
+ * @param {Object} imageCache - Pre-loaded images keyed by URL
  * @returns {number} - Final Y position
  */
-function renderHtmlToPdf(doc, html, margin, startY, contentWidth, pageHeight) {
+function renderHtmlToPdf(doc, html, margin, startY, contentWidth, pageHeight, imageCache = {}) {
   let y = startY;
   let pendingParagraphBreak = false; // Track if we need a paragraph break before next content
 
@@ -482,6 +520,39 @@ function renderHtmlToPdf(doc, html, margin, startY, contentWidth, pageHeight) {
         // The <br> just acts as a separator between text nodes, but the line spacing is handled by text output
         // We only ignore trailing <br> tags (added by ReactQuill) to prevent extra spacing
         // For non-trailing <br>, we still don't advance y - the text after it will render on the current y
+        return;
+      case 'img':
+        // Handle image elements (e.g., signature images)
+        const imgSrc = node.getAttribute('src');
+        if (imgSrc && imageCache[imgSrc]) {
+          if (pendingParagraphBreak) {
+            y += 5;
+            pendingParagraphBreak = false;
+          }
+          // Check for page break
+          const imgHeight = 15; // Default image height in mm (about 60px)
+          if (y + imgHeight > pageHeight - 30) {
+            doc.addPage();
+            y = margin;
+          }
+          try {
+            const imgData = imageCache[imgSrc];
+            // Signature images: max 50mm wide, 15mm tall
+            doc.addImage(
+              imgData.data,
+              imgData.format,
+              margin,
+              y,
+              50, // max width
+              imgHeight,
+              undefined,
+              'FAST'
+            );
+            y += imgHeight + 3; // Space after image
+          } catch (err) {
+            console.error('Failed to add image to PDF:', err);
+          }
+        }
         return;
       case 'ul':
       case 'ol':
