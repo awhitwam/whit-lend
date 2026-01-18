@@ -51,6 +51,9 @@ const PLACEHOLDER_GROUPS = [
       { key: 'current_balance', description: 'Current principal balance', example: '£245,000.00' },
       { key: 'interest_rate', description: 'Current interest rate', example: '8.5' },
       { key: 'maturity_date', description: 'Loan maturity date', example: '15 March 2025' },
+      { key: 'original_term', description: 'Original end date (start + original term)', example: '01 June 2025' },
+      { key: 'loan_end_date', description: 'Current end date (start + duration)', example: '01 December 2025' },
+      { key: 'loan_term', description: 'Term end date (original if set, else current)', example: '01 June 2025' },
     ]
   },
   {

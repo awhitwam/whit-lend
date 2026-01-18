@@ -1,7 +1,7 @@
 // Schema definitions for backup/restore compatibility
 // Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
 
-export const CURRENT_SCHEMA_VERSION = 68;
+export const CURRENT_SCHEMA_VERSION = 69;
 
 // Define columns and defaults for each table
 // When adding new columns to tables, add them here with appropriate defaults
@@ -87,7 +87,7 @@ export const tableSchemas = {
               'principal_remaining', 'interest_remaining', 'has_penalty_rate',
               'penalty_rate', 'penalty_rate_from', 'total_interest', 'total_repayable',
               'roll_up_length', 'roll_up_amount', 'roll_up_amount_override',
-              'additional_deducted_fees', 'additional_deducted_fees_note'],
+              'additional_deducted_fees', 'additional_deducted_fees_note', 'original_term'],
     defaults: {
       status: 'Live',
       restructured: false,

@@ -10,7 +10,7 @@
 
 import jsPDF from 'jspdf';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import { format } from 'date-fns';
+import { format, addMonths } from 'date-fns';
 
 /**
  * Render a template by substituting placeholders with values
@@ -92,6 +92,20 @@ export function buildPlaceholderData({
     current_balance: formatCurrency(loan?.principal_amount), // Will be updated with actual balance
     interest_rate: loan?.interest_rate ? `${loan.interest_rate}` : '',
     maturity_date: loan?.maturity_date ? format(new Date(loan.maturity_date), 'dd MMMM yyyy') : '',
+    // Original term end date (start date + original term months)
+    original_term: loan?.original_term && loan?.start_date
+      ? format(addMonths(new Date(loan.start_date), loan.original_term), 'dd MMMM yyyy')
+      : '',
+    // Current end date (start date + current duration months)
+    loan_end_date: loan?.duration && loan?.start_date
+      ? format(addMonths(new Date(loan.start_date), loan.duration), 'dd MMMM yyyy')
+      : (loan?.end_date ? format(new Date(loan.end_date), 'dd MMMM yyyy') : ''),
+    // Loan term date (original if set, else current end date)
+    loan_term: loan?.original_term && loan?.start_date
+      ? format(addMonths(new Date(loan.start_date), loan.original_term), 'dd MMMM yyyy')
+      : (loan?.duration && loan?.start_date
+          ? format(addMonths(new Date(loan.start_date), loan.duration), 'dd MMMM yyyy')
+          : ''),
 
     // Property fields
     property_address: property?.address || '',

@@ -23,19 +23,25 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
   const [searchTerm, setSearchTerm] = useState('');
   const [expandedGroups, setExpandedGroups] = useState(new Set());
 
-  // Group borrowers by contact_email
+  // Group borrowers by first_name + last_name only
   const groupedBorrowers = useMemo(() => {
     const groups = {};
 
     borrowers.forEach(borrower => {
-      // Use contact_email if available, otherwise use email, otherwise "No Contact Email"
-      const groupKey = borrower.contact_email || borrower.email || '__no_contact__';
+      // Normalize names: trim whitespace and normalize case for grouping
+      const firstName = (borrower.first_name || '').trim();
+      const lastName = (borrower.last_name || '').trim();
+      const fullName = (firstName && lastName)
+        ? `${firstName} ${lastName}`
+        : null;
+      // Normalize the key: lowercase and collapse multiple spaces
+      const groupKey = fullName?.toLowerCase().replace(/\s+/g, ' ') || '__no_name__';
 
       if (!groups[groupKey]) {
         groups[groupKey] = {
-          contactEmail: groupKey === '__no_contact__' ? null : groupKey,
-          contactNames: {}, // Track frequency of contact names
+          contactName: groupKey === '__no_name__' ? null : fullName,
           borrowers: [],
+          businesses: new Set(), // Track unique business names
           totalLoans: 0,
           liveLoans: 0,
           totalOutstanding: 0
@@ -44,10 +50,9 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
 
       groups[groupKey].borrowers.push(borrower);
 
-      // Track contact name frequency
-      const contactName = borrower.contact_name?.trim();
-      if (contactName) {
-        groups[groupKey].contactNames[contactName] = (groups[groupKey].contactNames[contactName] || 0) + 1;
+      // Collect unique business names
+      if (borrower.business?.trim()) {
+        groups[groupKey].businesses.add(borrower.business.trim());
       }
 
       // Aggregate loan counts
@@ -56,21 +61,10 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
       groups[groupKey].liveLoans += counts.live;
     });
 
-    // Determine the most common contact name for each group
+    // Convert business Sets to arrays and calculate outstanding
     Object.values(groups).forEach(group => {
-      const names = Object.entries(group.contactNames);
-      if (names.length > 0) {
-        // Sort by frequency (descending) and pick the most common
-        names.sort((a, b) => b[1] - a[1]);
-        group.contactName = names[0][0];
-      } else {
-        group.contactName = null;
-      }
-      delete group.contactNames; // Clean up temporary tracking object
-    });
+      group.businesses = Array.from(group.businesses);
 
-    // Calculate total outstanding per group from loans
-    Object.values(groups).forEach(group => {
       group.borrowers.forEach(borrower => {
         const borrowerLoans = loans.filter(l =>
           l.borrower_id === borrower.id &&
@@ -95,9 +89,8 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
 
     const filtered = {};
     Object.entries(groupedBorrowers).forEach(([key, group]) => {
-      // Check if contact email or contact name matches
-      const contactMatches = group.contactEmail?.toLowerCase().includes(search) ||
-                            group.contactName?.toLowerCase().includes(search);
+      // Check if contact name matches
+      const contactMatches = group.contactName?.toLowerCase().includes(search);
 
       // Check if any borrower in group matches
       const matchingBorrowers = group.borrowers.filter(b => {
@@ -124,10 +117,10 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
   }, [groupedBorrowers, searchTerm]);
 
   // Sort groups by most loans (live loans first, then total), then by outstanding
-  // Exclude the "No Contact" group (borrowers without contact_email)
+  // Exclude the "No Name" group (borrowers without first_name + last_name)
   const sortedGroups = useMemo(() => {
     return Object.entries(filteredGroups)
-      .filter(([key]) => key !== '__no_contact__')
+      .filter(([key]) => key !== '__no_name__')
       .sort(([, a], [, b]) => {
         // First sort by live loans
         if (b.liveLoans !== a.liveLoans) {
@@ -193,10 +186,10 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
         {sortedGroups.map(([key, group]) => {
           const isExpanded = expandedGroups.has(key);
           const hasMultipleBorrowers = group.borrowers.length > 1;
-          // Build display: "Name - email" or just "email" or "No Contact"
-          const displayTitle = group.contactName
-            ? `${group.contactName} - ${group.contactEmail || 'No Email'}`
-            : group.contactEmail || 'No Contact';
+          // Display just the name
+          const displayTitle = group.contactName || 'No Name';
+          // Build URL to filter loans by all borrowers in this group
+          const borrowerIds = group.borrowers.map(b => b.id).join(',');
 
           return (
             <Card key={key} className="overflow-hidden">
@@ -204,7 +197,7 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
                 <CardHeader className="py-4">
                   <div className="flex items-center justify-between">
                     <Link
-                      to={createPageUrl(`Loans?contact_email=${encodeURIComponent(group.contactEmail || '')}`)}
+                      to={createPageUrl(`Loans?borrower_ids=${encodeURIComponent(borrowerIds)}`)}
                       className="flex items-center gap-3 flex-1 hover:bg-slate-50 -m-2 p-2 rounded-lg transition-colors"
                     >
                       <div className={`p-2 rounded-lg ${hasMultipleBorrowers ? 'bg-blue-100' : 'bg-slate-100'}`}>
@@ -214,8 +207,8 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
                           <User className="w-5 h-5 text-slate-500" />
                         )}
                       </div>
-                      <div>
-                        <div className="flex items-center gap-2">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 flex-wrap">
                           <CardTitle className="text-base font-semibold">
                             {displayTitle}
                           </CardTitle>
@@ -223,6 +216,11 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
                             <Badge variant="secondary" className="bg-blue-50 text-blue-700">
                               {group.borrowers.length} borrowers
                             </Badge>
+                          )}
+                          {group.businesses.length > 0 && (
+                            <span className="text-sm text-slate-500">
+                              ({group.businesses.join(', ')})
+                            </span>
                           )}
                         </div>
                         <div className="flex items-center gap-4 mt-1 text-sm text-slate-500">
@@ -285,7 +283,7 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
                                       {borrower.phone}
                                     </span>
                                   )}
-                                  {borrower.email && borrower.email !== group.contactEmail && (
+                                  {borrower.email && (
                                     <span className="flex items-center gap-1">
                                       <Mail className="w-3 h-3" />
                                       {borrower.email}

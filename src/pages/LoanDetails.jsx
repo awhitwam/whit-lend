@@ -1537,15 +1537,14 @@ export default function LoanDetails() {
                       <p className="font-bold text-lg text-purple-700">{formatCurrency(loan.monthly_charge || 0)}</p>
                     </div>
                     <div>
-                      <span className="text-slate-500 text-xs">Duration</span>
-                      <p className="font-bold text-lg">{loan.duration} months</p>
+                      <span className="text-slate-500 text-xs">Term</span>
+                      <p className="font-bold text-lg">
+                        {loan.original_term || loan.duration} months
+                        {loan.original_term && loan.original_term !== loan.duration && (
+                          <span className="text-slate-500 text-sm font-normal ml-1">({loan.duration}m now)</span>
+                        )}
+                      </p>
                     </div>
-                    {loan.original_term && loan.original_term !== loan.duration && (
-                      <div>
-                        <span className="text-slate-500 text-xs">Original Term</span>
-                        <p className="font-bold text-lg text-slate-600">{loan.original_term} months</p>
-                      </div>
-                    )}
                     <div>
                       <span className="text-slate-500 text-xs">Start Date</span>
                       <p className="font-bold text-lg">{format(new Date(loan.start_date), 'dd/MM/yy')}</p>
@@ -1616,42 +1615,27 @@ export default function LoanDetails() {
                       </p>
                     </div>
                     <div>
-                      <span className="text-slate-500 text-xs">Duration</span>
+                      <span className="text-slate-500 text-xs">Term</span>
                       <p className="font-bold text-lg">
-                        {loan.period === 'Monthly' ? (
-                          loan.duration >= 12 ? (
-                            <>
-                              {Math.floor(loan.duration / 12)}y{loan.duration % 12 > 0 && ` ${loan.duration % 12}m`}
-                            </>
-                          ) : (
-                            `${loan.duration}m`
-                          )
-                        ) : (
-                          `${loan.duration}w`
+                        {(() => {
+                          const term = loan.original_term || loan.duration;
+                          const termDisplay = loan.period === 'Monthly' ? (
+                            term >= 12 ? `${Math.floor(term / 12)}y${term % 12 > 0 ? ` ${term % 12}m` : ''}` : `${term}m`
+                          ) : `${term}w`;
+                          return termDisplay;
+                        })()}
+                        {loan.original_term && loan.original_term !== loan.duration && (
+                          <span className="text-slate-500 text-sm font-normal ml-1">
+                            ({loan.period === 'Monthly' ? (
+                              loan.duration >= 12 ? `${Math.floor(loan.duration / 12)}y${loan.duration % 12 > 0 ? ` ${loan.duration % 12}m` : ''}` : `${loan.duration}m`
+                            ) : `${loan.duration}w`} now)
+                          </span>
                         )}
                       </p>
                       {loan.auto_extend && (
                         <p className="text-xs text-amber-600">Auto Extend</p>
                       )}
                     </div>
-                    {loan.original_term && loan.original_term !== loan.duration && (
-                      <div>
-                        <span className="text-slate-500 text-xs">Original Term</span>
-                        <p className="font-bold text-lg text-slate-600">
-                          {loan.period === 'Monthly' ? (
-                            loan.original_term >= 12 ? (
-                              <>
-                                {Math.floor(loan.original_term / 12)}y{loan.original_term % 12 > 0 && ` ${loan.original_term % 12}m`}
-                              </>
-                            ) : (
-                              `${loan.original_term}m`
-                            )
-                          ) : (
-                            `${loan.original_term}w`
-                          )}
-                        </p>
-                      </div>
-                    )}
                     {(loan.product_type === 'Roll-Up & Serviced' || loan.interest_type === 'Roll-Up & Serviced') && loan.roll_up_length && (
                       <div>
                         <span className="text-slate-500 text-xs">Roll-Up Period</span>

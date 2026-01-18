@@ -6,7 +6,7 @@ import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, Save, MapPin, Phone, Mail, Globe, Download, Upload, HardDrive, Image } from 'lucide-react';
+import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, Save, MapPin, Phone, Mail, Globe, Download, Upload, HardDrive, Image, UserCog, Search } from 'lucide-react';
 import { useRef } from 'react';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useQueryClient, useMutation } from '@tanstack/react-query';
@@ -14,7 +14,7 @@ import { api } from '@/api/dataClient';
 import { supabase } from '@/lib/supabaseClient';
 import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
 import { applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
-import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
+import { logAudit, logLoanEvent, AuditAction, EntityType } from '@/lib/auditLog';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 import {
@@ -69,6 +69,15 @@ export default function OrgAdmin() {
   const [restorePreview, setRestorePreview] = useState(null);
   const [restoreConfirmText, setRestoreConfirmText] = useState('');
 
+  // Change borrower state
+  const [changeBorrowerLoans, setChangeBorrowerLoans] = useState([]);
+  const [changeBorrowerBorrowers, setChangeBorrowerBorrowers] = useState([]);
+  const [selectedLoanId, setSelectedLoanId] = useState('');
+  const [selectedNewBorrowerId, setSelectedNewBorrowerId] = useState('');
+  const [changeBorrowerReason, setChangeBorrowerReason] = useState('');
+  const [isChangingBorrower, setIsChangingBorrower] = useState(false);
+  const [loanSearchQuery, setLoanSearchQuery] = useState('');
+
   // Reset clear data state when organization changes
   useEffect(() => {
     setClearing(false);
@@ -98,6 +107,84 @@ export default function OrgAdmin() {
       setOrgDetailsChanged(false);
     }
   }, [currentOrganization]);
+
+  // Load loans and borrowers for change borrower feature
+  // Delay loading slightly to ensure organization context is fully initialized in API client
+  useEffect(() => {
+    if (!currentOrganization?.id) return;
+
+    const loadData = async () => {
+      try {
+        const [loans, borrowers] = await Promise.all([
+          api.entities.Loan.listAll(),
+          api.entities.Borrower.listAll()
+        ]);
+        setChangeBorrowerLoans(loans.sort((a, b) => (a.loan_number || '').localeCompare(b.loan_number || '')));
+        setChangeBorrowerBorrowers(borrowers.sort((a, b) => (a.name || '').localeCompare(b.name || '')));
+      } catch (err) {
+        console.error('Failed to load data for change borrower:', err);
+      }
+    };
+
+    // Small delay to ensure organization context is fully propagated to API client
+    const timer = setTimeout(loadData, 200);
+    return () => clearTimeout(timer);
+  }, [currentOrganization?.id]);
+
+  // Get current borrower for selected loan
+  const selectedLoan = changeBorrowerLoans.find(l => l.id === selectedLoanId);
+  const currentBorrower = selectedLoan ? changeBorrowerBorrowers.find(b => b.id === selectedLoan.borrower_id) : null;
+
+  // Filter loans by search query
+  const filteredLoans = loanSearchQuery
+    ? changeBorrowerLoans.filter(l =>
+        (l.loan_number || '').toLowerCase().includes(loanSearchQuery.toLowerCase()) ||
+        (l.borrower_name || '').toLowerCase().includes(loanSearchQuery.toLowerCase())
+      )
+    : changeBorrowerLoans;
+
+  // Change borrower mutation
+  const changeBorrowerMutation = useMutation({
+    mutationFn: async () => {
+      if (!selectedLoanId || !selectedNewBorrowerId || !changeBorrowerReason.trim()) {
+        throw new Error('Please fill in all fields');
+      }
+      return api.changeLoanBorrower(selectedLoanId, selectedNewBorrowerId, {
+        reason: changeBorrowerReason
+      });
+    },
+    onSuccess: async (result) => {
+      // Log the change
+      await logLoanEvent(AuditAction.LOAN_UPDATE, selectedLoan, {
+        action: 'borrower_changed',
+        previous_borrower_id: result.oldBorrowerId,
+        previous_borrower_name: result.oldBorrowerName,
+        new_borrower_id: result.newBorrowerId,
+        new_borrower_name: result.newBorrowerName,
+        reason: result.reason
+      });
+
+      toast.success('Borrower changed successfully', {
+        description: `${selectedLoan.loan_number}: ${result.oldBorrowerName} → ${result.newBorrowerName}`
+      });
+
+      // Reset form
+      setSelectedLoanId('');
+      setSelectedNewBorrowerId('');
+      setChangeBorrowerReason('');
+      setLoanSearchQuery('');
+
+      // Reload loans to reflect the change
+      const loans = await api.entities.Loan.listAll();
+      setChangeBorrowerLoans(loans.sort((a, b) => (a.loan_number || '').localeCompare(b.loan_number || '')));
+
+      // Invalidate queries
+      queryClient.invalidateQueries(['loans']);
+    },
+    onError: (error) => {
+      toast.error('Failed to change borrower', { description: error.message });
+    }
+  });
 
   // Update organization details mutation
   const updateOrgDetailsMutation = useMutation({
@@ -2146,6 +2233,125 @@ export default function OrgAdmin() {
                     <Progress value={(restoreProgress.current / restoreProgress.total) * 100} />
                   </div>
                 )}
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* Change Loan Borrower */}
+          <Card className="border-amber-200 md:col-span-2">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2 text-amber-900">
+                <UserCog className="w-5 h-5" />
+                Change Loan Borrower
+              </CardTitle>
+              <CardDescription className="text-amber-700">
+                Correct data entry errors by reassigning a loan to a different borrower
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Alert className="border-amber-200 bg-amber-50">
+                <AlertTriangle className="w-4 h-4 text-amber-600" />
+                <AlertDescription className="text-amber-800">
+                  This will update the loan record and all associated transactions. This action is logged for audit purposes.
+                </AlertDescription>
+              </Alert>
+
+              <div className="grid gap-4 md:grid-cols-2">
+                {/* Loan Selection */}
+                <div className="space-y-3">
+                  <Label>Select Loan {changeBorrowerLoans.length > 0 && <span className="text-slate-500 font-normal">({changeBorrowerLoans.length} loans)</span>}</Label>
+                  <div className="relative">
+                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                    <Input
+                      placeholder="Search by loan number or borrower..."
+                      value={loanSearchQuery}
+                      onChange={(e) => setLoanSearchQuery(e.target.value)}
+                      className="pl-9"
+                    />
+                  </div>
+                  <select
+                    value={selectedLoanId}
+                    onChange={(e) => {
+                      setSelectedLoanId(e.target.value);
+                      setSelectedNewBorrowerId('');
+                    }}
+                    className="w-full h-10 px-3 border rounded-md bg-white text-sm"
+                  >
+                    <option value="">{changeBorrowerLoans.length === 0 ? '-- Loading loans... --' : '-- Select a loan --'}</option>
+                    {filteredLoans.slice(0, 100).map(loan => (
+                      <option key={loan.id} value={loan.id}>
+                        {loan.loan_number} - {loan.borrower_name || 'No borrower'}
+                      </option>
+                    ))}
+                    {filteredLoans.length > 100 && (
+                      <option disabled>...and {filteredLoans.length - 100} more (use search)</option>
+                    )}
+                  </select>
+
+                  {selectedLoan && currentBorrower && (
+                    <div className="p-3 bg-slate-50 rounded-lg border">
+                      <p className="text-sm font-medium text-slate-700">Current Borrower</p>
+                      <p className="text-lg font-semibold text-slate-900">{currentBorrower.full_name || `${currentBorrower.first_name} ${currentBorrower.last_name}`}</p>
+                      {currentBorrower.contact_email && (
+                        <p className="text-sm text-slate-500">{currentBorrower.contact_email}</p>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* New Borrower Selection */}
+                <div className="space-y-3">
+                  <Label>Select New Borrower {changeBorrowerBorrowers.length > 0 && <span className="text-slate-500 font-normal">({changeBorrowerBorrowers.length} available)</span>}</Label>
+                  <select
+                    value={selectedNewBorrowerId}
+                    onChange={(e) => setSelectedNewBorrowerId(e.target.value)}
+                    disabled={!selectedLoanId}
+                    className="w-full h-10 px-3 border rounded-md bg-white text-sm disabled:opacity-50"
+                  >
+                    <option value="">{changeBorrowerBorrowers.length === 0 ? '-- Loading borrowers... --' : '-- Select new borrower --'}</option>
+                    {changeBorrowerBorrowers
+                      .filter(b => b.id !== selectedLoan?.borrower_id)
+                      .map(borrower => (
+                        <option key={borrower.id} value={borrower.id}>
+                          {borrower.unique_number ? `${borrower.unique_number} - ` : ''}{borrower.full_name || `${borrower.first_name} ${borrower.last_name}`}{borrower.business ? ` (${borrower.business})` : ''}
+                        </option>
+                      ))}
+                  </select>
+
+                  <div className="space-y-2">
+                    <Label>Reason for Change *</Label>
+                    <Textarea
+                      placeholder="Enter the reason for this change (required for audit trail)"
+                      value={changeBorrowerReason}
+                      onChange={(e) => setChangeBorrowerReason(e.target.value)}
+                      disabled={!selectedLoanId}
+                      rows={3}
+                    />
+                  </div>
+
+                  <Button
+                    onClick={() => changeBorrowerMutation.mutate()}
+                    disabled={
+                      !selectedLoanId ||
+                      !selectedNewBorrowerId ||
+                      !changeBorrowerReason.trim() ||
+                      changeBorrowerMutation.isPending
+                    }
+                    className="w-full bg-amber-600 hover:bg-amber-700"
+                  >
+                    {changeBorrowerMutation.isPending ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        Changing Borrower...
+                      </>
+                    ) : (
+                      <>
+                        <UserCog className="w-4 h-4 mr-2" />
+                        Change Borrower
+                      </>
+                    )}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

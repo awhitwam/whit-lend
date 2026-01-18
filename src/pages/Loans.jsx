@@ -126,6 +126,7 @@ export default function Loans() {
   });
   const borrowerFilter = searchParams.get('borrower') || null;
   const contactEmailFilter = searchParams.get('contact_email') || null;
+  const borrowerIdsFilter = searchParams.get('borrower_ids') || null;
   const [statusFilter, setStatusFilter] = useState(
     searchParams.get('status') || 'Live'
   );
@@ -378,15 +379,24 @@ export default function Loans() {
     return loanSchedule.length > 0 ? loanSchedule[0] : null;
   };
 
+  // Parse borrower_ids filter (comma-separated list)
+  const borrowerIdsArray = useMemo(() => {
+    if (!borrowerIdsFilter) return [];
+    return borrowerIdsFilter.split(',').filter(id => id.trim());
+  }, [borrowerIdsFilter]);
+
   const borrowerFilteredLoans = useMemo(() => {
     if (borrowerFilter) {
       return allLoans.filter(loan => loan.borrower_id === borrowerFilter);
+    }
+    if (borrowerIdsFilter && borrowerIdsArray.length > 0) {
+      return allLoans.filter(loan => borrowerIdsArray.includes(loan.borrower_id));
     }
     if (contactEmailFilter && contactBorrowerIds.length > 0) {
       return allLoans.filter(loan => contactBorrowerIds.includes(loan.borrower_id));
     }
     return allLoans;
-  }, [allLoans, borrowerFilter, contactEmailFilter, contactBorrowerIds]);
+  }, [allLoans, borrowerFilter, borrowerIdsFilter, borrowerIdsArray, contactEmailFilter, contactBorrowerIds]);
 
   const loans = borrowerFilteredLoans.filter(loan => !loan.is_deleted);
   const deletedLoans = borrowerFilteredLoans.filter(loan => loan.is_deleted);
@@ -417,6 +427,7 @@ export default function Loans() {
     const newParams = new URLSearchParams(searchParams);
     newParams.delete('borrower');
     newParams.delete('contact_email');
+    newParams.delete('borrower_ids');
     setSearchParams(newParams);
     setStatusFilter('all');
   };
@@ -1174,6 +1185,53 @@ export default function Loans() {
                   <X className="w-4 h-4" />
                 </Button>
               </div>
+            </div>
+          </div>
+        )}
+
+        {/* Borrower IDs Filter Banner (for contact name groups) */}
+        {borrowerIdsFilter && borrowerIdsArray.length > 0 && (
+          <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
+                  <Users className="w-4 h-4 text-purple-600" />
+                </div>
+                <div>
+                  <p className="text-xs text-purple-600">Contact group</p>
+                  <p className="font-semibold text-purple-900 text-sm">
+                    {borrowerIdsArray.length} borrower{borrowerIdsArray.length !== 1 ? 's' : ''}
+                  </p>
+                </div>
+                {filterTotals && (
+                  <div className="hidden md:flex items-center gap-4 ml-4 pl-4 border-l border-purple-200">
+                    <div>
+                      <p className="text-xs text-purple-600">Loans</p>
+                      <p className="font-bold text-purple-900">{filterTotals.loanCount}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-purple-600">Principal</p>
+                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalPrincipalBalance)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-purple-600">Interest</p>
+                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalInterestOutstanding)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-purple-600">Total Outstanding</p>
+                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalOutstanding)}</p>
+                    </div>
+                  </div>
+                )}
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={clearBorrowerFilter}
+                className="text-purple-700 hover:bg-purple-100 h-7"
+              >
+                <X className="w-4 h-4" />
+              </Button>
             </div>
           </div>
         )}

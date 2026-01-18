@@ -458,6 +458,98 @@ for (const [entityName, tableName] of Object.entries(tableMap)) {
 // Add special handlers
 entities.OrganizationSummary = createOrganizationSummaryHandler();
 
+/**
+ * Change the borrower of a loan - used for data correction
+ * Updates the loan record and related transactions/letters
+ * @param {string} loanId - ID of the loan to update
+ * @param {string} newBorrowerId - ID of the new borrower
+ * @param {Object} options - Additional options
+ * @param {string} options.reason - Reason for the change (for audit)
+ * @returns {Promise<Object>} Result with old and new borrower info
+ */
+async function changeLoanBorrower(loanId, newBorrowerId, { reason }) {
+  const orgId = getCurrentOrganizationId();
+  if (!orgId) {
+    throw new Error('Organization context not available.');
+  }
+
+  // Fetch the loan
+  const { data: loan, error: loanError } = await supabase
+    .from('loans')
+    .select('*')
+    .eq('id', loanId)
+    .eq('organization_id', orgId)
+    .single();
+
+  if (loanError || !loan) {
+    throw new Error('Loan not found or access denied');
+  }
+
+  const oldBorrowerId = loan.borrower_id;
+  const oldBorrowerName = loan.borrower_name;
+
+  // Fetch the new borrower
+  const { data: newBorrower, error: borrowerError } = await supabase
+    .from('borrowers')
+    .select('*')
+    .eq('id', newBorrowerId)
+    .eq('organization_id', orgId)
+    .single();
+
+  if (borrowerError || !newBorrower) {
+    throw new Error('New borrower not found or access denied');
+  }
+
+  // Update the loan record
+  const newBorrowerName = newBorrower.full_name || `${newBorrower.first_name} ${newBorrower.last_name}`;
+  const { error: updateLoanError } = await supabase
+    .from('loans')
+    .update({
+      borrower_id: newBorrowerId,
+      borrower_name: newBorrowerName
+    })
+    .eq('id', loanId)
+    .eq('organization_id', orgId);
+
+  if (updateLoanError) {
+    throw new Error(`Failed to update loan: ${updateLoanError.message}`);
+  }
+
+  // Update transactions for this loan
+  const { error: updateTxError } = await supabase
+    .from('transactions')
+    .update({ borrower_id: newBorrowerId })
+    .eq('loan_id', loanId)
+    .eq('organization_id', orgId);
+
+  if (updateTxError) {
+    console.error('Failed to update transactions:', updateTxError);
+    // Don't throw - loan is already updated, this is supplementary
+  }
+
+  // Update generated letters for this loan
+  const { error: updateLettersError } = await supabase
+    .from('generated_letters')
+    .update({ borrower_id: newBorrowerId })
+    .eq('loan_id', loanId)
+    .eq('organization_id', orgId);
+
+  if (updateLettersError) {
+    console.error('Failed to update generated letters:', updateLettersError);
+    // Don't throw - loan is already updated, this is supplementary
+  }
+
+  return {
+    loanId,
+    oldBorrowerId,
+    oldBorrowerName,
+    newBorrowerId,
+    newBorrowerName,
+    reason
+  };
+}
+
 export const api = {
-  entities
+  entities,
+  changeLoanBorrower
 };

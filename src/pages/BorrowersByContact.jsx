@@ -41,7 +41,7 @@ export default function BorrowersByContact() {
         {/* Header */}
         <div>
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Borrowers by Contact</h1>
-          <p className="text-slate-500 mt-1">View borrowers grouped by their contact email</p>
+          <p className="text-slate-500 mt-1">View borrowers grouped by contact name</p>
         </div>
 
         {/* Content */}
