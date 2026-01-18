@@ -59,9 +59,12 @@ const PLACEHOLDER_GROUPS = [
     ]
   },
   {
-    name: 'Property',
+    name: 'Property / Security',
     placeholders: [
       { key: 'property_address', description: 'Primary security address', example: '45 Park Lane, London, W1K 1PN' },
+      { key: 'first_charge_addresses', description: 'First charge security addresses', example: '45 Park Lane, London, W1K 1PN' },
+      { key: 'second_charge_addresses', description: 'Second charge security addresses', example: '12 High Street, Manchester, M1 1AA' },
+      { key: 'all_security_addresses', description: 'All security addresses', example: '45 Park Lane, London; 12 High Street, Manchester' },
     ]
   },
   {
@@ -88,7 +91,7 @@ const PLACEHOLDER_GROUPS = [
     placeholders: [
       { key: 'company_name', description: 'Your organization name', example: 'ABC Lending Ltd' },
       { key: 'company_address', description: 'Your organization address', example: '10 Finance Street, London, EC2A 1AA' },
-      { key: 'today_date', description: 'Current date', example: format(new Date(), 'dd MMMM yyyy') },
+      { key: 'today_date', description: 'Current date (use +/- days e.g. {{today_date+14}})', example: format(new Date(), 'dd MMMM yyyy') },
     ]
   },
   {
@@ -102,7 +105,7 @@ const PLACEHOLDER_GROUPS = [
   {
     name: 'Signature',
     placeholders: [
-      { key: 'signature', description: 'Your signature image (upload in Settings → General)', example: '[Signature Image]' },
+      { key: 'signature', description: 'Your signature image (upload in Settings → User)', example: '[Signature Image]' },
     ]
   },
 ];
@@ -181,13 +184,18 @@ export default function LetterTemplateEditor() {
         borrower = borrowers[0] || null;
       }
 
-      // Fetch primary property
-      let property = null;
-      const loanProperties = await api.entities.LoanProperty.filter({ loan_id: loan.id });
-      if (loanProperties.length > 0) {
-        const properties = await api.entities.Property.filter({ id: loanProperties[0].property_id });
-        property = properties[0] || null;
-      }
+      // Fetch loan properties with enriched property data
+      const loanPropertyLinks = await api.entities.LoanProperty.filter({ loan_id: loan.id, status: 'Active' });
+      const enrichedLoanProperties = await Promise.all(loanPropertyLinks.map(async (link) => {
+        const properties = await api.entities.Property.filter({ id: link.property_id });
+        return {
+          ...link,
+          property: properties[0] || null
+        };
+      }));
+
+      // Get primary property for backward compatibility
+      const property = enrichedLoanProperties[0]?.property || null;
 
       // Fetch transactions for live settlement calculation
       const transactions = await api.entities.Transaction.filter({ loan_id: loan.id });
@@ -202,7 +210,7 @@ export default function LetterTemplateEditor() {
         product = products[0] || null;
       }
 
-      return { loan, borrower, property, transactions, schedule, product };
+      return { loan, borrower, property, loanProperties: enrichedLoanProperties, transactions, schedule, product };
     },
     enabled: !!previewLoanId,
     staleTime: 0 // Always refetch when loan ID changes
@@ -351,7 +359,7 @@ export default function LetterTemplateEditor() {
 
     // If a loan is selected, use real data
     if (selectedLoanData) {
-      const { loan, borrower, property, transactions, schedule, product } = selectedLoanData;
+      const { loan, borrower, property, loanProperties, transactions, schedule, product } = selectedLoanData;
 
       // Calculate live settlement figures using the schedule (same as LoanDetails page)
       let liveSettlement = null;
@@ -378,7 +386,8 @@ export default function LetterTemplateEditor() {
         settlementData: null,
         interestBalance: 0,
         liveSettlement,
-        userProfile
+        userProfile,
+        loanProperties
       });
     }
 

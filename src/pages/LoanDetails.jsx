@@ -47,7 +47,8 @@ import {
   ShieldCheck,
   Plus,
   MessageSquare,
-  FolderPlus
+  FolderPlus,
+  FolderOpen
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -76,6 +77,7 @@ import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange } fro
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
 import LoanCommentsPanel from '@/components/loan/LoanCommentsPanel';
+import LoanFilesPanel from '@/components/loan/LoanFilesPanel';
 import { getScheduler } from '@/lib/schedule';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import LetterGeneratorModal from '@/components/letters/LetterGeneratorModal';
@@ -2003,6 +2005,15 @@ export default function LoanDetails() {
                         {loanComments.length}
                       </Badge>
                     </Button>
+                    <Button
+                      variant={activeTab === 'files' ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab('files')}
+                      className="gap-1 h-6 text-xs px-2"
+                    >
+                      <FolderOpen className="w-3 h-3" />
+                      Files
+                    </Button>
                   </div>
                 </div>
               </div>
@@ -2646,6 +2657,10 @@ export default function LoanDetails() {
 
           {activeTab === 'comments' && (
             <LoanCommentsPanel loan={loan} />
+          )}
+
+          {activeTab === 'files' && (
+            <LoanFilesPanel loan={loan} borrower={borrower} />
           )}
 
               </div>

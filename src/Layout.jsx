@@ -95,7 +95,7 @@ const navigation = [
     name: 'Settings',
     icon: Settings,
     children: [
-      { name: 'General', href: 'Config', icon: Wrench },
+      { name: 'User', href: 'Config', icon: Wrench },
       { name: 'Products', href: 'Products', icon: Package },
       { name: 'Letter Templates', href: 'LetterTemplates', icon: Mail, requiresAdmin: true },
       { name: 'Users', href: 'Users', icon: UserCog },

@@ -338,6 +338,146 @@ export function useGoogleDrive() {
     return result;
   }, []);
 
+  /**
+   * List files and folders in a folder (for file browser)
+   */
+  const listFiles = useCallback(async (folderId, driveId = null) => {
+    const accessToken = await getAccessToken();
+
+    let url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-files?action=list&folderId=${folderId}`;
+    if (driveId) {
+      url += `&driveId=${driveId}`;
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+
+    const result = await response.json();
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result.items || [];
+  }, []);
+
+  /**
+   * List all files recursively (for flat view)
+   */
+  const listFilesFlat = useCallback(async (folderId, driveId = null) => {
+    const accessToken = await getAccessToken();
+
+    let url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-files?action=list-recursive&folderId=${folderId}`;
+    if (driveId) {
+      url += `&driveId=${driveId}`;
+    }
+
+    const response = await fetch(url, {
+      headers: {
+        'Authorization': `Bearer ${accessToken}`
+      }
+    });
+
+    const result = await response.json();
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result.items || [];
+  }, []);
+
+  /**
+   * Create a subfolder in a folder
+   */
+  const createSubfolder = useCallback(async (parentFolderId, folderName, driveId = null) => {
+    const accessToken = await getAccessToken();
+
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-files`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action: 'create-folder',
+          folderId: parentFolderId,
+          folderName,
+          driveId
+        })
+      }
+    );
+
+    const result = await response.json();
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result.folder;
+  }, []);
+
+  /**
+   * Upload a file to a specific folder (for file browser uploads)
+   */
+  const uploadFileToFolder = useCallback(async (folderId, fileName, fileContent, mimeType = 'application/octet-stream') => {
+    const accessToken = await getAccessToken();
+
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-files`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({
+          action: 'upload',
+          folderId,
+          fileName,
+          fileContent,
+          mimeType
+        })
+      }
+    );
+
+    const result = await response.json();
+
+    if (result.error) {
+      throw new Error(result.error);
+    }
+
+    return result.file;
+  }, []);
+
+  /**
+   * Get or create loan folder structure and return folder IDs
+   * This is a convenience wrapper around createFolderStructure
+   */
+  const getLoanFolderId = useCallback(async (borrowerId, borrowerDescription, loanId, loanDescription) => {
+    if (!isConnected) {
+      throw new Error('Google Drive not connected');
+    }
+
+    if (!baseFolderId) {
+      throw new Error('No base folder configured. Please select a base folder in Settings.');
+    }
+
+    const result = await createFolderStructure({
+      borrowerId,
+      borrowerDescription,
+      loanId,
+      loanDescription
+    });
+
+    return result.loanFolderId;
+  }, [isConnected, baseFolderId, createFolderStructure]);
+
   return {
     // State
     isConnected,
@@ -355,6 +495,13 @@ export function useGoogleDrive() {
     listSharedDrives,
     listFolders,
     saveBaseFolder,
-    refresh: loadConnectionStatus
+    refresh: loadConnectionStatus,
+
+    // File browser actions
+    listFiles,
+    listFilesFlat,
+    createSubfolder,
+    uploadFileToFolder,
+    getLoanFolderId
   };
 }

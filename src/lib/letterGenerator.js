@@ -10,14 +10,15 @@
 
 import jsPDF from 'jspdf';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
-import { format, addMonths } from 'date-fns';
+import { format, addMonths, addDays } from 'date-fns';
 
 /**
  * Render a template by substituting placeholders with values
  * Supports {{placeholder}} syntax
  *
- * Special handling for signature placeholder:
- * - If signature_image_url is provided, renders as <img> tag
+ * Special features:
+ * - Date arithmetic: {{today_date+14}} adds 14 days, {{today_date-7}} subtracts 7 days
+ * - Signature placeholder: renders as <img> tag if URL is provided
  *
  * @param {string} template - Template string with {{placeholders}}
  * @param {Object} data - Key-value pairs for substitution
@@ -26,7 +27,8 @@ import { format, addMonths } from 'date-fns';
 export function renderTemplate(template, data) {
   if (!template) return '';
 
-  return template.replace(/\{\{(\w+)\}\}/g, (match, key) => {
+  // Match both simple {{placeholder}} and date arithmetic {{today_date+14}} or {{today_date-7}}
+  return template.replace(/\{\{(\w+)([+-]\d+)?\}\}/g, (match, key, offset) => {
     // Special handling for signature - render as image if URL is provided
     if (key === 'signature') {
       const signatureUrl = data.signature_image_url || data.signature;
@@ -35,6 +37,13 @@ export function renderTemplate(template, data) {
         return `<img src="${signatureUrl}" alt="Signature" style="max-height: 60px; max-width: 200px;" class="signature-image" />`;
       }
       return ''; // No signature available
+    }
+
+    // Handle date arithmetic for today_date
+    if (key === 'today_date' && offset) {
+      const days = parseInt(offset, 10);
+      const date = addDays(new Date(), days);
+      return format(date, 'dd MMMM yyyy');
     }
 
     const value = data[key];
@@ -70,6 +79,7 @@ export function extractPlaceholders(template) {
  * @param {Object} params.settlementData - Optional settlement data (for future date)
  * @param {Object} params.liveSettlement - Live settlement figures (as of today)
  * @param {Object} params.userProfile - Current user profile with signature_image_url
+ * @param {Array} params.loanProperties - Array of loan property links with charge_type
  * @returns {Object} - Placeholder key-value pairs
  */
 export function buildPlaceholderData({
@@ -81,7 +91,8 @@ export function buildPlaceholderData({
   settlementData,
   interestBalance,
   liveSettlement,
-  userProfile
+  userProfile,
+  loanProperties = []
 }) {
   // Build borrower display name
   const borrowerName = borrower?.business
@@ -164,6 +175,37 @@ export function buildPlaceholderData({
     data.live_settlement_total = formatCurrency(liveSettlement.settlementTotal || 0);
   }
 
+  // Add security property addresses by charge type
+  if (loanProperties && loanProperties.length > 0) {
+    // Separate securities by charge type
+    const firstChargeSecurities = loanProperties.filter(lp => lp.charge_type === 'First Charge');
+    const secondChargeSecurities = loanProperties.filter(lp => lp.charge_type === 'Second Charge');
+
+    // Helper to format addresses as bullet list if multiple, plain text if single
+    const formatAddressList = (securities) => {
+      const addresses = securities
+        .map(lp => formatSecurityAddress(lp.property))
+        .filter(Boolean);
+      if (addresses.length === 0) return '';
+      if (addresses.length === 1) return addresses[0];
+      // Multiple addresses: bullet point each on its own line
+      return addresses.map(addr => `• ${addr}`).join('<br>');
+    };
+
+    // First charge addresses
+    data.first_charge_addresses = formatAddressList(firstChargeSecurities);
+
+    // Second charge addresses
+    data.second_charge_addresses = formatAddressList(secondChargeSecurities);
+
+    // All security addresses
+    data.all_security_addresses = formatAddressList(loanProperties);
+  } else {
+    data.first_charge_addresses = '';
+    data.second_charge_addresses = '';
+    data.all_security_addresses = '';
+  }
+
   // Add free text placeholders (to be filled in at merge time)
   data.free_text_1 = '[Enter at merge]';
   data.free_text_2 = '[Enter at merge]';
@@ -234,6 +276,21 @@ function getOrganizationAddressLines(org) {
  */
 function formatOrganizationAddress(org) {
   return getOrganizationAddressLines(org).join(', ');
+}
+
+/**
+ * Format security property address as a single line
+ * @param {Object} property - Property object with address, city, postcode
+ * @returns {string} - Formatted address string
+ */
+function formatSecurityAddress(property) {
+  if (!property) return '';
+  const parts = [
+    property.address?.trim(),
+    property.city?.trim(),
+    property.postcode?.trim()
+  ].filter(Boolean);
+  return parts.join(', ');
 }
 
 /**

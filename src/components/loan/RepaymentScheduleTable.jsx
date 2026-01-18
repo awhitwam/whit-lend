@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, FileText, Shield, Receipt, Banknote, Coins, MessageSquare } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, FileText, Shield, Receipt, Banknote, Coins, MessageSquare, FolderOpen } from 'lucide-react';
 import { formatCurrency, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from './LoanCalculator';
 import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 import RentScheduleView from './RentScheduleView';
@@ -613,6 +613,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
                   {commentCount}
                 </Badge>
+              </Button>
+              <Button
+                variant={activeTab === 'files' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => onTabChange?.('files')}
+                className="gap-1 h-6 text-xs px-2"
+              >
+                <FolderOpen className="w-3 h-3" />
+                Files
               </Button>
             </div>
           </div>

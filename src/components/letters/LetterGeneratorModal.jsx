@@ -162,6 +162,17 @@ export default function LetterGeneratorModal({
   // Build placeholder data
   const placeholderData = useMemo(() => {
     const primaryProperty = loanProperties[0]?.property;
+    console.log('[LetterGenerator] Building placeholder data:', {
+      loanPropertiesCount: loanProperties?.length,
+      loanProperties: loanProperties?.map(lp => ({
+        charge_type: lp.charge_type,
+        property_address: lp.property?.address,
+        property_city: lp.property?.city,
+        property_postcode: lp.property?.postcode
+      })),
+      borrower_name: borrower?.business || borrower?.full_name,
+      loan_number: loan?.loan_number
+    });
     const data = buildPlaceholderData({
       loan,
       borrower,
@@ -171,7 +182,15 @@ export default function LetterGeneratorModal({
       settlementData,
       interestBalance: interestCalc?.interestBalance,
       liveSettlement,
-      userProfile
+      userProfile,
+      loanProperties
+    });
+    console.log('[LetterGenerator] Generated placeholder data:', {
+      first_charge_addresses: data.first_charge_addresses,
+      second_charge_addresses: data.second_charge_addresses,
+      all_security_addresses: data.all_security_addresses,
+      property_address: data.property_address,
+      borrower_name: data.borrower_name
     });
     // Override free text fields with user input (if provided)
     if (freeTextFields.free_text_1) data.free_text_1 = freeTextFields.free_text_1;
