@@ -320,7 +320,6 @@ export default function LoanFilesPanel({ loan, borrower }) {
         body: {
           recipientEmail: to,
           subject: emailSubject,
-          htmlBody: `<p>${emailBody.replace(/\n/g, '</p><p>')}</p>`,
           textBody: emailBody,
           attachment: {
             type: 'driveFile',

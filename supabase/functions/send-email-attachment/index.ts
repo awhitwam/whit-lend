@@ -13,7 +13,7 @@
 //   SMTP_FROM - From email address
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts'
+import { encode as base64Encode } from 'https://deno.land/std@0.208.0/encoding/base64.ts'
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -38,25 +38,12 @@ type Attachment = AttachmentPdf | AttachmentDriveFile
 interface RequestBody {
   recipientEmail: string
   subject: string
-  htmlBody: string
-  textBody?: string
+  textBody: string
+  htmlBody?: string // Deprecated - kept for backwards compatibility, not used
   attachment: Attachment
   organizationName?: string
 }
 
-// Helper to strip HTML tags for plain text fallback
-function stripHtml(html: string): string {
-  return html
-    .replace(/<br\s*\/?>/gi, '\n')
-    .replace(/<\/p>/gi, '\n\n')
-    .replace(/<[^>]+>/g, '')
-    .replace(/&nbsp;/g, ' ')
-    .replace(/&amp;/g, '&')
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .trim()
-}
 
 // Helper to get file content from Google Drive
 async function getGoogleDriveFile(
@@ -103,6 +90,190 @@ async function getGoogleDriveFile(
     content,
     mimeType: metadata.mimeType || 'application/octet-stream',
     fileName: metadata.name || 'attachment',
+  }
+}
+
+// Simple SMTP client using raw TCP with TLS
+class SimpleSmtpClient {
+  private conn: Deno.Conn | null = null
+  private reader: ReadableStreamDefaultReader<Uint8Array> | null = null
+  private writer: WritableStreamDefaultWriter<Uint8Array> | null = null
+  private textDecoder = new TextDecoder()
+  private textEncoder = new TextEncoder()
+  private isTls = false
+
+  async connect(hostname: string, port: number): Promise<void> {
+    this.conn = await Deno.connect({ hostname, port })
+    this.reader = this.conn.readable.getReader()
+    this.writer = this.conn.writable.getWriter()
+    this.isTls = false
+    await this.readResponse() // Read greeting
+  }
+
+  async startTls(hostname: string): Promise<void> {
+    if (!this.conn || this.isTls) {
+      throw new Error('No TCP connection to upgrade or already TLS')
+    }
+
+    // Release readers/writers before TLS upgrade
+    this.reader?.releaseLock()
+    this.writer?.releaseLock()
+
+    // Upgrade to TLS - cast to any to avoid type issues in Supabase runtime
+    this.conn = await Deno.startTls(this.conn as any, { hostname })
+    this.reader = this.conn.readable.getReader()
+    this.writer = this.conn.writable.getWriter()
+    this.isTls = true
+  }
+
+  async connectTls(hostname: string, port: number): Promise<void> {
+    this.conn = await Deno.connectTls({ hostname, port })
+    this.reader = this.conn.readable.getReader()
+    this.writer = this.conn.writable.getWriter()
+    this.isTls = true
+    await this.readResponse() // Read greeting
+  }
+
+  private async readResponse(): Promise<string> {
+    if (!this.reader) throw new Error('Not connected')
+
+    let response = ''
+    while (true) {
+      const { value, done } = await this.reader.read()
+      if (done) break
+
+      response += this.textDecoder.decode(value)
+      // Check if response is complete (ends with \r\n and has a space after code)
+      const lines = response.split('\r\n')
+      const lastCompleteLine = lines[lines.length - 2] || lines[lines.length - 1]
+      if (lastCompleteLine && lastCompleteLine.length >= 4 && lastCompleteLine[3] === ' ') {
+        break
+      }
+      // Also break if we have a complete single-line response
+      if (response.endsWith('\r\n') && response.split('\r\n').filter(l => l).every(l => l[3] === ' ')) {
+        break
+      }
+    }
+
+    const code = parseInt(response.substring(0, 3))
+    if (code >= 400) {
+      throw new Error(`SMTP Error ${code}: ${response}`)
+    }
+
+    return response
+  }
+
+  private async sendCommand(command: string): Promise<string> {
+    if (!this.writer) throw new Error('Not connected')
+    await this.writer.write(this.textEncoder.encode(command + '\r\n'))
+    return await this.readResponse()
+  }
+
+  async ehlo(hostname: string): Promise<string> {
+    return await this.sendCommand(`EHLO ${hostname}`)
+  }
+
+  async starttls(): Promise<void> {
+    await this.sendCommand('STARTTLS')
+  }
+
+  async auth(username: string, password: string): Promise<void> {
+    await this.sendCommand('AUTH LOGIN')
+    await this.sendCommand(btoa(username))
+    await this.sendCommand(btoa(password))
+  }
+
+  async mailFrom(from: string): Promise<void> {
+    // Extract email from "Name <email>" format
+    const emailMatch = from.match(/<([^>]+)>/)
+    const email = emailMatch ? emailMatch[1] : from
+    await this.sendCommand(`MAIL FROM:<${email}>`)
+  }
+
+  async rcptTo(to: string): Promise<void> {
+    await this.sendCommand(`RCPT TO:<${to}>`)
+  }
+
+  async data(content: string): Promise<void> {
+    await this.sendCommand('DATA')
+    if (!this.writer) throw new Error('Not connected')
+    // Send content followed by terminator
+    await this.writer.write(this.textEncoder.encode(content + '\r\n.\r\n'))
+    await this.readResponse()
+  }
+
+  async quit(): Promise<void> {
+    try {
+      await this.sendCommand('QUIT')
+    } catch {
+      // Ignore errors on quit
+    }
+  }
+
+  async close(): Promise<void> {
+    try {
+      this.reader?.releaseLock()
+      this.writer?.releaseLock()
+      this.conn?.close()
+    } catch {
+      // Ignore close errors
+    }
+  }
+}
+
+// Send email using SMTP
+async function sendSmtpEmail(
+  smtpHost: string,
+  smtpPort: number,
+  smtpUser: string,
+  smtpPass: string,
+  smtpFrom: string,
+  recipientEmail: string,
+  mimeMessage: string
+): Promise<void> {
+  const client = new SimpleSmtpClient()
+
+  try {
+    if (smtpPort === 465) {
+      // Direct TLS connection
+      console.log('[SMTP] Connecting with TLS to', smtpHost, smtpPort)
+      await client.connectTls(smtpHost, smtpPort)
+    } else {
+      // Connect plain, then upgrade with STARTTLS
+      console.log('[SMTP] Connecting to', smtpHost, smtpPort)
+      await client.connect(smtpHost, smtpPort)
+    }
+
+    console.log('[SMTP] Sending EHLO')
+    const ehloResponse = await client.ehlo('localhost')
+    console.log('[SMTP] EHLO response received')
+
+    // Use STARTTLS for port 587
+    if (smtpPort === 587 && ehloResponse.includes('STARTTLS')) {
+      console.log('[SMTP] Starting TLS')
+      await client.starttls()
+      await client.startTls(smtpHost)
+      console.log('[SMTP] TLS established, sending EHLO again')
+      await client.ehlo('localhost')
+    }
+
+    console.log('[SMTP] Authenticating')
+    await client.auth(smtpUser, smtpPass)
+    console.log('[SMTP] Authenticated successfully')
+
+    console.log('[SMTP] Setting MAIL FROM')
+    await client.mailFrom(smtpFrom)
+
+    console.log('[SMTP] Setting RCPT TO')
+    await client.rcptTo(recipientEmail)
+
+    console.log('[SMTP] Sending DATA')
+    await client.data(mimeMessage)
+    console.log('[SMTP] Email sent successfully')
+
+    await client.quit()
+  } finally {
+    await client.close()
   }
 }
 
@@ -158,7 +329,7 @@ Deno.serve(async (req) => {
       })
     }
 
-    const { recipientEmail, subject, htmlBody, textBody, attachment, organizationName } = body
+    const { recipientEmail, subject, textBody, attachment } = body
 
     console.log('[SendEmailAttachment] Request:', {
       recipientEmail,
@@ -168,9 +339,9 @@ Deno.serve(async (req) => {
     })
 
     // Validate required fields
-    if (!recipientEmail || !subject || !htmlBody || !attachment) {
+    if (!recipientEmail || !subject || !textBody || !attachment) {
       return new Response(JSON.stringify({
-        error: 'Missing required fields: recipientEmail, subject, htmlBody, attachment'
+        error: 'Missing required fields: recipientEmail, subject, textBody, attachment'
       }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -193,10 +364,24 @@ Deno.serve(async (req) => {
     const smtpPass = Deno.env.get('SMTP_PASS')
     const smtpFrom = Deno.env.get('SMTP_FROM')
 
+    // Log SMTP configuration status (without exposing sensitive values)
+    console.log('[SendEmailAttachment] SMTP Configuration check:', {
+      SMTP_HOST: smtpHost ? `set (${smtpHost})` : 'NOT SET',
+      SMTP_PORT: smtpPort,
+      SMTP_USER: smtpUser ? `set (${smtpUser})` : 'NOT SET',
+      SMTP_PASS: smtpPass ? 'set (hidden)' : 'NOT SET',
+      SMTP_FROM: smtpFrom ? `set (${smtpFrom})` : 'NOT SET'
+    })
+
     if (!smtpHost || !smtpUser || !smtpPass || !smtpFrom) {
-      console.error('[SendEmailAttachment] Missing SMTP configuration')
+      const missing = []
+      if (!smtpHost) missing.push('SMTP_HOST')
+      if (!smtpUser) missing.push('SMTP_USER')
+      if (!smtpPass) missing.push('SMTP_PASS')
+      if (!smtpFrom) missing.push('SMTP_FROM')
+      console.error('[SendEmailAttachment] Missing SMTP configuration. Missing secrets:', missing.join(', '))
       return new Response(JSON.stringify({
-        error: 'Email service not configured. Please contact your administrator.'
+        error: `Email service not configured. Missing: ${missing.join(', ')}. Please contact your administrator.`
       }), {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -306,72 +491,38 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Create SMTP client
-    const client = new SMTPClient({
-      connection: {
-        hostname: smtpHost,
-        port: smtpPort,
-        tls: true,
-        auth: {
-          username: smtpUser,
-          password: smtpPass,
-        },
-      },
-    })
+    // Encode attachment as base64 using Deno's standard library
+    const attachmentBase64 = base64Encode(attachmentContent)
 
-    // Wrap HTML body with email template
-    const fullHtmlBody = `
-<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="utf-8">
-  <style>
-    body { font-family: Arial, sans-serif; line-height: 1.6; color: #333; }
-    .container { max-width: 600px; margin: 0 auto; padding: 20px; }
-    .header { border-bottom: 2px solid #0066cc; padding-bottom: 10px; margin-bottom: 20px; }
-    .header h1 { color: #0066cc; margin: 0; font-size: 24px; }
-    .content { margin-bottom: 20px; }
-    .footer { border-top: 1px solid #ddd; padding-top: 15px; font-size: 12px; color: #666; }
-  </style>
-</head>
-<body>
-  <div class="container">
-    <div class="header">
-      <h1>${organizationName || 'Lender'}</h1>
-    </div>
-    <div class="content">
-      ${htmlBody}
-    </div>
-    <div class="footer">
-      <p>This email and any attachments are confidential and intended solely for the addressee. If you have received this email in error, please notify the sender immediately and delete it.</p>
-    </div>
-  </div>
-</body>
-</html>
-`
+    // Build MIME message with plain text body and attachment
+    const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
 
-    // Use provided text body or strip HTML
-    const finalTextBody = textBody || stripHtml(htmlBody)
+    const mimeMessage = [
+      `From: ${smtpFrom}`,
+      `To: ${recipientEmail}`,
+      `Subject: ${subject}`,
+      `MIME-Version: 1.0`,
+      `Content-Type: multipart/mixed; boundary="${boundary}"`,
+      ``,
+      `--${boundary}`,
+      `Content-Type: text/plain; charset=utf-8`,
+      `Content-Transfer-Encoding: 7bit`,
+      ``,
+      textBody,
+      ``,
+      `--${boundary}`,
+      `Content-Type: ${attachmentMimeType}; name="${attachmentFileName}"`,
+      `Content-Disposition: attachment; filename="${attachmentFileName}"`,
+      `Content-Transfer-Encoding: base64`,
+      ``,
+      attachmentBase64.match(/.{1,76}/g)?.join('\r\n') || attachmentBase64,
+      ``,
+      `--${boundary}--`,
+    ].join('\r\n')
 
-    // Send email with attachment
+    // Send email
     console.log('[SendEmailAttachment] Sending email to:', recipientEmail)
-
-    await client.send({
-      from: smtpFrom,
-      to: recipientEmail,
-      subject: subject,
-      content: finalTextBody,
-      html: fullHtmlBody,
-      attachments: [
-        {
-          filename: attachmentFileName,
-          content: attachmentContent,
-          contentType: attachmentMimeType,
-        },
-      ],
-    })
-
-    await client.close()
+    await sendSmtpEmail(smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom, recipientEmail, mimeMessage)
 
     console.log('[SendEmailAttachment] Email sent successfully to:', recipientEmail)
 

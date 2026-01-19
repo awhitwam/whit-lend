@@ -9,7 +9,7 @@ import { logBorrowerEvent, AuditAction } from '@/lib/auditLog';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Input } from "@/components/ui/input";
 import {
@@ -1088,20 +1088,22 @@ export default function BorrowerDetails() {
           </TabsContent>
         </Tabs>
 
-        {/* Edit Dialog */}
-        <Dialog open={isEditOpen} onOpenChange={setIsEditOpen}>
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Edit Borrower</DialogTitle>
-            </DialogHeader>
-            <BorrowerForm
-              borrower={borrower}
-              onSubmit={(data) => updateMutation.mutate(data)}
-              onCancel={() => setIsEditOpen(false)}
-              isLoading={updateMutation.isPending}
-            />
-          </DialogContent>
-        </Dialog>
+        {/* Edit Panel */}
+        <Sheet open={isEditOpen} onOpenChange={setIsEditOpen}>
+          <SheetContent className="sm:max-w-md overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>Edit Borrower</SheetTitle>
+            </SheetHeader>
+            <div className="mt-4">
+              <BorrowerForm
+                borrower={borrower}
+                onSubmit={(data) => updateMutation.mutate(data)}
+                onCancel={() => setIsEditOpen(false)}
+                isLoading={updateMutation.isPending}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
 
         {/* Borrower Payment Modal */}
         <BorrowerPaymentModal

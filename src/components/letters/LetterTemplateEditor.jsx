@@ -140,6 +140,7 @@ export default function LetterTemplateEditor() {
   const [activeTab, setActiveTab] = useState('edit');
   const [previewLoanId, setPreviewLoanId] = useState('');
   const quillRef = useRef(null);
+  const formInitialized = useRef(false);
   const [formData, setFormData] = useState({
     name: '',
     description: '',
@@ -218,9 +219,10 @@ export default function LetterTemplateEditor() {
     staleTime: 0 // Always refetch when loan ID changes
   });
 
-  // Populate form when template loads
+  // Populate form when template loads (only on initial load, not after saves)
   useEffect(() => {
-    if (template) {
+    if (template && !formInitialized.current) {
+      formInitialized.current = true;
       setFormData({
         name: template.name || '',
         description: template.description || '',
@@ -233,6 +235,11 @@ export default function LetterTemplateEditor() {
       });
     }
   }, [template]);
+
+  // Reset form initialized flag when templateId changes (navigating to different template)
+  useEffect(() => {
+    formInitialized.current = false;
+  }, [templateId]);
 
   // Save mutation
   const saveMutation = useMutation({

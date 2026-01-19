@@ -6,23 +6,40 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Search, MoreHorizontal, Eye, Edit, Phone, Mail, User, FileText, ArrowUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 
 export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts = {} }) {
   const [searchTerm, setSearchTerm] = useState('');
   const [sortField, setSortField] = useState(() => localStorage.getItem('borrowers-sort-field') || 'name');
   const [sortDirection, setSortDirection] = useState(() => localStorage.getItem('borrowers-sort-direction') || 'asc');
+  const [loanFilter, setLoanFilter] = useState(() => localStorage.getItem('borrowers-loan-filter') || 'live');
+
+  const handleLoanFilterChange = (value) => {
+    setLoanFilter(value);
+    localStorage.setItem('borrowers-loan-filter', value);
+  };
 
   const filteredBorrowers = borrowers.filter(b => {
+    // First apply search filter
     const displayName = (b.business || `${b.first_name} ${b.last_name}`).toLowerCase();
     const search = searchTerm.toLowerCase();
     const keywords = b.keywords || [];
     const keywordMatch = keywords.some(k => k.toLowerCase().includes(search));
-    return displayName.includes(search) ||
+    const matchesSearch = displayName.includes(search) ||
            b.phone?.includes(search) ||
            b.unique_number?.includes(search) ||
            b.email?.toLowerCase().includes(search) ||
            keywordMatch;
+
+    if (!matchesSearch) return false;
+
+    // Then apply loan filter
+    const counts = loanCounts[b.id] || { total: 0, live: 0, settled: 0, pending: 0, defaulted: 0 };
+    if (loanFilter === 'live') {
+      return counts.live > 0 || counts.defaulted > 0; // Include defaulted as they still have exposure
+    }
+    return true; // 'all' shows everyone
   });
 
   const sortedBorrowers = useMemo(() => {
@@ -68,16 +85,37 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
       : <ArrowDown className="w-3 h-3 ml-1" />;
   };
 
+  // Count borrowers with live loans for the filter badge
+  const liveCount = borrowers.filter(b => {
+    const counts = loanCounts[b.id] || { live: 0, defaulted: 0 };
+    return counts.live > 0 || counts.defaulted > 0;
+  }).length;
+
   return (
     <div className="space-y-4">
-      <div className="relative max-w-sm">
-        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-        <Input
-          placeholder="Search borrowers..."
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          className="pl-10"
-        />
+      <div className="flex items-center gap-3">
+        <div className="relative max-w-sm flex-1">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+          <Input
+            placeholder="Search borrowers..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="pl-10"
+          />
+        </div>
+        <Select value={loanFilter} onValueChange={handleLoanFilterChange}>
+          <SelectTrigger className="w-[180px]">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="live">
+              With Live Loans ({liveCount})
+            </SelectItem>
+            <SelectItem value="all">
+              All Borrowers ({borrowers.length})
+            </SelectItem>
+          </SelectContent>
+        </Select>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
@@ -118,7 +156,11 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
             ) : sortedBorrowers.length === 0 ? (
               <TableRow>
                 <TableCell colSpan={6} className="text-center py-12 text-slate-500">
-                  {searchTerm ? 'No borrowers match your search' : 'No borrowers found'}
+                  {searchTerm
+                    ? 'No borrowers match your search'
+                    : loanFilter === 'live'
+                      ? 'No borrowers with live loans'
+                      : 'No borrowers found'}
                 </TableCell>
               </TableRow>
             ) : (
@@ -145,7 +187,6 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
                         {borrower.business && (
                           <p className="text-xs text-slate-500">{borrower.first_name} {borrower.last_name}</p>
                         )}
-                        <p className="text-xs text-slate-500">Added {new Date(borrower.created_date).toLocaleDateString()}</p>
                       </div>
                     </Link>
                   </TableCell>

@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { Plus, Users, Upload } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
@@ -284,23 +284,25 @@ export default function Borrowers() {
           />
         )}
 
-        {/* Form Dialog */}
-        <Dialog open={isFormOpen} onOpenChange={handleClose}>
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>
+        {/* Form Panel */}
+        <Sheet open={isFormOpen} onOpenChange={handleClose}>
+          <SheetContent className="sm:max-w-md overflow-y-auto">
+            <SheetHeader>
+              <SheetTitle>
                 {editingBorrower ? 'Edit Borrower' : 'Add New Borrower'}
-              </DialogTitle>
-            </DialogHeader>
-            <BorrowerForm
-              borrower={editingBorrower}
-              onSubmit={handleSubmit}
-              onCancel={handleClose}
-              isLoading={createMutation.isPending || updateMutation.isPending}
-              suggestedBorrowerNumber={suggestedBorrowerNumber}
-            />
-          </DialogContent>
-        </Dialog>
+              </SheetTitle>
+            </SheetHeader>
+            <div className="mt-4">
+              <BorrowerForm
+                borrower={editingBorrower}
+                onSubmit={handleSubmit}
+                onCancel={handleClose}
+                isLoading={createMutation.isPending || updateMutation.isPending}
+                suggestedBorrowerNumber={suggestedBorrowerNumber}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
       </div>
     </div>
   );

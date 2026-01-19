@@ -49,6 +49,7 @@ import {
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import jsPDF from 'jspdf';
+import { logLetterEvent, AuditAction } from '@/lib/auditLog';
 
 export default function LoanActivityPanel({ loan }) {
   const { user } = useAuth();
@@ -60,6 +61,7 @@ export default function LoanActivityPanel({ loan }) {
   const [editingComment, setEditingComment] = useState(null);
   const [editText, setEditText] = useState('');
   const [deleteConfirmComment, setDeleteConfirmComment] = useState(null);
+  const [deleteConfirmLetter, setDeleteConfirmLetter] = useState(null);
   const [filterType, setFilterType] = useState('all'); // 'all' | 'comments' | 'letters'
 
   // Fetch comments for this loan
@@ -154,6 +156,27 @@ export default function LoanActivityPanel({ loan }) {
     },
     onError: (error) => {
       toast.error('Failed to delete comment: ' + error.message);
+    }
+  });
+
+  // Delete letter mutation
+  const deleteLetterMutation = useMutation({
+    mutationFn: async (letter) => {
+      await api.entities.GeneratedLetter.delete(letter.id);
+      return letter; // Return the letter for audit logging
+    },
+    onSuccess: (deletedLetter) => {
+      // Log to audit trail
+      logLetterEvent(AuditAction.LETTER_DELETE, deletedLetter, loan, {
+        deleted_by: user?.id,
+        deleted_at: new Date().toISOString()
+      });
+      toast.success('Letter deleted');
+      setDeleteConfirmLetter(null);
+      queryClient.invalidateQueries({ queryKey: ['loan-letters', loan.id] });
+    },
+    onError: (error) => {
+      toast.error('Failed to delete letter: ' + error.message);
     }
   });
 
@@ -510,19 +533,19 @@ export default function LoanActivityPanel({ loan }) {
                   </div>
                 ) : (
                   // Letter display
-                  <div
-                    className={`px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg ${
-                      activity.google_drive_file_url ? 'cursor-pointer hover:bg-purple-100 transition-colors' : ''
-                    }`}
-                    onClick={() => {
-                      if (activity.google_drive_file_url) {
-                        window.open(activity.google_drive_file_url, '_blank', 'noopener,noreferrer');
-                      }
-                    }}
-                  >
+                  <div className="px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
                     <div className="flex items-start gap-2">
                       <Mail className="w-4 h-4 text-purple-600 mt-0.5 flex-shrink-0" />
-                      <div className="flex-1 min-w-0">
+                      <div
+                        className={`flex-1 min-w-0 ${
+                          activity.google_drive_file_url ? 'cursor-pointer' : ''
+                        }`}
+                        onClick={() => {
+                          if (activity.google_drive_file_url) {
+                            window.open(activity.google_drive_file_url, '_blank', 'noopener,noreferrer');
+                          }
+                        }}
+                      >
                         <p className="text-sm font-medium text-purple-900 flex items-center gap-1">
                           {activity.subject || 'No subject'}
                           {activity.google_drive_file_url && (
@@ -546,9 +569,35 @@ export default function LoanActivityPanel({ loan }) {
                           )}
                         </div>
                       </div>
-                      <span className="text-xs text-purple-400 whitespace-nowrap flex-shrink-0">
-                        {format(new Date(activity.created_at), 'dd MMM yyyy HH:mm')}
-                      </span>
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <span className="text-xs text-purple-400 whitespace-nowrap">
+                          {format(new Date(activity.created_at), 'dd MMM yyyy HH:mm')}
+                        </span>
+                        <DropdownMenu>
+                          <DropdownMenuTrigger asChild>
+                            <Button variant="ghost" size="sm" className="h-5 w-5 p-0">
+                              <MoreVertical className="w-3 h-3" />
+                            </Button>
+                          </DropdownMenuTrigger>
+                          <DropdownMenuContent align="end">
+                            {activity.google_drive_file_url && (
+                              <DropdownMenuItem
+                                onClick={() => window.open(activity.google_drive_file_url, '_blank', 'noopener,noreferrer')}
+                              >
+                                <ExternalLink className="w-4 h-4 mr-2" />
+                                Open in Drive
+                              </DropdownMenuItem>
+                            )}
+                            <DropdownMenuItem
+                              onClick={() => setDeleteConfirmLetter(activity)}
+                              className="text-red-600"
+                            >
+                              <Trash2 className="w-4 h-4 mr-2" />
+                              Delete
+                            </DropdownMenuItem>
+                          </DropdownMenuContent>
+                        </DropdownMenu>
+                      </div>
                     </div>
                   </div>
                 )}
@@ -558,7 +607,7 @@ export default function LoanActivityPanel({ loan }) {
         )}
       </CardContent>
 
-      {/* Delete Confirmation Dialog */}
+      {/* Delete Comment Confirmation Dialog */}
       <AlertDialog open={!!deleteConfirmComment} onOpenChange={(open) => !open && setDeleteConfirmComment(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -574,6 +623,31 @@ export default function LoanActivityPanel({ loan }) {
               className="bg-red-600 hover:bg-red-700"
             >
               {deleteCommentMutation.isPending && (
+                <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+              )}
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Delete Letter Confirmation Dialog */}
+      <AlertDialog open={!!deleteConfirmLetter} onOpenChange={(open) => !open && setDeleteConfirmLetter(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete Letter?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete this letter record from the activity log.
+              Note: This will not delete the file from Google Drive if one was created.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => deleteLetterMutation.mutate(deleteConfirmLetter)}
+              className="bg-red-600 hover:bg-red-700"
+            >
+              {deleteLetterMutation.isPending && (
                 <Loader2 className="w-4 h-4 mr-2 animate-spin" />
               )}
               Delete

@@ -493,19 +493,44 @@ export default function LetterGeneratorModal({
         body: {
           recipientEmail: to,
           subject: emailSubject,
-          htmlBody: `<p>${emailBody.replace(/\n/g, '</p><p>')}</p>`,
           textBody: emailBody,
           attachment: {
             type: 'pdf',
             base64: pdfBase64,
             fileName: getLetterFilename()
-          },
-          organizationName: organization?.name
+          }
         }
       });
 
       if (error) {
         throw new Error(error.message || 'Failed to send email');
+      }
+
+      // Auto-save to Google Drive if connected
+      let driveFileUrl = null;
+      if (googleDriveConnected) {
+        try {
+          const borrowerName = borrower?.business ||
+            `${borrower?.first_name || ''} ${borrower?.last_name || ''}`.trim() ||
+            loan?.borrower_name || 'Borrower';
+
+          const driveResult = await uploadToGoogleDrive({
+            fileName: getLetterFilename(),
+            fileContent: pdfBase64,
+            mimeType: 'application/pdf',
+            borrowerId: borrower?.unique_number || borrower?.id?.toString() || 'unknown',
+            borrowerDescription: borrowerName,
+            loanId: loan?.loan_number || loan?.id?.toString() || 'unknown',
+            loanDescription: loan?.description || ''
+          });
+
+          if (driveResult.success && driveResult.fileUrl) {
+            driveFileUrl = driveResult.fileUrl;
+          }
+        } catch (driveErr) {
+          // Don't fail the email send if Drive upload fails, just log it
+          console.warn('Failed to auto-save to Google Drive:', driveErr);
+        }
       }
 
       // Record in generated_letters
@@ -521,11 +546,12 @@ export default function LetterGeneratorModal({
         delivery_method: 'email',
         recipient_email: to,
         template_name: selectedTemplate?.name || 'Custom Letter',
+        google_drive_file_url: driveFileUrl,
         created_by: user?.id
       });
 
       queryClient.invalidateQueries({ queryKey: ['loan-letters', loan?.id] });
-      toast.success('Email sent successfully');
+      toast.success(driveFileUrl ? 'Email sent and saved to Google Drive' : 'Email sent successfully');
       setShowEmailCompose(false);
       handleClose();
     } catch (err) {

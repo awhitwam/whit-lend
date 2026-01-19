@@ -74,7 +74,11 @@ export const AuditAction = {
 
   // Backup/Restore
   ORG_BACKUP_EXPORT: 'org_backup_export',
-  ORG_BACKUP_RESTORE: 'org_backup_restore'
+  ORG_BACKUP_RESTORE: 'org_backup_restore',
+
+  // Letters
+  LETTER_CREATE: 'letter_create',
+  LETTER_DELETE: 'letter_delete'
 };
 
 // Entity types for categorization
@@ -94,7 +98,8 @@ export const EntityType = {
   VALUATION: 'valuation',
   FIRST_CHARGE_HOLDER: 'first_charge_holder',
   BULK_IMPORT: 'bulk_import',
-  RECONCILIATION: 'reconciliation'
+  RECONCILIATION: 'reconciliation',
+  LETTER: 'letter'
 };
 
 /**
@@ -388,5 +393,26 @@ export async function logOrgSwitchEvent(fromOrg, toOrg, userId = null) {
     },
     userId,
     organizationId: toOrg?.id // Log under the new organization
+  });
+}
+
+/**
+ * Helper to log letter events
+ */
+export async function logLetterEvent(action, letter, loanInfo = null, details = null) {
+  await logAudit({
+    action,
+    entityType: EntityType.LETTER,
+    entityId: letter.id,
+    entityName: letter.subject || letter.template_name || 'Letter',
+    details: {
+      loan_id: letter.loan_id,
+      loan_number: loanInfo?.loan_number,
+      borrower_id: letter.borrower_id,
+      template_name: letter.template_name,
+      delivery_method: letter.delivery_method,
+      recipient_email: letter.recipient_email,
+      ...details
+    }
   });
 }
