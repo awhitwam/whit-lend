@@ -5,6 +5,7 @@ import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -145,6 +146,7 @@ export default function LetterTemplateEditor() {
     category: 'General',
     subject_template: '',
     body_template: '',
+    email_body_template: '',
     default_attachments: [],
     is_active: true
   });
@@ -225,6 +227,7 @@ export default function LetterTemplateEditor() {
         category: template.category || 'General',
         subject_template: template.subject_template || '',
         body_template: template.body_template || '',
+        email_body_template: template.email_body_template || '',
         default_attachments: template.default_attachments || [],
         is_active: template.is_active !== false
       });
@@ -513,6 +516,19 @@ export default function LetterTemplateEditor() {
                   />
                   <p className="text-xs text-slate-500">
                     Used as the "Re:" line in the letter and email subject
+                  </p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email_body">Email Body (optional)</Label>
+                  <Textarea
+                    id="email_body"
+                    value={formData.email_body_template}
+                    onChange={(e) => setFormData(prev => ({ ...prev, email_body_template: e.target.value }))}
+                    placeholder="e.g., Please find attached {{template_name}} regarding your loan (Reference: {{loan_reference}})."
+                    rows={3}
+                  />
+                  <p className="text-xs text-slate-500">
+                    Default email body text when sending this letter via email. Supports the same placeholders as the letter body.
                   </p>
                 </div>
               </CardContent>

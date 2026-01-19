@@ -101,7 +101,6 @@ export default function ContactGroupView({ borrowers, loanCounts = {}, loans = [
                b.phone?.includes(search) ||
                b.unique_number?.includes(search) ||
                b.email?.toLowerCase().includes(search) ||
-               b.contact_name?.toLowerCase().includes(search) ||
                keywordMatch;
       });
 

@@ -13,6 +13,8 @@ import { useState, useCallback } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useGoogleDrive } from '@/hooks/useGoogleDrive';
 import { useNavigate } from 'react-router-dom';
+import { useAuth } from '@/lib/AuthContext';
+import { api } from '@/api/dataClient';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,6 +28,16 @@ import {
   DialogDescription,
   DialogFooter
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -52,10 +64,15 @@ import {
   List,
   LayoutGrid,
   Cloud,
-  AlertCircle
+  AlertCircle,
+  Mail,
+  Download,
+  CheckCircle
 } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabaseClient';
+import EmailComposeModal from '@/components/email/EmailComposeModal';
 
 // Get appropriate icon for file type
 function getFileIcon(mimeType) {
@@ -81,6 +98,7 @@ export default function LoanFilesPanel({ loan, borrower }) {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const googleDrive = useGoogleDrive();
+  const { user } = useAuth();
 
   // State
   const [viewMode, setViewMode] = useState('tree'); // 'tree' | 'flat'
@@ -92,13 +110,24 @@ export default function LoanFilesPanel({ loan, borrower }) {
   const [newFolderName, setNewFolderName] = useState('');
   const [isCreatingFolder, setIsCreatingFolder] = useState(false);
 
+  // File send via email state
+  const [showEmailCompose, setShowEmailCompose] = useState(false);
+  const [pendingFile, setPendingFile] = useState(null);
+  const [isSendingFile, setIsSendingFile] = useState(false);
+  const [emailError, setEmailError] = useState(null);
+
+  // Mark as sent state
+  const [showMarkAsSentDialog, setShowMarkAsSentDialog] = useState(false);
+  const [fileToMarkAsSent, setFileToMarkAsSent] = useState(null);
+  const [isMarkingAsSent, setIsMarkingAsSent] = useState(false);
+
   // Get or create loan folder ID
   const { data: loanFolderData, isLoading: folderLoading, error: folderError } = useQuery({
     queryKey: ['loan-drive-folder', loan?.id],
     queryFn: async () => {
       const result = await googleDrive.createFolderStructure({
         borrowerId: borrower?.unique_number || loan?.borrower_id,
-        borrowerDescription: borrower?.business_name || borrower?.full_name || '',
+        borrowerDescription: borrower?.business || borrower?.full_name || '',
         loanId: loan?.loan_number || loan?.id,
         loanDescription: loan?.description || ''
       });
@@ -248,6 +277,121 @@ export default function LoanFilesPanel({ loan, borrower }) {
   // Open in Google Drive
   const openInDrive = (url) => {
     window.open(url, '_blank');
+  };
+
+  // Download file from Google Drive
+  const downloadFile = (file) => {
+    // Google Drive download URL format
+    const downloadUrl = `https://drive.google.com/uc?export=download&id=${file.id}`;
+    window.open(downloadUrl, '_blank');
+  };
+
+  // Send file via email - opens email compose modal
+  const handleSendFile = (file) => {
+    setPendingFile(file);
+    setEmailError(null);
+    setShowEmailCompose(true);
+  };
+
+  // Get default email body for file send
+  const getFileEmailBody = () => {
+    const borrowerName = borrower?.business ||
+      `${borrower?.first_name || ''} ${borrower?.last_name || ''}`.trim() ||
+      loan?.borrower_name || 'Borrower';
+    return `Dear ${borrowerName},\n\nPlease find attached the document regarding your loan (Reference: ${loan?.loan_number || 'N/A'}).\n\nIf you have any questions, please do not hesitate to contact us.\n\nKind regards`;
+  };
+
+  // Send file email via Edge Function
+  const handleFileSend = async ({ to, subject: emailSubject, body: emailBody }) => {
+    if (!pendingFile) return;
+
+    setIsSendingFile(true);
+    setEmailError(null);
+
+    try {
+      // Get current session for auth token
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('Not authenticated');
+      }
+
+      // Call Edge Function to send email with Drive file attachment
+      const { data, error } = await supabase.functions.invoke('send-email-attachment', {
+        body: {
+          recipientEmail: to,
+          subject: emailSubject,
+          htmlBody: `<p>${emailBody.replace(/\n/g, '</p><p>')}</p>`,
+          textBody: emailBody,
+          attachment: {
+            type: 'driveFile',
+            fileId: pendingFile.id,
+            fileName: pendingFile.name,
+            mimeType: pendingFile.mimeType
+          }
+        }
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Failed to send email');
+      }
+
+      // Record in generated_letters
+      await api.entities.GeneratedLetter.create({
+        loan_id: loan?.id,
+        borrower_id: borrower?.id,
+        subject: `Sent file: ${pendingFile.name}`,
+        delivery_method: 'email',
+        recipient_email: to,
+        google_drive_file_id: pendingFile.id,
+        google_drive_file_url: pendingFile.webViewLink,
+        template_name: 'Google Drive File',
+        created_by: user?.id
+      });
+
+      queryClient.invalidateQueries({ queryKey: ['loan-letters', loan?.id] });
+      toast.success('Email sent successfully');
+      setShowEmailCompose(false);
+      setPendingFile(null);
+    } catch (err) {
+      console.error('Error sending file email:', err);
+      setEmailError(err.message || 'Failed to send email');
+    } finally {
+      setIsSendingFile(false);
+    }
+  };
+
+  // Mark file as sent (record in activity without sending email)
+  const handleMarkAsSent = (file) => {
+    setFileToMarkAsSent(file);
+    setShowMarkAsSentDialog(true);
+  };
+
+  const confirmMarkAsSent = async () => {
+    if (!fileToMarkAsSent) return;
+
+    setIsMarkingAsSent(true);
+    try {
+      await api.entities.GeneratedLetter.create({
+        loan_id: loan?.id,
+        borrower_id: borrower?.id,
+        subject: `Sent file: ${fileToMarkAsSent.name}`,
+        delivery_method: 'other',
+        google_drive_file_id: fileToMarkAsSent.id,
+        google_drive_file_url: fileToMarkAsSent.webViewLink,
+        template_name: 'Google Drive File',
+        created_by: user?.id
+      });
+
+      queryClient.invalidateQueries({ queryKey: ['loan-letters', loan?.id] });
+      toast.success('File marked as sent');
+      setShowMarkAsSentDialog(false);
+      setFileToMarkAsSent(null);
+    } catch (err) {
+      console.error('Error marking file as sent:', err);
+      toast.error('Failed to mark file as sent: ' + err.message);
+    } finally {
+      setIsMarkingAsSent(false);
+    }
   };
 
   // Not connected state
@@ -498,18 +642,43 @@ export default function LoanFilesPanel({ loan, borrower }) {
                         <DropdownMenuContent align="end">
                           {item.webViewLink && (
                             <>
-                              <DropdownMenuItem onClick={() => openInDrive(item.webViewLink)}>
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); openInDrive(item.webViewLink); }}>
                                 <ExternalLink className="w-4 h-4 mr-2" />
                                 Open in Drive
                               </DropdownMenuItem>
-                              <DropdownMenuItem onClick={() => copyLink(item.webViewLink)}>
+                              <DropdownMenuItem onClick={(e) => { e.stopPropagation(); copyLink(item.webViewLink); }}>
                                 <Copy className="w-4 h-4 mr-2" />
                                 Copy Link
                               </DropdownMenuItem>
+                              {!isFolder && (
+                                <>
+                                  <DropdownMenuItem onClick={(e) => { e.stopPropagation(); downloadFile(item); }}>
+                                    <Download className="w-4 h-4 mr-2" />
+                                    Download
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={(e) => { e.stopPropagation(); handleSendFile(item); }}
+                                    className="text-purple-700"
+                                  >
+                                    <Mail className="w-4 h-4 mr-2" />
+                                    Send via Email
+                                  </DropdownMenuItem>
+                                  <DropdownMenuItem
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      handleMarkAsSent(item);
+                                    }}
+                                    className="text-green-700"
+                                  >
+                                    <CheckCircle className="w-4 h-4 mr-2" />
+                                    Mark as Sent
+                                  </DropdownMenuItem>
+                                </>
+                              )}
                             </>
                           )}
                           {isFolder && viewMode === 'tree' && (
-                            <DropdownMenuItem onClick={() => navigateToFolder(item)}>
+                            <DropdownMenuItem onClick={(e) => { e.stopPropagation(); navigateToFolder(item); }}>
                               <FolderOpen className="w-4 h-4 mr-2" />
                               Open Folder
                             </DropdownMenuItem>
@@ -553,6 +722,55 @@ export default function LoanFilesPanel({ loan, borrower }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Email Compose Modal */}
+      <EmailComposeModal
+        isOpen={showEmailCompose}
+        onClose={() => {
+          setShowEmailCompose(false);
+          setPendingFile(null);
+        }}
+        defaultTo={borrower?.email || ''}
+        defaultSubject={pendingFile ? `Document: ${pendingFile.name}` : ''}
+        defaultBody={getFileEmailBody()}
+        attachmentName={pendingFile?.name || ''}
+        onSend={handleFileSend}
+        isSending={isSendingFile}
+        error={emailError}
+      />
+
+      {/* Mark as Sent Confirmation Dialog */}
+      <AlertDialog open={showMarkAsSentDialog} onOpenChange={setShowMarkAsSentDialog}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Mark file as sent?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will record "{fileToMarkAsSent?.name}" as sent in the activity log.
+              Use this if you've already sent this file via another method (e.g., printed and posted, sent from your email client).
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isMarkingAsSent}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={confirmMarkAsSent}
+              disabled={isMarkingAsSent}
+              className="bg-green-600 hover:bg-green-700"
+            >
+              {isMarkingAsSent ? (
+                <>
+                  <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                  Recording...
+                </>
+              ) : (
+                <>
+                  <CheckCircle className="w-4 h-4 mr-2" />
+                  Mark as Sent
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }

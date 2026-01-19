@@ -196,9 +196,9 @@ Deno.serve(async (req) => {
       })
 
     } else if (action === 'save-base') {
-      // Save base folder selection
+      // Save base folder selection (organization-level, super admin only)
       const body = await req.json()
-      const { folderId, folderPath } = body
+      const { folderId, folderPath, organizationId } = body
 
       if (!folderId) {
         return new Response(JSON.stringify({ error: 'Missing folderId' }), {
@@ -207,13 +207,35 @@ Deno.serve(async (req) => {
         })
       }
 
-      const { error: updateError } = await supabaseAdmin
+      if (!organizationId) {
+        return new Response(JSON.stringify({ error: 'Missing organizationId' }), {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+
+      // Verify user is super admin
+      const { data: profile, error: profileError } = await supabaseAdmin
         .from('user_profiles')
+        .select('is_super_admin')
+        .eq('id', user.id)
+        .single()
+
+      if (profileError || !profile?.is_super_admin) {
+        return new Response(JSON.stringify({ error: 'Super admin access required' }), {
+          status: 403,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        })
+      }
+
+      // Save to organizations table (not user_profiles)
+      const { error: updateError } = await supabaseAdmin
+        .from('organizations')
         .update({
           google_drive_base_folder_id: folderId,
           google_drive_base_folder_path: folderPath || folderId
         })
-        .eq('id', user.id)
+        .eq('id', organizationId)
 
       if (updateError) {
         throw new Error('Failed to save folder selection')

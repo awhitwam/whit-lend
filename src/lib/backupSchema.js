@@ -49,7 +49,7 @@ export const tableSchemas = {
     columns: ['id', 'organization_id', 'unique_number', 'full_name', 'first_name',
               'last_name', 'email', 'phone', 'mobile', 'landline', 'address',
               'city', 'zipcode', 'country', 'status', 'notes', 'created_at', 'updated_at',
-              'contact_email', 'keywords'],
+              'keywords'],
     defaults: { status: 'Active', keywords: [] }
   },
 
@@ -261,7 +261,7 @@ export const tableSchemas = {
 
   letter_templates: {
     columns: ['id', 'organization_id', 'name', 'description', 'category',
-              'subject_template', 'body_template', 'available_placeholders',
+              'subject_template', 'body_template', 'email_body_template', 'available_placeholders',
               'default_attachments', 'is_active', 'created_at', 'updated_at', 'created_by'],
     defaults: {
       category: 'General',
@@ -274,7 +274,9 @@ export const tableSchemas = {
   generated_letters: {
     columns: ['id', 'organization_id', 'template_id', 'loan_id', 'borrower_id',
               'subject', 'body_rendered', 'placeholder_values', 'attached_reports',
-              'settlement_date', 'pdf_storage_path', 'created_by', 'created_at'],
+              'settlement_date', 'pdf_storage_path', 'created_by', 'created_at',
+              'delivery_method', 'recipient_email', 'google_drive_file_id',
+              'google_drive_file_url', 'template_name'],
     defaults: {
       placeholder_values: {},
       attached_reports: []

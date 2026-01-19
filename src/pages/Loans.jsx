@@ -125,7 +125,6 @@ export default function Loans() {
     return localStorage.getItem('loans-search-term') || '';
   });
   const borrowerFilter = searchParams.get('borrower') || null;
-  const contactEmailFilter = searchParams.get('contact_email') || null;
   const borrowerIdsFilter = searchParams.get('borrower_ids') || null;
   const [statusFilter, setStatusFilter] = useState(
     searchParams.get('status') || 'Live'
@@ -231,12 +230,6 @@ export default function Loans() {
     enabled: !!currentOrganization
   });
 
-  const contactBorrowerIds = useMemo(() => {
-    if (!contactEmailFilter || !allBorrowers.length) return [];
-    return allBorrowers
-      .filter(b => b.contact_email === contactEmailFilter || b.email === contactEmailFilter)
-      .map(b => b.id);
-  }, [contactEmailFilter, allBorrowers]);
 
   // Only fetch transactions for interest calculation (principal uses cached value)
   // Still need transactions for: interest calculation, last payment, charges outstanding
@@ -392,11 +385,8 @@ export default function Loans() {
     if (borrowerIdsFilter && borrowerIdsArray.length > 0) {
       return allLoans.filter(loan => borrowerIdsArray.includes(loan.borrower_id));
     }
-    if (contactEmailFilter && contactBorrowerIds.length > 0) {
-      return allLoans.filter(loan => contactBorrowerIds.includes(loan.borrower_id));
-    }
     return allLoans;
-  }, [allLoans, borrowerFilter, borrowerIdsFilter, borrowerIdsArray, contactEmailFilter, contactBorrowerIds]);
+  }, [allLoans, borrowerFilter, borrowerIdsFilter, borrowerIdsArray]);
 
   const loans = borrowerFilteredLoans.filter(loan => !loan.is_deleted);
   const deletedLoans = borrowerFilteredLoans.filter(loan => loan.is_deleted);
@@ -426,54 +416,14 @@ export default function Loans() {
   const clearBorrowerFilter = () => {
     const newParams = new URLSearchParams(searchParams);
     newParams.delete('borrower');
-    newParams.delete('contact_email');
     newParams.delete('borrower_ids');
     setSearchParams(newParams);
     setStatusFilter('all');
   };
 
-  // Handler for downloading combined statements for contact group
-  const handleDownloadContactStatements = async () => {
-    if (!contactEmailFilter || filteredLoans.length === 0) return;
-
-    toast.info(`Generating statements for ${filteredLoans.length} loans...`);
-
-    try {
-      // Build loan data for each filtered loan
-      const loansData = filteredLoans.map(loan => {
-        const loanTransactions = allTransactions.filter(t => t.loan_id === loan.id && !t.is_deleted);
-        const loanSchedule = allSchedules.filter(s => s.loan_id === loan.id);
-        const product = allProducts.find(p => p.id === loan.product_id) || null;
-        const interestCalc = calculateAccruedInterestWithTransactions(loan, loanTransactions, new Date(), loanSchedule, product);
-
-        return {
-          loan,
-          schedule: loanSchedule,
-          transactions: loanTransactions,
-          product,
-          interestCalc
-        };
-      });
-
-      // Generate the PDF
-      generateContactStatementsPDF({
-        contactEmail: contactEmailFilter,
-        loans: filteredLoans,
-        loansData,
-        totals: filterTotals,
-        organization: currentOrganization
-      });
-
-      toast.success(`Generated combined statement for ${filteredLoans.length} loans`);
-    } catch (error) {
-      console.error('Error generating contact statements:', error);
-      toast.error('Failed to generate statements');
-    }
-  };
-
-  // Calculate totals for filtered views (borrower or contact filter)
+  // Calculate totals for filtered views (borrower or borrowerIds filter)
   const filterTotals = useMemo(() => {
-    if (!borrowerFilter && !contactEmailFilter) return null;
+    if (!borrowerFilter && !borrowerIdsFilter) return null;
 
     // Calculate totals based on filtered loans that match the current status filter
     // Uses CACHED balance values from loan records for performance
@@ -516,7 +466,7 @@ export default function Loans() {
       totalArrFees,
       totalExitFees
     };
-  }, [borrowerFilter, contactEmailFilter, filteredLoans, allTransactions]);
+  }, [borrowerFilter, borrowerIdsFilter, filteredLoans, allTransactions]);
 
   const sortedLoans = useMemo(() => {
     return [...filteredLoans].sort((a, b) => {
@@ -1100,87 +1050,6 @@ export default function Loans() {
                   size="sm"
                   onClick={clearBorrowerFilter}
                   className="text-blue-700 hover:bg-blue-100 h-7"
-                >
-                  <X className="w-4 h-4" />
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Contact Email Filter Banner */}
-        {contactEmailFilter && contactBorrowerIds.length > 0 && (
-          <div className="bg-purple-50 border border-purple-200 rounded-lg p-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="w-8 h-8 rounded-full bg-purple-100 flex items-center justify-center">
-                  <Users className="w-4 h-4 text-purple-600" />
-                </div>
-                <div>
-                  <p className="text-xs text-purple-600">Contact group</p>
-                  <p className="font-semibold text-purple-900 text-sm">{contactEmailFilter}</p>
-                </div>
-                <Badge variant="outline" className="text-purple-600 border-purple-300 text-xs">
-                  {contactBorrowerIds.length} borrower{contactBorrowerIds.length !== 1 ? 's' : ''}
-                </Badge>
-                {filterTotals && (
-                  <div className="hidden md:flex items-center gap-4 ml-4 pl-4 border-l border-purple-200">
-                    <div>
-                      <p className="text-xs text-purple-600">Loans</p>
-                      <p className="font-bold text-purple-900">{filterTotals.loanCount}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-purple-600">Principal</p>
-                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalPrincipalBalance)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-purple-600">Interest</p>
-                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalInterestOutstanding)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-purple-600">Exit Fees</p>
-                      <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalExitFees)}</p>
-                    </div>
-                    <TooltipProvider>
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <div className="cursor-help">
-                            <p className="text-xs text-purple-600">Total Outstanding</p>
-                            <p className="font-bold text-purple-900">{formatCurrency(filterTotals.totalOutstanding)}</p>
-                          </div>
-                        </TooltipTrigger>
-                        <TooltipContent>
-                          <p>Principal + Interest + Exit Fees</p>
-                        </TooltipContent>
-                      </Tooltip>
-                    </TooltipProvider>
-                  </div>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <TooltipProvider>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={handleDownloadContactStatements}
-                        className="border-purple-300 text-purple-700 hover:bg-purple-100 h-7 text-xs"
-                      >
-                        <Download className="w-3.5 h-3.5 mr-1" />
-                        Statements
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Download combined statements for all loans in this contact group</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </TooltipProvider>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={clearBorrowerFilter}
-                  className="text-purple-700 hover:bg-purple-100 h-7"
                 >
                   <X className="w-4 h-4" />
                 </Button>

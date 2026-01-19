@@ -2293,8 +2293,8 @@ export default function OrgAdmin() {
                     <div className="p-3 bg-slate-50 rounded-lg border">
                       <p className="text-sm font-medium text-slate-700">Current Borrower</p>
                       <p className="text-lg font-semibold text-slate-900">{currentBorrower.full_name || `${currentBorrower.first_name} ${currentBorrower.last_name}`}</p>
-                      {currentBorrower.contact_email && (
-                        <p className="text-sm text-slate-500">{currentBorrower.contact_email}</p>
+                      {currentBorrower.email && (
+                        <p className="text-sm text-slate-500">{currentBorrower.email}</p>
                       )}
                     </div>
                   )}

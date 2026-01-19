@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
@@ -40,10 +40,13 @@ import {
   Calendar,
   FileCheck,
   AlertCircle,
-  Cloud
+  Cloud,
+  Mail,
+  Send
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { useGoogleDrive } from '@/hooks/useGoogleDrive';
+import EmailComposeModal from '@/components/email/EmailComposeModal';
 
 /**
  * Multi-step modal for generating letters with attached reports
@@ -67,6 +70,7 @@ export default function LetterGeneratorModal({
   interestCalc = null
 }) {
   const { user } = useAuth();
+  const queryClient = useQueryClient();
   const { isConnected: googleDriveConnected, uploadFile: uploadToGoogleDrive } = useGoogleDrive();
 
   // Step management
@@ -113,6 +117,11 @@ export default function LetterGeneratorModal({
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatedPdfUrl, setGeneratedPdfUrl] = useState(null);
   const [isSavingToDrive, setIsSavingToDrive] = useState(false);
+
+  // Email compose modal
+  const [showEmailCompose, setShowEmailCompose] = useState(false);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+  const [emailError, setEmailError] = useState(null);
 
   // Fetch templates
   const { data: templates = [], isLoading: templatesLoading } = useQuery({
@@ -359,11 +368,16 @@ export default function LetterGeneratorModal({
   // Download PDF
   const handleDownload = () => {
     if (window._generatedLetterPdf) {
+      // Format: YYYY-MM-DD LoanNumber BorrowerName TemplateName.pdf
+      const dateStr = format(new Date(), 'yyyy-MM-dd');
+      const loanNumber = loan?.loan_number || loan?.id || 'unknown';
       const borrowerName = borrower?.business ||
         `${borrower?.first_name || ''} ${borrower?.last_name || ''}`.trim() ||
-        loan.borrower_name || 'Borrower';
-      const safeName = borrowerName.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
-      const filename = `${safeName}-Letter-${format(new Date(), 'yyyy-MM-dd')}.pdf`;
+        loan?.borrower_name || 'Borrower';
+      const safeBorrowerName = borrowerName.replace(/[^a-zA-Z0-9\s-]/g, '');
+      const templateName = selectedTemplate?.name || 'Letter';
+      const safeTemplateName = templateName.replace(/[^a-zA-Z0-9\s-]/g, '');
+      const filename = `${dateStr} ${loanNumber} ${safeBorrowerName} ${safeTemplateName}.pdf`;
 
       downloadPDF(window._generatedLetterPdf, filename);
       toast.success('Letter downloaded');
@@ -379,12 +393,16 @@ export default function LetterGeneratorModal({
 
     setIsSavingToDrive(true);
     try {
-      // Build filename
+      // Build filename: YYYY-MM-DD LoanNumber BorrowerName TemplateName.pdf
+      const dateStr = format(new Date(), 'yyyy-MM-dd');
+      const loanNumber = loan?.loan_number || loan?.id || 'unknown';
       const borrowerName = borrower?.business ||
         `${borrower?.first_name || ''} ${borrower?.last_name || ''}`.trim() ||
-        loan.borrower_name || 'Borrower';
-      const safeName = borrowerName.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
-      const filename = `${safeName}-Letter-${format(new Date(), 'yyyy-MM-dd')}.pdf`;
+        loan?.borrower_name || 'Borrower';
+      const safeBorrowerName = borrowerName.replace(/[^a-zA-Z0-9\s-]/g, '');
+      const templateName = selectedTemplate?.name || 'Letter';
+      const safeTemplateName = templateName.replace(/[^a-zA-Z0-9\s-]/g, '');
+      const filename = `${dateStr} ${loanNumber} ${safeBorrowerName} ${safeTemplateName}.pdf`;
 
       // Convert PDF bytes to base64
       const pdfBytes = window._generatedLetterPdf;
@@ -413,6 +431,108 @@ export default function LetterGeneratorModal({
       toast.error('Failed to save to Google Drive: ' + err.message);
     } finally {
       setIsSavingToDrive(false);
+    }
+  };
+
+  // Send via Email - opens email compose modal
+  const handleSendEmail = () => {
+    setEmailError(null);
+    setShowEmailCompose(true);
+  };
+
+  // Build default email body from template or use fallback
+  const getDefaultEmailBody = () => {
+    // If template has an email body template, render it with placeholders
+    if (selectedTemplate?.email_body_template) {
+      return renderTemplate(selectedTemplate.email_body_template, placeholderData);
+    }
+    // Default email body
+    const borrowerName = borrower?.business ||
+      `${borrower?.first_name || ''} ${borrower?.last_name || ''}`.trim() ||
+      loan?.borrower_name || 'Borrower';
+    return `Dear ${borrowerName},\n\nPlease find attached the letter regarding your loan (Reference: ${loan?.loan_number || 'N/A'}).\n\nIf you have any questions, please do not hesitate to contact us.\n\nKind regards,\n${organization?.name || 'The Lender'}`;
+  };
+
+  // Get filename for the email attachment
+  const getLetterFilename = () => {
+    const dateStr = format(new Date(), 'yyyy-MM-dd');
+    const loanNumber = loan?.loan_number || loan?.id || 'unknown';
+    const borrowerName = borrower?.business ||
+      `${borrower?.first_name || ''} ${borrower?.last_name || ''}`.trim() ||
+      loan?.borrower_name || 'Borrower';
+    const safeBorrowerName = borrowerName.replace(/[^a-zA-Z0-9\s-]/g, '');
+    const templateName = selectedTemplate?.name || 'Letter';
+    const safeTemplateName = templateName.replace(/[^a-zA-Z0-9\s-]/g, '');
+    return `${dateStr} ${loanNumber} ${safeBorrowerName} ${safeTemplateName}.pdf`;
+  };
+
+  // Send email via Edge Function
+  const handleEmailSend = async ({ to, subject: emailSubject, body: emailBody }) => {
+    setIsSendingEmail(true);
+    setEmailError(null);
+
+    try {
+      if (!window._generatedLetterPdf) {
+        throw new Error('No PDF generated');
+      }
+
+      // Convert PDF bytes to base64
+      const pdfBytes = window._generatedLetterPdf;
+      const pdfBase64 = btoa(
+        new Uint8Array(pdfBytes).reduce((data, byte) => data + String.fromCharCode(byte), '')
+      );
+
+      // Get current session for auth token
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session?.access_token) {
+        throw new Error('Not authenticated');
+      }
+
+      // Call Edge Function to send email
+      const { data, error } = await supabase.functions.invoke('send-email-attachment', {
+        body: {
+          recipientEmail: to,
+          subject: emailSubject,
+          htmlBody: `<p>${emailBody.replace(/\n/g, '</p><p>')}</p>`,
+          textBody: emailBody,
+          attachment: {
+            type: 'pdf',
+            base64: pdfBase64,
+            fileName: getLetterFilename()
+          },
+          organizationName: organization?.name
+        }
+      });
+
+      if (error) {
+        throw new Error(error.message || 'Failed to send email');
+      }
+
+      // Record in generated_letters
+      await api.entities.GeneratedLetter.create({
+        template_id: selectedTemplateId || null,
+        loan_id: loan?.id,
+        borrower_id: borrower?.id,
+        subject: emailSubject,
+        body_rendered: bodyContent,
+        placeholder_values: placeholderData,
+        attached_reports: selectedAttachments,
+        settlement_date: settlementData ? settlementDate : null,
+        delivery_method: 'email',
+        recipient_email: to,
+        template_name: selectedTemplate?.name || 'Custom Letter',
+        created_by: user?.id
+      });
+
+      queryClient.invalidateQueries({ queryKey: ['loan-letters', loan?.id] });
+      toast.success('Email sent successfully');
+      setShowEmailCompose(false);
+      handleClose();
+    } catch (err) {
+      console.error('Error sending email:', err);
+      setEmailError(err.message || 'Failed to send email');
+    } finally {
+      setIsSendingEmail(false);
     }
   };
 
@@ -800,8 +920,8 @@ export default function LetterGeneratorModal({
                   </CardContent>
                 </Card>
 
-                {/* Download and Google Drive buttons */}
-                <div className="flex justify-center gap-4">
+                {/* Download, Google Drive, and Send buttons */}
+                <div className="flex flex-wrap justify-center gap-3">
                   <Button onClick={handleDownload} size="lg">
                     <Download className="w-4 h-4 mr-2" />
                     Download PDF
@@ -821,6 +941,15 @@ export default function LetterGeneratorModal({
                       {isSavingToDrive ? 'Saving...' : 'Save to Google Drive'}
                     </Button>
                   )}
+                  <Button
+                    onClick={handleSendEmail}
+                    variant="outline"
+                    size="lg"
+                    className="border-purple-300 text-purple-700 hover:bg-purple-50"
+                  >
+                    <Mail className="w-4 h-4 mr-2" />
+                    Send via Email
+                  </Button>
                 </div>
 
                 {/* Summary */}
@@ -861,6 +990,19 @@ export default function LetterGeneratorModal({
           </div>
         </DialogFooter>
       </DialogContent>
+
+      {/* Email Compose Modal */}
+      <EmailComposeModal
+        isOpen={showEmailCompose}
+        onClose={() => setShowEmailCompose(false)}
+        defaultTo={borrower?.email || ''}
+        defaultSubject={renderedSubject || `Letter - ${loan?.loan_number}`}
+        defaultBody={getDefaultEmailBody()}
+        attachmentName={getLetterFilename()}
+        onSend={handleEmailSend}
+        isSending={isSendingEmail}
+        error={emailError}
+      />
     </Dialog>
   );
 }

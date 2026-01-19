@@ -58,7 +58,7 @@ export default function ValuationRequestLetterModal({
     organization?.settings?.letter_footer || DEFAULT_FOOTER
   );
   const [recipientEmail, setRecipientEmail] = useState(
-    borrower?.contact_email || borrower?.email || ''
+    borrower?.email || ''
   );
   const [isSending, setIsSending] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
@@ -385,26 +385,6 @@ export default function ValuationRequestLetterModal({
                         onChange={(e) => setRecipientEmail(e.target.value)}
                         placeholder="borrower@example.com"
                       />
-                      {borrower?.contact_email && borrower?.email && borrower.contact_email !== borrower.email && (
-                        <div className="flex gap-2 text-xs">
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-auto py-1 px-2"
-                            onClick={() => setRecipientEmail(borrower.contact_email)}
-                          >
-                            Use contact: {borrower.contact_email}
-                          </Button>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-auto py-1 px-2"
-                            onClick={() => setRecipientEmail(borrower.email)}
-                          >
-                            Use borrower: {borrower.email}
-                          </Button>
-                        </div>
-                      )}
                     </div>
 
                     <Alert className="border-blue-200 bg-blue-50">

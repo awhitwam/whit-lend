@@ -22,7 +22,6 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
            b.phone?.includes(search) ||
            b.unique_number?.includes(search) ||
            b.email?.toLowerCase().includes(search) ||
-           b.contact_email?.toLowerCase().includes(search) ||
            keywordMatch;
   });
 

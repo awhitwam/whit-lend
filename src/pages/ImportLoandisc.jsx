@@ -158,7 +158,7 @@ function mapLoanStatus(loandiscStatus) {
 // STRICT FIELD WHITELISTS - Only these fields exist in the database
 const VALID_BORROWER_FIELDS = [
   'unique_number', 'full_name', 'first_name', 'last_name', 'business',
-  'email', 'contact_email', 'address', 'phone', 'mobile', 'landline', 'gender',
+  'email', 'address', 'phone', 'mobile', 'landline', 'gender',
   'city', 'zipcode', 'country', 'notes', 'status'
 ];
 
@@ -204,7 +204,6 @@ const BORROWER_FIELD_OPTIONS = [
   { value: 'last_name', label: 'Last Name' },
   { value: 'business', label: 'Business/Company Name' },
   { value: 'email', label: 'Email' },
-  { value: 'contact_email', label: 'Contact Email (for grouping)' },
   { value: 'address', label: 'Address' },
   { value: 'phone', label: 'Phone (Primary)' },
   { value: 'mobile', label: 'Mobile' },
@@ -709,7 +708,6 @@ export default function ImportLoandisc() {
       first_name: mapped.first_name || '',
       last_name: mapped.last_name || '',
       email: mapped.email || '',
-      contact_email: mapped.contact_email || mapped.email || '',  // Default to email if not separately provided
       mobile: mapped.mobile || '',
       landline: mapped.landline || '',
       phone: mapped.phone || mapped.mobile || mapped.landline || '',
@@ -954,7 +952,7 @@ export default function ImportLoandisc() {
             }
 
             // Check for existing borrower - ONLY match on unique_number
-            // Email is NOT a unique identifier - multiple borrowers can legitimately share the same email/contact_email
+            // Email is NOT a unique identifier - multiple borrowers can legitimately share the same email
             const existing = borrowerData.unique_number
               ? existingBorrowersList.find(b => b.unique_number === borrowerData.unique_number)
               : null;

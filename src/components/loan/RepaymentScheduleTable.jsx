@@ -31,7 +31,7 @@ const getDisplayRate = (loan, date) => {
   return loan?.interest_rate || 0;
 };
 
-export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product, tabs = [], activeTab = 'schedule', onTabChange, expenses = [], securityCount = 0, commentCount = 0 }) {
+export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product, tabs = [], activeTab = 'schedule', onTabChange, expenses = [], securityCount = 0, activityCount = 0 }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
   const [viewMode, setViewMode] = useState('nested'); // 'nested', 'ledger'
@@ -603,15 +603,15 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 </Badge>
               </Button>
               <Button
-                variant={activeTab === 'comments' ? "default" : "ghost"}
+                variant={activeTab === 'activity' ? "default" : "ghost"}
                 size="sm"
-                onClick={() => onTabChange?.('comments')}
+                onClick={() => onTabChange?.('activity')}
                 className="gap-1 h-6 text-xs px-2"
               >
                 <MessageSquare className="w-3 h-3" />
-                Comments
+                Activity
                 <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
-                  {commentCount}
+                  {activityCount}
                 </Badge>
               </Button>
               <Button

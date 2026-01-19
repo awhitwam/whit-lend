@@ -24,6 +24,7 @@ export default function Config() {
     email: googleDriveEmail,
     baseFolderPath: googleDriveBasePath,
     isLoading: googleDriveLoading,
+    canEditBaseFolder,
     initiateOAuth: connectGoogleDrive,
     disconnect: disconnectGoogleDrive,
     refresh: refreshGoogleDrive
@@ -270,19 +271,26 @@ export default function Config() {
                   <span>Connected as <strong>{googleDriveEmail}</strong></span>
                 </div>
 
-                {/* Base folder selection */}
+                {/* Base folder selection (organization-level, super admin only) */}
                 <div className="space-y-2">
-                  <label className="text-sm font-medium text-slate-700">Base Folder</label>
+                  <label className="text-sm font-medium text-slate-700">
+                    Organization Base Folder
+                    {!canEditBaseFolder && (
+                      <span className="text-xs text-slate-400 font-normal ml-2">(Set by admin)</span>
+                    )}
+                  </label>
                   <div className="flex gap-2">
                     <div className="flex-1 px-3 py-2 bg-slate-50 border rounded-md text-sm">
                       {googleDriveBasePath || (
                         <span className="text-slate-400 italic">No folder selected</span>
                       )}
                     </div>
-                    <Button variant="outline" onClick={() => setFolderPickerOpen(true)}>
-                      <FolderOpen className="w-4 h-4 mr-2" />
-                      Browse
-                    </Button>
+                    {canEditBaseFolder && (
+                      <Button variant="outline" onClick={() => setFolderPickerOpen(true)}>
+                        <FolderOpen className="w-4 h-4 mr-2" />
+                        Browse
+                      </Button>
+                    )}
                   </div>
                   <p className="text-xs text-slate-500">
                     Letters will be saved to: <code className="bg-slate-100 px-1 rounded">{'{base folder}'}/{'{borrower_id} {name}'}/{'{loan_id} {description}'}/</code>

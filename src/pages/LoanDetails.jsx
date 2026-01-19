@@ -76,7 +76,7 @@ import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiv
 import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
-import LoanCommentsPanel from '@/components/loan/LoanCommentsPanel';
+import LoanActivityPanel from '@/components/loan/LoanActivityPanel';
 import LoanFilesPanel from '@/components/loan/LoanFilesPanel';
 import { getScheduler } from '@/lib/schedule';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
@@ -180,12 +180,20 @@ export default function LoanDetails() {
     enabled: !!loanId
   });
 
-  // Fetch comment count for Comments tab badge
+  // Fetch activity count for Activity tab badge (comments + letters)
   const { data: loanComments = [] } = useQuery({
     queryKey: ['loan-comments', loanId],
     queryFn: () => api.entities.LoanComment.filter({ loan_id: loanId }),
     enabled: !!loanId
   });
+
+  const { data: loanLetters = [] } = useQuery({
+    queryKey: ['loan-letters', loanId],
+    queryFn: () => api.entities.GeneratedLetter.filter({ loan_id: loanId }),
+    enabled: !!loanId
+  });
+
+  const activityCount = loanComments.length + loanLetters.length;
 
   // Fetch enriched loan properties with property data and valuations for LTV calculation
   const { data: loanProperties = [] } = useQuery({
@@ -1909,7 +1917,7 @@ export default function LoanDetails() {
               onTabChange={setActiveTab}
               expenses={expenses}
               securityCount={loanPropertiesBasic.length}
-              commentCount={loanComments.length}
+              activityCount={activityCount}
             />
           )}
 
@@ -1994,15 +2002,15 @@ export default function LoanDetails() {
                       </Badge>
                     </Button>
                     <Button
-                      variant={activeTab === 'comments' ? "default" : "ghost"}
+                      variant={activeTab === 'activity' ? "default" : "ghost"}
                       size="sm"
-                      onClick={() => setActiveTab('comments')}
+                      onClick={() => setActiveTab('activity')}
                       className="gap-1 h-6 text-xs px-2"
                     >
                       <MessageSquare className="w-3 h-3" />
-                      Comments
+                      Activity
                       <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
-                        {loanComments.length}
+                        {activityCount}
                       </Badge>
                     </Button>
                     <Button
@@ -2655,8 +2663,8 @@ export default function LoanDetails() {
             </Card>
           )}
 
-          {activeTab === 'comments' && (
-            <LoanCommentsPanel loan={loan} />
+          {activeTab === 'activity' && (
+            <LoanActivityPanel loan={loan} />
           )}
 
           {activeTab === 'files' && (

@@ -7,10 +7,14 @@
  * - File upload to Google Drive
  * - Folder browsing for picker
  * - Disconnect functionality
+ *
+ * Base folder is organization-level (managed by super admins)
+ * User connection (OAuth tokens) is user-level
  */
 
 import { useState, useEffect, useCallback } from 'react';
 import { useAuth } from '@/lib/AuthContext';
+import { useOrganization } from '@/lib/OrganizationContext';
 import { supabase } from '@/lib/supabaseClient';
 
 // Helper to get session access token
@@ -23,14 +27,15 @@ async function getAccessToken() {
 }
 
 export function useGoogleDrive() {
-  const { user } = useAuth();
+  const { user, isSuperAdmin } = useAuth();
+  const { currentOrganization } = useOrganization();
   const [isConnected, setIsConnected] = useState(false);
   const [email, setEmail] = useState(null);
   const [baseFolderId, setBaseFolderId] = useState(null);
   const [baseFolderPath, setBaseFolderPath] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load connection status from user profile
+  // Load connection status from user profile + base folder from organization
   const loadConnectionStatus = useCallback(async () => {
     if (!user?.id) {
       setIsLoading(false);
@@ -38,27 +43,44 @@ export function useGoogleDrive() {
     }
 
     try {
-      const { data, error } = await supabase
+      // Get user's Google Drive connection status (user-level)
+      const { data: userData, error: userError } = await supabase
         .from('user_profiles')
-        .select('google_drive_connected, google_drive_email, google_drive_base_folder_id, google_drive_base_folder_path')
+        .select('google_drive_connected, google_drive_email')
         .eq('id', user.id)
         .single();
 
-      if (error) {
-        console.error('Error loading Google Drive status:', error);
-        return;
+      if (userError) {
+        console.error('Error loading Google Drive user status:', userError);
       }
 
-      setIsConnected(data?.google_drive_connected || false);
-      setEmail(data?.google_drive_email || null);
-      setBaseFolderId(data?.google_drive_base_folder_id || null);
-      setBaseFolderPath(data?.google_drive_base_folder_path || null);
+      setIsConnected(userData?.google_drive_connected || false);
+      setEmail(userData?.google_drive_email || null);
+
+      // Get base folder from organization (org-level, set by super admin)
+      if (currentOrganization?.id) {
+        const { data: orgData, error: orgError } = await supabase
+          .from('organizations')
+          .select('google_drive_base_folder_id, google_drive_base_folder_path')
+          .eq('id', currentOrganization.id)
+          .single();
+
+        if (orgError) {
+          console.error('Error loading Google Drive org settings:', orgError);
+        }
+
+        setBaseFolderId(orgData?.google_drive_base_folder_id || null);
+        setBaseFolderPath(orgData?.google_drive_base_folder_path || null);
+      } else {
+        setBaseFolderId(null);
+        setBaseFolderPath(null);
+      }
     } catch (err) {
       console.error('Error loading Google Drive status:', err);
     } finally {
       setIsLoading(false);
     }
-  }, [user?.id]);
+  }, [user?.id, currentOrganization?.id]);
 
   useEffect(() => {
     loadConnectionStatus();
@@ -308,9 +330,17 @@ export function useGoogleDrive() {
   }, []);
 
   /**
-   * Save base folder selection
+   * Save base folder selection (organization-level, super admin only)
    */
   const saveBaseFolder = useCallback(async (folderId, folderPath) => {
+    if (!isSuperAdmin) {
+      throw new Error('Only super admins can change the base folder');
+    }
+
+    if (!currentOrganization?.id) {
+      throw new Error('No organization selected');
+    }
+
     const accessToken = await getAccessToken();
 
     const response = await fetch(
@@ -321,7 +351,7 @@ export function useGoogleDrive() {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ folderId, folderPath })
+        body: JSON.stringify({ folderId, folderPath, organizationId: currentOrganization.id })
       }
     );
 
@@ -336,7 +366,7 @@ export function useGoogleDrive() {
     setBaseFolderPath(folderPath);
 
     return result;
-  }, []);
+  }, [isSuperAdmin, currentOrganization?.id]);
 
   /**
    * List files and folders in a folder (for file browser)
@@ -485,6 +515,7 @@ export function useGoogleDrive() {
     baseFolderId,
     baseFolderPath,
     isLoading,
+    canEditBaseFolder: isSuperAdmin, // Only super admins can change the org base folder
 
     // Actions
     initiateOAuth,
