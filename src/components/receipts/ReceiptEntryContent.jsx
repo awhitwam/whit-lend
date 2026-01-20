@@ -20,6 +20,7 @@ import { FileText, Save, Loader2, AlertCircle, Check } from 'lucide-react';
 import ReceiptsSpreadsheet from './ReceiptsSpreadsheet';
 import { useReceiptDrafts } from '@/hooks/useReceiptDrafts';
 import { v4 as uuidv4 } from 'uuid';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Core receipt entry UI component
@@ -486,14 +487,6 @@ export default function ReceiptEntryContent({
       allComplete: localRows.length > 0 && completeCount === localRows.length
     };
   }, [localRows, mode, lockedLoanId]);
-
-  const formatCurrency = (value) => {
-    return new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency: 'GBP',
-      minimumFractionDigits: 2
-    }).format(value);
-  };
 
   const isLoading = (isStandalone && draftsLoading) || (isStandalone && borrowersLoading) || loansLoading;
 

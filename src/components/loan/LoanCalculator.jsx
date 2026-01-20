@@ -1,6 +1,7 @@
 import { addMonths, addWeeks, format, startOfMonth, addDays, differenceInDays, endOfMonth, isValid } from 'date-fns';
 import { getScheduler, createScheduler } from '@/lib/schedule';
 import { api } from '@/api/dataClient';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Generates a repayment schedule based on loan parameters
@@ -1780,16 +1781,8 @@ export function calculateInterestByPeriod(loan, schedule, transactions, asOfDate
   };
 }
 
-/**
- * Format currency
- */
-export function formatCurrency(amount, currency = 'GBP') {
-  return new Intl.NumberFormat('en-GB', {
-    style: 'currency',
-    currency: currency,
-    minimumFractionDigits: 2
-  }).format(amount || 0);
-}
+// Re-export formatCurrency for backward compatibility
+export { formatCurrency } from '@/lib/formatters';
 
 /**
  * Export detailed schedule calculation data for debugging/analysis

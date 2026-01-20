@@ -1,5 +1,6 @@
 import { api } from '@/api/dataClient';
 import { addMonths, addWeeks, format, differenceInDays, startOfMonth } from 'date-fns';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Calculate interest for a period based on product rules and principal balance
@@ -856,16 +857,8 @@ export async function applyScheduleToNewLoan(loanData, product, options = {}) {
   return { loan, schedule, summary: { totalInterest, totalRepayable } };
 }
 
-/**
- * Format currency
- */
-export function formatCurrency(amount, currency = 'GBP') {
-  return new Intl.NumberFormat('en-GB', {
-    style: 'currency',
-    currency: currency,
-    minimumFractionDigits: 2
-  }).format(amount || 0);
-}
+// Re-export formatCurrency for backward compatibility
+export { formatCurrency } from '@/lib/formatters';
 
 /**
  * Regenerate schedule if a transaction affected capital balance.

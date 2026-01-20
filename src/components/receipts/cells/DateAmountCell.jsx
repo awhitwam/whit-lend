@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Link2, Calendar } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Cell for date and amount entry
@@ -30,15 +31,6 @@ const DateAmountCell = forwardRef(function DateAmountCell({
       }
     }
   }));
-
-  const formatCurrency = (value) => {
-    const num = parseFloat(value) || 0;
-    return new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency: 'GBP',
-      minimumFractionDigits: 2
-    }).format(num);
-  };
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '';

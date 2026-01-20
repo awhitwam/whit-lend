@@ -8,6 +8,7 @@ import {
 import { Info } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Cell for selecting one or more loans for the receipt
@@ -30,15 +31,6 @@ const LoanCell = forwardRef(function LoanCell({
       containerRef.current?.focus();
     }
   }));
-
-  const formatCurrency = (value) => {
-    const num = parseFloat(value) || 0;
-    return new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency: 'GBP',
-      minimumFractionDigits: 2
-    }).format(num);
-  };
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'N/A';

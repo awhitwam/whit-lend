@@ -9,6 +9,7 @@ import {
 import { Info, AlertCircle, Check } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Combined cell for selecting loans and allocating amounts
@@ -39,16 +40,6 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
       containerRef.current?.focus();
     }
   }));
-
-  const formatCurrency = (value, suppressZero = false) => {
-    const num = parseFloat(value) || 0;
-    if (suppressZero && num === 0) return '';
-    return new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency: 'GBP',
-      minimumFractionDigits: 2
-    }).format(num);
-  };
 
   const formatDate = (dateStr) => {
     if (!dateStr) return 'N/A';

@@ -11,6 +11,7 @@ import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
 import { calculateRollUpAmount } from '@/lib/loanCalculations';
+import { formatCurrency } from '@/lib/formatters';
 
 export default function EditLoanPanel({
   isOpen,
@@ -71,14 +72,10 @@ export default function EditLoanPanel({
   // Roll-up calculation now uses shared utility from @/lib/loanCalculations
   // Principal IS the gross amount - no additional fees added
 
-  // Format currency for display
-  const formatCurrency = (val) => `£${parseFloat(val || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
-
   // Detect changes between current loan and form data
   const changes = useMemo(() => {
     if (!loan) return [];
     const changeList = [];
-    const formatCurrency = (val) => `£${parseFloat(val || 0).toLocaleString('en-GB', { minimumFractionDigits: 2 })}`;
     const formatDate = (val) => val ? format(new Date(val), 'dd MMM yyyy') : '-';
 
     // Product change

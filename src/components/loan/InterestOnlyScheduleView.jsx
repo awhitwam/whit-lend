@@ -705,10 +705,7 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
       </TableCell>
 
       {/* Note - combine all child notes */}
-      <TableCell className={cn(
-        "py-0.5 text-slate-500 whitespace-nowrap",
-        group.rows.length === 1 ? "text-base" : "text-xs"
-      )}>
+      <TableCell className="py-0.5 text-slate-500 whitespace-nowrap text-xs">
         {(() => {
           // Collect all rows with calculation breakdowns
           const notesData = group.rows
@@ -1122,7 +1119,7 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
       </TableCell>
 
       {/* Calculation (last column, fills remaining space, left-justified) */}
-      <TableCell className={cn("text-base py-0.5 whitespace-nowrap", isToday ? "text-amber-600" : "text-slate-500")}>
+      <TableCell className={cn("text-xs py-0.5 whitespace-nowrap", isToday ? "text-amber-600" : "text-slate-500")}>
         {isToday && row.accruedInterest > 0.01 ? (
           <Tooltip>
             <TooltipTrigger asChild>

@@ -2539,7 +2539,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               // This ensures display matches the calculation logic for capital changes
                               let segments = [];
 
-                              if (row.ledgerSegments && row.ledgerSegments.length > 1) {
+                              if (row.ledgerSegments && row.ledgerSegments.length >= 1) {
                                 // Use pre-calculated segments from the interest calculation
                                 // Note: calculateInterestFromLedger returns dailyRate (per £1), so calculate dailyAmount
                                 segments = row.ledgerSegments.map(seg => ({
@@ -2603,8 +2603,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                                 }
                               }
 
-                              // Only show split if we have multiple segments
-                              if (segments.length > 1) {
+                              // Show segment-based rendering if we have any segments (consistent styling)
+                              if (segments.length >= 1) {
                                 // For ADVANCE payment loans: show what was CHARGED (full period at starting rate)
                                 // The segmented calculation is only used internally to determine overpayment
                                 if (row.isAdvancePayment) {

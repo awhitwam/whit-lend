@@ -15,32 +15,8 @@
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-// Token decryption (must match google-drive-auth)
-function decryptToken(encrypted: string, key: string): string {
-  const keyBytes = new TextEncoder().encode(key)
-  const encryptedBytes = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0))
-  const decrypted = new Uint8Array(encryptedBytes.length)
-  for (let i = 0; i < encryptedBytes.length; i++) {
-    decrypted[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length]
-  }
-  return new TextDecoder().decode(decrypted)
-}
-
-function encryptToken(token: string, key: string): string {
-  const keyBytes = new TextEncoder().encode(key)
-  const tokenBytes = new TextEncoder().encode(token)
-  const encrypted = new Uint8Array(tokenBytes.length)
-  for (let i = 0; i < tokenBytes.length; i++) {
-    encrypted[i] = tokenBytes[i] ^ keyBytes[i % keyBytes.length]
-  }
-  return btoa(String.fromCharCode(...encrypted))
-}
+import { refreshTokenIfNeeded, getUserTokens } from '../_shared/tokenManagement.ts'
+import { jsonResponse, errorResponse, handleCors } from '../_shared/cors.ts'
 
 interface Folder {
   id: string
@@ -176,68 +152,9 @@ async function uploadFile(
   return { id: data.id, webViewLink: data.webViewLink }
 }
 
-// Refresh token if expired
-async function refreshTokenIfNeeded(
-  supabaseAdmin: any,
-  userId: string,
-  tokenData: any,
-  encryptionKey: string,
-  googleClientId: string,
-  googleClientSecret: string
-): Promise<string> {
-  const tokenExpiry = new Date(tokenData.token_expiry)
-  const now = new Date()
-
-  // Refresh if token expires in less than 5 minutes
-  if (tokenExpiry.getTime() - now.getTime() > 5 * 60 * 1000) {
-    return decryptToken(tokenData.access_token_encrypted, encryptionKey)
-  }
-
-  console.log('[GoogleDriveUpload] Token expired or expiring soon, refreshing...')
-
-  const refreshToken = decryptToken(tokenData.refresh_token_encrypted, encryptionKey)
-
-  const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: googleClientId,
-      client_secret: googleClientSecret,
-      grant_type: 'refresh_token'
-    })
-  })
-
-  const newTokens = await refreshResponse.json()
-
-  if (newTokens.error) {
-    // Mark user as disconnected when token refresh fails
-    await supabaseAdmin
-      .from('user_profiles')
-      .update({ google_drive_connected: false })
-      .eq('id', userId)
-
-    throw new Error('Google Drive session expired. Please reconnect in Settings.')
-  }
-
-  // Update stored tokens
-  const newExpiry = new Date(Date.now() + (newTokens.expires_in * 1000)).toISOString()
-
-  await supabaseAdmin
-    .from('google_drive_tokens')
-    .update({
-      access_token_encrypted: encryptToken(newTokens.access_token, encryptionKey),
-      token_expiry: newExpiry,
-      updated_at: new Date().toISOString()
-    })
-    .eq('user_id', userId)
-
-  return newTokens.access_token
-}
-
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+    return handleCors()
   }
 
   try {
@@ -254,20 +171,14 @@ Deno.serve(async (req) => {
     // Verify user
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Missing authorization header', 401)
     }
 
     const token = authHeader.replace('Bearer ', '')
     const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
 
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid user token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Invalid user token', 401)
     }
 
     // Parse request
@@ -286,42 +197,22 @@ Deno.serve(async (req) => {
 
     // Validate organizationId is always required
     if (!organizationId) {
-      return new Response(JSON.stringify({
-        error: 'Missing required field: organizationId'
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Missing required field: organizationId', 400)
     }
 
     // Validate required fields based on action
     if (action === 'upload') {
       if (!fileName || !fileContent || !borrowerId || !loanId) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields: fileName, fileContent, borrowerId, loanId'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('Missing required fields: fileName, fileContent, borrowerId, loanId', 400)
       }
       console.log('[GoogleDriveUpload] Upload request:', { fileName, borrowerId, loanId, organizationId })
     } else if (action === 'create-folders') {
       if (!borrowerId || !loanId) {
-        return new Response(JSON.stringify({
-          error: 'Missing required fields: borrowerId, loanId'
-        }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('Missing required fields: borrowerId, loanId', 400)
       }
       console.log('[GoogleDriveUpload] Create folders request:', { borrowerId, loanId, organizationId })
     } else {
-      return new Response(JSON.stringify({
-        error: 'Invalid action. Use "upload" or "create-folders"'
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Invalid action. Use "upload" or "create-folders"', 400)
     }
 
     // Get user's Google Drive connection status (user-level)
@@ -332,10 +223,7 @@ Deno.serve(async (req) => {
       .single()
 
     if (profileError || !profile?.google_drive_connected) {
-      return new Response(JSON.stringify({ error: 'Google Drive not connected' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Google Drive not connected', 400)
     }
 
     // Get organization's base folder (org-level)
@@ -346,39 +234,27 @@ Deno.serve(async (req) => {
       .single()
 
     if (orgError || !orgData?.google_drive_base_folder_id) {
-      return new Response(JSON.stringify({
-        error: 'No base folder configured for this organization. Please select a base folder in Settings.'
-      }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('No base folder configured for this organization. Please select a base folder in Settings.', 400)
     }
 
     const baseFolderId = orgData.google_drive_base_folder_id
 
     // Get tokens
-    const { data: tokenData, error: tokenError } = await supabaseAdmin
-      .from('google_drive_tokens')
-      .select('access_token_encrypted, refresh_token_encrypted, token_expiry')
-      .eq('user_id', user.id)
-      .single()
+    const tokenData = await getUserTokens(supabaseAdmin, user.id)
 
-    if (tokenError || !tokenData) {
-      return new Response(JSON.stringify({ error: 'No Google Drive tokens found. Please reconnect.' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+    if (!tokenData) {
+      return errorResponse('No Google Drive tokens found. Please reconnect.', 400)
     }
 
     // Get valid access token (refresh if needed)
-    const accessToken = await refreshTokenIfNeeded(
+    const accessToken = await refreshTokenIfNeeded({
       supabaseAdmin,
-      user.id,
+      userId: user.id,
       tokenData,
       encryptionKey,
       googleClientId,
       googleClientSecret
-    )
+    })
 
     // Find or create borrower folder
     const borrowerFolderName = `${borrowerId} ${borrowerDescription || ''}`.trim()
@@ -423,7 +299,7 @@ Deno.serve(async (req) => {
 
       const folderPath = `${borrowerFolderName}/${loanFolderName}`
       console.log('[GoogleDriveUpload] Folders created successfully:', folderPath)
-      return new Response(JSON.stringify({
+      return jsonResponse({
         success: true,
         folderPath,
         borrowerFolderId,
@@ -431,8 +307,6 @@ Deno.serve(async (req) => {
         lettersFolderId,
         ddFolderId,
         legalFolderId
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
 
@@ -443,20 +317,15 @@ Deno.serve(async (req) => {
 
     console.log('[GoogleDriveUpload] File uploaded successfully:', result.id)
 
-    return new Response(JSON.stringify({
+    return jsonResponse({
       success: true,
       fileId: result.id,
       fileUrl: result.webViewLink,
       folderPath
-    }), {
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
     })
 
   } catch (error) {
     console.error('[GoogleDriveUpload] Error:', error)
-    return new Response(JSON.stringify({ error: error.message || 'Upload failed' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    return errorResponse(error.message || 'Upload failed', 500)
   }
 })

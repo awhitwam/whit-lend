@@ -170,7 +170,10 @@ export default function Layout({ children, currentPageName }) {
 
   // Determine if we should show a back button (detail pages, not main nav pages)
   const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'OrphanedEntries', 'Expenses', 'OtherIncome', 'Products', 'Config', 'LetterTemplates', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportComments', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
-  const showBackButton = !mainPages.includes(currentPageName) && window.history.length > 1;
+  // Show back button on detail pages OR on Loans page when filtering by borrower
+  const isLoansWithBorrowerFilter = currentPageName === 'Loans' &&
+    (location.search.includes('borrower_ids') || location.search.includes('borrower='));
+  const showBackButton = (!mainPages.includes(currentPageName) && window.history.length > 1) || isLoansWithBorrowerFilter;
 
   useEffect(() => {
     setOrgItem('sidebarCollapsed', sidebarCollapsed);

@@ -11,6 +11,7 @@
 import jsPDF from 'jspdf';
 import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
 import { format, addMonths, addDays } from 'date-fns';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Render a template by substituting placeholders with values
@@ -212,17 +213,6 @@ export function buildPlaceholderData({
   data.free_text_3 = '[Enter at merge]';
 
   return data;
-}
-
-/**
- * Format a currency value
- */
-function formatCurrency(value) {
-  if (value === undefined || value === null) return '£0.00';
-  return new Intl.NumberFormat('en-GB', {
-    style: 'currency',
-    currency: 'GBP'
-  }).format(value);
 }
 
 /**

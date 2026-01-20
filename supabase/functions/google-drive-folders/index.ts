@@ -10,89 +10,12 @@
 //   POST ?action=save-base - Save selected base folder
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-function decryptToken(encrypted: string, key: string): string {
-  const keyBytes = new TextEncoder().encode(key)
-  const encryptedBytes = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0))
-  const decrypted = new Uint8Array(encryptedBytes.length)
-  for (let i = 0; i < encryptedBytes.length; i++) {
-    decrypted[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length]
-  }
-  return new TextDecoder().decode(decrypted)
-}
-
-function encryptToken(token: string, key: string): string {
-  const keyBytes = new TextEncoder().encode(key)
-  const tokenBytes = new TextEncoder().encode(token)
-  const encrypted = new Uint8Array(tokenBytes.length)
-  for (let i = 0; i < tokenBytes.length; i++) {
-    encrypted[i] = tokenBytes[i] ^ keyBytes[i % keyBytes.length]
-  }
-  return btoa(String.fromCharCode(...encrypted))
-}
-
-async function refreshTokenIfNeeded(
-  supabaseAdmin: any,
-  userId: string,
-  tokenData: any,
-  encryptionKey: string,
-  googleClientId: string,
-  googleClientSecret: string
-): Promise<string> {
-  const tokenExpiry = new Date(tokenData.token_expiry)
-  const now = new Date()
-
-  if (tokenExpiry.getTime() - now.getTime() > 5 * 60 * 1000) {
-    return decryptToken(tokenData.access_token_encrypted, encryptionKey)
-  }
-
-  const refreshToken = decryptToken(tokenData.refresh_token_encrypted, encryptionKey)
-
-  const refreshResponse = await fetch('https://oauth2.googleapis.com/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: new URLSearchParams({
-      refresh_token: refreshToken,
-      client_id: googleClientId,
-      client_secret: googleClientSecret,
-      grant_type: 'refresh_token'
-    })
-  })
-
-  const newTokens = await refreshResponse.json()
-
-  if (newTokens.error) {
-    // Mark user as disconnected when token refresh fails
-    await supabaseAdmin
-      .from('user_profiles')
-      .update({ google_drive_connected: false })
-      .eq('id', userId)
-
-    throw new Error('Google Drive session expired. Please reconnect in Settings.')
-  }
-
-  const newExpiry = new Date(Date.now() + (newTokens.expires_in * 1000)).toISOString()
-
-  await supabaseAdmin
-    .from('google_drive_tokens')
-    .update({
-      access_token_encrypted: encryptToken(newTokens.access_token, encryptionKey),
-      token_expiry: newExpiry,
-      updated_at: new Date().toISOString()
-    })
-    .eq('user_id', userId)
-
-  return newTokens.access_token
-}
+import { refreshTokenIfNeeded, getUserTokens } from '../_shared/tokenManagement.ts'
+import { jsonResponse, errorResponse, handleCors } from '../_shared/cors.ts'
 
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+    return handleCors()
   }
 
   try {
@@ -109,44 +32,31 @@ Deno.serve(async (req) => {
     // Verify user
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Missing authorization header', 401)
     }
 
     const token = authHeader.replace('Bearer ', '')
     const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
 
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid user token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Invalid user token', 401)
     }
 
     // Get tokens
-    const { data: tokenData, error: tokenError } = await supabaseAdmin
-      .from('google_drive_tokens')
-      .select('access_token_encrypted, refresh_token_encrypted, token_expiry')
-      .eq('user_id', user.id)
-      .single()
+    const tokenData = await getUserTokens(supabaseAdmin, user.id)
 
-    if (tokenError || !tokenData) {
-      return new Response(JSON.stringify({ error: 'Google Drive not connected' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+    if (!tokenData) {
+      return errorResponse('Google Drive not connected', 400)
     }
 
-    const accessToken = await refreshTokenIfNeeded(
+    const accessToken = await refreshTokenIfNeeded({
       supabaseAdmin,
-      user.id,
+      userId: user.id,
       tokenData,
       encryptionKey,
       googleClientId,
       googleClientSecret
-    )
+    })
 
     const url = new URL(req.url)
     const action = url.searchParams.get('action') || 'list'
@@ -169,9 +79,7 @@ Deno.serve(async (req) => {
         ...(data.drives || []).map((d: any) => ({ ...d, type: 'shared' }))
       ]
 
-      return new Response(JSON.stringify({ drives }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return jsonResponse({ drives })
 
     } else if (action === 'list') {
       // List folders in a folder
@@ -194,11 +102,9 @@ Deno.serve(async (req) => {
         throw new Error(data.error.message)
       }
 
-      return new Response(JSON.stringify({
+      return jsonResponse({
         folders: data.files || [],
         parentId: folderId
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
 
     } else if (action === 'save-base') {
@@ -207,17 +113,11 @@ Deno.serve(async (req) => {
       const { folderId, folderPath, organizationId } = body
 
       if (!folderId) {
-        return new Response(JSON.stringify({ error: 'Missing folderId' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('Missing folderId', 400)
       }
 
       if (!organizationId) {
-        return new Response(JSON.stringify({ error: 'Missing organizationId' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('Missing organizationId', 400)
       }
 
       // Verify user is super admin
@@ -228,10 +128,7 @@ Deno.serve(async (req) => {
         .single()
 
       if (profileError || !profile?.is_super_admin) {
-        return new Response(JSON.stringify({ error: 'Super admin access required' }), {
-          status: 403,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('Super admin access required', 403)
       }
 
       // Save to organizations table (not user_profiles)
@@ -247,22 +144,14 @@ Deno.serve(async (req) => {
         throw new Error('Failed to save folder selection')
       }
 
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return jsonResponse({ success: true })
 
     } else {
-      return new Response(JSON.stringify({ error: 'Invalid action' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Invalid action', 400)
     }
 
   } catch (error) {
     console.error('[GoogleDriveFolders] Error:', error)
-    return new Response(JSON.stringify({ error: error.message || 'Request failed' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    return errorResponse(error.message || 'Request failed', 500)
   }
 })

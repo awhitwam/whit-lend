@@ -10,37 +10,13 @@
 //   TOKEN_ENCRYPTION_KEY - 32-character key for AES encryption
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-
-const corsHeaders = {
-  'Access-Control-Allow-Origin': '*',
-  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
-}
-
-// Simple XOR-based encryption (for demonstration - in production use Web Crypto API)
-function encryptToken(token: string, key: string): string {
-  const keyBytes = new TextEncoder().encode(key)
-  const tokenBytes = new TextEncoder().encode(token)
-  const encrypted = new Uint8Array(tokenBytes.length)
-  for (let i = 0; i < tokenBytes.length; i++) {
-    encrypted[i] = tokenBytes[i] ^ keyBytes[i % keyBytes.length]
-  }
-  return btoa(String.fromCharCode(...encrypted))
-}
-
-function decryptToken(encrypted: string, key: string): string {
-  const keyBytes = new TextEncoder().encode(key)
-  const encryptedBytes = Uint8Array.from(atob(encrypted), c => c.charCodeAt(0))
-  const decrypted = new Uint8Array(encryptedBytes.length)
-  for (let i = 0; i < encryptedBytes.length; i++) {
-    decrypted[i] = encryptedBytes[i] ^ keyBytes[i % keyBytes.length]
-  }
-  return new TextDecoder().decode(decrypted)
-}
+import { encryptToken, decryptToken } from '../_shared/crypto.ts'
+import { corsHeaders, jsonResponse, errorResponse, handleCors } from '../_shared/cors.ts'
 
 Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
-    return new Response(null, { headers: corsHeaders })
+    return handleCors()
   }
 
   try {
@@ -52,10 +28,7 @@ Deno.serve(async (req) => {
 
     if (!googleClientId || !googleClientSecret || !encryptionKey) {
       console.error('[GoogleDriveAuth] Missing required environment variables')
-      return new Response(JSON.stringify({ error: 'Google Drive integration not configured' }), {
-        status: 500,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Google Drive integration not configured', 500)
     }
 
     // Create admin client
@@ -66,20 +39,14 @@ Deno.serve(async (req) => {
     // Verify user authorization
     const authHeader = req.headers.get('Authorization')
     if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Missing authorization header', 401)
     }
 
     const token = authHeader.replace('Bearer ', '')
     const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token)
 
     if (userError || !user) {
-      return new Response(JSON.stringify({ error: 'Invalid user token' }), {
-        status: 401,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Invalid user token', 401)
     }
 
     const url = new URL(req.url)
@@ -92,10 +59,7 @@ Deno.serve(async (req) => {
       const { code, redirect_uri } = body
 
       if (!code || !redirect_uri) {
-        return new Response(JSON.stringify({ error: 'Missing code or redirect_uri' }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('Missing code or redirect_uri', 400)
       }
 
       console.log('[GoogleDriveAuth] Exchanging code for tokens')
@@ -117,10 +81,7 @@ Deno.serve(async (req) => {
 
       if (tokens.error) {
         console.error('[GoogleDriveAuth] Token exchange error:', tokens.error)
-        return new Response(JSON.stringify({ error: tokens.error_description || tokens.error }), {
-          status: 400,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse(tokens.error_description || tokens.error, 400)
       }
 
       // Get user info from Google
@@ -146,10 +107,7 @@ Deno.serve(async (req) => {
 
       if (upsertError) {
         console.error('[GoogleDriveAuth] Failed to store tokens:', upsertError)
-        return new Response(JSON.stringify({ error: 'Failed to store tokens' }), {
-          status: 500,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('Failed to store tokens', 500)
       }
 
       // Update user profile
@@ -165,11 +123,9 @@ Deno.serve(async (req) => {
         console.error('[GoogleDriveAuth] Failed to update profile:', profileError)
       }
 
-      return new Response(JSON.stringify({
+      return jsonResponse({
         success: true,
         email: googleUser.email
-      }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
 
     } else if (action === 'refresh') {
@@ -184,10 +140,7 @@ Deno.serve(async (req) => {
         .single()
 
       if (tokenError || !tokenData) {
-        return new Response(JSON.stringify({ error: 'No tokens found' }), {
-          status: 404,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('No tokens found', 404)
       }
 
       const refreshToken = decryptToken(tokenData.refresh_token_encrypted, encryptionKey)
@@ -214,10 +167,7 @@ Deno.serve(async (req) => {
           .update({ google_drive_connected: false })
           .eq('id', user.id)
 
-        return new Response(JSON.stringify({ error: 'Token refresh failed. Please reconnect.' }), {
-          status: 401,
-          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-        })
+        return errorResponse('Token refresh failed. Please reconnect.', 401)
       }
 
       // Update stored tokens
@@ -232,9 +182,7 @@ Deno.serve(async (req) => {
         })
         .eq('user_id', user.id)
 
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return jsonResponse({ success: true })
 
     } else if (action === 'disconnect') {
       // Revoke tokens and disconnect
@@ -276,22 +224,14 @@ Deno.serve(async (req) => {
         })
         .eq('id', user.id)
 
-      return new Response(JSON.stringify({ success: true }), {
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return jsonResponse({ success: true })
 
     } else {
-      return new Response(JSON.stringify({ error: 'Invalid action' }), {
-        status: 400,
-        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-      })
+      return errorResponse('Invalid action', 400)
     }
 
   } catch (error) {
     console.error('[GoogleDriveAuth] Error:', error)
-    return new Response(JSON.stringify({ error: error.message || 'Internal server error' }), {
-      status: 500,
-      headers: { ...corsHeaders, 'Content-Type': 'application/json' }
-    })
+    return errorResponse(error.message || 'Internal server error', 500)
   }
 })

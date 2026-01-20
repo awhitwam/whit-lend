@@ -13,6 +13,7 @@ import { ScrollArea } from '@/components/ui/scroll-area';
 import { Search, Calendar, ArrowDownRight } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Modal dialog for selecting from unreconciled bank entries
@@ -51,15 +52,6 @@ export default function BankEntryPicker({
         return true;
       });
   }, [bankEntries, excludeIds, search]);
-
-  const formatCurrency = (value) => {
-    const num = parseFloat(value) || 0;
-    return new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency: 'GBP',
-      minimumFractionDigits: 2
-    }).format(num);
-  };
 
   const formatDate = (dateStr) => {
     if (!dateStr) return '';

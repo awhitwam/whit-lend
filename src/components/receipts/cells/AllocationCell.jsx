@@ -3,6 +3,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { AlertCircle, Check } from 'lucide-react';
 import { cn } from '@/lib/utils';
+import { formatCurrency } from '@/lib/formatters';
 
 /**
  * Cell for allocating receipt amount across selected loans
@@ -30,15 +31,6 @@ const AllocationCell = forwardRef(function AllocationCell({
       }
     }
   }));
-
-  const formatCurrency = (value) => {
-    const num = parseFloat(value) || 0;
-    return new Intl.NumberFormat('en-GB', {
-      style: 'currency',
-      currency: 'GBP',
-      minimumFractionDigits: 2
-    }).format(num);
-  };
 
   // Get selected loans
   const selectedLoans = useMemo(() => {
