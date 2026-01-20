@@ -1487,6 +1487,9 @@ export default function LoanDetails() {
                     onClick={(e) => e.stopPropagation()}
                   >
                     {loan.borrower_name}
+                    {borrower?.unique_number && (
+                      <span className="text-sm text-slate-400 ml-1">(#{borrower.unique_number})</span>
+                    )}
                   </Link>
                 </h1>
               </div>

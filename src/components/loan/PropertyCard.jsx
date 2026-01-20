@@ -82,6 +82,8 @@ export default function PropertyCard({
         return <TreePine className="w-5 h-5" />;
       case 'Mixed Use':
         return <Warehouse className="w-5 h-5" />;
+      case 'Development Build':
+        return <Building2 className="w-5 h-5" />;
       default:
         return <Building2 className="w-5 h-5" />;
     }
@@ -97,6 +99,8 @@ export default function PropertyCard({
         return 'bg-green-100 text-green-600';
       case 'Mixed Use':
         return 'bg-amber-100 text-amber-600';
+      case 'Development Build':
+        return 'bg-orange-100 text-orange-600';
       default:
         return 'bg-slate-100 text-slate-600';
     }

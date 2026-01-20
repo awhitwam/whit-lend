@@ -429,20 +429,35 @@ export default function LoanFilesPanel({ loan, borrower }) {
     );
   }
 
-  // Error state
+  // Error state - check if it's an auth error
   if (folderError) {
+    const isAuthError = folderError.message?.toLowerCase().includes('reconnect') ||
+                        folderError.message?.toLowerCase().includes('expired') ||
+                        folderError.message?.toLowerCase().includes('session');
+
     return (
       <Card>
         <CardContent className="py-12 text-center">
           <AlertCircle className="w-12 h-12 mx-auto text-red-400 mb-4" />
-          <h3 className="text-lg font-medium text-slate-700 mb-2">Error Loading Files</h3>
+          <h3 className="text-lg font-medium text-slate-700 mb-2">
+            {isAuthError ? 'Google Drive Session Expired' : 'Error Loading Files'}
+          </h3>
           <p className="text-sm text-slate-500 mb-4">
-            {folderError.message}
+            {isAuthError
+              ? 'Your Google Drive connection has expired. Please reconnect in Settings.'
+              : folderError.message
+            }
           </p>
-          <Button variant="outline" onClick={() => queryClient.invalidateQueries(['loan-drive-folder', loan?.id])}>
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Retry
-          </Button>
+          {isAuthError ? (
+            <Button onClick={() => navigate('/Config')}>
+              Reconnect Google Drive
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={() => queryClient.invalidateQueries(['loan-drive-folder', loan?.id])}>
+              <RefreshCw className="w-4 h-4 mr-2" />
+              Retry
+            </Button>
+          )}
         </CardContent>
       </Card>
     );

@@ -211,7 +211,13 @@ async function refreshTokenIfNeeded(
   const newTokens = await refreshResponse.json()
 
   if (newTokens.error) {
-    throw new Error('Token refresh failed. Please reconnect Google Drive.')
+    // Mark user as disconnected when token refresh fails
+    await supabaseAdmin
+      .from('user_profiles')
+      .update({ google_drive_connected: false })
+      .eq('id', userId)
+
+    throw new Error('Google Drive session expired. Please reconnect in Settings.')
   }
 
   // Update stored tokens
@@ -274,8 +280,19 @@ Deno.serve(async (req) => {
       borrowerId,
       borrowerDescription,
       loanId,
-      loanDescription
+      loanDescription,
+      organizationId
     } = body
+
+    // Validate organizationId is always required
+    if (!organizationId) {
+      return new Response(JSON.stringify({
+        error: 'Missing required field: organizationId'
+      }), {
+        status: 400,
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+      })
+    }
 
     // Validate required fields based on action
     if (action === 'upload') {
@@ -287,7 +304,7 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
       }
-      console.log('[GoogleDriveUpload] Upload request:', { fileName, borrowerId, loanId })
+      console.log('[GoogleDriveUpload] Upload request:', { fileName, borrowerId, loanId, organizationId })
     } else if (action === 'create-folders') {
       if (!borrowerId || !loanId) {
         return new Response(JSON.stringify({
@@ -297,7 +314,7 @@ Deno.serve(async (req) => {
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
         })
       }
-      console.log('[GoogleDriveUpload] Create folders request:', { borrowerId, loanId })
+      console.log('[GoogleDriveUpload] Create folders request:', { borrowerId, loanId, organizationId })
     } else {
       return new Response(JSON.stringify({
         error: 'Invalid action. Use "upload" or "create-folders"'
@@ -307,10 +324,10 @@ Deno.serve(async (req) => {
       })
     }
 
-    // Get user's Google Drive settings and tokens
+    // Get user's Google Drive connection status (user-level)
     const { data: profile, error: profileError } = await supabaseAdmin
       .from('user_profiles')
-      .select('google_drive_connected, google_drive_base_folder_id')
+      .select('google_drive_connected')
       .eq('id', user.id)
       .single()
 
@@ -321,12 +338,23 @@ Deno.serve(async (req) => {
       })
     }
 
-    if (!profile.google_drive_base_folder_id) {
-      return new Response(JSON.stringify({ error: 'No base folder configured. Please select a base folder in Settings.' }), {
+    // Get organization's base folder (org-level)
+    const { data: orgData, error: orgError } = await supabaseAdmin
+      .from('organizations')
+      .select('google_drive_base_folder_id')
+      .eq('id', organizationId)
+      .single()
+
+    if (orgError || !orgData?.google_drive_base_folder_id) {
+      return new Response(JSON.stringify({
+        error: 'No base folder configured for this organization. Please select a base folder in Settings.'
+      }), {
         status: 400,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
       })
     }
+
+    const baseFolderId = orgData.google_drive_base_folder_id
 
     // Get tokens
     const { data: tokenData, error: tokenError } = await supabaseAdmin
@@ -356,7 +384,7 @@ Deno.serve(async (req) => {
     const borrowerFolderName = `${borrowerId} ${borrowerDescription || ''}`.trim()
     const borrowerFolderId = await findOrCreateFolder(
       accessToken,
-      profile.google_drive_base_folder_id,
+      baseFolderId,
       borrowerId,
       borrowerFolderName
     )

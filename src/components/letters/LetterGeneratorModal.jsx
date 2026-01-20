@@ -47,6 +47,7 @@ import {
 import { toast } from 'sonner';
 import { useGoogleDrive } from '@/hooks/useGoogleDrive';
 import EmailComposeModal from '@/components/email/EmailComposeModal';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
  * Multi-step modal for generating letters with attached reports
@@ -71,7 +72,15 @@ export default function LetterGeneratorModal({
 }) {
   const { user } = useAuth();
   const queryClient = useQueryClient();
-  const { isConnected: googleDriveConnected, uploadFile: uploadToGoogleDrive } = useGoogleDrive();
+  const { isConnected: googleDriveConnected, baseFolderId, uploadFile: uploadToGoogleDrive } = useGoogleDrive();
+
+  // Google Drive readiness check
+  const isDriveReady = googleDriveConnected && baseFolderId;
+  const driveDisabledReason = !googleDriveConnected
+    ? 'Google Drive not connected. Go to Settings to connect.'
+    : !baseFolderId
+      ? 'No base folder configured. Go to Settings to select a folder.'
+      : null;
 
   // Step management
   const [step, setStep] = useState(1);
@@ -952,30 +961,60 @@ export default function LetterGeneratorModal({
                     <Download className="w-4 h-4 mr-2" />
                     Download PDF
                   </Button>
-                  {googleDriveConnected && (
-                    <Button
-                      onClick={handleSaveToGoogleDrive}
-                      variant="outline"
-                      size="lg"
-                      disabled={isSavingToDrive}
-                    >
-                      {isSavingToDrive ? (
-                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                      ) : (
-                        <Cloud className="w-4 h-4 mr-2" />
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button
+                            onClick={handleSaveToGoogleDrive}
+                            variant="outline"
+                            size="lg"
+                            disabled={isSavingToDrive || !isDriveReady}
+                            className={!isDriveReady ? "opacity-50" : ""}
+                          >
+                            {isSavingToDrive ? (
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            ) : (
+                              <Cloud className="w-4 h-4 mr-2" />
+                            )}
+                            {isSavingToDrive ? 'Saving...' : 'Save to Google Drive'}
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {driveDisabledReason && (
+                        <TooltipContent>
+                          <p>{driveDisabledReason}</p>
+                        </TooltipContent>
                       )}
-                      {isSavingToDrive ? 'Saving...' : 'Save to Google Drive'}
-                    </Button>
-                  )}
-                  <Button
-                    onClick={handleSendEmail}
-                    variant="outline"
-                    size="lg"
-                    className="border-purple-300 text-purple-700 hover:bg-purple-50"
-                  >
-                    <Mail className="w-4 h-4 mr-2" />
-                    Send via Email
-                  </Button>
+                    </Tooltip>
+                  </TooltipProvider>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span>
+                          <Button
+                            onClick={handleSendEmail}
+                            variant="outline"
+                            size="lg"
+                            disabled={isSendingEmail || !isDriveReady}
+                            className={`border-purple-300 text-purple-700 hover:bg-purple-50 ${!isDriveReady ? "opacity-50" : ""}`}
+                          >
+                            {isSendingEmail ? (
+                              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                            ) : (
+                              <Mail className="w-4 h-4 mr-2" />
+                            )}
+                            Send via Email
+                          </Button>
+                        </span>
+                      </TooltipTrigger>
+                      {driveDisabledReason && (
+                        <TooltipContent>
+                          <p>{driveDisabledReason}</p>
+                        </TooltipContent>
+                      )}
+                    </Tooltip>
+                  </TooltipProvider>
                 </div>
 
                 {/* Summary */}

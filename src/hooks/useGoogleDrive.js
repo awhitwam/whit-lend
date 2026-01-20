@@ -26,6 +26,15 @@ async function getAccessToken() {
   return session.access_token;
 }
 
+// Check if error indicates auth/token issue
+const isAuthError = (errorMessage) => {
+  if (!errorMessage) return false;
+  const authKeywords = ['reconnect', 'expired', 'session', 'unauthorized', 'invalid token'];
+  return authKeywords.some(keyword =>
+    errorMessage.toLowerCase().includes(keyword)
+  );
+};
+
 export function useGoogleDrive() {
   const { user, isSuperAdmin } = useAuth();
   const { currentOrganization } = useOrganization();
@@ -219,7 +228,8 @@ export function useGoogleDrive() {
           borrowerId,
           borrowerDescription,
           loanId,
-          loanDescription
+          loanDescription,
+          organizationId: currentOrganization?.id
         })
       }
     );
@@ -227,11 +237,15 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
     return result;
-  }, [isConnected, baseFolderId]);
+  }, [isConnected, baseFolderId, loadConnectionStatus]);
 
   /**
    * Create folder structure in Google Drive (without uploading a file)
@@ -265,7 +279,8 @@ export function useGoogleDrive() {
           borrowerId,
           borrowerDescription,
           loanId,
-          loanDescription
+          loanDescription,
+          organizationId: currentOrganization?.id
         })
       }
     );
@@ -273,11 +288,15 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
     return result;
-  }, [isConnected, baseFolderId]);
+  }, [isConnected, baseFolderId, loadConnectionStatus]);
 
   /**
    * List shared drives
@@ -297,11 +316,15 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
     return result.drives || [];
-  }, []);
+  }, [loadConnectionStatus]);
 
   /**
    * List folders in a folder
@@ -323,11 +346,15 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
     return result.folders || [];
-  }, []);
+  }, [loadConnectionStatus]);
 
   /**
    * Save base folder selection (organization-level, super admin only)
@@ -358,6 +385,10 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
@@ -366,7 +397,7 @@ export function useGoogleDrive() {
     setBaseFolderPath(folderPath);
 
     return result;
-  }, [isSuperAdmin, currentOrganization?.id]);
+  }, [isSuperAdmin, currentOrganization?.id, loadConnectionStatus]);
 
   /**
    * List files and folders in a folder (for file browser)
@@ -388,11 +419,15 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
     return result.items || [];
-  }, []);
+  }, [loadConnectionStatus]);
 
   /**
    * List all files recursively (for flat view)
@@ -414,11 +449,15 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
     return result.items || [];
-  }, []);
+  }, [loadConnectionStatus]);
 
   /**
    * Create a subfolder in a folder
@@ -446,11 +485,15 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
     return result.folder;
-  }, []);
+  }, [loadConnectionStatus]);
 
   /**
    * Upload a file to a specific folder (for file browser uploads)
@@ -479,11 +522,15 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
       throw new Error(result.error);
     }
 
     return result.file;
-  }, []);
+  }, [loadConnectionStatus]);
 
   /**
    * Get or create loan folder structure and return folder IDs

@@ -328,6 +328,7 @@ export default function PropertyModal({
                         <SelectItem value="Commercial">Commercial</SelectItem>
                         <SelectItem value="Land">Land</SelectItem>
                         <SelectItem value="Mixed Use">Mixed Use</SelectItem>
+                        <SelectItem value="Development Build">Development Build</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>

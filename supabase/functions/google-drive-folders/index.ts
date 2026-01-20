@@ -67,7 +67,13 @@ async function refreshTokenIfNeeded(
   const newTokens = await refreshResponse.json()
 
   if (newTokens.error) {
-    throw new Error('Token refresh failed')
+    // Mark user as disconnected when token refresh fails
+    await supabaseAdmin
+      .from('user_profiles')
+      .update({ google_drive_connected: false })
+      .eq('id', userId)
+
+    throw new Error('Google Drive session expired. Please reconnect in Settings.')
   }
 
   const newExpiry = new Date(Date.now() + (newTokens.expires_in * 1000)).toISOString()
