@@ -51,6 +51,36 @@ import { toast } from 'sonner';
 import jsPDF from 'jspdf';
 import { logLetterEvent, AuditAction } from '@/lib/auditLog';
 
+// Helper to render text with clickable links
+const renderTextWithLinks = (text) => {
+  if (!text) return null;
+
+  // URL regex pattern - matches http, https, and www URLs
+  const urlPattern = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
+
+  const parts = text.split(urlPattern);
+
+  return parts.map((part, index) => {
+    if (part.match(urlPattern)) {
+      // Add https:// if it starts with www.
+      const href = part.startsWith('www.') ? `https://${part}` : part;
+      return (
+        <a
+          key={index}
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-blue-600 hover:text-blue-800 hover:underline"
+          onClick={(e) => e.stopPropagation()}
+        >
+          {part}
+        </a>
+      );
+    }
+    return part;
+  });
+};
+
 export default function LoanActivityPanel({ loan }) {
   const { user } = useAuth();
   const { currentOrganization } = useOrganization();
@@ -500,7 +530,7 @@ export default function LoanActivityPanel({ loan }) {
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-slate-700">
                             <span className="text-xs text-slate-500 mr-1.5">{activity.user_name || 'Unknown'}:</span>
-                            {activity.comment}
+                            {renderTextWithLinks(activity.comment)}
                           </p>
                         </div>
                         <div className="flex items-center gap-1 flex-shrink-0">
