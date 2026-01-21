@@ -25,7 +25,7 @@ export default function OrphanedEntries() {
   const [showAccepted, setShowAccepted] = useState(true);
   const [expandedYears, setExpandedYears] = useState(new Set());
 
-  // Accept orphan dialog state
+  // Accept orphan dialog state x
   const [acceptDialogOpen, setAcceptDialogOpen] = useState(false);
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [acceptReason, setAcceptReason] = useState('');
