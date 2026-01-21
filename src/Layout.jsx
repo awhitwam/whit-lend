@@ -39,7 +39,8 @@ import {
   Info,
   Crown,
   MessageSquare,
-  Mail
+  Mail,
+  Star
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
@@ -47,7 +48,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/comp
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useAuth } from '@/lib/AuthContext';
-import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
+import { getOrgItem, setOrgItem, getOrgJSON, setOrgJSON } from '@/lib/orgStorage';
 
 const navigation = [
   { name: 'Dashboard', href: 'Dashboard', icon: LayoutDashboard },
@@ -120,6 +121,43 @@ const navigation = [
   },
 ];
 
+// Icon lookup map for favorites (icons can't be serialized to storage)
+const iconMap = {
+  LayoutDashboard,
+  Users,
+  FileText,
+  Package,
+  Building2,
+  Receipt,
+  TrendingUp,
+  Settings,
+  UserCog,
+  History,
+  Wrench,
+  FileSpreadsheet,
+  CreditCard,
+  FolderInput,
+  ShieldCheck,
+  List,
+  UsersRound,
+  CircleDot,
+  CheckCircle2,
+  Clock,
+  AlertTriangle,
+  AlertCircle,
+  LayoutList,
+  RefreshCw,
+  Banknote,
+  FileCheck,
+  DollarSign,
+  Coins,
+  Info,
+  Crown,
+  MessageSquare,
+  Mail,
+  Star
+};
+
 // Function to filter navigation based on permissions
 const getFilteredNavigation = (canAdmin, isSuperAdmin) => {
   const filterChildren = (children) => {
@@ -161,6 +199,9 @@ export default function Layout({ children, currentPageName }) {
     const saved = getOrgItem('expandedMenus');
     return saved ? JSON.parse(saved) : ['Settings'];
   });
+  const [favorites, setFavorites] = useState(() => {
+    return getOrgJSON('favoriteNavItems', []);
+  });
   const { currentTheme, currentOrganization, canAdmin } = useOrganization();
   const { isSuperAdmin } = useAuth();
   const navigate = useNavigate();
@@ -183,6 +224,35 @@ export default function Layout({ children, currentPageName }) {
   useEffect(() => {
     setOrgItem('expandedMenus', JSON.stringify(expandedMenus));
   }, [expandedMenus]);
+
+  useEffect(() => {
+    setOrgJSON('favoriteNavItems', favorites);
+  }, [favorites]);
+
+  // Toggle favorite status for a menu item
+  const toggleFavorite = (item, e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setFavorites(prev => {
+      const exists = prev.some(f => f.href === item.href);
+      if (exists) {
+        return prev.filter(f => f.href !== item.href);
+      }
+      if (prev.length >= 5) {
+        // Already at max, don't add
+        return prev;
+      }
+      // Get icon name from the component
+      const iconName = item.icon?.name || item.icon?.displayName || 'Star';
+      return [...prev, {
+        name: item.name,
+        href: item.href,
+        iconName
+      }];
+    });
+  };
+
+  const isFavorite = (href) => favorites.some(f => f.href === href);
 
   const isActive = (pageName) => {
     if (!pageName) return false;
@@ -369,7 +439,7 @@ export default function Layout({ children, currentPageName }) {
                             to={createPageUrl(grandchild.href)}
                             onClick={isMobile ? () => setMobileMenuOpen(false) : undefined}
                             className={`
-                              flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all
+                              group flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all
                               ${isActive(grandchild.href)
                                 ? isMobile
                                   ? 'bg-slate-100 text-slate-900 font-medium'
@@ -381,7 +451,17 @@ export default function Layout({ children, currentPageName }) {
                             `}
                           >
                             <grandchild.icon className="w-4 h-4 flex-shrink-0" />
-                            {grandchild.name}
+                            <span className="flex-1">{grandchild.name}</span>
+                            {grandchild.href && (
+                              <button
+                                onClick={(e) => toggleFavorite(grandchild, e)}
+                                className={`transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                              >
+                                <Star
+                                  className={`w-3 h-3 ${isFavorite(grandchild.href) ? 'fill-amber-400 text-amber-400' : isMobile ? 'text-slate-400' : 'text-slate-500'}`}
+                                />
+                              </button>
+                            )}
                           </Link>
                         ))}
                       </div>
@@ -393,7 +473,7 @@ export default function Layout({ children, currentPageName }) {
                     to={createPageUrl(child.href)}
                     onClick={isMobile ? () => setMobileMenuOpen(false) : undefined}
                     className={`
-                      flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all
+                      group flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all
                       ${isActive(child.href)
                         ? isMobile
                           ? 'bg-slate-100 text-slate-900 font-medium'
@@ -405,8 +485,18 @@ export default function Layout({ children, currentPageName }) {
                     `}
                   >
                     <child.icon className="w-4 h-4 flex-shrink-0" />
-                    {child.name}
+                    <span className="flex-1">{child.name}</span>
                     {child.requiresSuperAdmin && <Crown className="w-3 h-3 text-amber-400" />}
+                    {child.href && (
+                      <button
+                        onClick={(e) => toggleFavorite(child, e)}
+                        className={`transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
+                      >
+                        <Star
+                          className={`w-3 h-3 ${isFavorite(child.href) ? 'fill-amber-400 text-amber-400' : isMobile ? 'text-slate-400' : 'text-slate-500'}`}
+                        />
+                      </button>
+                    )}
                   </Link>
                 )
               ))}
@@ -496,7 +586,67 @@ export default function Layout({ children, currentPageName }) {
 
             {/* Navigation */}
             <nav className="flex-1 space-y-1 px-2 py-4 overflow-y-auto">
-              {filteredNavigation.map((item) => renderNavItem(item, false))}
+              {/* Dashboard */}
+              {renderNavItem(filteredNavigation[0], false)}
+
+              {/* Favorites Section */}
+              {favorites.length > 0 && (
+                <div className="mt-1 mb-2 pb-2 border-b border-slate-700 ml-2">
+                  {!sidebarCollapsed && (
+                    <div className="text-xs font-semibold text-slate-500 px-3 py-1 uppercase tracking-wider">
+                      Favorites
+                    </div>
+                  )}
+                  {favorites.map(fav => {
+                    const IconComponent = iconMap[fav.iconName] || Star;
+                    const active = isActive(fav.href);
+                    const linkContent = (
+                      <Link
+                        key={fav.href}
+                        to={createPageUrl(fav.href)}
+                        className={`
+                          group flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all
+                          ${sidebarCollapsed ? 'justify-center' : ''}
+                          ${active
+                            ? 'bg-slate-800 text-white'
+                            : 'text-slate-400 hover:text-white hover:bg-slate-800/50'
+                          }
+                        `}
+                      >
+                        <IconComponent className="w-4 h-4 flex-shrink-0" />
+                        {!sidebarCollapsed && (
+                          <>
+                            <span className="flex-1">{fav.name}</span>
+                            <button
+                              onClick={(e) => toggleFavorite(fav, e)}
+                              className="opacity-0 group-hover:opacity-100 transition-opacity"
+                            >
+                              <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                            </button>
+                          </>
+                        )}
+                      </Link>
+                    );
+
+                    if (sidebarCollapsed) {
+                      return (
+                        <Tooltip key={fav.href}>
+                          <TooltipTrigger asChild>
+                            {linkContent}
+                          </TooltipTrigger>
+                          <TooltipContent side="right" className="bg-slate-800 text-white border-slate-700">
+                            {fav.name}
+                          </TooltipContent>
+                        </Tooltip>
+                      );
+                    }
+                    return linkContent;
+                  })}
+                </div>
+              )}
+
+              {/* Rest of navigation */}
+              {filteredNavigation.slice(1).map((item) => renderNavItem(item, false))}
             </nav>
 
             {/* Footer */}
@@ -551,7 +701,47 @@ export default function Layout({ children, currentPageName }) {
                 <OrganizationSwitcher />
               </div>
               <nav className="p-2">
-                {filteredNavigation.map((item) => renderNavItem(item, true))}
+                {/* Dashboard */}
+                {renderNavItem(filteredNavigation[0], true)}
+
+                {/* Favorites Section for Mobile */}
+                {favorites.length > 0 && (
+                  <div className="mt-2 mb-2 pb-2 border-b border-slate-200 ml-2">
+                    <div className="text-xs font-semibold text-slate-400 px-3 py-1 uppercase tracking-wider">
+                      Favorites
+                    </div>
+                    {favorites.map(fav => {
+                      const IconComponent = iconMap[fav.iconName] || Star;
+                      const active = isActive(fav.href);
+                      return (
+                        <Link
+                          key={fav.href}
+                          to={createPageUrl(fav.href)}
+                          onClick={() => setMobileMenuOpen(false)}
+                          className={`
+                            group flex items-center gap-3 px-3 py-2 rounded-lg text-sm transition-all
+                            ${active
+                              ? 'bg-slate-100 text-slate-900 font-medium'
+                              : 'text-slate-600 hover:bg-slate-50'
+                            }
+                          `}
+                        >
+                          <IconComponent className="w-4 h-4 flex-shrink-0" />
+                          <span className="flex-1">{fav.name}</span>
+                          <button
+                            onClick={(e) => toggleFavorite(fav, e)}
+                            className="opacity-100"
+                          >
+                            <Star className="w-3 h-3 fill-amber-400 text-amber-400" />
+                          </button>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Rest of navigation */}
+                {filteredNavigation.slice(1).map((item) => renderNavItem(item, true))}
               </nav>
             </div>
           </div>
