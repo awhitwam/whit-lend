@@ -649,7 +649,7 @@ export async function unreconcile({ bankEntryId, reconciliationEntries, deleteCr
  * @param {Array} params.bankEntries - Bank entries being matched (with amounts)
  * @param {Array} params.targetTransactions - Target transactions to match to
  * @param {string} params.matchType - Type of match
- * @param {string} params.relationshipType - 'many-to-one' | 'one-to-many' | 'one-to-one'
+ * @param {string} params.relationshipType - 'many-to-one' | 'one-to-many' | 'one-to-one' | 'net-receipt'
  * @returns {Promise<void>}
  */
 export async function executeManualMatch({
@@ -660,7 +660,15 @@ export async function executeManualMatch({
   relationshipType
 }) {
   // Calculate totals for validation
-  const bankTotal = bankEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+  // For net-receipt: use signed amounts (credits - debits)
+  // For others: use absolute sum
+  let bankTotal;
+  if (relationshipType === 'net-receipt') {
+    // Net amount: sum of signed values
+    bankTotal = Math.abs(bankEntries.reduce((sum, e) => sum + e.amount, 0));
+  } else {
+    bankTotal = bankEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+  }
   const transactionTotal = targetTransactions.reduce((sum, t) => sum + Math.abs(t.amount), 0);
 
   // CRITICAL: Validate amounts balance before proceeding
@@ -669,7 +677,34 @@ export async function executeManualMatch({
   const isLoanType = matchType === 'loan_repayment' || matchType === 'loan_disbursement';
   const isInvestorType = matchType === 'investor_credit' || matchType === 'investor_withdrawal';
 
-  if (relationshipType === 'many-to-one') {
+  if (relationshipType === 'net-receipt') {
+    // Multiple bank entries (mixed credit/debit) → single target
+    // Net amount (credits - debits) = target amount
+    const target = targetTransactions[0];
+    const netAmount = bankEntries.reduce((sum, e) => sum + e.amount, 0);
+
+    for (const bankEntry of bankEntries) {
+      await createReconciliationEntry({
+        bankStatementId: bankEntry.id,
+        loanTransactionId: isLoanType ? target.id : null,
+        investorTransactionId: isInvestorType ? target.id : null,
+        amount: bankEntry.amount, // Keep signed amount for audit trail
+        reconciliationType: matchType,
+        notes: `Net receipt match: ${bankEntries.length} entries (net ${netAmount.toFixed(2)})`,
+        wasCreated: false
+      });
+
+      await markBankEntryReconciled(bankEntry.id);
+    }
+
+    logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
+      bank_entry_count: bankEntries.length,
+      target_count: 1,
+      net_amount: netAmount,
+      match_type: matchType,
+      relationship: relationshipType
+    });
+  } else if (relationshipType === 'many-to-one') {
     // Multiple bank entries → single target
     const target = targetTransactions[0];
     for (const bankEntry of bankEntries) {

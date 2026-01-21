@@ -46,14 +46,39 @@ export default function ManualMatchDialog({
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedTargets, setSelectedTargets] = useState(new Set());
 
-  // Calculate bank total
-  const bankTotal = useMemo(() => {
-    return selectedBankEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+  // Calculate bank total - NET for mixed directions, ABS for same direction
+  const { bankTotal, isNetMatch, totalCredits, totalDebits } = useMemo(() => {
+    const credits = selectedBankEntries.filter(e => e.amount > 0);
+    const debits = selectedBankEntries.filter(e => e.amount < 0);
+
+    const creditsSum = credits.reduce((sum, e) => sum + e.amount, 0);
+    const debitsSum = debits.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+
+    // Net match if we have both credits and debits
+    const isMixed = credits.length > 0 && debits.length > 0;
+
+    if (isMixed) {
+      // Net = credits - debits
+      return {
+        bankTotal: creditsSum - debitsSum,
+        isNetMatch: true,
+        totalCredits: creditsSum,
+        totalDebits: debitsSum
+      };
+    }
+
+    // Same direction: use absolute sum
+    return {
+      bankTotal: selectedBankEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0),
+      isNetMatch: false,
+      totalCredits: creditsSum,
+      totalDebits: debitsSum
+    };
   }, [selectedBankEntries]);
 
-  // Check if all bank entries are same direction
-  const isCredits = selectedBankEntries.every(e => e.amount > 0);
-  const isDebits = selectedBankEntries.every(e => e.amount < 0);
+  // Check if all bank entries are same direction (for non-net matches)
+  const isCredits = !isNetMatch && selectedBankEntries.every(e => e.amount > 0);
+  const isDebits = !isNetMatch && selectedBankEntries.every(e => e.amount < 0);
   const isManyBankEntries = selectedBankEntries.length > 1;
 
   // Get borrower name
@@ -66,9 +91,16 @@ export default function ManualMatchDialog({
   const filteredLoanTxs = useMemo(() => {
     let txs = loanTransactions.filter(tx => {
       if (tx.is_deleted) return false;
-      // Credits match to repayments, debits to disbursements
-      if (isCredits && tx.type !== 'Repayment') return false;
-      if (isDebits && tx.type !== 'Disbursement') return false;
+
+      if (isNetMatch) {
+        // Net positive = repayment, net negative = disbursement
+        if (bankTotal > 0 && tx.type !== 'Repayment') return false;
+        if (bankTotal < 0 && tx.type !== 'Disbursement') return false;
+      } else {
+        // Credits match to repayments, debits to disbursements
+        if (isCredits && tx.type !== 'Repayment') return false;
+        if (isDebits && tx.type !== 'Disbursement') return false;
+      }
       return true;
     });
 
@@ -83,14 +115,20 @@ export default function ManualMatchDialog({
     }
 
     return txs.slice(0, 50); // Limit for performance
-  }, [loanTransactions, loans, borrowers, searchTerm, isCredits, isDebits]);
+  }, [loanTransactions, loans, borrowers, searchTerm, isCredits, isDebits, isNetMatch, bankTotal]);
 
   // Filter investor transactions
   const filteredInvestorTxs = useMemo(() => {
     let txs = investorTransactions.filter(tx => {
-      // Credits match to capital_in, debits to capital_out
-      if (isCredits && tx.type !== 'capital_in') return false;
-      if (isDebits && tx.type !== 'capital_out') return false;
+      if (isNetMatch) {
+        // Net positive = capital_in, net negative = capital_out
+        if (bankTotal > 0 && tx.type !== 'capital_in') return false;
+        if (bankTotal < 0 && tx.type !== 'capital_out') return false;
+      } else {
+        // Credits match to capital_in, debits to capital_out
+        if (isCredits && tx.type !== 'capital_in') return false;
+        if (isDebits && tx.type !== 'capital_out') return false;
+      }
       return true;
     });
 
@@ -104,7 +142,7 @@ export default function ManualMatchDialog({
     }
 
     return txs.slice(0, 50);
-  }, [investorTransactions, investors, searchTerm, isCredits, isDebits]);
+  }, [investorTransactions, investors, searchTerm, isCredits, isDebits, isNetMatch, bankTotal]);
 
   // Filter expenses (only for debits)
   const filteredExpenses = useMemo(() => {
@@ -141,8 +179,9 @@ export default function ManualMatchDialog({
     return total;
   }, [selectedTargets, activeTab, loanTransactions, investorTransactions, expenses]);
 
-  // Check if amounts balance
-  const difference = Math.abs(bankTotal - selectedTotal);
+  // Check if amounts balance (use absolute bankTotal for comparison)
+  const absBankTotal = Math.abs(bankTotal);
+  const difference = Math.abs(absBankTotal - selectedTotal);
   const isBalanced = difference < 0.01;
 
   // Toggle target selection
@@ -171,14 +210,22 @@ export default function ManualMatchDialog({
 
   // Determine match type and relationship
   const getMatchInfo = () => {
-    const matchType = activeTab === 'loans'
-      ? (isCredits ? 'loan_repayment' : 'loan_disbursement')
-      : activeTab === 'investors'
-        ? (isCredits ? 'investor_credit' : 'investor_withdrawal')
-        : 'expense';
+    let matchType;
+    if (activeTab === 'loans') {
+      // For net matches, use the sign of bankTotal; for same-direction, use isCredits
+      const isPositive = isNetMatch ? bankTotal > 0 : isCredits;
+      matchType = isPositive ? 'loan_repayment' : 'loan_disbursement';
+    } else if (activeTab === 'investors') {
+      const isPositive = isNetMatch ? bankTotal > 0 : isCredits;
+      matchType = isPositive ? 'investor_credit' : 'investor_withdrawal';
+    } else {
+      matchType = 'expense';
+    }
 
     let relationshipType;
-    if (isManyBankEntries && selectedTargets.size === 1) {
+    if (isNetMatch) {
+      relationshipType = 'net-receipt';
+    } else if (isManyBankEntries && selectedTargets.size === 1) {
       relationshipType = 'many-to-one';
     } else if (!isManyBankEntries && selectedTargets.size > 1) {
       relationshipType = 'one-to-many';
@@ -238,12 +285,31 @@ export default function ManualMatchDialog({
                 </div>
               ))}
             </div>
-            <div className="mt-2 pt-2 border-t flex items-center justify-between">
-              <span className="text-sm font-medium">Total</span>
-              <span className={`font-mono font-bold ${isCredits ? 'text-emerald-600' : 'text-red-600'}`}>
-                {formatCurrency(bankTotal)}
-              </span>
-            </div>
+            {isNetMatch ? (
+              <div className="mt-2 pt-2 border-t space-y-1">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-emerald-600">Credits:</span>
+                  <span className="text-emerald-600 font-mono">+{formatCurrency(totalCredits)}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-red-600">Refunds/Debits:</span>
+                  <span className="text-red-600 font-mono">-{formatCurrency(totalDebits)}</span>
+                </div>
+                <div className="flex items-center justify-between pt-1 border-t">
+                  <span className="text-sm font-bold">Net Amount</span>
+                  <span className={`font-mono font-bold ${bankTotal > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {formatCurrency(bankTotal)}
+                  </span>
+                </div>
+              </div>
+            ) : (
+              <div className="mt-2 pt-2 border-t flex items-center justify-between">
+                <span className="text-sm font-medium">Total</span>
+                <span className={`font-mono font-bold ${isCredits ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {formatCurrency(bankTotal)}
+                </span>
+              </div>
+            )}
           </div>
 
           <ArrowRight className="w-6 h-6 mx-auto text-slate-400" />
@@ -392,8 +458,8 @@ export default function ManualMatchDialog({
           <div className="p-3 border rounded-lg">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm text-slate-500">Bank Total</p>
-                <p className="font-mono font-bold">{formatCurrency(bankTotal)}</p>
+                <p className="text-sm text-slate-500">{isNetMatch ? 'Net Amount' : 'Bank Total'}</p>
+                <p className="font-mono font-bold">{formatCurrency(absBankTotal)}</p>
               </div>
               <div className="text-center">
                 <p className="text-sm text-slate-500">Selected</p>
@@ -413,7 +479,7 @@ export default function ManualMatchDialog({
             <Alert className="border-amber-200 bg-amber-50">
               <AlertCircle className="w-4 h-4 text-amber-600" />
               <AlertDescription className="text-amber-800 text-sm">
-                Amounts don't balance. Select transactions totaling {formatCurrency(bankTotal)}.
+                Amounts don't balance. Select transactions totaling {formatCurrency(absBankTotal)}.
               </AlertDescription>
             </Alert>
           )}

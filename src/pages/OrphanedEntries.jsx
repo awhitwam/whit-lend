@@ -11,14 +11,15 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Checkbox } from "@/components/ui/checkbox";
-import { AlertCircle, Search, Loader2, ChevronLeft, ChevronRight, ChevronDown, Check, X, Eye, EyeOff } from 'lucide-react';
-import { format, getYear } from 'date-fns';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { AlertCircle, Search, Loader2, ChevronDown, Check, X, Eye, EyeOff, Trash2, AlertTriangle, Unlink } from 'lucide-react';
+import { format } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { toast } from 'sonner';
 
 export default function OrphanedEntries() {
+  const [activeTab, setActiveTab] = useState('unreconciled');
   const [typeFilter, setTypeFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
   const [showAccepted, setShowAccepted] = useState(true);
@@ -29,6 +30,11 @@ export default function OrphanedEntries() {
   const [selectedEntry, setSelectedEntry] = useState(null);
   const [acceptReason, setAcceptReason] = useState('');
 
+  // Cleanup dialog state for orphaned reconciliations
+  const [cleanupDialogOpen, setCleanupDialogOpen] = useState(false);
+  const [selectedOrphanedReconciliation, setSelectedOrphanedReconciliation] = useState(null);
+  const [cleaningUp, setCleaningUp] = useState(false);
+
   const queryClient = useQueryClient();
 
   // Query all reconciliation entries to know what's already reconciled
@@ -36,6 +42,12 @@ export default function OrphanedEntries() {
   const { data: reconciliationEntries = [] } = useQuery({
     queryKey: ['reconciliation-entries-all'],
     queryFn: () => api.entities.ReconciliationEntry.listAll()
+  });
+
+  // Query bank statements to show details for orphaned reconciliation entries
+  const { data: bankStatements = [] } = useQuery({
+    queryKey: ['bank-statements-all'],
+    queryFn: () => api.entities.BankStatement.listAll('-date')
   });
 
   // Query accepted orphans
@@ -74,10 +86,10 @@ export default function OrphanedEntries() {
     queryFn: () => api.entities.InvestorInterest.list('-date')
   });
 
-  // Expenses
+  // Expenses - use listAll() to ensure we get all records
   const { data: expenses = [], isLoading: loadingExpenses } = useQuery({
     queryKey: ['expenses-all'],
-    queryFn: () => api.entities.Expense.list('-date')
+    queryFn: () => api.entities.Expense.listAll('-date')
   });
 
   // Other income
@@ -254,6 +266,109 @@ export default function OrphanedEntries() {
     return entries.sort((a, b) => new Date(b.date) - new Date(a.date));
   }, [loans, investors, loanTransactions, investorTransactions, investorInterest, expenses, otherIncome, receipts, reconciledIds, acceptedOrphanMap]);
 
+  // Detect two types of orphaned reconciliations:
+  // 1. Bank statements marked as reconciled but with NO reconciliation entries (entries were deleted)
+  // 2. Reconciliation entries where the linked entity is NULL (entity was deleted with SET NULL)
+  const orphanedReconciliations = useMemo(() => {
+    const orphans = [];
+
+    // Build map of bank statement ID -> count of reconciliation entries
+    const bankStatementEntryCounts = new Map();
+    reconciliationEntries.forEach(re => {
+      if (re.bank_statement_id) {
+        bankStatementEntryCounts.set(
+          re.bank_statement_id,
+          (bankStatementEntryCounts.get(re.bank_statement_id) || 0) + 1
+        );
+      }
+    });
+
+    // Type 1: Bank statements marked as reconciled but with no entries (or 0 entries)
+    bankStatements
+      .filter(bs => bs.is_reconciled && (!bankStatementEntryCounts.has(bs.id) || bankStatementEntryCounts.get(bs.id) === 0))
+      .forEach(bs => {
+        orphans.push({
+          id: `orphan-bs-${bs.id}`,
+          type: 'missing_entries',
+          bankStatement: bs,
+          bank_statement_id: bs.id,
+          reconciliation_type: 'unknown',
+          expectedType: 'unknown'
+        });
+      });
+
+    // Type 2: Reconciliation entries where linked entity is NULL or entity no longer exists
+    const bankStatementMap = new Map(bankStatements.map(bs => [bs.id, bs]));
+
+    // Build lookup sets for existing entities
+    const existingExpenseIds = new Set(expenses.map(e => e.id));
+    const existingLoanTxIds = new Set(loanTransactions.map(t => t.id));
+    const existingInvestorTxIds = new Set(investorTransactions.map(t => t.id));
+    const existingInterestIds = new Set(investorInterest.map(i => i.id));
+    const existingOtherIncomeIds = new Set(otherIncome.map(o => o.id));
+
+    reconciliationEntries.forEach(re => {
+      let isOrphaned = false;
+      let expectedType = null;
+
+      // ALWAYS check each FK to see if it points to a non-existent entity
+      // Don't rely on reconciliation_type as it may not be set for older entries
+
+      // Check expense_id - if set, does the expense still exist?
+      if (re.expense_id && !existingExpenseIds.has(re.expense_id)) {
+        isOrphaned = true;
+        expectedType = 'expense';
+      }
+      // Check loan_transaction_id
+      else if (re.loan_transaction_id && !existingLoanTxIds.has(re.loan_transaction_id)) {
+        isOrphaned = true;
+        expectedType = re.reconciliation_type || 'loan_transaction';
+      }
+      // Check investor_transaction_id
+      else if (re.investor_transaction_id && !existingInvestorTxIds.has(re.investor_transaction_id)) {
+        isOrphaned = true;
+        expectedType = re.reconciliation_type || 'investor_transaction';
+      }
+      // Check interest_id
+      else if (re.interest_id && !existingInterestIds.has(re.interest_id)) {
+        isOrphaned = true;
+        expectedType = 'investor_interest';
+      }
+      // Check other_income_id
+      else if (re.other_income_id && !existingOtherIncomeIds.has(re.other_income_id)) {
+        isOrphaned = true;
+        expectedType = 'other_income';
+      }
+      // Finally: Check if ALL entity FKs are NULL (completely orphaned record)
+      else {
+        const hasNoLinkedEntity = !re.expense_id && !re.loan_transaction_id &&
+                                  !re.investor_transaction_id && !re.interest_id &&
+                                  !re.other_income_id;
+        if (hasNoLinkedEntity) {
+          isOrphaned = true;
+          expectedType = re.reconciliation_type || 'unknown';
+        }
+      }
+
+      if (isOrphaned) {
+        const bankStatement = bankStatementMap.get(re.bank_statement_id);
+        orphans.push({
+          ...re,
+          type: 'null_reference',
+          expectedType,
+          bankStatement
+        });
+      }
+    });
+
+    // Sort by bank statement date descending
+    return orphans.sort((a, b) => {
+      const dateA = a.bankStatement?.date || '1970-01-01';
+      const dateB = b.bankStatement?.date || '1970-01-01';
+      return new Date(dateB) - new Date(dateA);
+    });
+  }, [reconciliationEntries, bankStatements, expenses, loanTransactions, investorTransactions, investorInterest, otherIncome]);
+
   // Filter entries by type, search, and accepted status
   const filteredEntries = useMemo(() => {
     let filtered = orphanedEntries;
@@ -412,6 +527,104 @@ export default function OrphanedEntries() {
     }
   });
 
+  // Cleanup orphaned reconciliation entry
+  const handleCleanupOrphanedReconciliation = async (entry) => {
+    setCleaningUp(true);
+    try {
+      if (entry.type === 'missing_entries') {
+        // Type 1: Bank statement is reconciled but has no entries - just un-reconcile it
+        await api.entities.BankStatement.update(entry.bank_statement_id, {
+          is_reconciled: false,
+          reconciled_at: null
+        });
+      } else {
+        // Type 2: Reconciliation entry exists but linked entity is NULL
+        // Delete the orphaned reconciliation entry
+        await api.entities.ReconciliationEntry.delete(entry.id);
+
+        // Check if bank statement has any other reconciliation entries
+        const remainingEntries = reconciliationEntries.filter(
+          re => re.bank_statement_id === entry.bank_statement_id && re.id !== entry.id
+        );
+
+        // If no remaining entries, un-reconcile the bank statement
+        if (remainingEntries.length === 0 && entry.bank_statement_id) {
+          await api.entities.BankStatement.update(entry.bank_statement_id, {
+            is_reconciled: false,
+            reconciled_at: null
+          });
+        }
+      }
+
+      // Refresh data
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-entries-all'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-statements-all'] });
+
+      toast.success('Orphaned reconciliation cleaned up. Bank statement can now be re-reconciled.');
+      setCleanupDialogOpen(false);
+      setSelectedOrphanedReconciliation(null);
+    } catch (error) {
+      toast.error('Failed to cleanup: ' + error.message);
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
+  // Bulk cleanup all orphaned reconciliations
+  const handleBulkCleanup = async () => {
+    if (orphanedReconciliations.length === 0) return;
+
+    setCleaningUp(true);
+    try {
+      // Track which bank statements we need to un-reconcile
+      const affectedBankStatementIds = new Set();
+
+      for (const entry of orphanedReconciliations) {
+        if (entry.type === 'missing_entries') {
+          // Type 1: Just mark bank statement ID for un-reconciliation
+          affectedBankStatementIds.add(entry.bank_statement_id);
+        } else {
+          // Type 2: Delete the reconciliation entry
+          await api.entities.ReconciliationEntry.delete(entry.id);
+          if (entry.bank_statement_id) {
+            affectedBankStatementIds.add(entry.bank_statement_id);
+          }
+        }
+      }
+
+      // Un-reconcile all affected bank statements that have no remaining entries
+      const deletedEntryIds = new Set(
+        orphanedReconciliations
+          .filter(o => o.type !== 'missing_entries')
+          .map(o => o.id)
+      );
+      const updatedReconciliationEntries = reconciliationEntries.filter(
+        re => !deletedEntryIds.has(re.id)
+      );
+
+      for (const bsId of affectedBankStatementIds) {
+        const hasRemainingEntries = updatedReconciliationEntries.some(
+          re => re.bank_statement_id === bsId
+        );
+        if (!hasRemainingEntries) {
+          await api.entities.BankStatement.update(bsId, {
+            is_reconciled: false,
+            reconciled_at: null
+          });
+        }
+      }
+
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-entries-all'] });
+      queryClient.invalidateQueries({ queryKey: ['bank-statements-all'] });
+
+      toast.success(`Cleaned up ${orphanedReconciliations.length} orphaned reconciliation entries.`);
+    } catch (error) {
+      toast.error('Failed to cleanup: ' + error.message);
+    } finally {
+      setCleaningUp(false);
+    }
+  };
+
   const handleAcceptClick = (entry) => {
     setSelectedEntry(entry);
     setAcceptReason('');
@@ -469,6 +682,25 @@ export default function OrphanedEntries() {
     }
   };
 
+  const formatReconciliationType = (type) => {
+    switch (type) {
+      case 'expense': return 'Expense';
+      case 'investor_interest': return 'Investor Interest';
+      case 'other_income': return 'Other Income';
+      case 'loan_repayment': return 'Loan Repayment';
+      case 'loan_disbursement': return 'Loan Disbursement';
+      case 'investor_credit': return 'Investor Credit';
+      case 'investor_withdrawal': return 'Investor Withdrawal';
+      case 'unknown': return 'Unknown';
+      default: return type;
+    }
+  };
+
+  const handleCleanupClick = (entry) => {
+    setSelectedOrphanedReconciliation(entry);
+    setCleanupDialogOpen(true);
+  };
+
   const handleFindMatch = (entry) => {
     const searchValue = entry.entityName || formatCurrency(Math.abs(entry.amount));
     window.location.href = createPageUrl(`BankReconciliation?search=${encodeURIComponent(searchValue)}`);
@@ -485,48 +717,68 @@ export default function OrphanedEntries() {
               System transactions not linked to bank statements
             </p>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant={showAccepted ? "default" : "outline"}
-              size="sm"
-              onClick={() => setShowAccepted(!showAccepted)}
-            >
-              {showAccepted ? <Eye className="w-4 h-4 mr-2" /> : <EyeOff className="w-4 h-4 mr-2" />}
-              {showAccepted ? 'Showing Accepted' : 'Show Accepted'} ({statsByType.accepted})
-            </Button>
-          </div>
         </div>
 
-        {/* Summary Stats */}
-        <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
-          <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'loan_transaction' ? 'ring-2 ring-blue-500' : 'hover:bg-blue-50'}`} onClick={() => setTypeFilter(typeFilter === 'loan_transaction' ? 'all' : 'loan_transaction')}>
-            <p className="text-xs text-slate-500">Loan Transactions</p>
-            <p className="text-xl font-bold text-blue-600">{statsByType.loan_transaction}</p>
-          </Card>
-          <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'investor_transaction' ? 'ring-2 ring-purple-500' : 'hover:bg-purple-50'}`} onClick={() => setTypeFilter(typeFilter === 'investor_transaction' ? 'all' : 'investor_transaction')}>
-            <p className="text-xs text-slate-500">Investor Transactions</p>
-            <p className="text-xl font-bold text-purple-600">{statsByType.investor_transaction}</p>
-          </Card>
-          <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'investor_interest' ? 'ring-2 ring-amber-500' : 'hover:bg-amber-50'}`} onClick={() => setTypeFilter(typeFilter === 'investor_interest' ? 'all' : 'investor_interest')}>
-            <p className="text-xs text-slate-500">Investor Interest</p>
-            <p className="text-xl font-bold text-amber-600">{statsByType.investor_interest}</p>
-          </Card>
-          <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'expense' ? 'ring-2 ring-red-500' : 'hover:bg-red-50'}`} onClick={() => setTypeFilter(typeFilter === 'expense' ? 'all' : 'expense')}>
-            <p className="text-xs text-slate-500">Expenses</p>
-            <p className="text-xl font-bold text-red-600">{statsByType.expense}</p>
-          </Card>
-          <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'other_income' ? 'ring-2 ring-emerald-500' : 'hover:bg-emerald-50'}`} onClick={() => setTypeFilter(typeFilter === 'other_income' ? 'all' : 'other_income')}>
-            <p className="text-xs text-slate-500">Other Income</p>
-            <p className="text-xl font-bold text-emerald-600">{statsByType.other_income}</p>
-          </Card>
-          <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'receipt' ? 'ring-2 ring-cyan-500' : 'hover:bg-cyan-50'}`} onClick={() => setTypeFilter(typeFilter === 'receipt' ? 'all' : 'receipt')}>
-            <p className="text-xs text-slate-500">Receipts</p>
-            <p className="text-xl font-bold text-cyan-600">{statsByType.receipt}</p>
-          </Card>
-        </div>
+        <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+          <TabsList>
+            <TabsTrigger value="unreconciled" className="relative">
+              Unreconciled Items
+              {filteredEntries.length > 0 && (
+                <Badge variant="secondary" className="ml-2">{filteredEntries.length}</Badge>
+              )}
+            </TabsTrigger>
+            <TabsTrigger value="orphaned-reconciliations" className="relative">
+              <AlertTriangle className="w-4 h-4 mr-1.5 text-amber-500" />
+              Broken Reconciliations
+              {orphanedReconciliations.length > 0 && (
+                <Badge variant="destructive" className="ml-2">{orphanedReconciliations.length}</Badge>
+              )}
+            </TabsTrigger>
+          </TabsList>
 
-        {/* Main Content */}
-        <Card>
+          <TabsContent value="unreconciled" className="space-y-4">
+            {/* Show Accepted Button */}
+            <div className="flex items-center justify-end gap-2">
+              <Button
+                variant={showAccepted ? "default" : "outline"}
+                size="sm"
+                onClick={() => setShowAccepted(!showAccepted)}
+              >
+                {showAccepted ? <Eye className="w-4 h-4 mr-2" /> : <EyeOff className="w-4 h-4 mr-2" />}
+                {showAccepted ? 'Showing Accepted' : 'Show Accepted'} ({statsByType.accepted})
+              </Button>
+            </div>
+
+            {/* Summary Stats */}
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
+              <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'loan_transaction' ? 'ring-2 ring-blue-500' : 'hover:bg-blue-50'}`} onClick={() => setTypeFilter(typeFilter === 'loan_transaction' ? 'all' : 'loan_transaction')}>
+                <p className="text-xs text-slate-500">Loan Transactions</p>
+                <p className="text-xl font-bold text-blue-600">{statsByType.loan_transaction}</p>
+              </Card>
+              <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'investor_transaction' ? 'ring-2 ring-purple-500' : 'hover:bg-purple-50'}`} onClick={() => setTypeFilter(typeFilter === 'investor_transaction' ? 'all' : 'investor_transaction')}>
+                <p className="text-xs text-slate-500">Investor Transactions</p>
+                <p className="text-xl font-bold text-purple-600">{statsByType.investor_transaction}</p>
+              </Card>
+              <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'investor_interest' ? 'ring-2 ring-amber-500' : 'hover:bg-amber-50'}`} onClick={() => setTypeFilter(typeFilter === 'investor_interest' ? 'all' : 'investor_interest')}>
+                <p className="text-xs text-slate-500">Investor Interest</p>
+                <p className="text-xl font-bold text-amber-600">{statsByType.investor_interest}</p>
+              </Card>
+              <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'expense' ? 'ring-2 ring-red-500' : 'hover:bg-red-50'}`} onClick={() => setTypeFilter(typeFilter === 'expense' ? 'all' : 'expense')}>
+                <p className="text-xs text-slate-500">Expenses</p>
+                <p className="text-xl font-bold text-red-600">{statsByType.expense}</p>
+              </Card>
+              <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'other_income' ? 'ring-2 ring-emerald-500' : 'hover:bg-emerald-50'}`} onClick={() => setTypeFilter(typeFilter === 'other_income' ? 'all' : 'other_income')}>
+                <p className="text-xs text-slate-500">Other Income</p>
+                <p className="text-xl font-bold text-emerald-600">{statsByType.other_income}</p>
+              </Card>
+              <Card className={`p-4 cursor-pointer transition-colors ${typeFilter === 'receipt' ? 'ring-2 ring-cyan-500' : 'hover:bg-cyan-50'}`} onClick={() => setTypeFilter(typeFilter === 'receipt' ? 'all' : 'receipt')}>
+                <p className="text-xs text-slate-500">Receipts</p>
+                <p className="text-xl font-bold text-cyan-600">{statsByType.receipt}</p>
+              </Card>
+            </div>
+
+            {/* Main Content */}
+            <Card>
           <CardHeader>
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
               <div className="flex items-center gap-2">
@@ -724,7 +976,185 @@ export default function OrphanedEntries() {
             )}
           </CardContent>
         </Card>
+          </TabsContent>
+
+          <TabsContent value="orphaned-reconciliations" className="space-y-4">
+            {/* Orphaned Reconciliations - bank statements marked as reconciled but linked entity deleted */}
+            <Card>
+              <CardHeader>
+                <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="w-5 h-5 text-amber-500" />
+                    <div>
+                      <CardTitle>Broken Reconciliation Links</CardTitle>
+                      <CardDescription>
+                        Bank statements reconciled to deleted entities. These need cleanup so the bank entries can be re-reconciled.
+                      </CardDescription>
+                    </div>
+                  </div>
+                  {orphanedReconciliations.length > 0 && (
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={handleBulkCleanup}
+                      disabled={cleaningUp}
+                    >
+                      {cleaningUp ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4 mr-2" />
+                      )}
+                      Clean Up All ({orphanedReconciliations.length})
+                    </Button>
+                  )}
+                </div>
+              </CardHeader>
+              <CardContent>
+                {isLoading ? (
+                  <div className="flex items-center justify-center py-12">
+                    <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                  </div>
+                ) : orphanedReconciliations.length === 0 ? (
+                  <div className="text-center py-12 text-slate-500">
+                    <Check className="w-12 h-12 mx-auto mb-4 text-emerald-300" />
+                    <p>No broken reconciliation links found</p>
+                    <p className="text-sm text-slate-400 mt-1">All reconciled bank statements have valid linked entities</p>
+                  </div>
+                ) : (
+                  <div className="border rounded-lg overflow-hidden">
+                    <Table>
+                      <TableHeader>
+                        <TableRow className="bg-slate-50/50">
+                          <TableHead className="w-[100px]">Bank Date</TableHead>
+                          <TableHead className="min-w-[200px]">Bank Description</TableHead>
+                          <TableHead className="text-right w-[100px]">Amount</TableHead>
+                          <TableHead className="w-[140px]">Was Linked To</TableHead>
+                          <TableHead className="w-[100px]">Status</TableHead>
+                          <TableHead className="w-[80px]"></TableHead>
+                        </TableRow>
+                      </TableHeader>
+                      <TableBody>
+                        {orphanedReconciliations.map((entry) => (
+                          <TableRow key={entry.id} className="bg-red-50/30">
+                            <TableCell className="text-sm">
+                              {entry.bankStatement?.date
+                                ? format(new Date(entry.bankStatement.date), 'dd MMM yyyy')
+                                : '-'
+                              }
+                            </TableCell>
+                            <TableCell className="text-slate-600">
+                              <div className="truncate max-w-[280px]" title={entry.bankStatement?.description}>
+                                {entry.bankStatement?.description || '-'}
+                              </div>
+                            </TableCell>
+                            <TableCell className={`text-right font-mono font-medium ${
+                              entry.bankStatement?.amount >= 0 ? 'text-emerald-600' : 'text-red-600'
+                            }`}>
+                              {entry.bankStatement?.amount !== undefined
+                                ? formatCurrency(entry.bankStatement.amount)
+                                : '-'
+                              }
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                                <Unlink className="w-3 h-3 mr-1" />
+                                {formatReconciliationType(entry.reconciliation_type)}
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Badge variant="outline" className="bg-amber-50 text-amber-700 border-amber-200">
+                                Entity Deleted
+                              </Badge>
+                            </TableCell>
+                            <TableCell>
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7 text-red-500 hover:text-red-700 hover:bg-red-50"
+                                onClick={() => handleCleanupClick(entry)}
+                                title="Clean up this orphaned reconciliation"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </Button>
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </TabsContent>
+        </Tabs>
       </div>
+
+      {/* Cleanup Orphaned Reconciliation Dialog */}
+      <Dialog open={cleanupDialogOpen} onOpenChange={setCleanupDialogOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Clean Up Broken Reconciliation</DialogTitle>
+            <DialogDescription>
+              This will delete the reconciliation link and mark the bank statement as unreconciled so it can be matched again.
+            </DialogDescription>
+          </DialogHeader>
+          {selectedOrphanedReconciliation && (
+            <div className="space-y-4">
+              <div className="p-3 bg-slate-50 rounded-lg border space-y-2">
+                <div className="flex justify-between">
+                  <span className="text-sm text-slate-500">Bank Date:</span>
+                  <span className="text-sm font-medium">
+                    {selectedOrphanedReconciliation.bankStatement?.date
+                      ? format(new Date(selectedOrphanedReconciliation.bankStatement.date), 'dd MMM yyyy')
+                      : '-'
+                    }
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-slate-500">Description:</span>
+                  <span className="text-sm font-medium truncate max-w-[200px]">
+                    {selectedOrphanedReconciliation.bankStatement?.description || '-'}
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-slate-500">Amount:</span>
+                  <span className={`text-sm font-medium ${
+                    selectedOrphanedReconciliation.bankStatement?.amount >= 0 ? 'text-emerald-600' : 'text-red-600'
+                  }`}>
+                    {selectedOrphanedReconciliation.bankStatement?.amount !== undefined
+                      ? formatCurrency(selectedOrphanedReconciliation.bankStatement.amount)
+                      : '-'
+                    }
+                  </span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-slate-500">Was Linked To:</span>
+                  <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200">
+                    {formatReconciliationType(selectedOrphanedReconciliation.reconciliation_type)}
+                  </Badge>
+                </div>
+              </div>
+              <div className="p-3 bg-amber-50 rounded-lg border border-amber-200">
+                <p className="text-sm text-amber-800">
+                  The linked {formatReconciliationType(selectedOrphanedReconciliation.reconciliation_type).toLowerCase()} has been deleted.
+                  Cleaning up will allow you to re-reconcile this bank entry.
+                </p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setCleanupDialogOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              onClick={() => handleCleanupOrphanedReconciliation(selectedOrphanedReconciliation)}
+              disabled={cleaningUp}
+            >
+              {cleaningUp && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+              Clean Up
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* Accept Orphan Dialog */}
       <Dialog open={acceptDialogOpen} onOpenChange={setAcceptDialogOpen}>
