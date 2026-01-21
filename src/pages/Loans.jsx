@@ -138,7 +138,7 @@ export default function Loans() {
   });
 
   // Column configuration - order and widths
-  const defaultColumnOrder = ['loan_number', 'description', 'date', 'borrower', 'product', 'principal_bal', 'interest_os', 'ltv', 'arr_fee', 'exit_fee', 'last_payment', 'next_due'];
+  const defaultColumnOrder = ['loan_number', 'description', 'date', 'borrower', 'product', 'principal_bal', 'interest_os', 'ltv', 'last_payment', 'next_due'];
   const defaultColumnWidths = {
     loan_number: 80,
     description: 150,
@@ -147,10 +147,8 @@ export default function Loans() {
     product: 85,
     principal_bal: 95,
     interest_os: 85,
-    ltv: 60,
-    arr_fee: 75,
-    exit_fee: 75,
-    last_payment: 80,
+    ltv: 40,
+    last_payment: 160,
     next_due: 80,
   };
 
@@ -186,7 +184,17 @@ export default function Loans() {
   });
   const [columnWidths, setColumnWidths] = useState(() => {
     const saved = getOrgJSON('loans_column_widths', null);
-    return saved ? { ...defaultColumnWidths, ...saved } : defaultColumnWidths;
+    if (!saved) return defaultColumnWidths;
+
+    // Migrate column widths: enforce min/max constraints
+    const migrated = { ...defaultColumnWidths, ...saved };
+    if (migrated.last_payment < 160) {
+      migrated.last_payment = 160;
+    }
+    if (migrated.ltv > 40) {
+      migrated.ltv = 40;
+    }
+    return migrated;
   });
   const resizingRef = useRef(null);
   const dragRef = useRef(null);
@@ -898,37 +906,29 @@ export default function Loans() {
         );
       }
     },
-    arr_fee: {
-      header: 'Arr Fee',
-      sortKey: 'arrangement_fee',
-      align: 'right',
-      render: (loan) => (
-        <span className="font-mono text-sm text-slate-600">
-          {loan.arrangement_fee > 0 ? formatCurrency(loan.arrangement_fee) : '-'}
-        </span>
-      )
-    },
-    exit_fee: {
-      header: 'Exit Fee',
-      sortKey: 'exit_fee',
-      align: 'right',
-      render: (loan) => (
-        <span className="font-mono text-sm text-slate-600">
-          {loan.exit_fee > 0 ? formatCurrency(loan.exit_fee) : '-'}
-        </span>
-      )
-    },
     last_payment: {
-      header: 'Last Pay',
+      header: 'Last Paid',
       sortKey: 'last_payment',
       align: 'left',
-      render: (loan, { lastPayment }) => (
-        lastPayment ? (
-          <span className="text-sm text-slate-600">{format(new Date(lastPayment.date), 'dd/MM/yy')}</span>
-        ) : (
-          <span className="text-sm text-slate-400">-</span>
-        )
-      )
+      render: (loan, { lastPayment }) => {
+        if (!lastPayment) return <span className="text-sm text-slate-400">-</span>;
+        const amount = lastPayment.gross_amount ?? lastPayment.amount ?? 0;
+        const roundedAmount = `£${Math.round(amount).toLocaleString()}`;
+        return (
+          <TooltipProvider>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <span className="text-sm text-slate-600 whitespace-nowrap cursor-help">
+                  {format(new Date(lastPayment.date), 'dd/MM/yy')} <span className="font-mono text-emerald-600">({roundedAmount})</span>
+                </span>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>{formatCurrency(amount)}</p>
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        );
+      }
     },
     next_due: {
       header: 'End Date',
@@ -1298,10 +1298,6 @@ export default function Loans() {
                               content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalPrincipalBalance)}</span>;
                             } else if (colKey === 'interest_os') {
                               content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalInterestOutstanding)}</span>;
-                            } else if (colKey === 'arr_fee') {
-                              content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalArrFees)}</span>;
-                            } else if (colKey === 'exit_fee') {
-                              content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalExitFees)}</span>;
                             }
 
                             return (
