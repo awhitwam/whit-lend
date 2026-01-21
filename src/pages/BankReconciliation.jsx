@@ -6157,17 +6157,15 @@ export default function BankReconciliation() {
                                             </div>
                                           </div>
                                         ) : links.length === 0 ? (
-                                          // Check if this is an orphaned entry (reconciled but no recon entries, excluding legitimate patterns)
+                                          // Check if this is an orphaned entry (reconciled but no links, excluding legitimate patterns)
                                           (() => {
-                                            const desc = (entry.description || '').toLowerCase();
-                                            const isLegitimate = desc.includes('funds returned') ||
-                                                                 desc.includes('transfer') ||
-                                                                 desc.includes('internal');
-                                            if (entry.is_reconciled && recons.length === 0 && !isLegitimate) {
+                                            // Check if this is an offset reconciliation (legitimate to have no external links)
+                                            const isOffsetReconciliation = recons.some(r => r.reconciliation_type === 'offset');
+                                            if (entry.is_reconciled && !isOffsetReconciliation) {
                                               return (
-                                                <div className="flex items-center gap-1.5">
-                                                  <AlertTriangle className="w-4 h-4 flex-shrink-0 text-red-500" />
-                                                  <span className="text-xs font-semibold text-red-600">Orphaned - no links</span>
+                                                <div className="flex items-center gap-1.5 bg-red-600 text-white px-2 py-1 rounded">
+                                                  <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+                                                  <span className="text-sm font-bold">Orphaned - no links</span>
                                                 </div>
                                               );
                                             }

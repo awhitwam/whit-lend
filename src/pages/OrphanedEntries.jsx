@@ -181,9 +181,9 @@ export default function OrphanedEntries() {
         });
       });
 
-    // Investor interest not reconciled
+    // Investor interest DEBITS not reconciled (credits don't need bank reconciliation)
     investorInterest
-      .filter(entry => !reconciledIds.interestIds.has(entry.id))
+      .filter(entry => !reconciledIds.interestIds.has(entry.id) && entry.type === 'debit')
       .forEach(entry => {
         const key = `investor_interest-${entry.id}`;
         const accepted = acceptedOrphanMap.get(key);
