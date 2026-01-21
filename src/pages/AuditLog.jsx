@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { api } from '@/api/dataClient';
 import { useQuery } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
+import { useAuth } from '@/lib/AuthContext';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -48,6 +49,7 @@ const saveFilterPrefs = (prefs) => {
 
 export default function AuditLog() {
   const { currentOrganization } = useOrganization();
+  const { isSuperAdmin } = useAuth();
   const [auditPage, setAuditPage] = useState(1);
   const [auditFilter, setAuditFilter] = useState('all');
   const [searchTerm, setSearchTerm] = useState('');
@@ -396,6 +398,25 @@ export default function AuditLog() {
     if (isUuid(strVal)) return '-';
     return strVal.slice(0, 50);
   };
+
+  // Restrict access to super admins only
+  if (!isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="p-4 md:p-6 flex items-center justify-center min-h-[60vh]">
+          <Card className="max-w-md">
+            <CardContent className="pt-6 text-center">
+              <History className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+              <h2 className="text-xl font-semibold text-slate-900 mb-2">Access Restricted</h2>
+              <p className="text-slate-500">
+                The Audit Log is only accessible to super administrators.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">

@@ -111,7 +111,7 @@ const navigation = [
           { name: 'Import Investor Txns', href: 'ImportInvestorTransactions', icon: CreditCard },
         ]
       },
-      { name: 'Audit Log', href: 'AuditLog', icon: History },
+      { name: 'Audit Log', href: 'AuditLog', icon: History, requiresSuperAdmin: true },
       { name: 'Org Admin', href: 'OrgAdmin', icon: ShieldCheck, requiresAdmin: true },
       { name: 'Super Admin', href: 'SuperAdmin', icon: Crown, requiresSuperAdmin: true },
       { name: 'About', href: 'About', icon: Info },
