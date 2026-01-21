@@ -3,6 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/lib/AuthContext';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -123,11 +124,31 @@ function transformInvestorData(row, products) {
 }
 
 export default function ImportInvestors() {
+  const { isSuperAdmin } = useAuth();
   const [file, setFile] = useState(null);
   const [importResult, setImportResult] = useState(null);
   const [isProcessing, setIsProcessing] = useState(false);
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+
+  // Restrict access to super admins only
+  if (!isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="p-4 md:p-6 flex items-center justify-center min-h-[60vh]">
+          <Card className="max-w-md">
+            <CardContent className="pt-6 text-center">
+              <Upload className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+              <h2 className="text-xl font-semibold text-slate-900 mb-2">Access Restricted</h2>
+              <p className="text-slate-500">
+                Data import is only accessible to super administrators.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   // Fetch investor products for matching
   const { data: products = [] } = useQuery({

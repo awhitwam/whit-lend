@@ -2,12 +2,34 @@ import { useState } from 'react';
 import UserManagement from '@/components/organization/UserManagement';
 import MFAManagement from '@/components/auth/MFAManagement';
 import { useOrganization } from '@/lib/OrganizationContext';
+import { useAuth } from '@/lib/AuthContext';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Card, CardContent } from "@/components/ui/card";
 import { Users as UsersIcon, Shield } from 'lucide-react';
 
 export default function Users() {
   const { currentOrganization } = useOrganization();
+  const { isSuperAdmin } = useAuth();
   const [activeTab, setActiveTab] = useState('team');
+
+  // Restrict access to super admins only
+  if (!isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="p-4 md:p-6 flex items-center justify-center min-h-[60vh]">
+          <Card className="max-w-md">
+            <CardContent className="pt-6 text-center">
+              <UsersIcon className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+              <h2 className="text-xl font-semibold text-slate-900 mb-2">Access Restricted</h2>
+              <p className="text-slate-500">
+                User management is only accessible to super administrators.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">

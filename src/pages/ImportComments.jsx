@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useAuth } from '@/lib/AuthContext';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -171,7 +172,27 @@ const DEFAULT_COMMENT_MAPPINGS = {
 };
 
 export default function ImportComments() {
+  const { isSuperAdmin } = useAuth();
   const queryClient = useQueryClient();
+
+  // Restrict access to super admins only
+  if (!isSuperAdmin) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
+        <div className="p-4 md:p-6 flex items-center justify-center min-h-[60vh]">
+          <Card className="max-w-md">
+            <CardContent className="pt-6 text-center">
+              <Upload className="w-12 h-12 mx-auto mb-4 text-slate-300" />
+              <h2 className="text-xl font-semibold text-slate-900 mb-2">Access Restricted</h2>
+              <p className="text-slate-500">
+                Data import is only accessible to super administrators.
+              </p>
+            </CardContent>
+          </Card>
+        </div>
+      </div>
+    );
+  }
 
   // State
   const [step, setStep] = useState('upload'); // upload, mapping, staffMapping, preview, importing, complete

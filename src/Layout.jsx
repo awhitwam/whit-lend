@@ -98,10 +98,11 @@ const navigation = [
       { name: 'User', href: 'Config', icon: Wrench },
       { name: 'Products', href: 'Products', icon: Package },
       { name: 'Letter Templates', href: 'LetterTemplates', icon: Mail, requiresAdmin: true },
-      { name: 'Users', href: 'Users', icon: UserCog },
+      { name: 'Users', href: 'Users', icon: UserCog, requiresSuperAdmin: true },
       {
         name: 'Import Data',
         icon: FolderInput,
+        requiresSuperAdmin: true,
         children: [
           { name: 'Loandisc Import', href: 'ImportLoandisc', icon: FileSpreadsheet },
           { name: 'Loandisc Expenses', href: 'ImportExpenses', icon: Receipt },
@@ -294,6 +295,7 @@ export default function Layout({ children, currentPageName }) {
                     >
                       <child.icon className="w-4 h-4" />
                       {child.name}
+                      {child.requiresSuperAdmin && <Crown className="w-3 h-3 text-amber-400" />}
                     </Link>
                   )
                 ))}
@@ -352,7 +354,10 @@ export default function Layout({ children, currentPageName }) {
                         `}
                       >
                         <child.icon className="w-4 h-4 flex-shrink-0" />
-                        <span className="flex-1 text-left">{child.name}</span>
+                        <span className="flex-1 text-left flex items-center gap-1">
+                          {child.name}
+                          {child.requiresSuperAdmin && <Crown className="w-3 h-3 text-amber-400" />}
+                        </span>
                         <ChevronDown className={`w-3 h-3 transition-transform ${expandedMenus.includes(child.name) ? 'rotate-180' : ''}`} />
                       </button>
                     </CollapsibleTrigger>
@@ -401,6 +406,7 @@ export default function Layout({ children, currentPageName }) {
                   >
                     <child.icon className="w-4 h-4 flex-shrink-0" />
                     {child.name}
+                    {child.requiresSuperAdmin && <Crown className="w-3 h-3 text-amber-400" />}
                   </Link>
                 )
               ))}

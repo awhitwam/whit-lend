@@ -5,9 +5,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { Button } from "@/components/ui/button";
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Plus, Users, Upload } from 'lucide-react';
-import { Link } from 'react-router-dom';
-import { createPageUrl } from '@/utils';
+import { Plus, Users } from 'lucide-react';
 import BorrowerTable from '@/components/borrower/BorrowerTable';
 import BorrowerForm from '@/components/borrower/BorrowerForm';
 import EmptyState from '@/components/ui/EmptyState';
@@ -249,12 +247,6 @@ export default function Borrowers() {
             <p className="text-slate-500 mt-1">Manage your borrower profiles</p>
           </div>
           <div className="flex items-center gap-3">
-            <Link to={createPageUrl('ImportBorrowers')}>
-              <Button variant="outline">
-                <Upload className="w-4 h-4 mr-2" />
-                Import CSV
-              </Button>
-            </Link>
             <Button onClick={() => setIsFormOpen(true)} className="bg-slate-900 hover:bg-slate-800">
               <Plus className="w-4 h-4 mr-2" />
               Add Borrower

@@ -8,7 +8,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Upload, Link2, Shield, RefreshCw, Download } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Link2, Shield, RefreshCw, Download } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
 import { formatCurrency, calculateAccruedInterestWithTransactions, updateAllLoanBalanceCaches } from '@/components/loan/LoanCalculator';
@@ -976,12 +976,6 @@ export default function Loans() {
                 </TooltipContent>
               </Tooltip>
             </TooltipProvider>
-            <Link to={createPageUrl('ImportTransactions')}>
-              <Button variant="outline" size="sm">
-                <Upload className="w-4 h-4 mr-2" />
-                Import
-              </Button>
-            </Link>
             <Link to={createPageUrl('NewLoan')}>
               <Button className="bg-slate-900 hover:bg-slate-800" size="sm">
                 <Plus className="w-4 h-4 mr-2" />
