@@ -3,6 +3,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Card, CardContent } from "@/components/ui/card";
@@ -39,7 +40,8 @@ export default function PropertyModal({
     charge_type: 'First Charge',
     first_charge_holder_id: '',
     first_charge_balance: '',
-    valuation_date: format(new Date(), 'yyyy-MM-dd')
+    valuation_date: format(new Date(), 'yyyy-MM-dd'),
+    notes: ''
   });
 
   // Load existing properties for selection
@@ -70,6 +72,9 @@ export default function PropertyModal({
   // Pre-fill form if editing
   useEffect(() => {
     if (existingLoanProperty?.property) {
+      // Use lastValuationDate from the enriched loanProperty data (passed from SecurityTab)
+      const lastValuationDate = existingLoanProperty.lastValuationDate;
+
       setFormData({
         address: existingLoanProperty.property.address || '',
         city: existingLoanProperty.property.city || '',
@@ -80,7 +85,8 @@ export default function PropertyModal({
         charge_type: existingLoanProperty.charge_type || 'First Charge',
         first_charge_holder_id: existingLoanProperty.first_charge_holder_id || '',
         first_charge_balance: existingLoanProperty.first_charge_balance || '',
-        valuation_date: format(new Date(), 'yyyy-MM-dd')
+        valuation_date: lastValuationDate || format(new Date(), 'yyyy-MM-dd'),
+        notes: existingLoanProperty.notes || ''
       });
     } else {
       // Reset form for new property
@@ -94,7 +100,8 @@ export default function PropertyModal({
         charge_type: 'First Charge',
         first_charge_holder_id: '',
         first_charge_balance: '',
-        valuation_date: format(new Date(), 'yyyy-MM-dd')
+        valuation_date: format(new Date(), 'yyyy-MM-dd'),
+        notes: ''
       });
       setSelectedPropertyId('');
       setMode('new');
@@ -167,7 +174,8 @@ export default function PropertyModal({
         first_charge_balance: formData.charge_type === 'Second Charge'
           ? parseFloat(formData.first_charge_balance) || 0
           : null,
-        status: 'Active'
+        status: 'Active',
+        notes: formData.notes || null
       };
 
       let loanProperty;
@@ -436,6 +444,22 @@ export default function PropertyModal({
                 )}
               </CardContent>
             </Card>
+
+            {/* Notes Section */}
+            <div className="space-y-2">
+              <Label htmlFor="notes">Notes / Comments</Label>
+              <Textarea
+                id="notes"
+                value={formData.notes}
+                onChange={(e) => handleChange('notes', e.target.value)}
+                placeholder="Add any notes or comments about this property security..."
+                rows={3}
+                className="resize-none"
+              />
+              <p className="text-xs text-slate-500">
+                Free text comments specific to this loan's security arrangement
+              </p>
+            </div>
 
             <DialogFooter>
               <Button type="button" variant="outline" onClick={onClose}>
