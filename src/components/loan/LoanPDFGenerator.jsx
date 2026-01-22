@@ -438,8 +438,11 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
   return rows;
 }
 
-export function generateLoanStatementPDF(loan, schedule, transactions, product = null, interestCalc = null, organization = null) {
-  const doc = new jsPDF();
+/**
+ * Internal function to render loan statement content to a jsPDF document
+ * Used by both generateLoanStatementPDF (download) and generateLoanStatementPDFBytes (merge)
+ */
+function renderLoanStatementToDoc(doc, loan, schedule, transactions, product, interestCalc, organization) {
   const pageWidth = doc.internal.pageSize.getWidth();
   let y = 15;
 
@@ -515,6 +518,13 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
     doc.text(`Description: ${loan.description}`, 15, y);
   }
 
+  // Calculate total disbursed from transactions (includes additional advances)
+  const allActiveTxs = (transactions || []).filter(t => !t.is_deleted);
+  const disbursementTxs = allActiveTxs.filter(t => t.type === 'Disbursement');
+  const totalDisbursed = disbursementTxs.reduce((sum, t) => sum + (t.amount || 0), 0);
+  const additionalAdvances = totalDisbursed - loan.principal_amount;
+  const hasAdditionalAdvances = additionalAdvances > 0.01;
+
   // Loan Details
   y += 10;
   doc.setFontSize(12);
@@ -526,7 +536,12 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
   doc.setFont(undefined, 'normal');
   doc.text(`Product: ${loan.product_name}`, 15, y);
   y += 5;
-  doc.text(`Principal: ${formatCurrency(loan.principal_amount)}`, 15, y);
+  // Show total principal if there are additional advances
+  if (hasAdditionalAdvances) {
+    doc.text(`Total Principal: ${formatCurrency(totalDisbursed)}`, 15, y);
+  } else {
+    doc.text(`Principal: ${formatCurrency(loan.principal_amount)}`, 15, y);
+  }
   y += 5;
 
   // Show rate info including penalty if applicable
@@ -568,7 +583,8 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
   const additionalFees = loan.additional_deducted_fees || 0;
   const totalDeducted = arrangementFee + additionalFees;
 
-  if (totalDeducted > 0) {
+  // Show disbursement breakdown if there are deducted fees OR additional advances
+  if (totalDeducted > 0 || hasAdditionalAdvances) {
     y += 8;
     doc.setFontSize(11);
     doc.setFont(undefined, 'bold');
@@ -578,11 +594,11 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
     doc.setFontSize(10);
     doc.setFont(undefined, 'normal');
 
-    // Calculate net disbursed
-    const grossAmount = loan.principal_amount;
-    const netDisbursed = grossAmount - totalDeducted;
+    // Initial disbursement
+    const initialGross = loan.principal_amount;
+    const initialNetDisbursed = initialGross - totalDeducted;
 
-    doc.text(`Gross Principal: ${formatCurrency(grossAmount)}`, 15, y);
+    doc.text(`Initial Principal: ${formatCurrency(initialGross)}`, 15, y);
     y += 5;
 
     if (arrangementFee > 0) {
@@ -596,10 +612,43 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
       y += 5;
     }
 
-    // Net disbursed line with emphasis
-    doc.setFont(undefined, 'bold');
-    doc.text(`Net Disbursed: ${formatCurrency(netDisbursed)}`, 15, y);
-    doc.setFont(undefined, 'normal');
+    if (totalDeducted > 0) {
+      doc.text(`Initial Net Disbursed: ${formatCurrency(initialNetDisbursed)}`, 15, y);
+      y += 5;
+    }
+
+    // Show additional advances if any
+    if (hasAdditionalAdvances) {
+      y += 2;
+      // List individual additional disbursements (excluding the first one which is the original)
+      const sortedDisbursements = [...disbursementTxs].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+      // Skip the first disbursement (original principal) and show the rest
+      let additionalTotal = 0;
+      sortedDisbursements.forEach((tx, idx) => {
+        if (idx === 0) return; // Skip initial disbursement
+        additionalTotal += tx.amount || 0;
+        const txDate = format(new Date(tx.date), 'dd/MM/yyyy');
+        const reference = tx.reference ? ` - ${tx.reference}` : '';
+        doc.text(`Additional Advance (${txDate})${reference}: +${formatCurrency(tx.amount)}`, 15, y);
+        y += 5;
+      });
+
+      // Summary lines
+      y += 2;
+      doc.setFont(undefined, 'bold');
+      doc.text(`Total Principal Advanced: ${formatCurrency(totalDisbursed)}`, 15, y);
+      y += 5;
+      // Calculate total net disbursed (total principal minus fees deducted from initial)
+      const totalNetDisbursed = totalDisbursed - totalDeducted;
+      doc.text(`Total Net Disbursed: ${formatCurrency(totalNetDisbursed)}`, 15, y);
+      doc.setFont(undefined, 'normal');
+    } else if (totalDeducted > 0) {
+      // Just show net disbursed if no additional advances
+      doc.setFont(undefined, 'bold');
+      doc.text(`Net Disbursed: ${formatCurrency(initialNetDisbursed)}`, 15, y);
+      doc.setFont(undefined, 'normal');
+    }
   }
 
   // Build interest ledger for detailed transaction history
@@ -989,194 +1038,25 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
     doc.text(`Page ${i} of ${pageCount}`, pageWidth / 2, 290, { align: 'center' });
     doc.setTextColor(0, 0, 0);
   }
+  // Note: caller is responsible for saving or returning the doc
+}
 
-  doc.save(`loan-statement-${loan.id}-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+/**
+ * Generate loan statement PDF and download it
+ */
+export function generateLoanStatementPDF(loan, schedule, transactions, product = null, interestCalc = null, organization = null) {
+  const doc = new jsPDF();
+  renderLoanStatementToDoc(doc, loan, schedule, transactions, product, interestCalc, organization);
+  doc.save(`loan-statement-${loan.loan_number || loan.id.slice(0,8)}-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
 }
 
 /**
  * Generate loan statement PDF and return as ArrayBuffer (for merging)
- * Same as generateLoanStatementPDF but returns bytes instead of downloading
+ * Uses the same rendering as generateLoanStatementPDF for consistency
  */
 export function generateLoanStatementPDFBytes(loan, schedule, transactions, product = null, interestCalc = null, organization = null) {
   const doc = new jsPDF();
-  const pageWidth = doc.internal.pageSize.getWidth();
-  let y = 15;
-
-  // Organization Details (if available)
-  if (organization) {
-    doc.setFontSize(14);
-    doc.setFont(undefined, 'bold');
-    doc.text(organization.name || '', pageWidth / 2, y, { align: 'center' });
-    y += 6;
-
-    doc.setFontSize(9);
-    doc.setFont(undefined, 'normal');
-
-    const addressParts = [];
-    if (organization.address_line1) addressParts.push(organization.address_line1);
-    if (organization.address_line2) addressParts.push(organization.address_line2);
-
-    const cityPostcode = [organization.city, organization.postcode].filter(Boolean).join(' ');
-    if (cityPostcode) addressParts.push(cityPostcode);
-    if (organization.country) addressParts.push(organization.country);
-
-    for (const line of addressParts) {
-      doc.text(line, pageWidth / 2, y, { align: 'center' });
-      y += 4;
-    }
-
-    const contactParts = [];
-    if (organization.phone) contactParts.push(`Tel: ${organization.phone}`);
-    if (organization.email) contactParts.push(`Email: ${organization.email}`);
-    if (organization.website) contactParts.push(organization.website);
-
-    if (contactParts.length > 0) {
-      doc.setFontSize(8);
-      doc.text(contactParts.join('  |  '), pageWidth / 2, y, { align: 'center' });
-      y += 4;
-    }
-
-    y += 2;
-    doc.setDrawColor(200, 200, 200);
-    doc.line(40, y, pageWidth - 40, y);
-    y += 8;
-  }
-
-  // Header
-  doc.setFontSize(20);
-  doc.setFont(undefined, 'bold');
-  doc.text('LOAN STATEMENT', pageWidth / 2, y, { align: 'center' });
-
-  y += 12;
-  doc.setFontSize(10);
-  doc.setFont(undefined, 'normal');
-  doc.text(`Generated: ${format(new Date(), 'dd MMM yyyy HH:mm')}`, pageWidth / 2, y, { align: 'center' });
-
-  // Borrower Info
-  y += 12;
-  doc.setFontSize(12);
-  doc.setFont(undefined, 'bold');
-  doc.text('Borrower Information', 15, y);
-
-  y += 7;
-  doc.setFontSize(10);
-  doc.setFont(undefined, 'normal');
-  doc.text(`Name: ${loan.borrower_name}`, 15, y);
-  y += 5;
-  doc.text(`Loan Reference: #${loan.loan_number || loan.id.slice(0, 8)}`, 15, y);
-  if (loan.description) {
-    y += 5;
-    doc.text(`Description: ${loan.description}`, 15, y);
-  }
-
-  // Loan Details
-  y += 10;
-  doc.setFontSize(12);
-  doc.setFont(undefined, 'bold');
-  doc.text('Loan Details', 15, y);
-
-  y += 7;
-  doc.setFontSize(10);
-  doc.setFont(undefined, 'normal');
-  doc.text(`Principal Amount: ${formatCurrency(loan.principal_amount)}`, 15, y);
-  y += 5;
-  doc.text(`Interest Rate: ${loan.interest_rate}%`, 15, y);
-  y += 5;
-  doc.text(`Start Date: ${format(new Date(loan.start_date), 'dd MMM yyyy')}`, 15, y);
-  y += 5;
-  doc.text(`Maturity Date: ${format(new Date(loan.maturity_date), 'dd MMM yyyy')}`, 15, y);
-
-  // Interest Summary from calculations
-  if (interestCalc) {
-    y += 10;
-    doc.setFontSize(12);
-    doc.setFont(undefined, 'bold');
-    doc.text('Interest Summary', 15, y);
-
-    y += 7;
-    doc.setFontSize(10);
-    doc.setFont(undefined, 'normal');
-    doc.text(`Interest Accrued: ${formatCurrency(interestCalc.accruedInterest || 0)}`, 15, y);
-    y += 5;
-    doc.text(`Interest Paid: ${formatCurrency(interestCalc.interestPaid || 0)}`, 15, y);
-    y += 5;
-    doc.text(`Interest Balance: ${formatCurrency(interestCalc.interestBalance || 0)}`, 15, y);
-  }
-
-  // Transaction History
-  const activeTransactions = (transactions || []).filter(t => !t.is_deleted);
-  if (activeTransactions.length > 0) {
-    y += 10;
-    doc.setFontSize(12);
-    doc.setFont(undefined, 'bold');
-    doc.text('Transaction History', 15, y);
-
-    y += 7;
-    doc.setFontSize(8);
-    doc.setFont(undefined, 'bold');
-    doc.text('Date', 17, y);
-    doc.text('Type', 45, y);
-    doc.text('Amount', 120, y, { align: 'right' });
-    doc.text('Interest', 145, y, { align: 'right' });
-    doc.text('Principal', 170, y, { align: 'right' });
-
-    y += 2;
-    doc.setDrawColor(200, 200, 200);
-    doc.line(15, y, 195, y);
-    y += 4;
-
-    let totalAmount = 0;
-    let totalInterestPaid = 0;
-    let totalPrincipalPaid = 0;
-    let totalDisbursed = 0;
-
-    doc.setFont(undefined, 'normal');
-    for (const tx of activeTransactions) {
-      if (y > 270) {
-        doc.addPage();
-        y = 20;
-      }
-
-      const txDate = format(new Date(tx.date), 'dd MMM yy');
-      const amount = tx.gross_amount ?? tx.amount ?? 0;
-
-      doc.text(txDate, 17, y);
-      doc.text(tx.type, 45, y);
-      doc.text(formatCurrency(amount), 120, y, { align: 'right' });
-
-      if (tx.type === 'Repayment') {
-        doc.text(formatCurrency(tx.interest_applied || 0), 145, y, { align: 'right' });
-        doc.text(formatCurrency(tx.principal_applied || 0), 170, y, { align: 'right' });
-        totalInterestPaid += tx.interest_applied || 0;
-        totalPrincipalPaid += tx.principal_applied || 0;
-        totalAmount += amount;
-      } else if (tx.type === 'Disbursement') {
-        totalDisbursed += amount;
-        doc.text('-', 145, y, { align: 'right' });
-        doc.text('-', 170, y, { align: 'right' });
-      }
-
-      y += 5;
-    }
-
-    y += 2;
-    doc.setDrawColor(100, 100, 100);
-    doc.line(15, y, 195, y);
-    y += 5;
-
-    doc.setFont(undefined, 'bold');
-    doc.setFontSize(8);
-    doc.text('TOTALS', 17, y);
-    doc.text(formatCurrency(totalAmount), 120, y, { align: 'right' });
-    doc.text(formatCurrency(totalInterestPaid), 145, y, { align: 'right' });
-    doc.text(formatCurrency(totalPrincipalPaid), 170, y, { align: 'right' });
-
-    y += 8;
-    doc.setFont(undefined, 'normal');
-    doc.text(`Disbursed: ${formatCurrency(totalDisbursed)}  |  Interest Received: ${formatCurrency(totalInterestPaid)}`, 17, y);
-  }
-
-  // Return as ArrayBuffer (no page numbers - will be added during merge)
+  renderLoanStatementToDoc(doc, loan, schedule, transactions, product, interestCalc, organization);
   return doc.output('arraybuffer');
 }
 

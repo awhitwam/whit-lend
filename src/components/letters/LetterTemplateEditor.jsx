@@ -12,6 +12,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Checkbox } from "@/components/ui/checkbox";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from "@/components/ui/command";
 import {
   FileText,
   Save,
@@ -21,7 +23,10 @@ import {
   Code,
   Paperclip,
   Info,
-  Search
+  Search,
+  Check,
+  ChevronsUpDown,
+  X
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { api } from '@/api/dataClient';
@@ -139,6 +144,7 @@ export default function LetterTemplateEditor() {
 
   const [activeTab, setActiveTab] = useState('edit');
   const [previewLoanId, setPreviewLoanId] = useState('');
+  const [loanSearchOpen, setLoanSearchOpen] = useState(false);
   const quillRef = useRef(null);
   const formInitialized = useRef(false);
   const [formData, setFormData] = useState({
@@ -163,10 +169,28 @@ export default function LetterTemplateEditor() {
     enabled: !!templateId
   });
 
-  // Fetch loans for preview selector
+  // Fetch live loans for preview selector (with borrower details for contact name search)
   const { data: loans = [] } = useQuery({
     queryKey: ['loans-for-preview'],
-    queryFn: () => api.entities.Loan.list('-created_at'),
+    queryFn: async () => {
+      // Only fetch live loans
+      const loansData = await api.entities.Loan.filter({ status: 'Live' }, '-created_at');
+      // Fetch all borrowers to enrich loans with contact name
+      const borrowerIds = [...new Set(loansData.filter(l => l.borrower_id).map(l => l.borrower_id))];
+      const borrowersMap = {};
+      if (borrowerIds.length > 0) {
+        const borrowers = await api.entities.Borrower.list();
+        borrowers.forEach(b => { borrowersMap[b.id] = b; });
+      }
+      // Enrich loans with borrower contact info
+      return loansData.map(loan => ({
+        ...loan,
+        borrower: borrowersMap[loan.borrower_id] || null,
+        contact_name: borrowersMap[loan.borrower_id]
+          ? `${borrowersMap[loan.borrower_id].first_name || ''} ${borrowersMap[loan.borrower_id].last_name || ''}`.trim()
+          : null
+      }));
+    },
   });
 
   // Fetch selected loan details with borrower, transactions, and product for live settlement calc
@@ -596,38 +620,120 @@ Yours sincerely,
                   <div className="space-y-4">
                     {/* Loan Selector for Preview */}
                     <div className="flex items-center gap-3 p-3 bg-slate-100 rounded-lg">
-                      <Search className="w-4 h-4 text-slate-500" />
+                      <Search className="w-4 h-4 text-slate-500 flex-shrink-0" />
                       <Label className="text-sm whitespace-nowrap">Preview with loan:</Label>
-                      <Select
-                        value={previewLoanId || '_sample'}
-                        onValueChange={(v) => setPreviewLoanId(v === '_sample' ? '' : v)}
-                      >
-                        <SelectTrigger className="flex-1 bg-white">
-                          <SelectValue placeholder="Select a loan to preview with real data..." />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="_sample">
-                            <span className="text-slate-500">Use sample data</span>
-                          </SelectItem>
-                          {loans.map(loan => (
-                            <SelectItem key={loan.id} value={loan.id}>
-                              {loan.loan_number || loan.id.slice(0, 8)} - {loan.borrower_name || 'Unknown'} - {formatCurrency(loan.principal_amount)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                      <Popover open={loanSearchOpen} onOpenChange={setLoanSearchOpen}>
+                        <PopoverTrigger asChild>
+                          <Button
+                            variant="outline"
+                            role="combobox"
+                            aria-expanded={loanSearchOpen}
+                            className="flex-1 justify-between bg-white font-normal"
+                          >
+                            {previewLoanId ? (
+                              (() => {
+                                const selectedLoan = loans.find(l => l.id === previewLoanId);
+                                if (selectedLoan) {
+                                  return (
+                                    <span className="truncate">
+                                      {selectedLoan.loan_number || selectedLoan.id.slice(0, 8)} - {selectedLoan.borrower_name || 'Unknown'}
+                                    </span>
+                                  );
+                                }
+                                return 'Select a loan...';
+                              })()
+                            ) : (
+                              <span className="text-slate-500">Search by name, loan number, or description...</span>
+                            )}
+                            <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent className="w-[500px] p-0" align="start">
+                          <Command>
+                            <CommandInput placeholder="Type to search loans..." />
+                            <CommandList>
+                              <CommandEmpty>No loans found.</CommandEmpty>
+                              <CommandGroup heading="Sample Data">
+                                <CommandItem
+                                  value="_sample_data_option"
+                                  onSelect={() => {
+                                    setPreviewLoanId('');
+                                    setLoanSearchOpen(false);
+                                  }}
+                                >
+                                  <Check
+                                    className={`mr-2 h-4 w-4 ${!previewLoanId ? 'opacity-100' : 'opacity-0'}`}
+                                  />
+                                  <span className="text-slate-500">Use sample data</span>
+                                </CommandItem>
+                              </CommandGroup>
+                              <CommandGroup heading="Live Loans">
+                                {loans.map(loan => {
+                                  // Build searchable text for filtering (includes contact name)
+                                  const searchText = [
+                                    loan.loan_number,
+                                    loan.borrower_name,
+                                    loan.contact_name,
+                                    loan.borrower?.full_name,
+                                    loan.borrower?.business,
+                                    loan.description,
+                                    loan.id.slice(0, 8)
+                                  ].filter(Boolean).join(' ').toLowerCase();
+
+                                  return (
+                                    <CommandItem
+                                      key={loan.id}
+                                      value={searchText}
+                                      onSelect={() => {
+                                        setPreviewLoanId(loan.id);
+                                        setLoanSearchOpen(false);
+                                      }}
+                                    >
+                                      <Check
+                                        className={`mr-2 h-4 w-4 ${previewLoanId === loan.id ? 'opacity-100' : 'opacity-0'}`}
+                                      />
+                                      <div className="flex flex-col">
+                                        <div className="flex items-center gap-2">
+                                          <span className="font-medium">
+                                            {loan.loan_number || loan.id.slice(0, 8)}
+                                          </span>
+                                          <span className="text-slate-500">-</span>
+                                          <span>{loan.borrower_name || 'Unknown'}</span>
+                                          {loan.contact_name && loan.contact_name !== loan.borrower_name && (
+                                            <span className="text-slate-400 text-xs">
+                                              ({loan.contact_name})
+                                            </span>
+                                          )}
+                                          <span className="text-slate-400 text-xs">
+                                            {formatCurrency(loan.principal_amount)}
+                                          </span>
+                                        </div>
+                                        {loan.description && (
+                                          <span className="text-xs text-slate-500 truncate max-w-[400px]">
+                                            {loan.description}
+                                          </span>
+                                        )}
+                                      </div>
+                                    </CommandItem>
+                                  );
+                                })}
+                              </CommandGroup>
+                            </CommandList>
+                          </Command>
+                        </PopoverContent>
+                      </Popover>
                       {previewLoanId && (
                         <Button
                           variant="ghost"
                           size="sm"
                           onClick={() => setPreviewLoanId('')}
-                          className="text-xs"
+                          className="text-xs flex-shrink-0"
                         >
-                          Clear
+                          <X className="w-4 h-4" />
                         </Button>
                       )}
                       {isLoadingLoanData && (
-                        <Loader2 className="w-4 h-4 animate-spin text-slate-500" />
+                        <Loader2 className="w-4 h-4 animate-spin text-slate-500 flex-shrink-0" />
                       )}
                     </div>
 
