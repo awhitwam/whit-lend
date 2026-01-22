@@ -40,7 +40,8 @@ import {
   Crown,
   MessageSquare,
   Mail,
-  Star
+  Star,
+  FileBarChart
 } from 'lucide-react';
 import { useState, useEffect } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
@@ -51,10 +52,11 @@ import { useAuth } from '@/lib/AuthContext';
 import { getOrgItem, setOrgItem, getOrgJSON, setOrgJSON } from '@/lib/orgStorage';
 
 const navigation = [
-  { name: 'Dashboard', href: 'Dashboard', icon: LayoutDashboard },
+  { name: 'Dashboard', href: 'Dashboard', icon: LayoutDashboard, iconColor: 'text-sky-400' },
   {
     name: 'Borrowers',
     icon: Users,
+    iconColor: 'text-violet-400',
     children: [
       { name: 'All Borrowers', href: 'Borrowers', icon: List },
       { name: 'By Contact', href: 'BorrowersByContact', icon: UsersRound },
@@ -63,6 +65,7 @@ const navigation = [
   {
     name: 'Loans',
     icon: FileText,
+    iconColor: 'text-emerald-400',
     children: [
       { name: 'Live', href: 'Loans?status=Live', icon: CircleDot },
       { name: 'Settled', href: 'Loans?status=Closed', icon: CheckCircle2 },
@@ -75,6 +78,7 @@ const navigation = [
   {
     name: 'Investors',
     icon: TrendingUp,
+    iconColor: 'text-amber-400',
     children: [
       { name: 'All Investors', href: 'Investors', icon: List },
       { name: 'Investor Products', href: 'InvestorProducts', icon: Package },
@@ -83,6 +87,7 @@ const navigation = [
   {
     name: 'Finance',
     icon: DollarSign,
+    iconColor: 'text-green-400',
     children: [
       { name: 'Ledger', href: 'Ledger', icon: Building2 },
       { name: 'Receipts', href: 'Receipts', icon: Receipt },
@@ -93,8 +98,17 @@ const navigation = [
     ]
   },
   {
+    name: 'Reports',
+    icon: FileBarChart,
+    iconColor: 'text-rose-400',
+    children: [
+      { name: 'Accountant Report', href: 'AccountantReport', icon: FileSpreadsheet },
+    ]
+  },
+  {
     name: 'Settings',
     icon: Settings,
+    iconColor: 'text-slate-400',
     children: [
       { name: 'User', href: 'Config', icon: Wrench },
       { name: 'Products', href: 'Products', icon: Package },
@@ -320,7 +334,7 @@ export default function Layout({ children, currentPageName }) {
                   }
                 `}
               >
-                <item.icon className="w-5 h-5 flex-shrink-0" />
+                <item.icon className={`w-5 h-5 flex-shrink-0 ${item.iconColor || ''}`} />
               </button>
             </TooltipTrigger>
             <TooltipContent side="right" className="bg-slate-800 text-white border-slate-700 p-0">
@@ -394,7 +408,7 @@ export default function Layout({ children, currentPageName }) {
                 ${isMobile && childActive ? 'bg-slate-100 text-slate-900' : ''}
               `}
             >
-              <item.icon className="w-5 h-5 flex-shrink-0" />
+              <item.icon className={`w-5 h-5 flex-shrink-0 ${!isMobile && item.iconColor ? item.iconColor : ''}`} />
               <span className="flex-1 text-left">{item.name}</span>
               <ChevronDown className={`w-4 h-4 transition-transform ${isExpanded ? 'rotate-180' : ''}`} />
             </button>
@@ -526,7 +540,7 @@ export default function Layout({ children, currentPageName }) {
           }
         `}
       >
-        <item.icon className="w-5 h-5 flex-shrink-0" />
+        <item.icon className={`w-5 h-5 flex-shrink-0 ${!isMobile && item.iconColor ? item.iconColor : ''}`} />
         {(!sidebarCollapsed || isMobile) && item.name}
       </Link>
     );
