@@ -6,6 +6,7 @@ export const AuditAction = {
   LOGIN: 'login',
   LOGOUT: 'logout',
   LOGIN_FAILED: 'login_failed',
+  SESSION_TIMEOUT: 'session_timeout',
 
   // Loans
   LOAN_CREATE: 'loan_create',

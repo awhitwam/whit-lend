@@ -80,6 +80,7 @@ const PLACEHOLDER_GROUPS = [
       { key: 'live_interest_balance', description: 'Interest owed today', example: '£3,500.00' },
       { key: 'live_fees_balance', description: 'Outstanding fees', example: '£500.00' },
       { key: 'live_settlement_total', description: 'Settlement total today', example: '£249,000.00' },
+      { key: 'payments_behind', description: 'Payments behind (interest arrears / avg payment)', example: '3' },
     ]
   },
   {
@@ -389,6 +390,7 @@ export default function LetterTemplateEditor() {
       free_text_2: '[Enter at merge]',
       free_text_3: '[Enter at merge]',
       signature: '[Signature Image]',
+      payments_behind: '3',
     };
 
     // If a loan is selected, use real data
@@ -421,7 +423,8 @@ export default function LetterTemplateEditor() {
         interestBalance: 0,
         liveSettlement,
         userProfile,
-        loanProperties
+        loanProperties,
+        schedule
       });
     }
 

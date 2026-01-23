@@ -484,6 +484,11 @@ export const AuthProvider = ({ children }) => {
           inactivityTimerRef.current = null;
         }
         setShowTimeoutWarning(false);
+        // Log session timeout event (fire-and-forget to not block redirect)
+        logAuthEvent(AuditAction.SESSION_TIMEOUT, user?.email, true, {
+          reason: 'inactivity',
+          timeout_ms: inactivityTimeoutMs
+        });
         // Clear this tab's org context (sessionStorage is per-tab)
         sessionStorage.removeItem('currentOrganizationId');
         sessionStorage.removeItem(SESSION_ALIVE_KEY);

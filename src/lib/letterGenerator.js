@@ -93,7 +93,8 @@ export function buildPlaceholderData({
   interestBalance,
   liveSettlement,
   userProfile,
-  loanProperties = []
+  loanProperties = [],
+  schedule = []
 }) {
   // Build borrower display name
   const borrowerName = borrower?.business
@@ -211,6 +212,27 @@ export function buildPlaceholderData({
   data.free_text_1 = '[Enter at merge]';
   data.free_text_2 = '[Enter at merge]';
   data.free_text_3 = '[Enter at merge]';
+
+  // Calculate payments behind (interest arrears / average monthly payment)
+  if (liveSettlement && schedule && schedule.length > 0) {
+    const interestRemaining = liveSettlement.interestRemaining || 0;
+    const interestPayments = schedule
+      .filter(row => row.interest_amount > 0)
+      .map(row => row.interest_amount);
+
+    if (interestPayments.length > 0 && interestRemaining > 0) {
+      const avgMonthlyPayment = interestPayments.reduce((sum, amt) => sum + amt, 0) / interestPayments.length;
+      if (avgMonthlyPayment > 0) {
+        data.payments_behind = String(Math.round(interestRemaining / avgMonthlyPayment));
+      } else {
+        data.payments_behind = '0';
+      }
+    } else {
+      data.payments_behind = '0';
+    }
+  } else {
+    data.payments_behind = '0';
+  }
 
   return data;
 }

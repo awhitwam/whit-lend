@@ -72,7 +72,7 @@ import PaymentModal from '@/components/loan/PaymentModal';
 import DisbursementModal from '@/components/loan/DisbursementModal';
 import EditLoanPanel from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
-import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions, exportScheduleCalculationData, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger, queueBalanceCacheUpdate } from '@/components/loan/LoanCalculator';
+import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions, exportScheduleCalculationData, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger, queueBalanceCacheUpdate, calculatePaymentsBehind, calculateRentalYield } from '@/components/loan/LoanCalculator';
 import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
@@ -1392,7 +1392,8 @@ export default function LoanDetails() {
   // Determine product type
   const isFixedCharge = loan?.product_type === 'Fixed Charge' || product?.product_type === 'Fixed Charge';
   const isIrregularIncome = loan?.product_type === 'Irregular Income' || product?.product_type === 'Irregular Income';
-  const isSpecialType = isFixedCharge || isIrregularIncome;
+  const isRent = loan?.product_type === 'Rent' || product?.product_type === 'Rent';
+  const isSpecialType = isFixedCharge || isIrregularIncome || isRent;
 
   // Calculate totals from actual transactions
   const actualPrincipalPaid = transactions
@@ -1831,6 +1832,72 @@ export default function LoanDetails() {
                   </>
                 )}
 
+                {/* Rent Summary */}
+                {isRent && (
+                  <>
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 min-w-[110px]">
+                      <p className="text-xs text-blue-600 font-medium">Principal O/S</p>
+                      <p className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</p>
+                    </div>
+                    {(() => {
+                      const yieldCalc = calculateRentalYield(transactions, principalRemaining);
+                      const yieldColor = yieldCalc.yield >= 8
+                        ? { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600', value: 'text-emerald-900' }
+                        : yieldCalc.yield >= 5
+                          ? { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', value: 'text-amber-900' }
+                          : { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-600', value: 'text-red-900' };
+                      return (
+                        <div className={`${yieldColor.bg} border ${yieldColor.border} rounded-lg px-3 py-2 min-w-[110px]`}>
+                          <p className={`text-xs font-medium ${yieldColor.text}`}>Yield</p>
+                          <p className={`text-xl font-bold ${yieldColor.value}`}>{yieldCalc.yield.toFixed(1)}%</p>
+                          <p className="text-xs text-slate-500">{formatCurrency(yieldCalc.annualRent)} / yr</p>
+                        </div>
+                      );
+                    })()}
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 min-w-[110px]">
+                      <p className="text-xs text-emerald-600 font-medium">Receipts</p>
+                      <p className="text-xl font-bold text-emerald-900">{formatCurrency(transactions.filter(t => !t.is_deleted && t.type === 'Repayment').reduce((sum, t) => sum + t.amount, 0))}</p>
+                      <p className="text-xs text-slate-500">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length} payments</p>
+                    </div>
+                    {ltvMetrics.ltv !== null && (() => {
+                      const ltvColor = ltvMetrics.ltv > 80
+                        ? { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-600', value: 'text-red-900' }
+                        : ltvMetrics.ltv > 70
+                          ? { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', value: 'text-amber-900' }
+                          : { bg: 'bg-emerald-50', border: 'border-emerald-200', text: 'text-emerald-600', value: 'text-emerald-900' };
+                      const ageMonths = ltvMetrics.oldestValuationAge;
+                      const ageColor = ageMonths === null ? 'text-slate-400'
+                        : ageMonths < 12 ? 'text-emerald-600'
+                        : ageMonths < 24 ? 'text-amber-600'
+                        : 'text-red-600';
+                      return (
+                        <div className={`${ltvColor.bg} border ${ltvColor.border} rounded-lg px-3 py-2 min-w-[80px]`}>
+                          <p className={`text-xs font-medium ${ltvColor.text}`}>LTV</p>
+                          <div className="flex items-baseline gap-1">
+                            <p className={`text-xl font-bold ${ltvColor.value}`}>{ltvMetrics.ltv.toFixed(1)}%</p>
+                            {ageMonths !== null && (
+                              <span className={`text-sm font-medium ${ageColor}`}>{ageMonths}m</span>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                    {expenses.length > 0 && (() => {
+                      const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
+                      return (
+                        <div
+                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
+                          onClick={() => setActiveTab('expenses')}
+                        >
+                          <p className="text-xs text-red-600 font-medium">Expenses</p>
+                          <p className="text-xl font-bold text-red-900">{formatCurrency(totalExpenses)}</p>
+                          <p className="text-xs text-slate-500">{expenses.length} item{expenses.length !== 1 ? 's' : ''}</p>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+
                 {/* Standard Loan Summary */}
                 {!isSpecialType && (
                   <>
@@ -1838,12 +1905,21 @@ export default function LoanDetails() {
                       <p className="text-xs text-blue-600 font-medium">Principal O/S</p>
                       <p className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</p>
                     </div>
-                    <div className={`border rounded-lg px-3 py-2 min-w-[110px] ${interestRemaining < 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
-                      <p className={`text-xs font-medium ${interestRemaining < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
-                        {interestRemaining < 0 ? 'Int Overpaid' : `Interest O/S${product?.interest_paid_in_advance ? ' (in Advance)' : ''}`}
-                      </p>
-                      <p className={`text-xl font-bold ${interestRemaining < 0 ? 'text-emerald-900' : 'text-amber-900'}`}>{formatCurrency(Math.abs(interestRemaining))}</p>
-                    </div>
+                    {(() => {
+                      const behindCalc = calculatePaymentsBehind(schedule, interestRemaining);
+                      const paymentsBehind = Math.ceil(behindCalc.paymentsBehind);
+                      return (
+                        <div className={`border rounded-lg px-3 py-2 min-w-[110px] ${interestRemaining < 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                          <p className={`text-xs font-medium ${interestRemaining < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
+                            {interestRemaining < 0 ? 'Int Overpaid' : `Interest O/S${product?.interest_paid_in_advance ? ' (in Advance)' : ''}`}
+                          </p>
+                          <p className={`text-xl font-bold ${interestRemaining < 0 ? 'text-emerald-900' : 'text-amber-900'}`}>{formatCurrency(Math.abs(interestRemaining))}</p>
+                          {paymentsBehind >= 1 && (
+                            <p className="text-xs text-rose-600 font-medium">{paymentsBehind} payment{paymentsBehind !== 1 ? 's' : ''} behind</p>
+                          )}
+                        </div>
+                      );
+                    })()}
                     {isLoanActive && (() => {
                       // Only include exit fee in settlement - arrangement fee was already deducted from disbursement
                       const outstandingFees = loan.exit_fee || 0;

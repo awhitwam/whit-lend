@@ -8,10 +8,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
-import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Link2, Shield, RefreshCw, Download } from 'lucide-react';
+import { Plus, Search, FileText, Trash2, ArrowUpDown, ChevronRight, X, User, Users, Link2, Shield, RefreshCw, Download, Home } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { format } from 'date-fns';
-import { formatCurrency, calculateAccruedInterestWithTransactions, updateAllLoanBalanceCaches } from '@/components/loan/LoanCalculator';
+import { formatCurrency, calculateAccruedInterestWithTransactions, updateAllLoanBalanceCaches, calculateRentalYield } from '@/components/loan/LoanCalculator';
 import { generateContactStatementsPDF } from '@/components/loan/LoanPDFGenerator';
 import EmptyState from '@/components/ui/EmptyState';
 import { toast } from 'sonner';
@@ -147,7 +147,7 @@ export default function Loans() {
     product: 85,
     principal_bal: 95,
     interest_os: 85,
-    ltv: 40,
+    ltv: 55,
     last_payment: 160,
     next_due: 80,
   };
@@ -560,9 +560,24 @@ export default function Loans() {
           }
           break;
         case 'ltv':
-          // Calculate LTV for sorting - null values sort to end
-          aVal = calculateLoanLtv(a) ?? Infinity;
-          bVal = calculateLoanLtv(b) ?? Infinity;
+          // Calculate LTV or yield for sorting - null values sort to end
+          // For Rent type loans, use yield; for others, use LTV
+          if (a.product_type === 'Rent') {
+            const aTransactions = allTransactions.filter(t => t.loan_id === a.id);
+            const aPrincipalRemaining = a.principal_remaining ?? (a.principal_amount || 0);
+            const aYield = calculateRentalYield(aTransactions, aPrincipalRemaining);
+            aVal = aYield.yield || Infinity;
+          } else {
+            aVal = calculateLoanLtv(a) ?? Infinity;
+          }
+          if (b.product_type === 'Rent') {
+            const bTransactions = allTransactions.filter(t => t.loan_id === b.id);
+            const bPrincipalRemaining = b.principal_remaining ?? (b.principal_amount || 0);
+            const bYield = calculateRentalYield(bTransactions, bPrincipalRemaining);
+            bVal = bYield.yield || Infinity;
+          } else {
+            bVal = calculateLoanLtv(b) ?? Infinity;
+          }
           break;
         case 'created_date':
         default:
@@ -876,7 +891,30 @@ export default function Loans() {
       header: 'LTV',
       sortKey: 'ltv',
       align: 'right',
-      render: (loan, { loanLtv, valuationAgeMonths }) => {
+      render: (loan, { loanLtv, valuationAgeMonths, loanTransactions, principalRemaining }) => {
+        // For Rent type loans, show yield instead of LTV
+        const isRent = loan.product_type === 'Rent';
+        if (isRent) {
+          const yieldCalc = calculateRentalYield(loanTransactions, principalRemaining);
+          if (yieldCalc.yield === 0) {
+            return <span className="text-sm text-slate-400">-</span>;
+          }
+          const yieldColor = yieldCalc.yield >= 8
+            ? 'text-emerald-600'
+            : yieldCalc.yield >= 5
+              ? 'text-amber-600'
+              : 'text-red-600';
+          return (
+            <div className="flex items-center justify-end gap-1">
+              <span className={`font-mono text-sm font-semibold ${yieldColor}`}>
+                {yieldCalc.yield.toFixed(1)}%
+              </span>
+              <Home className="w-3 h-3 text-slate-400" />
+            </div>
+          );
+        }
+
+        // Standard LTV display for non-Rent loans
         if (loanLtv === null) {
           return <span className="text-sm text-slate-400">-</span>;
         }
@@ -1254,7 +1292,7 @@ export default function Loans() {
                         const loanLtv = calculateLoanLtv(loan);
                         const valuationAgeMonths = getOldestValuationAge(loan);
 
-                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr, borrower, loanLtv, valuationAgeMonths };
+                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr, borrower, loanLtv, valuationAgeMonths, loanTransactions };
 
                         return (
                           <tr

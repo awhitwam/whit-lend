@@ -1,4 +1,4 @@
-import React, { createContext, useState, useContext, useEffect } from 'react';
+import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import { setOrganizationIdGetter } from '@/api/dataClient';
@@ -14,6 +14,9 @@ export const OrganizationProvider = ({ children }) => {
   const [memberRole, setMemberRole] = useState(null);
   const [isLoadingOrgs, setIsLoadingOrgs] = useState(true);
 
+  // Track if this is a fresh login (to log login event with org context)
+  const isFirstOrgSetRef = useRef(true);
+
   // Fetch user's organizations
   useEffect(() => {
     if (isAuthenticated && user) {
@@ -23,6 +26,8 @@ export const OrganizationProvider = ({ children }) => {
       setCurrentOrganization(null);
       setMemberRole(null);
       setIsLoadingOrgs(false);
+      // Reset for next login so we log the login event again
+      isFirstOrgSetRef.current = true;
     }
   }, [user, isAuthenticated]);
 
@@ -117,21 +122,21 @@ export const OrganizationProvider = ({ children }) => {
           setMemberRole(orgToUse.role);
           sessionStorage.setItem('currentOrganizationId', orgToUse.id);
 
-          // Log initial organization context on login
-          logAudit({
-            action: AuditAction.LOGIN,
-            entityType: EntityType.ORGANIZATION,
-            entityId: orgToUse.id,
-            entityName: orgToUse.name,
-            details: {
-              event: 'login_org_context',
-              organization_id: orgToUse.id,
-              organization_name: orgToUse.name,
-              source: defaultOrg ? 'user_preference' : 'first_available'
-            },
-            userId: user.id,
-            organizationId: orgToUse.id
-          });
+          // Log login event with organization context (only on fresh login)
+          if (isFirstOrgSetRef.current) {
+            isFirstOrgSetRef.current = false;
+            logAudit({
+              action: AuditAction.LOGIN,
+              entityType: EntityType.ORGANIZATION,
+              entityId: orgToUse.id,
+              entityName: orgToUse.name,
+              details: {
+                event: 'login_org_context',
+                organization_name: orgToUse.name
+              },
+              organizationId: orgToUse.id
+            });
+          }
         }
       }
     } catch (error) {

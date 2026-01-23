@@ -599,13 +599,120 @@ export function calculateLoanSummary(schedule) {
   const totalPrincipal = schedule.reduce((sum, row) => sum + row.principal_amount, 0);
   const totalInterest = schedule.reduce((sum, row) => sum + row.interest_amount, 0);
   const totalRepayable = schedule.reduce((sum, row) => sum + row.total_due, 0);
-  
+
   return {
     totalPrincipal: Math.round(totalPrincipal * 100) / 100,
     totalInterest: Math.round(totalInterest * 100) / 100,
     totalRepayable: Math.round(totalRepayable * 100) / 100,
     installmentAmount: schedule.length > 0 ? schedule[0].total_due : 0,
     numberOfInstallments: schedule.length
+  };
+}
+
+/**
+ * Calculate how many payments the borrower is behind
+ * Based on outstanding interest arrears / average expected monthly payment
+ *
+ * @param {Array} schedule - Repayment schedule rows
+ * @param {number} interestRemaining - Current outstanding interest (can be negative if overpaid)
+ * @returns {Object} { paymentsBehind: number, monthlyPayment: number }
+ */
+export function calculatePaymentsBehind(schedule, interestRemaining) {
+  if (!schedule || schedule.length === 0 || interestRemaining <= 0) {
+    return { paymentsBehind: 0, monthlyPayment: 0 };
+  }
+
+  // Calculate average expected monthly interest payment from schedule
+  // Use interest_amount from schedule rows (not total_due which includes principal)
+  const interestPayments = schedule
+    .filter(row => row.interest_amount > 0)
+    .map(row => row.interest_amount);
+
+  if (interestPayments.length === 0) {
+    return { paymentsBehind: 0, monthlyPayment: 0 };
+  }
+
+  const avgMonthlyPayment = interestPayments.reduce((sum, amt) => sum + amt, 0) / interestPayments.length;
+
+  if (avgMonthlyPayment <= 0) {
+    return { paymentsBehind: 0, monthlyPayment: 0 };
+  }
+
+  const paymentsBehind = interestRemaining / avgMonthlyPayment;
+
+  return {
+    paymentsBehind: Math.round(paymentsBehind), // Round to nearest whole number
+    monthlyPayment: avgMonthlyPayment
+  };
+}
+
+/**
+ * Calculate rental yield for rent-type loans
+ * Looks at interest payments (rent) in the last year from today and compares against principal outstanding
+ * Capital repayments are excluded from the calculation
+ *
+ * @param {Array} transactions - All loan transactions
+ * @param {number} principalOutstanding - Current principal outstanding
+ * @returns {Object} { yield: number (percentage), annualRent: number }
+ */
+export function calculateRentalYield(transactions, principalOutstanding) {
+  if (!transactions || transactions.length === 0 || principalOutstanding <= 0) {
+    return { yield: 0, annualRent: 0 };
+  }
+
+  // Get all non-deleted repayments that have interest applied (rent payments)
+  // Exclude capital-only repayments (where interest_applied is 0 or null)
+  const rentPayments = transactions
+    .filter(t => !t.is_deleted && t.type === 'Repayment' && (t.interest_applied || 0) > 0);
+
+  if (rentPayments.length === 0) {
+    return { yield: 0, annualRent: 0 };
+  }
+
+  // Filter to payments within the last 12 months
+  const today = new Date();
+  const oneYearAgo = new Date(today);
+  oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+
+  const paymentsInPeriod = rentPayments.filter(r => {
+    const paymentDate = new Date(r.date);
+    return paymentDate > oneYearAgo && paymentDate <= today;
+  });
+
+  if (paymentsInPeriod.length === 0) {
+    return { yield: 0, annualRent: 0 };
+  }
+
+  // Sort payments by date descending (most recent first)
+  const sortedPayments = [...paymentsInPeriod].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  // Track which calendar months (0-11) we've already counted
+  // Only include one payment per month, taking the most recent for each
+  const monthsSeen = new Set();
+  let annualRent = 0;
+
+  for (const payment of sortedPayments) {
+    const paymentDate = new Date(payment.date);
+    const month = paymentDate.getMonth(); // 0-11
+
+    // Only count this payment if we haven't seen this month yet
+    if (!monthsSeen.has(month)) {
+      monthsSeen.add(month);
+      annualRent += payment.interest_applied || 0;
+    }
+
+    // Stop once we've seen all 12 months
+    if (monthsSeen.size >= 12) {
+      break;
+    }
+  }
+
+  // Calculate yield as percentage
+  const yieldPercent = (annualRent / principalOutstanding) * 100;
+
+  return {
+    yield: yieldPercent,
+    annualRent
   };
 }
 

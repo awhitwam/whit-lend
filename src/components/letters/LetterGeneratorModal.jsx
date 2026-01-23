@@ -201,7 +201,8 @@ export default function LetterGeneratorModal({
       interestBalance: interestCalc?.interestBalance,
       liveSettlement,
       userProfile,
-      loanProperties
+      loanProperties,
+      schedule
     });
     console.log('[LetterGenerator] Generated placeholder data:', {
       first_charge_addresses: data.first_charge_addresses,
@@ -215,7 +216,7 @@ export default function LetterGeneratorModal({
     if (freeTextFields.free_text_2) data.free_text_2 = freeTextFields.free_text_2;
     if (freeTextFields.free_text_3) data.free_text_3 = freeTextFields.free_text_3;
     return data;
-  }, [loan, borrower, organization, loanProperties, product, settlementData, interestCalc, liveSettlement, freeTextFields, userProfile]);
+  }, [loan, borrower, organization, loanProperties, product, settlementData, interestCalc, liveSettlement, freeTextFields, userProfile, schedule]);
 
   // Rendered content with placeholders substituted
   const renderedSubject = useMemo(() => {
