@@ -28,6 +28,12 @@ export const OrganizationProvider = ({ children }) => {
       setIsLoadingOrgs(false);
       // Reset for next login so we log the login event again
       isFirstOrgSetRef.current = true;
+      // Clear login logged flags so next login gets recorded
+      Object.keys(sessionStorage).forEach(key => {
+        if (key.startsWith('login_logged_')) {
+          sessionStorage.removeItem(key);
+        }
+      });
     }
   }, [user, isAuthenticated]);
 
@@ -123,8 +129,12 @@ export const OrganizationProvider = ({ children }) => {
           sessionStorage.setItem('currentOrganizationId', orgToUse.id);
 
           // Log login event with organization context (only on fresh login)
-          if (isFirstOrgSetRef.current) {
+          // Use sessionStorage to prevent duplicates from React StrictMode remounts
+          const loginLoggedKey = `login_logged_${user.id}`;
+          const alreadyLogged = sessionStorage.getItem(loginLoggedKey);
+          if (isFirstOrgSetRef.current && !alreadyLogged) {
             isFirstOrgSetRef.current = false;
+            sessionStorage.setItem(loginLoggedKey, 'true');
             logAudit({
               action: AuditAction.LOGIN,
               entityType: EntityType.ORGANIZATION,
