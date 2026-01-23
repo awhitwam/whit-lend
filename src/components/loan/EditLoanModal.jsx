@@ -22,32 +22,33 @@ export default function EditLoanPanel({
 }) {
   const [formData, setFormData] = useState({
     product_id: loan?.product_id || '',
-    principal_amount: loan?.principal_amount || '',
-    monthly_charge: loan?.monthly_charge || '',
-    arrangement_fee: loan?.arrangement_fee || '',
-    exit_fee: loan?.exit_fee || '',
-    interest_rate: loan?.interest_rate || '',
+    // Use ?? for numeric fields to preserve 0 values (|| would convert 0 to '')
+    principal_amount: loan?.principal_amount ?? '',
+    monthly_charge: loan?.monthly_charge ?? '',
+    arrangement_fee: loan?.arrangement_fee ?? '',
+    exit_fee: loan?.exit_fee ?? '',
+    interest_rate: loan?.interest_rate ?? '',
     interest_type: loan?.interest_type || '',
     period: loan?.period || '',
-    interest_only_period: loan?.interest_only_period || 0,
-    duration: loan?.duration || '',
-    original_term: loan?.original_term || '',
+    interest_only_period: loan?.interest_only_period ?? 0,
+    duration: loan?.duration ?? '',
+    original_term: loan?.original_term ?? '',
     start_date: loan?.start_date || '',
     description: loan?.description || '',
     // Interest rate override fields
-    override_interest_rate: loan?.override_interest_rate || false,
-    overridden_rate: loan?.overridden_rate || '',
+    override_interest_rate: loan?.override_interest_rate ?? false,
+    overridden_rate: loan?.overridden_rate ?? '',
     // Penalty rate fields
-    has_penalty_rate: loan?.has_penalty_rate || false,
-    penalty_rate: loan?.penalty_rate || '',
+    has_penalty_rate: loan?.has_penalty_rate ?? false,
+    penalty_rate: loan?.penalty_rate ?? '',
     penalty_rate_from: loan?.penalty_rate_from || '',
     // Product type tracking
     product_type: loan?.product_type || '',
     // Roll-Up & Serviced fields
-    roll_up_length: loan?.roll_up_length || '',
-    roll_up_amount: loan?.roll_up_amount || '',
+    roll_up_length: loan?.roll_up_length ?? '',
+    roll_up_amount: loan?.roll_up_amount ?? '',
     // Additional deducted fees
-    additional_deducted_fees: loan?.additional_deducted_fees || '',
+    additional_deducted_fees: loan?.additional_deducted_fees ?? '',
     additional_deducted_fees_note: loan?.additional_deducted_fees_note || ''
   });
 
@@ -89,8 +90,8 @@ export default function EditLoanPanel({
       });
     }
 
-    // Principal amount
-    if (parseFloat(formData.principal_amount) !== parseFloat(loan.principal_amount || 0)) {
+    // Principal amount - use || 0 on both sides to handle NaN from parseFloat('')
+    if ((parseFloat(formData.principal_amount) || 0) !== (parseFloat(loan.principal_amount) || 0)) {
       changeList.push({
         field: 'Principal Amount',
         from: formatCurrency(loan.principal_amount),
@@ -99,7 +100,7 @@ export default function EditLoanPanel({
     }
 
     // Monthly charge (Fixed Charge)
-    if (parseFloat(formData.monthly_charge) !== parseFloat(loan.monthly_charge || 0)) {
+    if ((parseFloat(formData.monthly_charge) || 0) !== (parseFloat(loan.monthly_charge) || 0)) {
       changeList.push({
         field: 'Monthly Charge',
         from: formatCurrency(loan.monthly_charge),
@@ -108,7 +109,7 @@ export default function EditLoanPanel({
     }
 
     // Interest rate
-    if (parseFloat(formData.interest_rate) !== parseFloat(loan.interest_rate || 0)) {
+    if ((parseFloat(formData.interest_rate) || 0) !== (parseFloat(loan.interest_rate) || 0)) {
       changeList.push({
         field: 'Interest Rate',
         from: `${loan.interest_rate || 0}%`,
@@ -116,8 +117,8 @@ export default function EditLoanPanel({
       });
     }
 
-    // Interest rate override
-    if (formData.override_interest_rate !== loan.override_interest_rate) {
+    // Interest rate override - normalize booleans with !! to handle undefined
+    if (!!formData.override_interest_rate !== !!loan.override_interest_rate) {
       changeList.push({
         field: 'Interest Rate Override',
         from: loan.override_interest_rate ? 'Enabled' : 'Disabled',
@@ -126,7 +127,7 @@ export default function EditLoanPanel({
     }
 
     // Overridden rate
-    if (formData.override_interest_rate && parseFloat(formData.overridden_rate) !== parseFloat(loan.overridden_rate || 0)) {
+    if (formData.override_interest_rate && (parseFloat(formData.overridden_rate) || 0) !== (parseFloat(loan.overridden_rate) || 0)) {
       changeList.push({
         field: 'Custom Interest Rate',
         from: `${loan.overridden_rate || 0}%`,
@@ -134,8 +135,8 @@ export default function EditLoanPanel({
       });
     }
 
-    // Duration
-    if (parseInt(formData.duration) !== parseInt(loan.duration || 0)) {
+    // Duration - use || 0 on both sides to handle NaN
+    if ((parseInt(formData.duration) || 0) !== (parseInt(loan.duration) || 0)) {
       changeList.push({
         field: 'Duration',
         from: `${loan.duration || 0} periods`,
@@ -144,7 +145,7 @@ export default function EditLoanPanel({
     }
 
     // Start date
-    if (formData.start_date !== loan.start_date) {
+    if ((formData.start_date || '') !== (loan.start_date || '')) {
       changeList.push({
         field: 'Start Date',
         from: formatDate(loan.start_date),
@@ -153,7 +154,7 @@ export default function EditLoanPanel({
     }
 
     // Arrangement fee
-    if (parseFloat(formData.arrangement_fee) !== parseFloat(loan.arrangement_fee || 0)) {
+    if ((parseFloat(formData.arrangement_fee) || 0) !== (parseFloat(loan.arrangement_fee) || 0)) {
       changeList.push({
         field: 'Arrangement Fee',
         from: formatCurrency(loan.arrangement_fee),
@@ -162,7 +163,7 @@ export default function EditLoanPanel({
     }
 
     // Exit fee
-    if (parseFloat(formData.exit_fee) !== parseFloat(loan.exit_fee || 0)) {
+    if ((parseFloat(formData.exit_fee) || 0) !== (parseFloat(loan.exit_fee) || 0)) {
       changeList.push({
         field: 'Exit Fee',
         from: formatCurrency(loan.exit_fee),
@@ -170,8 +171,8 @@ export default function EditLoanPanel({
       });
     }
 
-    // Penalty rate enabled
-    if (formData.has_penalty_rate !== loan.has_penalty_rate) {
+    // Penalty rate enabled - normalize booleans with !!
+    if (!!formData.has_penalty_rate !== !!loan.has_penalty_rate) {
       changeList.push({
         field: 'Penalty Rate',
         from: loan.has_penalty_rate ? 'Enabled' : 'Disabled',
@@ -180,7 +181,7 @@ export default function EditLoanPanel({
     }
 
     // Penalty rate value
-    if (formData.has_penalty_rate && parseFloat(formData.penalty_rate) !== parseFloat(loan.penalty_rate || 0)) {
+    if (formData.has_penalty_rate && (parseFloat(formData.penalty_rate) || 0) !== (parseFloat(loan.penalty_rate) || 0)) {
       changeList.push({
         field: 'Penalty Rate Value',
         from: `${loan.penalty_rate || 0}%`,
@@ -189,7 +190,7 @@ export default function EditLoanPanel({
     }
 
     // Penalty rate from date
-    if (formData.has_penalty_rate && formData.penalty_rate_from !== loan.penalty_rate_from) {
+    if (formData.has_penalty_rate && (formData.penalty_rate_from || '') !== (loan.penalty_rate_from || '')) {
       changeList.push({
         field: 'Penalty Rate From',
         from: formatDate(loan.penalty_rate_from),
@@ -207,7 +208,7 @@ export default function EditLoanPanel({
     }
 
     // Roll-up length
-    if (parseInt(formData.roll_up_length) !== parseInt(loan.roll_up_length || 0)) {
+    if ((parseInt(formData.roll_up_length) || 0) !== (parseInt(loan.roll_up_length) || 0)) {
       changeList.push({
         field: 'Roll-Up Period',
         from: `${loan.roll_up_length || 0} months`,
@@ -216,7 +217,7 @@ export default function EditLoanPanel({
     }
 
     // Roll-up amount
-    if (parseFloat(formData.roll_up_amount) !== parseFloat(loan.roll_up_amount || 0)) {
+    if ((parseFloat(formData.roll_up_amount) || 0) !== (parseFloat(loan.roll_up_amount) || 0)) {
       changeList.push({
         field: 'Roll-Up Amount',
         from: formatCurrency(loan.roll_up_amount),
@@ -225,7 +226,7 @@ export default function EditLoanPanel({
     }
 
     // Additional deducted fees
-    if (parseFloat(formData.additional_deducted_fees) !== parseFloat(loan.additional_deducted_fees || 0)) {
+    if ((parseFloat(formData.additional_deducted_fees) || 0) !== (parseFloat(loan.additional_deducted_fees) || 0)) {
       changeList.push({
         field: 'Additional Deducted Fees',
         from: formatCurrency(loan.additional_deducted_fees),
@@ -245,129 +246,147 @@ export default function EditLoanPanel({
     }
   }, [isOpen]);
 
-  // Build submit data based on loan type
+  // Build submit data - ONLY include fields that actually changed
+  // This prevents overwriting unchanged fields with recalculated/default values
   const buildSubmitData = () => {
     const product = products.find(p => p.id === formData.product_id);
+    const changes = {};
 
-    // Handle Fixed Charge Facility
-    if (isFixedCharge) {
-      const monthlyCharge = parseFloat(formData.monthly_charge) || 0;
-      const duration = parseInt(formData.duration) || 0;
-
-      return {
-        product_id: formData.product_id,
-        product_name: product?.name || loan.product_name,
-        product_type: 'Fixed Charge',
-        principal_amount: 0,
-        monthly_charge: monthlyCharge,
-        arrangement_fee: parseFloat(formData.arrangement_fee) || 0,
-        exit_fee: parseFloat(formData.exit_fee) || 0,
-        net_disbursed: 0,
-        duration: duration,
-        start_date: formData.start_date,
-        description: formData.description,
-        interest_rate: 0,
-        interest_type: null,
-        period: 'Monthly',
-        total_interest: 0,
-        total_charges: monthlyCharge * duration,
-        // Clear interest-related fields
-        override_interest_rate: false,
-        overridden_rate: null,
-        has_penalty_rate: false,
-        penalty_rate: null,
-        penalty_rate_from: null
-      };
-    }
-
-    // Handle Irregular Income - no interest calculation
-    if (isIrregularIncome) {
-      return {
-        product_id: formData.product_id,
-        product_name: product?.name || loan.product_name,
-        product_type: 'Irregular Income',
-        principal_amount: parseFloat(formData.principal_amount) || 0,
-        arrangement_fee: parseFloat(formData.arrangement_fee) || 0,
-        exit_fee: parseFloat(formData.exit_fee) || 0,
-        net_disbursed: parseFloat(formData.principal_amount) - (parseFloat(formData.arrangement_fee) || 0),
-        duration: 0,
-        start_date: formData.start_date,
-        description: formData.description,
-        // Clear interest-related fields
-        interest_rate: 0,
-        interest_type: null,
-        period: 'Monthly',
-        override_interest_rate: false,
-        overridden_rate: null,
-        has_penalty_rate: false,
-        penalty_rate: null,
-        penalty_rate_from: null
-      };
-    }
-
-    // Handle Rent - no interest calculation, rent is tracked via transactions
-    if (isRent) {
-      return {
-        product_id: formData.product_id,
-        product_name: product?.name || loan.product_name,
-        product_type: 'Rent',
-        principal_amount: parseFloat(formData.principal_amount) || 0,
-        arrangement_fee: parseFloat(formData.arrangement_fee) || 0,
-        exit_fee: parseFloat(formData.exit_fee) || 0,
-        net_disbursed: parseFloat(formData.principal_amount) - (parseFloat(formData.arrangement_fee) || 0),
-        duration: 0,
-        start_date: formData.start_date,
-        description: formData.description,
-        // Clear interest-related fields
-        interest_rate: 0,
-        interest_type: null,
-        period: 'Monthly',
-        override_interest_rate: false,
-        overridden_rate: null,
-        has_penalty_rate: false,
-        penalty_rate: null,
-        penalty_rate_from: null
-      };
-    }
-
-    // Standard loan handling (including Roll-Up & Serviced)
-    const effectiveRate = formData.override_interest_rate && formData.overridden_rate
-      ? parseFloat(formData.overridden_rate)
-      : parseFloat(formData.interest_rate);
-
-    const additionalDeductedFees = parseFloat(formData.additional_deducted_fees) || 0;
-    const arrangementFee = parseFloat(formData.arrangement_fee) || 0;
-    const principalAmount = parseFloat(formData.principal_amount);
-
-    return {
-      product_id: formData.product_id,
-      product_name: product?.name || loan.product_name,
-      product_type: product?.product_type || 'Standard',
-      principal_amount: principalAmount,
-      arrangement_fee: arrangementFee,
-      exit_fee: parseFloat(formData.exit_fee) || 0,
-      additional_deducted_fees: additionalDeductedFees,
-      additional_deducted_fees_note: formData.additional_deducted_fees_note || '',
-      interest_rate: effectiveRate,
-      interest_type: formData.interest_type,
-      period: formData.period,
-      interest_only_period: parseInt(formData.interest_only_period) || 0,
-      duration: parseInt(formData.duration),
-      original_term: formData.original_term ? parseInt(formData.original_term) : null,
-      start_date: formData.start_date,
-      net_disbursed: principalAmount - arrangementFee - additionalDeductedFees,
-      description: formData.description,
-      // Interest rate override tracking
-      override_interest_rate: formData.override_interest_rate,
-      overridden_rate: formData.override_interest_rate ? parseFloat(formData.overridden_rate) || null : null,
-      // Penalty rate fields
-      has_penalty_rate: formData.has_penalty_rate,
-      penalty_rate: formData.has_penalty_rate ? parseFloat(formData.penalty_rate) || null : null,
-      penalty_rate_from: formData.has_penalty_rate ? formData.penalty_rate_from || null : null,
-      // Roll-Up & Serviced fields
-      roll_up_length: formData.roll_up_length ? parseInt(formData.roll_up_length) : null,
-      roll_up_amount: formData.roll_up_amount ? parseFloat(formData.roll_up_amount) : null
+    // Helper to compare numbers with tolerance for floating point
+    const numChanged = (formVal, loanVal) => {
+      const a = parseFloat(formVal) || 0;
+      const b = parseFloat(loanVal) || 0;
+      return Math.abs(a - b) > 0.001;
     };
+
+    // Helper to compare integers
+    const intChanged = (formVal, loanVal) => {
+      const a = parseInt(formVal) || 0;
+      const b = parseInt(loanVal) || 0;
+      return a !== b;
+    };
+
+    // Helper to compare strings
+    const strChanged = (formVal, loanVal) => {
+      return (formVal || '') !== (loanVal || '');
+    };
+
+    // Product change - include product_name and product_type if product changes
+    if (formData.product_id !== loan.product_id) {
+      changes.product_id = formData.product_id;
+      changes.product_name = product?.name || loan.product_name;
+      changes.product_type = product?.product_type || loan.product_type;
+    }
+
+    // Principal amount
+    if (numChanged(formData.principal_amount, loan.principal_amount)) {
+      changes.principal_amount = parseFloat(formData.principal_amount) || 0;
+    }
+
+    // Monthly charge (Fixed Charge)
+    if (numChanged(formData.monthly_charge, loan.monthly_charge)) {
+      changes.monthly_charge = parseFloat(formData.monthly_charge) || 0;
+    }
+
+    // Arrangement fee
+    if (numChanged(formData.arrangement_fee, loan.arrangement_fee)) {
+      changes.arrangement_fee = parseFloat(formData.arrangement_fee) || 0;
+    }
+
+    // Exit fee
+    if (numChanged(formData.exit_fee, loan.exit_fee)) {
+      changes.exit_fee = parseFloat(formData.exit_fee) || 0;
+    }
+
+    // Additional deducted fees
+    if (numChanged(formData.additional_deducted_fees, loan.additional_deducted_fees)) {
+      changes.additional_deducted_fees = parseFloat(formData.additional_deducted_fees) || 0;
+    }
+
+    // Additional deducted fees note
+    if (strChanged(formData.additional_deducted_fees_note, loan.additional_deducted_fees_note)) {
+      changes.additional_deducted_fees_note = formData.additional_deducted_fees_note || '';
+    }
+
+    // Interest rate
+    if (numChanged(formData.interest_rate, loan.interest_rate)) {
+      changes.interest_rate = parseFloat(formData.interest_rate) || 0;
+    }
+
+    // Interest type
+    if (strChanged(formData.interest_type, loan.interest_type)) {
+      changes.interest_type = formData.interest_type;
+    }
+
+    // Period
+    if (strChanged(formData.period, loan.period)) {
+      changes.period = formData.period;
+    }
+
+    // Interest only period
+    if (intChanged(formData.interest_only_period, loan.interest_only_period)) {
+      changes.interest_only_period = parseInt(formData.interest_only_period) || 0;
+    }
+
+    // Duration
+    if (intChanged(formData.duration, loan.duration)) {
+      changes.duration = parseInt(formData.duration) || 0;
+    }
+
+    // Original term
+    if (intChanged(formData.original_term, loan.original_term)) {
+      changes.original_term = formData.original_term ? parseInt(formData.original_term) : null;
+    }
+
+    // Start date
+    if (strChanged(formData.start_date, loan.start_date)) {
+      changes.start_date = formData.start_date;
+    }
+
+    // Description
+    if (strChanged(formData.description, loan.description)) {
+      changes.description = formData.description;
+    }
+
+    // Interest rate override
+    if (formData.override_interest_rate !== loan.override_interest_rate) {
+      changes.override_interest_rate = formData.override_interest_rate;
+    }
+
+    // Overridden rate
+    if (numChanged(formData.overridden_rate, loan.overridden_rate)) {
+      changes.overridden_rate = formData.override_interest_rate ? parseFloat(formData.overridden_rate) || null : null;
+    }
+
+    // Penalty rate enabled
+    if (formData.has_penalty_rate !== loan.has_penalty_rate) {
+      changes.has_penalty_rate = formData.has_penalty_rate;
+    }
+
+    // Penalty rate value
+    if (numChanged(formData.penalty_rate, loan.penalty_rate)) {
+      changes.penalty_rate = formData.has_penalty_rate ? parseFloat(formData.penalty_rate) || null : null;
+    }
+
+    // Penalty rate from date
+    if (strChanged(formData.penalty_rate_from, loan.penalty_rate_from)) {
+      changes.penalty_rate_from = formData.has_penalty_rate ? formData.penalty_rate_from || null : null;
+    }
+
+    // Roll-up length
+    if (intChanged(formData.roll_up_length, loan.roll_up_length)) {
+      changes.roll_up_length = formData.roll_up_length ? parseInt(formData.roll_up_length) : null;
+    }
+
+    // Roll-up amount
+    if (numChanged(formData.roll_up_amount, loan.roll_up_amount)) {
+      changes.roll_up_amount = formData.roll_up_amount ? parseFloat(formData.roll_up_amount) : null;
+    }
+
+    // NEVER recalculate net_disbursed - it should only be changed if user explicitly edits it
+    // or through the disbursement transaction editing
+
+    return changes;
   };
 
   const handleSubmit = (e) => {

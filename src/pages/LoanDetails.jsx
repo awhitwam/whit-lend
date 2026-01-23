@@ -315,36 +315,15 @@ export default function LoanDetails() {
       const editReason = updatedData._editReason;
       delete updatedData._editReason;
 
-      // Fetch the product to get its settings
-      const products = await api.entities.LoanProduct.filter({ id: updatedData.product_id });
-      const product = products[0];
+      // Capture previous values for audit - only for fields being changed
+      const previousValues = {};
+      for (const key of Object.keys(updatedData)) {
+        if (loan[key] !== undefined) {
+          previousValues[key] = loan[key];
+        }
+      }
 
-      if (!product) throw new Error('Product not found');
-
-      // Capture previous values for audit - include all modifiable fields
-      const previousValues = {
-        principal_amount: loan.principal_amount,
-        interest_rate: loan.interest_rate,
-        duration: loan.duration,
-        start_date: loan.start_date,
-        auto_extend: loan.auto_extend,
-        // Product changes
-        product_id: loan.product_id,
-        product_name: loan.product_name,
-        // Fee changes
-        arrangement_fee: loan.arrangement_fee,
-        exit_fee: loan.exit_fee,
-        net_disbursed: loan.net_disbursed,
-        // Interest rate override
-        override_interest_rate: loan.override_interest_rate,
-        overridden_rate: loan.overridden_rate,
-        // Penalty rate changes
-        has_penalty_rate: loan.has_penalty_rate,
-        penalty_rate: loan.penalty_rate,
-        penalty_rate_from: loan.penalty_rate_from
-      };
-
-      // Update loan with new parameters
+      // Update loan with new parameters (only changed fields are in updatedData)
       await api.entities.Loan.update(loanId, updatedData);
 
       // Log loan update to audit trail with edit reason
@@ -353,82 +332,94 @@ export default function LoanDetails() {
         edit_reason: editReason
       }, previousValues);
 
-      toast.loading('Regenerating schedule...', { id: 'edit-loan' });
+      // Define which fields require schedule regeneration
+      const scheduleAffectingFields = [
+        'principal_amount', 'interest_rate', 'duration', 'start_date',
+        'period', 'interest_type', 'interest_only_period', 'product_id',
+        'arrangement_fee', 'override_interest_rate', 'overridden_rate',
+        'has_penalty_rate', 'penalty_rate', 'penalty_rate_from',
+        'monthly_charge', 'roll_up_length', 'roll_up_amount'
+      ];
 
-      // Delete old schedule
-      const oldSchedule = await api.entities.RepaymentSchedule.filter({ loan_id: loanId });
-      for (const row of oldSchedule) {
-        await api.entities.RepaymentSchedule.delete(row.id);
-      }
+      // Check if any schedule-affecting field changed
+      const needsScheduleRegeneration = scheduleAffectingFields.some(
+        field => updatedData[field] !== undefined
+      );
 
-      // Use centralized schedule manager to regenerate
-      // Use same logic as Regenerate Schedule: respect auto_extend setting
-      const today = new Date();
-      const isAutoExtend = updatedData.auto_extend !== undefined ? updatedData.auto_extend : loan.auto_extend;
-      const loanDuration = updatedData.duration || loan.duration;
-      const options = isAutoExtend
-        ? { endDate: format(today, 'yyyy-MM-dd'), duration: loanDuration }
-        : { duration: loanDuration };
-      await regenerateLoanSchedule(loanId, options);
-      
-      toast.loading('Reapplying payments...', { id: 'edit-loan' });
-      
-      // Reapply all non-deleted payments
-      const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
-      const newScheduleRows = await api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
-      
-      let totalPrincipalPaid = 0;
-      let totalInterestPaid = 0;
-      
-      for (const tx of activeTransactions) {
-        const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
-        
-        for (const update of updates) {
-          await api.entities.RepaymentSchedule.update(update.id, {
-            interest_paid: update.interest_paid,
-            principal_paid: update.principal_paid,
-            status: update.status
-          });
-          totalPrincipalPaid += update.principalApplied;
-          totalInterestPaid += update.interestApplied;
+      // Only regenerate schedule if schedule-affecting fields changed
+      if (needsScheduleRegeneration) {
+        toast.loading('Regenerating schedule...', { id: 'edit-loan' });
+
+        // Delete old schedule
+        const oldSchedule = await api.entities.RepaymentSchedule.filter({ loan_id: loanId });
+        for (const row of oldSchedule) {
+          await api.entities.RepaymentSchedule.delete(row.id);
         }
+
+        // Use centralized schedule manager to regenerate
+        const today = new Date();
+        const isAutoExtend = updatedData.auto_extend !== undefined ? updatedData.auto_extend : loan.auto_extend;
+        const loanDuration = updatedData.duration ?? loan.duration;
+        const options = isAutoExtend
+          ? { endDate: format(today, 'yyyy-MM-dd'), duration: loanDuration }
+          : { duration: loanDuration };
+        await regenerateLoanSchedule(loanId, options);
+
+        toast.loading('Reapplying payments...', { id: 'edit-loan' });
+
+        // Reapply all non-deleted payments
+        const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
+        const newScheduleRows = await api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
+
+        let totalPrincipalPaid = 0;
+        let totalInterestPaid = 0;
+
+        for (const tx of activeTransactions) {
+          const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
+
+          for (const update of updates) {
+            await api.entities.RepaymentSchedule.update(update.id, {
+              interest_paid: update.interest_paid,
+              principal_paid: update.principal_paid,
+              status: update.status
+            });
+            totalPrincipalPaid += update.principalApplied;
+            totalInterestPaid += update.interestApplied;
+          }
+        }
+
+        // Update loan payment totals
+        await api.entities.Loan.update(loanId, {
+          principal_paid: totalPrincipalPaid,
+          interest_paid: totalInterestPaid
+        });
       }
-      
-      // Update loan payment totals
-      await api.entities.Loan.update(loanId, {
-        principal_paid: totalPrincipalPaid,
-        interest_paid: totalInterestPaid
-      });
 
-      // Update initial disbursement transaction if principal, arrangement fee, or additional fees changed
-      const newPrincipal = updatedData.principal_amount ?? loan.principal_amount;
-      const newArrangementFee = updatedData.arrangement_fee ?? loan.arrangement_fee ?? 0;
-      const additionalFees = updatedData.additional_deducted_fees ?? loan.additional_deducted_fees ?? 0;
+      // Only update disbursement if principal or fees actually changed
+      const disbursementAffectingFields = ['principal_amount', 'arrangement_fee', 'additional_deducted_fees'];
+      const needsDisbursementUpdate = disbursementAffectingFields.some(
+        field => updatedData[field] !== undefined
+      );
 
-      // Check if any disbursement-related fields changed
-      const principalChanged = Math.abs(newPrincipal - loan.principal_amount) > 0.01;
-      const feeChanged = Math.abs(newArrangementFee - (loan.arrangement_fee || 0)) > 0.01;
-      const additionalFeesChanged = Math.abs(additionalFees - (loan.additional_deducted_fees || 0)) > 0.01;
+      if (needsDisbursementUpdate) {
+        const newPrincipal = updatedData.principal_amount ?? loan.principal_amount;
+        const newArrangementFee = updatedData.arrangement_fee ?? loan.arrangement_fee ?? 0;
+        const additionalFees = updatedData.additional_deducted_fees ?? loan.additional_deducted_fees ?? 0;
 
-      // Find the disbursement transaction to check if it needs fixing
-      const allTx = await api.entities.Transaction.filter({ loan_id: loanId });
-      const disbursementTx = allTx.find(t => t.type === 'Disbursement' && !t.is_deleted);
+        // Find the disbursement transaction
+        const allTx = await api.entities.Transaction.filter({ loan_id: loanId });
+        const disbursementTx = allTx.find(t => t.type === 'Disbursement' && !t.is_deleted);
 
-      if (disbursementTx) {
-        // Calculate what the correct net should be
-        const existingDeductedInterest = disbursementTx.deducted_interest || 0;
-        const correctNetAmount = newPrincipal - newArrangementFee - existingDeductedInterest - additionalFees;
-        const currentTxAmount = disbursementTx.amount || 0;
-        const amountNeedsFix = Math.abs(currentTxAmount - correctNetAmount) > 0.01;
+        if (disbursementTx) {
+          const existingDeductedInterest = disbursementTx.deducted_interest || 0;
+          const correctNetAmount = newPrincipal - newArrangementFee - existingDeductedInterest - additionalFees;
 
-        // Update if any field changed OR if the transaction amount is wrong (legacy fix)
-        if (principalChanged || feeChanged || additionalFeesChanged || amountNeedsFix) {
           await api.entities.Transaction.update(disbursementTx.id, {
             gross_amount: newPrincipal,
             deducted_fee: newArrangementFee,
             deducted_interest: existingDeductedInterest,
             amount: correctNetAmount,
-            principal_applied: newPrincipal,  // Full gross amount
+            principal_applied: newPrincipal,
             fees_applied: newArrangementFee,
             interest_applied: existingDeductedInterest
           });
