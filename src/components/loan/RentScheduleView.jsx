@@ -207,36 +207,6 @@ export default function RentScheduleView({ schedule, transactions = [], loan, pr
 
   return (
     <div className="space-y-4">
-      {/* Pattern Detection Summary */}
-      <div className="bg-emerald-50 border border-emerald-200 rounded-lg p-4">
-        <div className="flex items-start gap-3">
-          <div className="p-2 bg-emerald-100 rounded-lg">
-            <Home className="w-5 h-5 text-emerald-600" />
-          </div>
-          <div className="flex-1">
-            <h3 className="font-semibold text-emerald-900">Rent Income Analysis</h3>
-            <div className="mt-2 grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-              <div>
-                <p className="text-emerald-600">Detected Pattern</p>
-                <p className="font-semibold text-emerald-900">{getFrequencyLabel(pattern.frequency)}</p>
-              </div>
-              <div>
-                <p className="text-emerald-600">Average Rent</p>
-                <p className="font-semibold text-emerald-900">{formatCurrency(pattern.averageAmount)}</p>
-              </div>
-              <div>
-                <p className="text-emerald-600">Payments Analyzed</p>
-                <p className="font-semibold text-emerald-900">{pattern.paymentCount || 0}</p>
-              </div>
-              <div>
-                <p className="text-emerald-600">Pattern Confidence</p>
-                {getConfidenceBadge(pattern.confidence)}
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* Prediction Card */}
       {prediction && (
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">

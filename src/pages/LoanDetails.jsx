@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
@@ -48,7 +48,8 @@ import {
   Plus,
   MessageSquare,
   FolderPlus,
-  FolderOpen
+  FolderOpen,
+  Home
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -81,7 +82,7 @@ import LoanFilesPanel from '@/components/loan/LoanFilesPanel';
 import { getScheduler } from '@/lib/schedule';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import LetterGeneratorModal from '@/components/letters/LetterGeneratorModal';
-import { format } from 'date-fns';
+import { format, differenceInDays } from 'date-fns';
 import { toast } from 'sonner';
 import { cn } from '@/lib/utils';
 
@@ -1356,6 +1357,68 @@ export default function LoanDetails() {
     return status === 'Closed' ? 'Settled' : status;
   };
 
+  // Rent pattern analysis for header card (must be before early returns to maintain hook order)
+  const isRentLoan = loan?.product_type === 'Rent' || product?.product_type === 'Rent';
+  const rentPattern = useMemo(() => {
+    if (!isRentLoan || !transactions?.length) return null;
+
+    const repaymentTransactions = transactions
+      .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+      .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+    if (repaymentTransactions.length < 2) {
+      return {
+        frequency: repaymentTransactions.length === 1 ? 'insufficient_data' : 'unknown',
+        confidence: 'low',
+        averageAmount: repaymentTransactions[0]?.amount || 0,
+        paymentCount: repaymentTransactions.length
+      };
+    }
+
+    // Calculate intervals between payments
+    const intervals = [];
+    for (let i = 1; i < repaymentTransactions.length; i++) {
+      const days = differenceInDays(
+        new Date(repaymentTransactions[i].date),
+        new Date(repaymentTransactions[i - 1].date)
+      );
+      intervals.push(days);
+    }
+
+    const avgInterval = intervals.reduce((sum, d) => sum + d, 0) / intervals.length;
+
+    // Determine frequency
+    let frequency;
+    if (avgInterval >= 300 && avgInterval <= 400) {
+      frequency = 'Annual';
+    } else if (avgInterval >= 75 && avgInterval <= 120) {
+      frequency = 'Quarterly';
+    } else if (avgInterval >= 25 && avgInterval <= 40) {
+      frequency = 'Monthly';
+    } else {
+      frequency = 'Irregular';
+    }
+
+    // Calculate weighted average amount (more weight on recent payments)
+    const recentPayments = repaymentTransactions.slice(-4);
+    const weights = recentPayments.map((_, i) => i + 1);
+    const totalWeight = weights.reduce((sum, w) => sum + w, 0);
+    const weightedSum = recentPayments.reduce((sum, p, i) => sum + (p.amount * weights[i]), 0);
+    const averageAmount = weightedSum / totalWeight;
+
+    // Calculate confidence from variance
+    const variance = intervals.reduce((sum, d) => sum + Math.pow(d - avgInterval, 2), 0) / intervals.length;
+    const stdDev = Math.sqrt(variance);
+    const confidence = stdDev < 15 ? 'high' : stdDev < 30 ? 'medium' : 'low';
+
+    return {
+      frequency,
+      confidence,
+      averageAmount: Math.round(averageAmount * 100) / 100,
+      paymentCount: repaymentTransactions.length
+    };
+  }, [isRentLoan, transactions]);
+
   if (loanLoading) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 p-4 md:p-6">
@@ -1647,6 +1710,46 @@ export default function LoanDetails() {
                         <p className="font-bold text-lg text-red-600">{formatCurrency(loan.arrangement_fee)}</p>
                       </div>
                     )}
+                  </>
+                )}
+
+                {/* Rent - Income Analysis Stats (matching right-side card style) */}
+                {isRent && rentPattern && (
+                  <>
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 min-w-[100px]">
+                      <p className="text-xs text-emerald-600 font-medium flex items-center gap-1">
+                        <Home className="w-3 h-3" />
+                        Pattern
+                      </p>
+                      <p className="text-xl font-bold text-emerald-900">{rentPattern.frequency}</p>
+                    </div>
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 min-w-[110px]">
+                      <p className="text-xs text-emerald-600 font-medium">Avg Rent</p>
+                      <p className="text-xl font-bold text-emerald-900">{formatCurrency(rentPattern.averageAmount)}</p>
+                    </div>
+                    <div className={`border rounded-lg px-3 py-2 min-w-[90px] ${
+                      rentPattern.confidence === 'high'
+                        ? 'bg-emerald-50 border-emerald-200'
+                        : rentPattern.confidence === 'medium'
+                          ? 'bg-amber-50 border-amber-200'
+                          : 'bg-slate-50 border-slate-200'
+                    }`}>
+                      <p className={`text-xs font-medium ${
+                        rentPattern.confidence === 'high'
+                          ? 'text-emerald-600'
+                          : rentPattern.confidence === 'medium'
+                            ? 'text-amber-600'
+                            : 'text-slate-500'
+                      }`}>Confidence</p>
+                      <p className={`text-xl font-bold ${
+                        rentPattern.confidence === 'high'
+                          ? 'text-emerald-900'
+                          : rentPattern.confidence === 'medium'
+                            ? 'text-amber-900'
+                            : 'text-slate-700'
+                      }`}>{rentPattern.confidence === 'high' ? 'High' : rentPattern.confidence === 'medium' ? 'Med' : 'Low'}</p>
+                      <p className="text-xs text-slate-500">{rentPattern.paymentCount} payments</p>
+                    </div>
                   </>
                 )}
 
