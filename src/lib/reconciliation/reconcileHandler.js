@@ -189,6 +189,47 @@ export async function reconcileGroupedDisbursement({ suggestion }) {
 }
 
 /**
+ * Execute reconciliation for grouped_repayment (many bank credits → one loan repayment)
+ *
+ * @param {Object} params
+ * @param {Object} params.suggestion - The match suggestion
+ * @returns {Promise<void>}
+ */
+export async function reconcileGroupedRepayment({ suggestion }) {
+  const tx = suggestion.existingTransaction;
+  const groupedEntries = suggestion.groupedEntries;
+
+  // Calculate totals
+  const bankTotal = groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+  const transactionAmount = Math.abs(tx.amount);
+
+  // CRITICAL: Validate amounts balance before proceeding
+  validateAmountsBalance(bankTotal, transactionAmount, 'grouped_repayment');
+
+  // Create reconciliation entry for each bank credit
+  for (const bankEntry of groupedEntries) {
+    await createReconciliationEntry({
+      bankStatementId: bankEntry.id,
+      loanTransactionId: tx.id,
+      amount: Math.abs(bankEntry.amount),
+      reconciliationType: 'loan_repayment',
+      notes: `Grouped repayment: ${groupedEntries.length} bank entries`,
+      wasCreated: false
+    });
+
+    await markBankEntryReconciled(bankEntry.id);
+  }
+
+  logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
+    bank_statement_id: groupedEntries[0]?.id,
+    description: groupedEntries[0]?.description,
+    amount: Math.abs(tx.amount),
+    bank_entry_count: groupedEntries.length,
+    match_type: 'grouped_repayment'
+  });
+}
+
+/**
  * Execute reconciliation for grouped_investor (many bank → one investor tx)
  *
  * @param {Object} params
@@ -796,6 +837,9 @@ export async function executeReconciliation({ bankEntry, suggestion }) {
 
     case 'grouped_investor':
       return reconcileGroupedInvestor({ suggestion });
+
+    case 'grouped_repayment':
+      return reconcileGroupedRepayment({ suggestion });
 
     case 'match':
       return reconcileSingleMatch({ bankEntry, suggestion });

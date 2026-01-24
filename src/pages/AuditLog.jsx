@@ -317,24 +317,63 @@ export default function AuditLog() {
 
     // If we have details, show them (filtered)
     if (details && typeof details === 'object' && result.length <= 1) {
-      const entries = Object.entries(details).filter(([key, value]) => {
-        if (skipKeys.includes(key)) return false;
-        if (subActionKeys.includes(key)) return false; // Shown in Sub-Action column
-        if (key === 'edit_reason') return false; // Already shown above
-        if (key.endsWith('_id') && isUuid(value)) return false;
-        if (value === null || value === undefined) return false;
-        if (isUuid(value)) return false;
-        return true;
-      });
+      // Check for previous_X/new_X pattern (used in disbursement edits, etc.)
+      const pairedChanges = [];
 
-      if (entries.length > 0) {
-        const detailItems = entries.slice(0, 8).map(([key, value]) => (
-          <div key={key} className="text-xs">
-            <span className="font-medium">{formatFieldName(key)}:</span>{' '}
-            <span className="text-slate-600">{formatValue(value, key)}</span>
-          </div>
-        ));
-        result.push(...detailItems);
+      for (const key of Object.keys(details)) {
+        if (key.startsWith('previous_')) {
+          const fieldName = key.replace('previous_', '');
+          const newKey = `new_${fieldName}`;
+          const oldVal = details[key];
+          const newVal = details[newKey];
+
+          // Only process if we have a matching new_X key
+          if (newKey in details) {
+            const oldNormalized = oldVal ?? '';
+            const newNormalized = newVal ?? '';
+
+            // Only show if values actually changed
+            if (String(oldNormalized) !== String(newNormalized)) {
+              pairedChanges.push(
+                <div key={fieldName} className="text-xs">
+                  <span className="font-medium">{formatFieldName(fieldName)}:</span>{' '}
+                  <span className="text-red-500 line-through mr-1">
+                    {formatValue(oldVal, key)}
+                  </span>
+                  <span className="text-green-600">
+                    {formatValue(newVal, newKey)}
+                  </span>
+                </div>
+              );
+            }
+          }
+        }
+      }
+
+      // If we found paired changes, show them
+      if (pairedChanges.length > 0) {
+        result.push(...pairedChanges.slice(0, 8));
+      } else {
+        // Fall back to showing regular detail entries
+        const entries = Object.entries(details).filter(([key, value]) => {
+          if (skipKeys.includes(key)) return false;
+          if (subActionKeys.includes(key)) return false; // Shown in Sub-Action column
+          if (key === 'edit_reason') return false; // Already shown above
+          if (key.endsWith('_id') && isUuid(value)) return false;
+          if (value === null || value === undefined) return false;
+          if (isUuid(value)) return false;
+          return true;
+        });
+
+        if (entries.length > 0) {
+          const detailItems = entries.slice(0, 8).map(([key, value]) => (
+            <div key={key} className="text-xs">
+              <span className="font-medium">{formatFieldName(key)}:</span>{' '}
+              <span className="text-slate-600">{formatValue(value, key)}</span>
+            </div>
+          ));
+          result.push(...detailItems);
+        }
       }
     }
 

@@ -396,8 +396,8 @@ export default function LoanDetails() {
         });
       }
 
-      // Only update disbursement if principal or fees actually changed
-      const disbursementAffectingFields = ['principal_amount', 'arrangement_fee', 'additional_deducted_fees'];
+      // Only update disbursement if principal, fees, or start_date actually changed
+      const disbursementAffectingFields = ['principal_amount', 'arrangement_fee', 'additional_deducted_fees', 'start_date'];
       const needsDisbursementUpdate = disbursementAffectingFields.some(
         field => updatedData[field] !== undefined
       );
@@ -415,7 +415,8 @@ export default function LoanDetails() {
           const existingDeductedInterest = disbursementTx.deducted_interest || 0;
           const correctNetAmount = newPrincipal - newArrangementFee - existingDeductedInterest - additionalFees;
 
-          await api.entities.Transaction.update(disbursementTx.id, {
+          // Build update object with amounts
+          const disbursementUpdate = {
             gross_amount: newPrincipal,
             deducted_fee: newArrangementFee,
             deducted_interest: existingDeductedInterest,
@@ -423,7 +424,14 @@ export default function LoanDetails() {
             principal_applied: newPrincipal,
             fees_applied: newArrangementFee,
             interest_applied: existingDeductedInterest
-          });
+          };
+
+          // Also update date if start_date changed
+          if (updatedData.start_date) {
+            disbursementUpdate.date = updatedData.start_date;
+          }
+
+          await api.entities.Transaction.update(disbursementTx.id, disbursementUpdate);
         }
       }
     },

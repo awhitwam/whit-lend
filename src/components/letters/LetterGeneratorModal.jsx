@@ -47,6 +47,7 @@ import {
 import { toast } from 'sonner';
 import { useGoogleDrive } from '@/hooks/useGoogleDrive';
 import EmailComposeModal from '@/components/email/EmailComposeModal';
+import { logLetterEvent, AuditAction } from '@/lib/auditLog';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 /**
@@ -390,6 +391,17 @@ export default function LetterGeneratorModal({
       const filename = `${dateStr} ${loanNumber} ${safeBorrowerName} ${safeTemplateName}.pdf`;
 
       downloadPDF(window._generatedLetterPdf, filename);
+
+      // Audit log the letter download
+      logLetterEvent(AuditAction.LETTER_CREATE, {
+        id: null,
+        subject: subject,
+        template_name: selectedTemplate?.name
+      }, loan, {
+        delivery_method: 'download',
+        attached_reports: selectedAttachments.join(', ')
+      });
+
       toast.success('Letter downloaded');
     }
   };
@@ -432,6 +444,17 @@ export default function LetterGeneratorModal({
       });
 
       if (result.success) {
+        // Audit log the letter saved to Google Drive
+        logLetterEvent(AuditAction.LETTER_CREATE, {
+          id: null,
+          subject: subject,
+          template_name: selectedTemplate?.name
+        }, loan, {
+          delivery_method: 'drive',
+          google_drive_folder: result.folderPath,
+          attached_reports: selectedAttachments.join(', ')
+        });
+
         toast.success(`Saved to Google Drive: ${result.folderPath}`);
       } else {
         throw new Error(result.error || 'Upload failed');
@@ -558,6 +581,17 @@ export default function LetterGeneratorModal({
         template_name: selectedTemplate?.name || 'Custom Letter',
         google_drive_file_url: driveFileUrl,
         created_by: user?.id
+      });
+
+      // Audit log the letter sent via email
+      logLetterEvent(AuditAction.LETTER_CREATE, {
+        id: null,
+        subject: emailSubject,
+        template_name: selectedTemplate?.name
+      }, loan, {
+        delivery_method: 'email',
+        recipient_email: to,
+        attached_reports: selectedAttachments.join(', ')
       });
 
       queryClient.invalidateQueries({ queryKey: ['loan-letters', loan?.id] });

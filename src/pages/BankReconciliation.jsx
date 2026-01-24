@@ -100,7 +100,7 @@ function amountsMatch(amount1, amount2, tolerancePercent = 1) {
  * Check if a matchMode indicates matching to an existing transaction (vs creating new)
  */
 function isMatchType(matchMode) {
-  return matchMode === 'match' || matchMode === 'match_group' || matchMode === 'grouped_disbursement' || matchMode === 'grouped_investor';
+  return matchMode === 'match' || matchMode === 'match_group' || matchMode === 'grouped_disbursement' || matchMode === 'grouped_investor' || matchMode === 'grouped_repayment';
 }
 
 /**
@@ -1239,6 +1239,126 @@ export default function BankReconciliation() {
         }
       }
 
+      // 1d. GROUPED REPAYMENT MATCH: Multiple bank credits → single repayment transaction
+      // This handles cases where a borrower's payment arrives as multiple bank transfers
+      // Always check for grouped repayments when credit - an exact sum match should beat a single match with amount mismatch
+      if (isCredit) {
+        // Find all unreconciled credits within 3 days of this entry (including this entry)
+        const nearbyCredits = sortedEntries.filter(other => {
+          if (other.amount <= 0) return false; // Must be credit
+          if (other.id !== entry.id && claimedTxIds.has(other.id)) return false;
+          return datesWithinDays(entry.statement_date, other.statement_date, 3);
+        });
+
+        console.log('[GroupedRepayment] Entry:', entry.id, entry.description?.substring(0, 40), entryAmount);
+        console.log('[GroupedRepayment] nearbyCredits:', nearbyCredits.length, nearbyCredits.map(c => ({ id: c.id, amount: c.amount })));
+
+        // Need at least 2 entries to form a group
+        if (nearbyCredits.length >= 2) {
+          // For each Repayment transaction, check if any subset of credits sums to it
+          for (const tx of loanTransactions) {
+            if (tx.type !== 'Repayment') continue;
+            if (tx.is_deleted || reconciledTxIds.has(tx.id) || claimedTxIds.has(tx.id)) continue;
+
+            const repaymentAmount = Math.abs(tx.amount);
+
+            console.log('[GroupedRepayment] Checking repayment tx:', tx.id, repaymentAmount);
+
+            // Skip if this single entry already matches (handled above)
+            if (amountsMatch(entryAmount, repaymentAmount, 1)) {
+              console.log('[GroupedRepayment] Skipped - single entry already matches');
+              continue;
+            }
+
+            // Skip if this entry is larger than the repayment
+            if (entryAmount > repaymentAmount * 1.01) {
+              console.log('[GroupedRepayment] Skipped - entry larger than repayment');
+              continue;
+            }
+
+            // Find subset of credits that sum to repayment (must include current entry)
+            const matchingSubset = findSubsetSum(
+              nearbyCredits,
+              repaymentAmount,
+              entry.id // Must include this entry
+            );
+
+            console.log('[GroupedRepayment] findSubsetSum result:', matchingSubset?.length || 0, matchingSubset?.map(e => e.amount));
+
+            if (matchingSubset && matchingSubset.length >= 2) {
+              const loan = loans.find(l => l.id === tx.loan_id);
+              const borrower = borrowers.find(b => b.id === loan?.borrower_id);
+
+              // Check that bank entries are within reasonable date range of the repayment
+              const txDate = tx.date;
+              const maxDaysFromTransaction = 14;
+              const allEntriesNearTransaction = matchingSubset.every(e =>
+                datesWithinDays(e.statement_date, txDate, maxDaysFromTransaction)
+              );
+
+              if (!allEntriesNearTransaction) {
+                console.log('[GroupedRepayment] Skipped - entries not near transaction date');
+                continue;
+              }
+
+              // Validate that grouped entries are related
+              const entriesAreRelated = groupHasRelatedDescriptions(matchingSubset);
+              const borrowerName = borrower?.full_name || borrower?.business || loan?.borrower_name || '';
+              const hasBorrowerName = borrowerName && matchingSubset.some(e =>
+                descriptionContainsName(e.description, borrowerName, borrower?.business) > 0.5
+              );
+
+              console.log('[GroupedRepayment] entriesAreRelated:', entriesAreRelated, 'hasBorrowerName:', hasBorrowerName, 'borrowerName:', borrowerName);
+
+              // Skip if entries don't appear to be related
+              if (!entriesAreRelated && !hasBorrowerName) {
+                console.log('[GroupedRepayment] Skipped - entries not related and no borrower name match');
+                continue;
+              }
+
+              const allSameDay = matchingSubset.every(e =>
+                datesWithinDays(e.statement_date, entry.statement_date, 0)
+              );
+
+              const allNearTransaction = matchingSubset.every(e =>
+                datesWithinDays(e.statement_date, txDate, 3)
+              );
+
+              // Score based on both same-day grouping AND proximity to transaction
+              // Grouped matches with exact sums should score higher than single matches with amount mismatches
+              let score;
+              if (allSameDay && allNearTransaction) {
+                score = 0.96; // Same day entries, within 3 days of transaction - high confidence for exact sum
+              } else if (allSameDay) {
+                score = 0.85; // Same day entries, but further from transaction
+              } else if (allNearTransaction) {
+                score = 0.88; // Different day entries, but close to transaction
+              } else {
+                score = 0.70; // Different days, further from transaction
+              }
+
+              if (score > bestScore) {
+                console.log('[GroupedRepayment] MATCH FOUND! Adding grouped_repayment match with score:', score);
+                bestScore = score;
+                const borrowerDisplayName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
+                const groupTotal = matchingSubset.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+                bestMatch = {
+                  type: 'loan_repayment',
+                  matchMode: 'grouped_repayment',
+                  existingTransaction: tx,
+                  groupedEntries: matchingSubset,
+                  loan,
+                  borrower,
+                  confidence: score,
+                  reason: `Split payment: ${matchingSubset.length} bank entries → ${loan?.loan_number || 'Unknown'} (${borrowerDisplayName}) = ${formatCurrency(groupTotal)}`
+                };
+                break; // Stop at first match
+              }
+            }
+          }
+        }
+      }
+
       // 1b. GROUPED MATCH: Check if multiple repayments from same borrower/email sum to this amount
       // This handles cases where a borrower pays once for multiple loans
       // Also groups by email address for borrowers that share the same email
@@ -1945,6 +2065,17 @@ export default function BankReconciliation() {
           });
         }
       }
+      // Check grouped_repayment (multiple bank credits → single repayment)
+      if (suggestion.matchMode === 'grouped_repayment' && suggestion.groupedEntries) {
+        for (const groupedEntry of suggestion.groupedEntries) {
+          // Mark all entries in the group (including the primary)
+          grouped.set(groupedEntry.id, {
+            primaryEntryId,
+            suggestion,
+            groupType: 'repayment'
+          });
+        }
+      }
       // Check grouped_payment (single bank credit → multiple repayments)
       if (suggestion.matchMode === 'grouped' && suggestion.existingTransactions) {
         // This is for grouped repayments - mark the primary entry
@@ -2582,6 +2713,12 @@ export default function BankReconciliation() {
       return reviewingSuggestion.existingTransactions;
     }
 
+    // For grouped_repayment/grouped_disbursement, include the pre-matched transaction
+    if ((reviewingSuggestion?.matchMode === 'grouped_repayment' || reviewingSuggestion?.matchMode === 'grouped_disbursement') &&
+        reviewingSuggestion.existingTransaction) {
+      return [reviewingSuggestion.existingTransaction];
+    }
+
     const entryDate = parseISO(selectedEntry.statement_date);
     const entryAmount = Math.abs(selectedEntry.amount);
 
@@ -2817,6 +2954,14 @@ export default function BankReconciliation() {
         }
       } else if (suggestion.matchMode === 'grouped_disbursement' && suggestion.existingTransaction) {
         // Grouped disbursement - multiple bank debits → single disbursement transaction
+        setMatchMode('match');
+        setSelectedExistingTxs([suggestion.existingTransaction]);
+        // Also set the loan if available
+        if (suggestion.loan) {
+          setSelectedLoan(suggestion.loan);
+        }
+      } else if (suggestion.matchMode === 'grouped_repayment' && suggestion.existingTransaction) {
+        // Grouped repayment - multiple bank credits → single repayment transaction
         setMatchMode('match');
         setSelectedExistingTxs([suggestion.existingTransaction]);
         // Also set the loan if available
@@ -3301,6 +3446,66 @@ export default function BankReconciliation() {
         queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
         queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
         queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
+
+        // Clean up dismissed state for all reconciled entries
+        setDismissedSuggestions(prev => {
+          const next = new Set(prev);
+          for (const bankEntry of groupedEntries) {
+            next.delete(bankEntry.id);
+          }
+          return next;
+        });
+
+        setSelectedEntry(null);
+        setReviewingSuggestion(null);
+      } catch (error) {
+        alert(`Error: ${error.message}`);
+      } finally {
+        setIsReconciling(false);
+      }
+      return;
+    }
+
+    // Handle grouped repayment match (multiple bank credits → single repayment transaction)
+    if (reviewingSuggestion?.matchMode === 'grouped_repayment' && reviewingSuggestion.existingTransaction) {
+      setIsReconciling(true);
+      try {
+        const tx = reviewingSuggestion.existingTransaction;
+        const groupedEntries = reviewingSuggestion.groupedEntries;
+
+        // Create reconciliation entry for each bank credit, linking to same repayment
+        for (const bankEntry of groupedEntries) {
+          await api.entities.ReconciliationEntry.create({
+            bank_statement_id: bankEntry.id,
+            loan_transaction_id: tx.id,
+            investor_transaction_id: null,
+            expense_id: null,
+            amount: Math.abs(bankEntry.amount),
+            reconciliation_type: 'loan_repayment',
+            notes: `Grouped repayment: ${groupedEntries.length} payments`,
+            was_created: false
+          });
+
+          // Mark each bank statement as reconciled
+          await api.entities.BankStatement.update(bankEntry.id, {
+            is_reconciled: true,
+            reconciled_at: new Date().toISOString()
+          });
+        }
+
+        // Log the grouped repayment reconciliation
+        logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
+          bank_statement_id: selectedEntry.id,
+          description: selectedEntry.description,
+          amount: Math.abs(tx.amount),
+          bank_entry_count: groupedEntries.length,
+          match_type: 'grouped_repayment'
+        });
+
+        // Refresh data
+        queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+        queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+        queryClient.invalidateQueries({ queryKey: ['transactions'] });
 
         // Clean up dismissed state for all reconciled entries
         setDismissedSuggestions(prev => {
@@ -4396,6 +4601,64 @@ export default function BankReconciliation() {
         }
 
         return { success: true, groupedCount: suggestion.groupedEntries.length }; // Early return - we handled everything
+      } else if (suggestion.matchMode === 'grouped_repayment' && suggestion.existingTransaction && suggestion.groupedEntries) {
+        // Grouped repayment: multiple bank credits → single repayment transaction
+        // Process ALL entries in the group, not just the one passed in
+        const tx = suggestion.existingTransaction;
+        if (tx.is_deleted) {
+          return { success: false, error: 'Transaction has been deleted' };
+        }
+        const txExists = loanTransactions.some(lt => lt.id === tx.id && !lt.is_deleted);
+        if (!txExists) {
+          return { success: false, error: 'Transaction no longer exists' };
+        }
+
+        // Create reconciliation entry for each bank credit in the group
+        for (const bankEntry of suggestion.groupedEntries) {
+          await api.entities.ReconciliationEntry.create({
+            bank_statement_id: bankEntry.id,
+            loan_transaction_id: tx.id,
+            investor_transaction_id: null,
+            expense_id: null,
+            amount: Math.abs(bankEntry.amount),
+            reconciliation_type: 'loan_repayment',
+            notes: `Grouped repayment: ${suggestion.groupedEntries.length} payments`,
+            was_created: false
+          });
+
+          // Mark each bank statement as reconciled
+          await api.entities.BankStatement.update(bankEntry.id, {
+            is_reconciled: true,
+            reconciled_at: new Date().toISOString()
+          });
+        }
+
+        // Log the grouped repayment reconciliation
+        logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
+          bank_statement_id: entry.id,
+          description: entry.description,
+          amount: Math.abs(tx.amount),
+          bank_entry_count: suggestion.groupedEntries.length,
+          match_type: 'grouped_repayment'
+        });
+
+        // Refresh data (skip if bulk operation will do it at the end)
+        if (!skipInvalidation) {
+          queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+          queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+          queryClient.invalidateQueries({ queryKey: ['transactions'] });
+
+          // Clean up dismissed state for all reconciled entries
+          setDismissedSuggestions(prev => {
+            const next = new Set(prev);
+            for (const bankEntry of suggestion.groupedEntries) {
+              next.delete(bankEntry.id);
+            }
+            return next;
+          });
+        }
+
+        return { success: true, groupedCount: suggestion.groupedEntries.length }; // Early return - we handled everything
       } else if (suggestion.matchMode === 'match_group' && (suggestion.existingTransactions || suggestion.existingInterestEntries)) {
         // Link to multiple existing transactions (grouped payments)
         // NOTE: For cross-table matches, BOTH existingTransactions AND existingInterestEntries may be present
@@ -4729,7 +4992,7 @@ export default function BankReconciliation() {
         }
         // For grouped matches, mark all entries in the group as processed
         // so we don't try to process them again individually
-        if ((suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor') && suggestion.groupedEntries) {
+        if ((suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor' || suggestion.matchMode === 'grouped_repayment') && suggestion.groupedEntries) {
           for (const groupedEntry of suggestion.groupedEntries) {
             processedGroupedEntryIds.add(groupedEntry.id);
           }
@@ -6664,6 +6927,8 @@ export default function BankReconciliation() {
                                     linkText = `${txCount} items: ${linkText}`;
                                   } else if (suggestion.matchMode === 'grouped_disbursement') {
                                     linkText = `${suggestion.groupedEntries?.length || 0} debits → ${suggestion.loan?.loan_number || 'Unknown'}`;
+                                  } else if (suggestion.matchMode === 'grouped_repayment') {
+                                    linkText = `${suggestion.groupedEntries?.length || 0} credits → ${suggestion.loan?.loan_number || 'Unknown'}`;
                                   }
 
                                   // Get match explanation for amount/date
@@ -6671,7 +6936,7 @@ export default function BankReconciliation() {
                                   let matchExplanation = null;
                                   if (matchTx) {
                                     // For grouped matches, use combined amount from all grouped entries
-                                    if ((suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor') && suggestion.groupedEntries) {
+                                    if ((suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor' || suggestion.matchMode === 'grouped_repayment') && suggestion.groupedEntries) {
                                       const groupedTotal = suggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
                                       const syntheticEntry = { amount: groupedTotal, statement_date: entry.statement_date };
                                       matchExplanation = getMatchExplanation(syntheticEntry, matchTx, matchTx.date ? 'date' : 'statement_date');
@@ -6681,7 +6946,7 @@ export default function BankReconciliation() {
                                   }
 
                                   // For grouped matches, show the other bank entries in the group
-                                  const otherGroupedEntries = (suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor') && suggestion.groupedEntries
+                                  const otherGroupedEntries = (suggestion.matchMode === 'grouped_disbursement' || suggestion.matchMode === 'grouped_investor' || suggestion.matchMode === 'grouped_repayment') && suggestion.groupedEntries
                                     ? suggestion.groupedEntries.filter(e => e.id !== entry.id)
                                     : [];
 
@@ -6816,6 +7081,15 @@ export default function BankReconciliation() {
                                         Combined payment
                                       </div>
                                     )}
+                                    {isPartOfGroupedSuggestion && groupedInfo.groupType === 'repayment' && (
+                                      <div
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-700 text-xs font-medium"
+                                        title={`Part of grouped repayment: ${groupedInfo.suggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → ${groupedInfo.suggestion.loan?.borrower_name || 'Unknown'}`}
+                                      >
+                                        <Link2 className="w-3 h-3 flex-shrink-0" />
+                                        Combined receipt
+                                      </div>
+                                    )}
                                   </div>
                                 );
                               }
@@ -6845,6 +7119,15 @@ export default function BankReconciliation() {
                                       >
                                         <Link2 className="w-3 h-3 flex-shrink-0" />
                                         Combined payment
+                                      </div>
+                                    )}
+                                    {isPartOfGroupedSuggestion && groupedInfo.groupType === 'repayment' && (
+                                      <div
+                                        className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-100 border border-emerald-300 text-emerald-700 text-xs font-medium"
+                                        title={`Part of grouped repayment: ${groupedInfo.suggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → ${groupedInfo.suggestion.loan?.borrower_name || 'Unknown'}`}
+                                      >
+                                        <Link2 className="w-3 h-3 flex-shrink-0" />
+                                        Combined receipt
                                       </div>
                                     )}
                                   </div>
@@ -7352,6 +7635,18 @@ export default function BankReconciliation() {
                     explanation = txToCompare
                       ? getMatchExplanation(syntheticBankEntry, txToCompare, 'date')
                       : null;
+                  } else if (reviewingSuggestion.matchMode === 'grouped_repayment' && reviewingSuggestion.groupedEntries) {
+                    // For grouped repayment: multiple bank credits → single repayment transaction
+                    // Create a synthetic bank entry with the combined amount from all grouped entries
+                    const groupedTotal = reviewingSuggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+                    const syntheticBankEntry = {
+                      amount: groupedTotal,
+                      statement_date: selectedEntry?.statement_date
+                    };
+                    const txToCompare = reviewingSuggestion.existingTransaction;
+                    explanation = txToCompare
+                      ? getMatchExplanation(syntheticBankEntry, txToCompare, 'date')
+                      : null;
                   } else {
                     const txToCompare = (selectedExistingTxs.length > 0 ? selectedExistingTxs[0] : null) ||
                       reviewingSuggestion.existingTransaction ||
@@ -7406,6 +7701,25 @@ export default function BankReconciliation() {
                           </div>
                           <div className="text-xs text-slate-500 mt-1">
                             → Matches investor: {reviewingSuggestion.investor?.business_name || reviewingSuggestion.investor?.name || 'Unknown'}
+                          </div>
+                        </div>
+                      )}
+                      {/* For grouped repayment matches, show all bank entries in the group */}
+                      {reviewingSuggestion.matchMode === 'grouped_repayment' && reviewingSuggestion.groupedEntries && (
+                        <div className="text-xs text-emerald-600 border-t border-slate-200 pt-2">
+                          <div className="font-medium mb-1">Bank entries matching loan repayment:</div>
+                          {reviewingSuggestion.groupedEntries.map((e, idx) => (
+                            <div key={e.id} className="flex justify-between text-slate-600">
+                              <span>{format(parseISO(e.statement_date), 'dd/MM/yyyy')}: {e.description?.substring(0, 30)}...</span>
+                              <span className="font-medium">{formatCurrency(Math.abs(e.amount))}</span>
+                            </div>
+                          ))}
+                          <div className="flex justify-between font-medium text-emerald-700 border-t border-slate-300 pt-1 mt-1">
+                            <span>Total:</span>
+                            <span>{formatCurrency(reviewingSuggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0))}</span>
+                          </div>
+                          <div className="text-xs text-slate-500 mt-1">
+                            → Matches repayment: {reviewingSuggestion.loan?.borrower_name || reviewingSuggestion.borrower?.full_name || reviewingSuggestion.borrower?.business || 'Unknown'}
                           </div>
                         </div>
                       )}
@@ -7486,6 +7800,30 @@ export default function BankReconciliation() {
                                 </div>
                                 <div className="text-amber-600 mt-1">
                                   {groupedSuggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → {groupedSuggestion.investor?.business_name || groupedSuggestion.investor?.name || 'Unknown'}
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
+                      {/* Warning if this entry is part of a grouped repayment suggestion elsewhere */}
+                      {(() => {
+                        const groupedInfoDialog = entriesInGroupedSuggestions.get(selectedEntry?.id);
+                        const isPartOfGroup = groupedInfoDialog && groupedInfoDialog.primaryEntryId !== selectedEntry?.id;
+                        if (!isPartOfGroup || groupedInfoDialog?.groupType !== 'repayment') return null;
+
+                        const groupedSuggestion = groupedInfoDialog.suggestion;
+                        return (
+                          <div className="pt-2 border-t border-emerald-200 mt-2 bg-emerald-50 rounded-lg p-2">
+                            <div className="flex items-start gap-2 text-emerald-700">
+                              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" />
+                              <div className="text-xs">
+                                <div className="font-medium mb-1">Part of combined receipt</div>
+                                <div className="text-emerald-600">
+                                  This entry is suggested as part of a grouped loan repayment:
+                                </div>
+                                <div className="text-emerald-600 mt-1">
+                                  {groupedSuggestion.groupedEntries?.map(e => formatCurrency(Math.abs(e.amount))).join(' + ')} → {groupedSuggestion.loan?.borrower_name || groupedSuggestion.borrower?.full_name || 'Unknown'}
                                 </div>
                               </div>
                             </div>
@@ -8106,7 +8444,12 @@ export default function BankReconciliation() {
                             {/* Selection Summary */}
                             {selectedExistingTxs.length > 0 && (() => {
                               const selectedTotal = selectedExistingTxs.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
-                              const bankAmount = Math.abs(selectedEntry?.amount || 0);
+                              // For grouped matches, use the combined amount from all grouped entries
+                              const isGroupedMatch = (reviewingSuggestion?.matchMode === 'grouped_repayment' || reviewingSuggestion?.matchMode === 'grouped_disbursement') && reviewingSuggestion?.groupedEntries;
+                              const bankAmount = isGroupedMatch
+                                ? reviewingSuggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0)
+                                : Math.abs(selectedEntry?.amount || 0);
+                              const bankEntriesCount = isGroupedMatch ? reviewingSuggestion.groupedEntries.length : 1;
                               const difference = Math.abs(bankAmount - selectedTotal);
                               const isBalanced = difference < 0.01;
 
@@ -8117,7 +8460,7 @@ export default function BankReconciliation() {
                                     <span className="font-mono font-medium">{formatCurrency(selectedTotal)}</span>
                                   </div>
                                   <div className="flex justify-between text-sm">
-                                    <span className="text-slate-600">Bank Entry</span>
+                                    <span className="text-slate-600">{isGroupedMatch ? `Bank Entries (${bankEntriesCount})` : 'Bank Entry'}</span>
                                     <span className="font-mono">{formatCurrency(bankAmount)}</span>
                                   </div>
                                   <div className={`flex justify-between text-sm pt-2 border-t ${isBalanced ? 'text-emerald-600' : 'text-amber-600'}`}>
@@ -8359,7 +8702,11 @@ export default function BankReconciliation() {
                       // For multi-select matching, ensure amounts balance
                       if (matchMode === 'match' && selectedExistingTxs.length > 0) {
                         const selectedTotal = selectedExistingTxs.reduce((sum, tx) => sum + Math.abs(tx.amount), 0);
-                        const bankAmount = Math.abs(selectedEntry?.amount || 0);
+                        // For grouped matches, use combined total from grouped entries
+                        const isGroupedMatch = (reviewingSuggestion?.matchMode === 'grouped_repayment' || reviewingSuggestion?.matchMode === 'grouped_disbursement') && reviewingSuggestion?.groupedEntries;
+                        const bankAmount = isGroupedMatch
+                          ? reviewingSuggestion.groupedEntries.reduce((sum, e) => sum + Math.abs(e.amount), 0)
+                          : Math.abs(selectedEntry?.amount || 0);
                         if (Math.abs(bankAmount - selectedTotal) >= 0.01) return true;
                       }
                       if (reconciliationType === 'offset' && (selectedOffsetEntries.length === 0 || !offsetNotes.trim() || Math.abs(selectedEntry.amount + selectedOffsetEntries.reduce((sum, e) => sum + e.amount, 0)) >= 0.01)) return true;

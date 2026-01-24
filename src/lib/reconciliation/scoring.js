@@ -469,5 +469,5 @@ export function findSubsetSum(entries, targetAmount, mustIncludeId) {
  * Check if a matchMode indicates matching to an existing transaction (vs creating new)
  */
 export function isMatchType(matchMode) {
-  return matchMode === 'match' || matchMode === 'match_group' || matchMode === 'grouped_disbursement' || matchMode === 'grouped_investor';
+  return matchMode === 'match' || matchMode === 'match_group' || matchMode === 'grouped_disbursement' || matchMode === 'grouped_investor' || matchMode === 'grouped_repayment';
 }

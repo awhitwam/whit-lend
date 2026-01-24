@@ -12,7 +12,9 @@ import {
   calculateMatchScore,
   descriptionContainsName,
   datesWithinDays,
-  amountsMatch
+  amountsMatch,
+  findSubsetSum,
+  groupHasRelatedDescriptions
 } from '../scoring';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 
@@ -79,6 +81,10 @@ export class LoanRepaymentMatcher extends BaseMatcher {
     // 4. Date-based grouped repayments (any borrowers, same date, amounts sum to bank entry)
     const dateGroupedMatches = this.findDateGroupedMatches(entry, context);
     matches.push(...dateGroupedMatches);
+
+    // 5. Grouped bank entries matching single repayment (split bank payments → one loan receipt)
+    const groupedBankEntryMatches = this.findGroupedBankEntries(entry, context);
+    matches.push(...groupedBankEntryMatches);
 
     return matches;
   }
@@ -363,6 +369,134 @@ export class LoanRepaymentMatcher extends BaseMatcher {
   }
 
   /**
+   * Find matches where multiple bank credits sum to a single loan repayment
+   * This handles cases where a borrower's payment arrives as multiple bank transfers
+   */
+  findGroupedBankEntries(entry, context) {
+    const {
+      loanTransactions,
+      loans,
+      borrowers,
+      reconciledTxIds,
+      claimedTxIds,
+      bankEntries
+    } = context;
+
+    const matches = [];
+    const entryAmount = Math.abs(entry.amount);
+
+    console.log('[GroupedBankEntries] Entry:', entry.id, entry.description, entryAmount);
+    console.log('[GroupedBankEntries] bankEntries count:', bankEntries?.length || 0);
+
+    // Find all unreconciled credits within 3 days of this entry
+    const nearbyCredits = (bankEntries || []).filter(other => {
+      if (other.amount <= 0) return false; // Must be credit
+      if (other.is_reconciled) return false;
+      if (other.id !== entry.id && claimedTxIds?.has(other.id)) return false;
+      return datesWithinDays(entry.statement_date, other.statement_date, 3);
+    });
+
+    console.log('[GroupedBankEntries] nearbyCredits:', nearbyCredits.length, nearbyCredits.map(c => ({ id: c.id, amount: c.amount, desc: c.description?.slice(0, 30) })));
+
+    // Need at least 2 entries to form a group
+    if (nearbyCredits.length < 2) {
+      console.log('[GroupedBankEntries] Not enough nearby credits (need >= 2)');
+      return matches;
+    }
+
+    // For each Repayment transaction, check if any subset of credits sums to it
+    for (const tx of loanTransactions) {
+      if (tx.type !== 'Repayment') continue;
+      if (tx.is_deleted) continue;
+      if (reconciledTxIds?.has(tx.id)) continue;
+      if (claimedTxIds?.has(tx.id)) continue;
+
+      const repaymentAmount = Math.abs(tx.amount);
+
+      console.log('[GroupedBankEntries] Checking repayment tx:', tx.id, repaymentAmount, 'vs entryAmount:', entryAmount);
+
+      // Skip if this single entry already matches (handled by single match logic)
+      if (amountsMatch(entryAmount, repaymentAmount, 1)) {
+        console.log('[GroupedBankEntries] Skipped - single entry already matches');
+        continue;
+      }
+
+      // Skip if this entry is larger than the repayment
+      if (entryAmount > repaymentAmount * 1.01) {
+        console.log('[GroupedBankEntries] Skipped - entry larger than repayment');
+        continue;
+      }
+
+      // Find subset of credits that sum to repayment (must include current entry)
+      const matchingSubset = findSubsetSum(
+        nearbyCredits,
+        repaymentAmount,
+        entry.id
+      );
+
+      console.log('[GroupedBankEntries] findSubsetSum result:', matchingSubset?.length || 0, matchingSubset?.map(e => e.amount));
+
+      if (matchingSubset && matchingSubset.length >= 2) {
+        const loan = loans.find(l => l.id === tx.loan_id);
+        const borrower = borrowers.find(b => b.id === (loan?.borrower_id || tx.borrower_id));
+
+        // Check that bank entries are within reasonable date range of the repayment
+        const txDate = tx.date;
+        const maxDaysFromTransaction = 14;
+        const allEntriesNearTransaction = matchingSubset.every(e =>
+          datesWithinDays(e.statement_date, txDate, maxDaysFromTransaction)
+        );
+
+        if (!allEntriesNearTransaction) {
+          console.log('[GroupedBankEntries] Skipped - entries not near transaction date');
+          continue;
+        }
+
+        // Validate that grouped entries are related (similar descriptions)
+        const entriesAreRelated = groupHasRelatedDescriptions(matchingSubset);
+        const borrowerName = borrower?.full_name || borrower?.business || loan?.borrower_name || '';
+        const hasBorrowerName = borrowerName && matchingSubset.some(e =>
+          descriptionContainsName(e.description, borrowerName, borrower?.business) > 0.5
+        );
+
+        console.log('[GroupedBankEntries] entriesAreRelated:', entriesAreRelated, 'hasBorrowerName:', hasBorrowerName, 'borrowerName:', borrowerName);
+
+        // Skip if entries don't appear to be related
+        if (!entriesAreRelated && !hasBorrowerName) {
+          console.log('[GroupedBankEntries] Skipped - entries not related and no borrower name match');
+          continue;
+        }
+
+        const allSameDay = matchingSubset.every(e =>
+          datesWithinDays(e.statement_date, entry.statement_date, 0)
+        );
+
+        const allNearTransaction = matchingSubset.every(e =>
+          datesWithinDays(e.statement_date, txDate, 3)
+        );
+
+        const groupTotal = matchingSubset.reduce((sum, e) => sum + Math.abs(e.amount), 0);
+
+        console.log('[GroupedBankEntries] MATCH FOUND! Adding grouped_repayment match');
+        matches.push({
+          type: 'loan_repayment',
+          matchMode: 'grouped_repayment',
+          existingTransaction: tx,
+          groupedEntries: matchingSubset,
+          loan,
+          borrower,
+          allSameDay,
+          allNearTransaction,
+          reason: `Split payment: ${matchingSubset.length} bank entries → ${loan?.loan_number || 'Unknown'} (${borrower?.business || borrower?.full_name || loan?.borrower_name || 'Unknown'}) = ${formatCurrency(groupTotal)}`
+        });
+      }
+    }
+
+    console.log('[GroupedBankEntries] Returning', matches.length, 'matches');
+    return matches;
+  }
+
+  /**
    * Calculate confidence score for a match
    */
   calculateConfidence(match, entry) {
@@ -398,6 +532,35 @@ export class LoanRepaymentMatcher extends BaseMatcher {
       }
 
       // Check for name match bonus
+      if (match.borrower) {
+        const nameScore = descriptionContainsName(
+          entry.description,
+          match.borrower.full_name,
+          match.borrower.business
+        );
+        if (nameScore > 0) {
+          score = Math.min(score + (nameScore * 0.05), 0.95);
+        }
+      }
+
+      return score;
+    }
+
+    // For grouped bank entry matches (multiple bank credits → single repayment)
+    if (match.matchMode === 'grouped_repayment' && match.groupedEntries) {
+      let score;
+
+      if (match.allSameDay && match.allNearTransaction) {
+        score = 0.92; // Same day entries, within 3 days of transaction
+      } else if (match.allSameDay) {
+        score = 0.75; // Same day entries, but further from transaction
+      } else if (match.allNearTransaction) {
+        score = 0.80; // Different day entries, but close to transaction
+      } else {
+        score = 0.60; // Different days, further from transaction
+      }
+
+      // Name matching bonus
       if (match.borrower) {
         const nameScore = descriptionContainsName(
           entry.description,
