@@ -442,7 +442,7 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
  * Internal function to render loan statement content to a jsPDF document
  * Used by both generateLoanStatementPDF (download) and generateLoanStatementPDFBytes (merge)
  */
-function renderLoanStatementToDoc(doc, loan, schedule, transactions, product, interestCalc, organization) {
+function renderLoanStatementToDoc(doc, loan, schedule, transactions, product, interestCalc, organization, { skipPageNumbers = false } = {}) {
   const pageWidth = doc.internal.pageSize.getWidth();
   let y = 15;
 
@@ -1028,15 +1028,17 @@ function renderLoanStatementToDoc(doc, loan, schedule, transactions, product, in
     doc.text(`Disbursed: ${formatCurrency(totalDisbursed)}  |  Interest Received: ${formatCurrency(totalInterestPaid)}`, 17, y);
   }
 
-  // Footer on all pages
-  const pageCount = doc.internal.getNumberOfPages();
-  for (let i = 1; i <= pageCount; i++) {
-    doc.setPage(i);
-    doc.setFontSize(8);
-    doc.setFont(undefined, 'normal');
-    doc.setTextColor(128, 128, 128);
-    doc.text(`Page ${i} of ${pageCount}`, pageWidth / 2, 290, { align: 'center' });
-    doc.setTextColor(0, 0, 0);
+  // Footer on all pages (unless skipped for merging)
+  if (!skipPageNumbers) {
+    const pageCount = doc.internal.getNumberOfPages();
+    for (let i = 1; i <= pageCount; i++) {
+      doc.setPage(i);
+      doc.setFontSize(8);
+      doc.setFont(undefined, 'normal');
+      doc.setTextColor(128, 128, 128);
+      doc.text(`Page ${i} of ${pageCount}`, pageWidth / 2, 290, { align: 'center' });
+      doc.setTextColor(0, 0, 0);
+    }
   }
   // Note: caller is responsible for saving or returning the doc
 }
@@ -1056,7 +1058,8 @@ export function generateLoanStatementPDF(loan, schedule, transactions, product =
  */
 export function generateLoanStatementPDFBytes(loan, schedule, transactions, product = null, interestCalc = null, organization = null) {
   const doc = new jsPDF();
-  renderLoanStatementToDoc(doc, loan, schedule, transactions, product, interestCalc, organization);
+  // Skip page numbers - they'll be added during merge by the letter generator
+  renderLoanStatementToDoc(doc, loan, schedule, transactions, product, interestCalc, organization, { skipPageNumbers: true });
   return doc.output('arraybuffer');
 }
 
@@ -1095,7 +1098,7 @@ export function generateSettlementStatementPDFBytes(loan, settlementData, schedu
  * Internal shared function that renders settlement statement to a jsPDF document
  * Used by both generateSettlementStatementPDF (downloads) and generateSettlementStatementPDFBytes (returns bytes)
  */
-function renderSettlementStatementToDoc(loan, settlementData, schedule = [], transactions = [], product = null) {
+function renderSettlementStatementToDoc(loan, settlementData, schedule = [], transactions = [], product = null, { skipPageNumbers = false } = {}) {
   const doc = new jsPDF();
   const pageWidth = doc.internal.pageSize.getWidth();
   let y = 15;

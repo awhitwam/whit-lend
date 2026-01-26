@@ -23,7 +23,8 @@ import {
   mergePDFs,
   downloadPDF,
   pdfToDataUrl,
-  ATTACHABLE_REPORTS
+  ATTACHABLE_REPORTS,
+  getOrganizationAddressLines
 } from '@/lib/letterGenerator';
 import { api } from '@/api/dataClient';
 import { useAuth } from '@/lib/AuthContext';
@@ -843,20 +844,16 @@ export default function LetterGeneratorModal({
                         />
                       )}
                       <p className="font-bold">{organization?.name}</p>
-                      {organization?.address_line1 && (
-                        <p className="text-sm text-slate-600">{organization.address_line1}</p>
+                      {getOrganizationAddressLines(organization).map((line, idx) => (
+                        <p key={idx} className="text-sm text-slate-600">{line}</p>
+                      ))}
+                      {organization?.phone && (
+                        <p className="text-sm text-slate-600">Tel: {organization.phone}</p>
                       )}
-                      {(organization?.city || organization?.postcode) && (
-                        <p className="text-sm text-slate-600">
-                          {[organization.city, organization.postcode].filter(Boolean).join(' ')}
-                        </p>
+                      {organization?.email && (
+                        <p className="text-sm text-slate-600">Email: {organization.email}</p>
                       )}
                     </div>
-
-                  {/* Subject */}
-                  {renderedSubject && (
-                    <p className="font-semibold text-sm">Re: {renderedSubject}</p>
-                  )}
 
                   {/* Body - render HTML content */}
                   <div className="text-sm bg-slate-50 p-4 rounded min-h-[200px] prose prose-sm max-w-none letter-preview-body">

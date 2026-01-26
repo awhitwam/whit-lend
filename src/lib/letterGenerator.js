@@ -273,7 +273,7 @@ function formatBorrowerAddress(borrower) {
  * Format organization address with each component on a separate line
  * Returns an array of address lines for PDF rendering
  */
-function getOrganizationAddressLines(org) {
+export function getOrganizationAddressLines(org) {
   if (!org) return [];
   return [
     org.address_line1,

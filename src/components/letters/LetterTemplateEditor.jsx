@@ -33,7 +33,7 @@ import { api } from '@/api/dataClient';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useAuth } from '@/lib/AuthContext';
 import { supabase } from '@/lib/supabaseClient';
-import { ATTACHABLE_REPORTS, renderTemplate, buildPlaceholderData } from '@/lib/letterGenerator';
+import { ATTACHABLE_REPORTS, renderTemplate, buildPlaceholderData, getOrganizationAddressLines } from '@/lib/letterGenerator';
 import { format } from 'date-fns';
 import { formatCurrency, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
 
@@ -772,14 +772,9 @@ Yours sincerely,
                         </div>
                       )}
                       <p className="font-bold text-lg">{currentOrganization?.name || 'Your Company'}</p>
-                      {currentOrganization?.address_line1 && (
-                        <p className="text-sm text-slate-600">{currentOrganization.address_line1}</p>
-                      )}
-                      {(currentOrganization?.city || currentOrganization?.postcode) && (
-                        <p className="text-sm text-slate-600">
-                          {[currentOrganization.city, currentOrganization.postcode].filter(Boolean).join(' ')}
-                        </p>
-                      )}
+                      {getOrganizationAddressLines(currentOrganization).map((line, idx) => (
+                        <p key={idx} className="text-sm text-slate-600">{line}</p>
+                      ))}
                       {currentOrganization?.phone && (
                         <p className="text-sm text-slate-600">Tel: {currentOrganization.phone}</p>
                       )}
@@ -787,11 +782,6 @@ Yours sincerely,
                         <p className="text-sm text-slate-600">Email: {currentOrganization.email}</p>
                       )}
                     </div>
-
-                    {/* Subject */}
-                    {renderedSubject && (
-                      <p className="font-semibold text-sm mb-4">Re: {renderedSubject}</p>
-                    )}
 
                       {/* Body */}
                       <div className="text-sm prose prose-sm max-w-none template-preview-body">
