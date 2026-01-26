@@ -1,5 +1,61 @@
 import { supabase } from '@/lib/supabaseClient';
 
+// Helper to parse user agent into friendly browser/OS info
+const parseUserAgent = () => {
+  const ua = navigator.userAgent;
+  let browser = 'Unknown Browser';
+  let os = 'Unknown OS';
+
+  // Detect browser
+  if (ua.includes('Firefox/')) {
+    const match = ua.match(/Firefox\/(\d+)/);
+    browser = `Firefox ${match ? match[1] : ''}`;
+  } else if (ua.includes('Edg/')) {
+    const match = ua.match(/Edg\/(\d+)/);
+    browser = `Edge ${match ? match[1] : ''}`;
+  } else if (ua.includes('Chrome/')) {
+    const match = ua.match(/Chrome\/(\d+)/);
+    browser = `Chrome ${match ? match[1] : ''}`;
+  } else if (ua.includes('Safari/') && !ua.includes('Chrome')) {
+    const match = ua.match(/Version\/(\d+)/);
+    browser = `Safari ${match ? match[1] : ''}`;
+  }
+
+  // Detect OS
+  if (ua.includes('Windows NT 10')) os = 'Windows 10/11';
+  else if (ua.includes('Windows NT')) os = 'Windows';
+  else if (ua.includes('Mac OS X')) os = 'macOS';
+  else if (ua.includes('Linux')) os = 'Linux';
+  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
+  else if (ua.includes('Android')) os = 'Android';
+
+  return { browser, os, userAgent: ua };
+};
+
+// Helper to fetch public IP address (with timeout)
+const fetchIPAddress = async () => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000);
+
+    const response = await fetch('https://api.ipify.org?format=json', {
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      return data.ip;
+    }
+  } catch (err) {
+    // Silently fail - IP capture is optional
+    if (err.name !== 'AbortError') {
+      console.warn('Could not fetch IP address:', err.message);
+    }
+  }
+  return null;
+};
+
 // Audit log action types
 export const AuditAction = {
   // Authentication
@@ -139,12 +195,39 @@ export async function logAudit({
       organizationId = sessionStorage.getItem('currentOrganizationId');
     }
 
+    // For authentication events (login/logout/timeout), fetch user's organization if not available
+    // This ensures auth events are logged even when org context doesn't exist yet (e.g., during login)
+    // or has been cleared (e.g., during logout)
+    const authActions = ['login', 'logout', 'session_timeout', 'login_failed'];
+    if (!organizationId && userId && authActions.includes(action)) {
+      try {
+        const { data: membership } = await supabase
+          .from('organization_members')
+          .select('organization_id')
+          .eq('user_id', userId)
+          .eq('is_active', true)
+          .limit(1)
+          .single();
+
+        if (membership?.organization_id) {
+          organizationId = membership.organization_id;
+        }
+      } catch (err) {
+        // Silently continue - some auth events may happen before user has orgs
+        console.warn('[AuditLog] Could not fetch org for auth event:', err.message);
+      }
+    }
+
+    const detailsJson = details ? JSON.stringify(details) : null;
+    console.log('[AuditLog] logAudit details object:', details);
+    console.log('[AuditLog] logAudit details JSON:', detailsJson);
+
     const auditEntry = {
       action,
       entity_type: entityType,
       entity_id: entityId,
       entity_name: entityName,
-      details: details ? JSON.stringify(details) : null,
+      details: detailsJson,
       previous_values: previousValues ? JSON.stringify(previousValues) : null,
       new_values: newValues ? JSON.stringify(newValues) : null,
       user_id: userId,
@@ -154,31 +237,56 @@ export async function logAudit({
       created_at: new Date().toISOString()
     };
 
+    console.log('[AuditLog] Inserting auditEntry:', auditEntry);
+
     const { error } = await supabase
       .from('audit_logs')
-      .insert(auditEntry)
-      .select();
+      .insert(auditEntry);
 
     if (error) {
       console.error('Failed to log audit event:', error);
+    } else {
+      console.log('[AuditLog] Audit entry inserted successfully');
     }
   } catch (err) {
     // Don't throw - audit logging should not break the app
-    console.error('Audit logging error:', err);
+    console.error('[AuditLog] Audit logging error:', err);
   }
 }
 
 /**
  * Helper to log authentication events
+ * @param {string} action - The auth action (login, logout, session_timeout, login_failed)
+ * @param {string} userEmail - The user's email address
+ * @param {boolean} success - Whether the action succeeded
+ * @param {Object} details - Additional details; can include organization_id to pass through
  */
 export async function logAuthEvent(action, userEmail, success = true, details = null) {
+  // Extract organization_id and user_id if passed in details (e.g., during logout when session is cleared)
+  const organizationId = details?.organization_id;
+  const userId = details?.user_id;
+  const cleanDetails = details ? { ...details } : {};
+  delete cleanDetails.organization_id;  // Don't store org_id in details JSON, it goes in the column
+  delete cleanDetails.user_id;  // Don't store user_id in details JSON, it goes in the column
+
+  console.log('[AuditLog] logAuthEvent called:', action, 'session_id:', cleanDetails.session_id);
+
+  // Gather browser and IP details for auth events
+  const browserInfo = parseUserAgent();
+  const ipAddress = await fetchIPAddress();
+
   await logAudit({
     action,
     entityType: EntityType.USER,
     entityName: userEmail,
+    organizationId,  // Pass through to logAudit
+    userId,  // Pass through user ID (important for logout when session is already cleared)
     details: {
       success,
-      ...details
+      ip_address: ipAddress,
+      browser: browserInfo.browser,
+      os: browserInfo.os,
+      ...cleanDetails
     }
   });
 }

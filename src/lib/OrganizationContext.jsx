@@ -1,65 +1,9 @@
-import React, { createContext, useState, useContext, useEffect, useRef } from 'react';
+import React, { createContext, useState, useContext, useEffect } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import { setOrganizationIdGetter } from '@/api/dataClient';
 import { getOrganizationTheme } from '@/lib/organizationThemes';
-import { logOrgSwitchEvent, logAudit, AuditAction, EntityType } from '@/lib/auditLog';
-
-// Helper to parse user agent into friendly browser/OS info
-const parseUserAgent = () => {
-  const ua = navigator.userAgent;
-  let browser = 'Unknown Browser';
-  let os = 'Unknown OS';
-
-  // Detect browser
-  if (ua.includes('Firefox/')) {
-    const match = ua.match(/Firefox\/(\d+)/);
-    browser = `Firefox ${match ? match[1] : ''}`;
-  } else if (ua.includes('Edg/')) {
-    const match = ua.match(/Edg\/(\d+)/);
-    browser = `Edge ${match ? match[1] : ''}`;
-  } else if (ua.includes('Chrome/')) {
-    const match = ua.match(/Chrome\/(\d+)/);
-    browser = `Chrome ${match ? match[1] : ''}`;
-  } else if (ua.includes('Safari/') && !ua.includes('Chrome')) {
-    const match = ua.match(/Version\/(\d+)/);
-    browser = `Safari ${match ? match[1] : ''}`;
-  }
-
-  // Detect OS
-  if (ua.includes('Windows NT 10')) os = 'Windows 10/11';
-  else if (ua.includes('Windows NT')) os = 'Windows';
-  else if (ua.includes('Mac OS X')) os = 'macOS';
-  else if (ua.includes('Linux')) os = 'Linux';
-  else if (ua.includes('iPhone') || ua.includes('iPad')) os = 'iOS';
-  else if (ua.includes('Android')) os = 'Android';
-
-  return { browser, os, userAgent: ua };
-};
-
-// Helper to fetch public IP address
-const fetchIPAddress = async () => {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 3000);
-
-    const response = await fetch('https://api.ipify.org?format=json', {
-      signal: controller.signal
-    });
-    clearTimeout(timeoutId);
-
-    if (response.ok) {
-      const data = await response.json();
-      return data.ip;
-    }
-  } catch (err) {
-    // Silently fail - IP capture is optional
-    if (err.name !== 'AbortError') {
-      console.warn('Could not fetch IP address:', err.message);
-    }
-  }
-  return null;
-};
+import { logOrgSwitchEvent } from '@/lib/auditLog';
 
 const OrganizationContext = createContext();
 
@@ -70,32 +14,15 @@ export const OrganizationProvider = ({ children }) => {
   const [memberRole, setMemberRole] = useState(null);
   const [isLoadingOrgs, setIsLoadingOrgs] = useState(true);
 
-  // Track if this is a fresh login (to log login event with org context)
-  const isFirstOrgSetRef = useRef(true);
-
   // Fetch user's organizations
   useEffect(() => {
     if (isAuthenticated && user) {
-      // Check login logging flag SYNCHRONOUSLY before async fetch to prevent race conditions
-      const loginLoggedKey = `login_logged_${user.id}`;
-      const shouldLogLogin = !sessionStorage.getItem(loginLoggedKey);
-      if (shouldLogLogin) {
-        sessionStorage.setItem(loginLoggedKey, 'true'); // Set immediately to block concurrent calls
-      }
-      fetchOrganizations(shouldLogLogin);
+      fetchOrganizations();
     } else {
       setOrganizations([]);
       setCurrentOrganization(null);
       setMemberRole(null);
       setIsLoadingOrgs(false);
-      // Reset for next login so we log the login event again
-      isFirstOrgSetRef.current = true;
-      // Clear login logged flags so next login gets recorded
-      Object.keys(sessionStorage).forEach(key => {
-        if (key.startsWith('login_logged_')) {
-          sessionStorage.removeItem(key);
-        }
-      });
     }
   }, [user, isAuthenticated]);
 
@@ -108,7 +35,7 @@ export const OrganizationProvider = ({ children }) => {
     });
   }, [currentOrganization]);
 
-  const fetchOrganizations = async (shouldLogLogin = false) => {
+  const fetchOrganizations = async () => {
     try {
       setIsLoadingOrgs(true);
 
@@ -189,29 +116,6 @@ export const OrganizationProvider = ({ children }) => {
           setCurrentOrganization(orgToUse);
           setMemberRole(orgToUse.role);
           sessionStorage.setItem('currentOrganizationId', orgToUse.id);
-
-          // Log login event with organization context (only on fresh login)
-          // shouldLogLogin flag was set synchronously in useEffect to prevent race conditions
-          if (shouldLogLogin) {
-            isFirstOrgSetRef.current = false;
-
-            // Gather browser and IP details for login audit
-            const browserInfo = parseUserAgent();
-            const ipAddress = await fetchIPAddress();
-
-            logAudit({
-              action: AuditAction.LOGIN,
-              entityType: EntityType.ORGANIZATION,
-              entityId: orgToUse.id,
-              entityName: orgToUse.name,
-              organizationId: orgToUse.id,
-              details: {
-                ip_address: ipAddress,
-                browser: browserInfo.browser,
-                os: browserInfo.os
-              }
-            });
-          }
         }
       }
     } catch (error) {

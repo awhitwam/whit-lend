@@ -66,6 +66,9 @@ export const AuthProvider = ({ children }) => {
   // Activity-based inactivity timeout
   const lastActivityRef = useRef(Date.now());
   const inactivityTimerRef = useRef(null);
+  const timeoutTriggeredRef = useRef(false); // Guard to prevent multiple timeout triggers
+  const tabSessionIdRef = useRef(null); // Unique ID for this tab's session (for audit tracking)
+  const wasAuthenticatedRef = useRef(false); // Track auth state transitions
   const [inactivityTimeoutMs, setInactivityTimeoutMs] = useState(DEFAULT_INACTIVITY_TIMEOUT_MS);
   const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
   const [timeoutSecondsRemaining, setTimeoutSecondsRemaining] = useState(0);
@@ -218,9 +221,26 @@ export const AuthProvider = ({ children }) => {
       // the Supabase session, causing false-positive logouts when the user returns.
       // Instead, we rely on the inactivity timeout to handle session expiration.
 
-      console.log('[AuthContext] Setting isAuthenticated to:', !!session?.user);
-      setUser(session?.user ?? null);
-      setIsAuthenticated(!!session?.user);
+      // Use functional updates to preserve object references when user hasn't changed
+      // This prevents unnecessary re-renders in dependent contexts (like OrganizationContext)
+      const newUser = session?.user ?? null;
+      const newIsAuthenticated = !!session?.user;
+      console.log('[AuthContext] Setting isAuthenticated to:', newIsAuthenticated);
+
+      setUser(prevUser => {
+        if (prevUser?.id === newUser?.id) {
+          console.log('[AuthContext] User unchanged in checkSession, preserving reference');
+          return prevUser; // Keep same reference to avoid triggering dependent useEffects
+        }
+        console.log('[AuthContext] User changed in checkSession, updating state');
+        return newUser;
+      });
+      setIsAuthenticated(prev => {
+        if (prev === newIsAuthenticated) {
+          return prev; // No change
+        }
+        return newIsAuthenticated;
+      });
 
       // Mark session as alive for this tab (used by inactivity timer)
       if (session?.user) {
@@ -284,11 +304,13 @@ export const AuthProvider = ({ children }) => {
       setIsAuthenticated(true);
       // Mark session as alive (cleared when browser closes)
       sessionStorage.setItem(SESSION_ALIVE_KEY, 'true');
+      // Generate new session ID for this login
+      tabSessionIdRef.current = crypto.randomUUID();
       // Initialize activity timestamp for this tab
       lastActivityRef.current = Date.now();
-      console.log('[AuthContext] Login successful');
-      // Log successful login
-      logAuthEvent(AuditAction.LOGIN, email, true);
+      console.log('[AuthContext] Login successful, session_id:', tabSessionIdRef.current);
+      // Log successful login with session ID
+      logAuthEvent(AuditAction.LOGIN, email, true, { session_id: tabSessionIdRef.current });
       return { data };
     } catch (error) {
       setAuthError({
@@ -352,38 +374,50 @@ export const AuthProvider = ({ children }) => {
 
   const logout = async () => {
     try {
+      // Capture user info BEFORE signOut - needed for audit logging
       const userEmail = user?.email;
+      const userId = user?.id;
+      // Capture org ID BEFORE clearing - needed for audit logging
+      const currentOrgId = sessionStorage.getItem('currentOrganizationId');
+
+      // CRITICAL: Log logout event BEFORE signOut while session is still valid
+      // RLS policies require a valid session for INSERT
+      console.log('[AuthContext] Logout, session_id:', tabSessionIdRef.current);
+      try {
+        await logAuthEvent(AuditAction.LOGOUT, userEmail, true, {
+          organization_id: currentOrgId,
+          user_id: userId,
+          session_id: tabSessionIdRef.current
+        });
+      } catch (auditError) {
+        console.error('[AuthContext] Logout audit failed:', auditError);
+      }
+
       // Mark THIS tab as initiating logout (sessionStorage is per-tab)
-      // This allows onAuthStateChange to know this tab chose to logout
       sessionStorage.setItem(TAB_LOGOUT_KEY, 'true');
-      // SECURITY: Clear organization context to prevent data leakage on next login
-      // Using sessionStorage (per-tab isolation)
+      // Clear organization context and session markers
       sessionStorage.removeItem('currentOrganizationId');
-      // Clear session markers
       sessionStorage.removeItem(SESSION_ALIVE_KEY);
+
       // Sign out from Supabase - this will trigger SIGNED_OUT event
-      // Other tabs will see SIGNED_OUT but will ignore it (tab autonomy)
       await supabase.auth.signOut();
-      // Log logout event
-      logAuthEvent(AuditAction.LOGOUT, userEmail, true);
+
+      // Reset state
       setUser(null);
       setIsAuthenticated(false);
-      // Reset MFA state
       setMfaFactors([]);
       setMfaRequired(false);
       setMfaEnrolled(false);
       setCurrentFactorId(null);
-      // Reset super admin state
       setIsSuperAdmin(false);
+
       // Redirect to login page
       window.location.href = '/Login';
     } catch (error) {
       console.error('Logout failed:', error);
-      // Still clear org context and session markers even if signOut fails
       sessionStorage.removeItem('currentOrganizationId');
       sessionStorage.removeItem(SESSION_ALIVE_KEY);
       sessionStorage.removeItem(TAB_LOGOUT_KEY);
-      // Still redirect to login
       window.location.href = '/Login';
     }
   };
@@ -462,6 +496,20 @@ export const AuthProvider = ({ children }) => {
     console.log('[AuthContext] Authenticated, initializing activity timer');
     lastActivityRef.current = Date.now();
 
+    // Only reset timeout guard on fresh login (was unauthenticated, now authenticated)
+    // Don't reset when useEffect re-runs due to other dependency changes (like inactivityTimeoutMs)
+    if (!wasAuthenticatedRef.current && isAuthenticated) {
+      timeoutTriggeredRef.current = false;
+      // Only generate session ID if not already set (login() may have already set it)
+      if (!tabSessionIdRef.current) {
+        tabSessionIdRef.current = crypto.randomUUID();
+        console.log('[AuthContext] Generated new session_id (session restore):', tabSessionIdRef.current);
+      } else {
+        console.log('[AuthContext] Preserving existing session_id from login:', tabSessionIdRef.current);
+      }
+    }
+    wasAuthenticatedRef.current = isAuthenticated;
+
     // Listen for user activity in this tab
     ACTIVITY_EVENTS.forEach(event => {
       window.addEventListener(event, resetActivityTimer, { passive: true });
@@ -473,28 +521,40 @@ export const AuthProvider = ({ children }) => {
       const timeRemaining = inactivityTimeoutMs - elapsed;
 
       if (timeRemaining <= 0) {
+        // Guard: Only trigger timeout once to prevent multiple audit logs
+        if (timeoutTriggeredRef.current) {
+          return;
+        }
+        timeoutTriggeredRef.current = true;
+
         // This tab has been inactive too long - redirect to login
-        // IMPORTANT: Do NOT call supabase.auth.signOut() here because that would
-        // sign out ALL tabs, including ones that are still active.
-        // Each tab manages its own inactivity independently.
-        console.log('[AuthContext] This tab inactive for too long, redirecting to login');
-        // Clear the interval before redirect to prevent multiple calls
+        // Clear the interval to prevent any further checks
         if (inactivityTimerRef.current) {
           clearInterval(inactivityTimerRef.current);
           inactivityTimerRef.current = null;
         }
         setShowTimeoutWarning(false);
-        // Log session timeout event (fire-and-forget to not block redirect)
-        logAuthEvent(AuditAction.SESSION_TIMEOUT, user?.email, true, {
-          reason: 'inactivity',
-          timeout_ms: inactivityTimeoutMs
-        });
+
+        // Capture org ID and user ID BEFORE clearing - needed for audit logging
+        const currentOrgId = sessionStorage.getItem('currentOrganizationId');
+        const currentUserId = user?.id;
+
         // Clear this tab's org context (sessionStorage is per-tab)
         sessionStorage.removeItem('currentOrganizationId');
         sessionStorage.removeItem(SESSION_ALIVE_KEY);
-        // Redirect to login without signing out of Supabase
-        // Other active tabs will continue working
-        window.location.href = '/Login?session_expired=true';
+
+        // Log session timeout event, then redirect after audit completes
+        console.log('[AuthContext] Session timeout, session_id:', tabSessionIdRef.current);
+        logAuthEvent(AuditAction.SESSION_TIMEOUT, user?.email, true, {
+          organization_id: currentOrgId,
+          user_id: currentUserId,
+          session_id: tabSessionIdRef.current,
+          reason: 'inactivity',
+          timeout_ms: inactivityTimeoutMs
+        }).finally(() => {
+          // Redirect to login without signing out of Supabase
+          window.location.href = '/Login?session_expired=true';
+        });
       } else if (timeRemaining <= WARNING_BEFORE_TIMEOUT_MS) {
         // Show warning with countdown
         setShowTimeoutWarning(true);

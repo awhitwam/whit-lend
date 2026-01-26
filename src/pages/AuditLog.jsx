@@ -359,9 +359,9 @@ export default function AuditLog() {
           if (skipKeys.includes(key)) return false;
           if (subActionKeys.includes(key)) return false; // Shown in Sub-Action column
           if (key === 'edit_reason') return false; // Already shown above
-          if (key.endsWith('_id') && isUuid(value)) return false;
+          if (key.endsWith('_id') && isUuid(value) && key !== 'session_id') return false;
           if (value === null || value === undefined) return false;
-          if (isUuid(value)) return false;
+          if (isUuid(value) && key !== 'session_id') return false; // Allow session_id even though it's a UUID
           return true;
         });
 
@@ -433,8 +433,8 @@ export default function AuditLog() {
       return `{${keys.length} items}`;
     }
     const strVal = String(value);
-    // Don't show UUIDs
-    if (isUuid(strVal)) return '-';
+    // Don't show UUIDs (except session_id which we want to display)
+    if (isUuid(strVal) && fieldName !== 'session_id') return '-';
     return strVal.slice(0, 50);
   };
 
