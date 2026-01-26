@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
@@ -172,6 +172,11 @@ export default function LoanDetails() {
     queryFn: () => api.entities.Expense.filter({ loan_id: loanId }, '-date'),
     enabled: !!loanId
   });
+
+  // Debug: Log active tab changes
+  useEffect(() => {
+    console.log('[LoanDetails] Active tab changed:', activeTab);
+  }, [activeTab]);
 
   // Fetch loan properties (basic) for Security tab badge count
   // This uses the same query key as SecurityTab so they share cache
@@ -2099,6 +2104,8 @@ export default function LoanDetails() {
               expenses={expenses}
               securityCount={loanPropertiesBasic.length}
               activityCount={activityCount}
+              reconciliationMap={reconciliationMap}
+              reconciledTransactionIds={reconciledTransactionIds}
             />
           )}
 
@@ -2132,18 +2139,6 @@ export default function LoanDetails() {
                   <div className="h-4 w-px bg-slate-300" />
                   {/* Content tabs */}
                   <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
-                    <Button
-                      variant={activeTab === 'receipts' ? "default" : "ghost"}
-                      size="sm"
-                      onClick={() => setActiveTab('receipts')}
-                      className="gap-1 h-6 text-xs px-2"
-                    >
-                      <Receipt className="w-3 h-3" />
-                      Receipts
-                      <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
-                        {transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}
-                      </Badge>
-                    </Button>
                     {!isFixedCharge && (
                       <Button
                         variant={activeTab === 'disbursements' ? "default" : "ghost"}
@@ -2209,208 +2204,6 @@ export default function LoanDetails() {
 
               {/* Tab content */}
               <div className="flex-1 min-h-0 overflow-y-auto">
-
-          {activeTab === 'receipts' && (
-            <Card>
-              <CardHeader className="py-3">
-                <div className="flex items-center justify-between">
-                  <CardTitle className="text-base">Receipt History</CardTitle>
-                  <Select 
-                    defaultValue="date-desc"
-                    onValueChange={(value) => {
-                      const sorted = [...transactions.filter(t => !t.is_deleted && t.type === 'Repayment')];
-                      if (value === 'date-desc') sorted.sort((a, b) => new Date(b.date) - new Date(a.date));
-                      if (value === 'date-asc') sorted.sort((a, b) => new Date(a.date) - new Date(b.date));
-                      if (value === 'amount-desc') sorted.sort((a, b) => b.amount - a.amount);
-                      if (value === 'amount-asc') sorted.sort((a, b) => a.amount - b.amount);
-                    }}
-                  >
-                    <SelectTrigger className="w-40">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="date-desc">Date (Newest)</SelectItem>
-                      <SelectItem value="date-asc">Date (Oldest)</SelectItem>
-                      <SelectItem value="amount-desc">Amount (High-Low)</SelectItem>
-                      <SelectItem value="amount-asc">Amount (Low-High)</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </CardHeader>
-              <CardContent className="pt-0">
-                {(() => {
-                  const repayments = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
-                  const totalAmount = repayments.reduce((sum, t) => sum + t.amount, 0);
-                  const totalPrincipal = repayments.reduce((sum, t) => sum + (t.principal_applied || 0), 0);
-                  const totalInterest = repayments.reduce((sum, t) => sum + (t.interest_applied || 0), 0);
-                  const totalFees = repayments.reduce((sum, t) => sum + (t.fees_applied || 0), 0);
-
-                  return (
-                    <>
-                      <div className={`flex flex-wrap items-center gap-4 mb-3 px-3 py-1.5 bg-slate-50 rounded text-sm`}>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-slate-500">Total:</span>
-                          <span className="font-bold text-slate-900">{formatCurrency(totalAmount)}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-slate-500">Principal:</span>
-                          <span className="font-bold text-emerald-600">{formatCurrency(totalPrincipal)}</span>
-                        </div>
-                        <div className="flex items-center gap-1.5">
-                          <span className="text-slate-500">Interest:</span>
-                          <span className="font-bold text-amber-600">{formatCurrency(totalInterest)}</span>
-                        </div>
-                        {totalFees > 0 && (
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-slate-500">Fees:</span>
-                            <span className="font-bold text-purple-600">{formatCurrency(totalFees)}</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {repayments.length === 0 ? (
-                        <div className="text-center py-12 text-slate-500">
-                          <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
-                          <p>No repayments recorded yet</p>
-                        </div>
-                      ) : (
-                        <div className="overflow-x-auto">
-                          <table className="w-full">
-                            <thead className="bg-slate-50 border-b border-slate-200">
-                              <tr>
-                                <th className="text-left py-1.5 px-2 text-sm font-semibold text-slate-700">Date</th>
-                                <th className="text-left py-1.5 px-2 text-sm font-semibold text-slate-700">Reference</th>
-                                <th className="text-right py-1.5 px-2 text-sm font-semibold text-slate-700">Amount</th>
-                                <th className="text-right py-1.5 px-2 text-sm font-semibold text-slate-700">Principal</th>
-                                <th className="text-right py-1.5 px-2 text-sm font-semibold text-slate-700">Interest</th>
-                                {totalFees > 0 && (
-                                  <th className="text-right py-1.5 px-2 text-sm font-semibold text-slate-700">Fees</th>
-                                )}
-                                <th className="text-left py-1.5 px-2 text-sm font-semibold text-slate-700">Notes</th>
-                                <th className="w-6 py-1.5 px-1">
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Landmark className="w-3 h-3 text-slate-400" />
-                                    </TooltipTrigger>
-                                    <TooltipContent><p>Bank Reconciled</p></TooltipContent>
-                                  </Tooltip>
-                                </th>
-                                <th className="w-8"></th>
-                              </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                              {repayments.map((tx) => (
-                                <tr key={tx.id} className="hover:bg-slate-50">
-                                  <td className="py-1 px-2 text-base font-medium">{format(new Date(tx.date), 'dd/MM/yy')}</td>
-                                  <td className="py-1 px-2 text-base text-slate-600">{tx.reference || '—'}</td>
-                                  <td className="py-1 px-2 text-base font-semibold text-emerald-600 text-right">{formatCurrency(tx.amount)}</td>
-                                  <td className="py-1 px-2 text-base text-slate-600 text-right">{(tx.principal_applied || 0) > 0 ? formatCurrency(tx.principal_applied) : ''}</td>
-                                  <td className="py-1 px-2 text-base text-slate-600 text-right">{(tx.interest_applied || 0) > 0 ? formatCurrency(tx.interest_applied) : ''}</td>
-                                  {totalFees > 0 && (
-                                    <td className="py-1 px-2 text-base text-purple-600 text-right">{(tx.fees_applied || 0) > 0 ? formatCurrency(tx.fees_applied) : ''}</td>
-                                  )}
-                                  <td className="py-1 px-2 text-base text-slate-500 max-w-[200px] truncate" title={tx.notes || ''}>{tx.notes || '—'}</td>
-                                  <td className="py-1 px-1 text-center">
-                                    {reconciledTransactionIds.has(tx.id) ? (
-                                      (() => {
-                                        const matches = reconciliationMap.get(tx.id) || [];
-                                        return (
-                                          <Tooltip>
-                                            <TooltipTrigger asChild>
-                                              <Landmark className="w-3.5 h-3.5 text-emerald-500 cursor-help" />
-                                            </TooltipTrigger>
-                                            <TooltipContent className="max-w-xs">
-                                              <div className="space-y-2">
-                                                <p className="font-medium text-emerald-400">
-                                                  Matched to {matches.length > 1 ? `${matches.length} bank entries` : 'Bank Statement'}
-                                                </p>
-                                                {matches.map((match, idx) => {
-                                                  const bs = match?.bankStatement;
-                                                  return (
-                                                    <div key={idx} className={matches.length > 1 ? 'border-t border-slate-600 pt-1' : ''}>
-                                                      {bs ? (
-                                                        <>
-                                                          <p className="text-xs"><span className="text-slate-400">Date:</span> {format(new Date(bs.statement_date), 'dd/MM/yyyy')}</p>
-                                                          <p className="text-xs"><span className="text-slate-400">Amount:</span> {formatCurrency(Math.abs(bs.amount))}</p>
-                                                          <p className="text-xs"><span className="text-slate-400">Source:</span> {bs.bank_source}</p>
-                                                          {bs.description && <p className="text-xs text-slate-300 truncate max-w-[200px]">{bs.description}</p>}
-                                                        </>
-                                                      ) : (
-                                                        <p className="text-xs text-slate-400">Bank statement details loading...</p>
-                                                      )}
-                                                    </div>
-                                                  );
-                                                })}
-                                              </div>
-                                            </TooltipContent>
-                                          </Tooltip>
-                                        );
-                                      })()
-                                    ) : acceptedOrphanMap.has(tx.id) ? (
-                                      <Tooltip>
-                                        <TooltipTrigger asChild>
-                                          <ShieldCheck className="w-3.5 h-3.5 text-amber-500 cursor-help" />
-                                        </TooltipTrigger>
-                                        <TooltipContent className="max-w-xs">
-                                          <p className="font-medium text-amber-400">Accepted Orphan</p>
-                                          <p className="text-xs text-slate-300 mt-1">{acceptedOrphanMap.get(tx.id).reason}</p>
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    ) : (
-                                      <span className="text-slate-300">—</span>
-                                    )}
-                                  </td>
-                                  <td className="py-0.5 px-1">
-                                    <DropdownMenu>
-                                      <DropdownMenuTrigger asChild>
-                                        <Button variant="ghost" size="icon" className="h-7 w-7">
-                                          <MoreHorizontal className="w-4 h-4" />
-                                        </Button>
-                                      </DropdownMenuTrigger>
-                                      <DropdownMenuContent align="end">
-                                        <DropdownMenuItem
-                                          onClick={() => {
-                                            setEditReceiptTarget(tx);
-                                            setEditReceiptValues({
-                                              principal: tx.principal_applied || 0,
-                                              interest: tx.interest_applied || 0,
-                                              fees: tx.fees_applied || 0,
-                                              amount: parseFloat(tx.amount) || 0,
-                                              date: tx.date?.split('T')[0] || '',
-                                              reference: tx.reference || ''
-                                            });
-                                            setEditReceiptDialogOpen(true);
-                                          }}
-                                        >
-                                          <Edit className="w-4 h-4 mr-2" />
-                                          Edit Receipt
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                          className="text-red-600"
-                                          onClick={() => {
-                                            setDeleteTransactionTarget(tx);
-                                            setDeleteTransactionReason('');
-                                            setDeleteTransactionDialogOpen(true);
-                                          }}
-                                        >
-                                          <Trash2 className="w-4 h-4 mr-2" />
-                                          Delete
-                                        </DropdownMenuItem>
-                                      </DropdownMenuContent>
-                                    </DropdownMenu>
-                                  </td>
-                                </tr>
-                              ))}
-                            </tbody>
-                          </table>
-                        </div>
-                      )}
-                    </>
-                  );
-                })()}
-              </CardContent>
-            </Card>
-          )}
 
           {activeTab === 'disbursements' && (
             <Card>
@@ -2641,14 +2434,14 @@ export default function LoanDetails() {
                                       </p>
                                     )}
                                   </td>
-                                  <td className="py-1 px-2 text-base text-slate-700 text-right font-medium">
+                                  <td className="py-1 px-2 text-base font-mono text-slate-700 text-right font-medium">
                                     {formatCurrency(entry.gross_amount)}
                                   </td>
                                   <td className="py-1 px-2 text-base text-right">
                                     {entry.hasDeductions ? (
                                       <Tooltip>
                                         <TooltipTrigger asChild>
-                                          <span className="text-amber-600 cursor-help">
+                                          <span className="font-mono text-amber-600 cursor-help">
                                             -{formatCurrency(entry.total_deductions)}
                                           </span>
                                         </TooltipTrigger>
@@ -2675,10 +2468,10 @@ export default function LoanDetails() {
                                       <span className="text-slate-300">-</span>
                                     )}
                                   </td>
-                                  <td className="py-1 px-2 text-base text-emerald-600 text-right font-medium">
+                                  <td className="py-1 px-2 text-base font-mono text-emerald-600 text-right font-medium">
                                     {formatCurrency(entry.amount)}
                                   </td>
-                                  <td className="py-1 px-2 text-base text-slate-700 text-right font-semibold">
+                                  <td className="py-1 px-2 text-base font-mono text-slate-700 text-right font-semibold">
                                     {formatCurrency(balanceMap[entry.id])}
                                   </td>
                                   <td className="py-1 px-1 text-center">
@@ -2897,18 +2690,20 @@ export default function LoanDetails() {
         />
 
         {/* Letter Generator Modal */}
-        <LetterGeneratorModal
-          isOpen={isLetterModalOpen}
-          onClose={() => setIsLetterModalOpen(false)}
-          loan={loan}
-          borrower={borrower}
-          organization={currentOrganization}
-          schedule={schedule}
-          transactions={transactions}
-          product={product}
-          loanProperties={loanProperties}
-          interestCalc={liveInterestCalc}
-        />
+        {isLetterModalOpen && (
+          <LetterGeneratorModal
+            isOpen={isLetterModalOpen}
+            onClose={() => setIsLetterModalOpen(false)}
+            loan={loan}
+            borrower={borrower}
+            organization={currentOrganization}
+            schedule={schedule}
+            transactions={transactions}
+            product={product}
+            loanProperties={loanProperties}
+            interestCalc={liveInterestCalc}
+          />
+        )}
 
         {/* Regenerate Schedule Dialog */}
         <AlertDialog open={isRegenerateDialogOpen} onOpenChange={setIsRegenerateDialogOpen}>

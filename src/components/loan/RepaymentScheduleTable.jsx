@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, FileText, Shield, Receipt, Banknote, Coins, MessageSquare, FolderOpen } from 'lucide-react';
+import { ChevronLeft, ChevronRight, ChevronDown, Layers, ArrowUp, ArrowDown, AlertTriangle, FileText, Shield, Receipt, Banknote, Coins, MessageSquare, FolderOpen, Landmark } from 'lucide-react';
 import { formatCurrency, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger } from './LoanCalculator';
 import { getOrgItem, setOrgItem } from '@/lib/orgStorage';
 import RentScheduleView from './RentScheduleView';
@@ -31,10 +31,15 @@ const getDisplayRate = (loan, date) => {
   return loan?.interest_rate || 0;
 };
 
-export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product, tabs = [], activeTab = 'schedule', onTabChange, expenses = [], securityCount = 0, activityCount = 0 }) {
+export default function RepaymentScheduleTable({ schedule, isLoading, transactions = [], loan, product, tabs = [], activeTab = 'schedule', onTabChange, expenses = [], securityCount = 0, activityCount = 0, reconciliationMap = new Map(), reconciledTransactionIds = new Set() }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(25);
-  const [viewMode, setViewMode] = useState('nested'); // 'nested', 'ledger'
+
+  // Load view mode from org-scoped localStorage, default to 'nested'
+  const [viewMode, setViewMode] = useState(() => {
+    const saved = getOrgItem('scheduleViewMode');
+    return saved || 'nested';
+  });
 
   // Get scheduler info if available
   const schedulerType = product?.scheduler_type;
@@ -137,6 +142,10 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
   useEffect(() => {
     setOrgItem('nestedScheduleCollapsed', periodsCollapsed.toString());
   }, [periodsCollapsed]);
+
+  useEffect(() => {
+    setOrgItem('scheduleViewMode', viewMode);
+  }, [viewMode]);
 
   const toggleNestedSortOrder = () => {
     setNestedSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -552,18 +561,6 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             <div className="h-4 w-px bg-slate-300" />
             {/* Content tabs */}
             <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
-              <Button
-                variant={activeTab === 'receipts' ? "default" : "ghost"}
-                size="sm"
-                onClick={() => onTabChange?.('receipts')}
-                className="gap-1 h-6 text-xs px-2"
-              >
-                <Receipt className="w-3 h-3" />
-                Receipts
-                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
-                  {transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}
-                </Badge>
-              </Button>
               {!isFixedCharge && (
                 <Button
                   variant={activeTab === 'disbursements' ? "default" : "ghost"}
@@ -718,6 +715,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             const totalDisbursed = sortedTx
               .filter(tx => tx.type === 'Disbursement')
               .reduce((sum, tx) => sum + (tx.amount || 0), 0);
+            const totalRepaid = sortedTx
+              .filter(tx => tx.type === 'Repayment')
+              .reduce((sum, tx) => sum + (tx.amount || 0), 0);
             const totalPrincipalRepaid = sortedTx
               .filter(tx => tx.type === 'Repayment')
               .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
@@ -735,12 +735,21 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     <TableRow className="bg-slate-50">
                       <TableHead className="font-semibold text-xs w-20 py-1">Date</TableHead>
                       <TableHead className="font-semibold text-xs w-24 py-1">Type</TableHead>
-                      <TableHead className="font-semibold text-xs text-right py-1">Amount</TableHead>
+                      <TableHead className="font-semibold text-xs text-right py-1">Disbursed</TableHead>
+                      <TableHead className="font-semibold text-xs text-right py-1">Repaid</TableHead>
                       <TableHead className="font-semibold text-xs text-right py-1">Principal</TableHead>
                       <TableHead className="font-semibold text-xs text-right py-1">Interest</TableHead>
                       <TableHead className="font-semibold text-xs text-right py-1">Fees</TableHead>
                       <TableHead className="font-semibold text-xs text-right py-1">Balance</TableHead>
                       <TableHead className="font-semibold text-xs py-1">Reference</TableHead>
+                      <TableHead className="font-semibold text-xs w-8 py-1">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Landmark className="w-3 h-3 text-slate-400" />
+                          </TooltipTrigger>
+                          <TooltipContent><p>Bank Reconciled</p></TooltipContent>
+                        </Tooltip>
+                      </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -754,10 +763,11 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                               Rate Change
                             </Badge>
                           </TableCell>
-                          <TableCell colSpan={5} className="text-sm text-amber-700 py-0.5">
+                          <TableCell colSpan={6} className="text-sm text-amber-700 py-0.5">
                             Interest rate changed from <span className="font-semibold">{tx.oldRate}%</span> to <span className="font-semibold">{tx.newRate}%</span> pa
                           </TableCell>
                           <TableCell className="text-sm text-slate-500 py-0.5">—</TableCell>
+                          <TableCell className="py-0.5"></TableCell>
                         </TableRow>
                       ) : (
                         // Regular transaction row
@@ -769,14 +779,19 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             </Badge>
                           </TableCell>
                           <TableCell className="text-sm text-right font-mono py-0.5">
-                            {formatCurrency(tx.amount)}
+                            {tx.type === 'Disbursement'
+                              ? <span className="text-red-600">{formatCurrency(tx.amount)}</span>
+                              : '—'}
                           </TableCell>
                           <TableCell className="text-sm text-right font-mono py-0.5">
-                            {tx.type === 'Disbursement'
-                              ? <span className="text-red-600">+{formatCurrency(tx.amount)}</span>
-                              : tx.principal_applied
-                                ? <span className="text-emerald-600">-{formatCurrency(tx.principal_applied)}</span>
-                                : '—'}
+                            {tx.type === 'Repayment'
+                              ? <span className="text-emerald-600">{formatCurrency(tx.amount)}</span>
+                              : '—'}
+                          </TableCell>
+                          <TableCell className="text-sm text-right font-mono py-0.5">
+                            {tx.type === 'Repayment' && tx.principal_applied
+                              ? <span className="text-emerald-600">{formatCurrency(tx.principal_applied)}</span>
+                              : '—'}
                           </TableCell>
                           <TableCell className="text-sm text-right font-mono py-0.5">
                             {tx.interest_applied ? formatCurrency(tx.interest_applied) : '—'}
@@ -788,12 +803,52 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             {formatCurrency(tx.runningBalance)}
                           </TableCell>
                           <TableCell className="text-sm text-slate-500 py-0.5">{tx.reference || '—'}</TableCell>
+                          <TableCell className="text-center py-0.5">
+                            {reconciledTransactionIds.has(tx.id) ? (
+                              (() => {
+                                const matches = reconciliationMap.get(tx.id) || [];
+                                return (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Landmark className="w-3.5 h-3.5 text-emerald-500 cursor-help" />
+                                    </TooltipTrigger>
+                                    <TooltipContent className="max-w-xs">
+                                      <div className="space-y-2">
+                                        <p className="font-medium text-emerald-400">
+                                          Matched to {matches.length > 1 ? `${matches.length} bank entries` : 'Bank Statement'}
+                                        </p>
+                                        {matches.map((match, idx) => {
+                                          const bs = match?.bankStatement;
+                                          return (
+                                            <div key={idx} className={matches.length > 1 ? 'border-t border-slate-600 pt-1' : ''}>
+                                              {bs ? (
+                                                <>
+                                                  <p className="text-xs"><span className="text-slate-400">Date:</span> {format(new Date(bs.statement_date), 'dd/MM/yyyy')}</p>
+                                                  <p className="text-xs"><span className="text-slate-400">Amount:</span> {formatCurrency(Math.abs(bs.amount))}</p>
+                                                  <p className="text-xs"><span className="text-slate-400">Source:</span> {bs.bank_source}</p>
+                                                  {bs.description && <p className="text-xs text-slate-300 truncate max-w-[200px]">{bs.description}</p>}
+                                                </>
+                                              ) : (
+                                                <p className="text-xs text-slate-400">Bank statement details loading...</p>
+                                              )}
+                                            </div>
+                                          );
+                                        })}
+                                      </div>
+                                    </TooltipContent>
+                                  </Tooltip>
+                                );
+                              })()
+                            ) : (
+                              <span className="text-slate-300">—</span>
+                            )}
+                          </TableCell>
                         </TableRow>
                       )
                     ))}
                     {txWithBalance.length === 0 && (
                       <TableRow>
-                        <TableCell colSpan={8} className="text-center text-slate-500 py-8">
+                        <TableCell colSpan={10} className="text-center text-slate-500 py-8">
                           No transactions recorded
                         </TableCell>
                       </TableRow>
@@ -802,10 +857,14 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                     {txWithBalance.length > 0 && (
                       <TableRow className="bg-slate-100 border-t-2 border-slate-300">
                         <TableCell className="text-sm font-semibold py-0.5" colSpan={2}>Totals</TableCell>
-                        <TableCell className="text-sm text-right font-mono py-0.5">—</TableCell>
-                        <TableCell className="text-sm text-right font-mono py-0.5">
-                          <div className="text-red-600">+{formatCurrency(totalDisbursed)}</div>
-                          <div className="text-emerald-600">-{formatCurrency(totalPrincipalRepaid)}</div>
+                        <TableCell className="text-sm text-right font-mono text-red-600 py-0.5">
+                          {formatCurrency(totalDisbursed)}
+                        </TableCell>
+                        <TableCell className="text-sm text-right font-mono text-emerald-600 py-0.5">
+                          {formatCurrency(totalRepaid)}
+                        </TableCell>
+                        <TableCell className="text-sm text-right font-mono text-emerald-600 py-0.5">
+                          {formatCurrency(totalPrincipalRepaid)}
                         </TableCell>
                         <TableCell className="text-sm text-right font-mono text-emerald-600 py-0.5">
                           {formatCurrency(totalInterestPaid)}
@@ -816,6 +875,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         <TableCell className="text-sm text-right font-mono py-0.5">
                           {formatCurrency(totalDisbursed - totalPrincipalRepaid)}
                         </TableCell>
+                        <TableCell className="py-0.5"></TableCell>
                         <TableCell className="py-0.5"></TableCell>
                       </TableRow>
                     )}
