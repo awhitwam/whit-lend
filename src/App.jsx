@@ -111,7 +111,6 @@ const AuthenticatedApp = () => {
   const { isLoadingOrgs, currentOrganization } = useOrganization();
   const location = useLocation();
 
-  console.log('[App] AuthenticatedApp render - isLoadingAuth:', isLoadingAuth, 'isAuthenticated:', isAuthenticated, 'path:', location.pathname);
 
   // Check for password recovery token in URL hash FIRST, before anything else
   // This prevents the app from redirecting to login before Supabase can process the token

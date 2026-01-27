@@ -158,13 +158,15 @@ export default function LoanDetails() {
   const { data: schedule = [], isLoading: scheduleLoading } = useQuery({
     queryKey: ['loan-schedule', loanId],
     queryFn: () => api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number'),
-    enabled: !!loanId
+    enabled: !!loanId,
+    staleTime: 30 * 1000, // Cache for 30 seconds
   });
 
   const { data: transactions = [] } = useQuery({
     queryKey: ['loan-transactions', loanId],
     queryFn: () => api.entities.Transaction.filter({ loan_id: loanId }, '-date'),
-    enabled: !!loanId
+    enabled: !!loanId,
+    staleTime: 30 * 1000, // Cache for 30 seconds
   });
 
   const { data: expenses = [] } = useQuery({
@@ -172,11 +174,6 @@ export default function LoanDetails() {
     queryFn: () => api.entities.Expense.filter({ loan_id: loanId }, '-date'),
     enabled: !!loanId
   });
-
-  // Debug: Log active tab changes
-  useEffect(() => {
-    console.log('[LoanDetails] Active tab changed:', activeTab);
-  }, [activeTab]);
 
   // Fetch loan properties (basic) for Security tab badge count
   // This uses the same query key as SecurityTab so they share cache
@@ -263,17 +260,32 @@ export default function LoanDetails() {
   })();
 
   // Fetch reconciliation entries to show which transactions are matched to bank statements
+  // Only fetch if we have transactions, and cache for 5 minutes to reduce re-fetching
+  const transactionIds = transactions.map(t => t.id);
   const { data: reconciliationEntries = [] } = useQuery({
     queryKey: ['loan-reconciliation-entries', loanId],
-    queryFn: () => api.entities.ReconciliationEntry.list(),
-    enabled: !!loanId
+    queryFn: async () => {
+      if (transactionIds.length === 0) return [];
+      // Fetch entries for this loan's transactions
+      const entries = await api.entities.ReconciliationEntry.list();
+      return entries.filter(e => transactionIds.includes(e.loan_transaction_id));
+    },
+    enabled: !!loanId && transactions.length > 0,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
-  // Fetch bank statements to show details about matched entries
+  // Fetch bank statements needed for reconciled entries
+  const bankStatementIds = [...new Set(reconciliationEntries.map(e => e.bank_statement_id).filter(Boolean))];
   const { data: bankStatements = [] } = useQuery({
-    queryKey: ['bank-statements'],
-    queryFn: () => api.entities.BankStatement.list(),
-    enabled: reconciliationEntries.length > 0
+    queryKey: ['bank-statements-for-loan', loanId],
+    queryFn: async () => {
+      if (bankStatementIds.length === 0) return [];
+      // Only fetch the statements we need
+      const statements = await api.entities.BankStatement.list();
+      return statements.filter(s => bankStatementIds.includes(s.id));
+    },
+    enabled: bankStatementIds.length > 0,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
   // Build a map of transaction ID -> array of bank statement details for quick lookup
@@ -291,11 +303,16 @@ export default function LoanDetails() {
   // Keep the Set for simple boolean checks
   const reconciledTransactionIds = new Set(reconciliationMap.keys());
 
-  // Fetch accepted orphans for loan transactions
+  // Fetch accepted orphans for this loan's transactions
   const { data: acceptedOrphans = [] } = useQuery({
-    queryKey: ['accepted-orphans-loan-transactions'],
-    queryFn: () => api.entities.AcceptedOrphan.filter({ entity_type: 'loan_transaction' }),
-    enabled: !!loanId
+    queryKey: ['accepted-orphans-loan', loanId],
+    queryFn: async () => {
+      if (transactionIds.length === 0) return [];
+      const orphans = await api.entities.AcceptedOrphan.filter({ entity_type: 'loan_transaction' });
+      return orphans.filter(o => transactionIds.includes(o.entity_id));
+    },
+    enabled: !!loanId && transactions.length > 0,
+    staleTime: 5 * 60 * 1000, // Cache for 5 minutes
   });
 
   // Build a map of transaction ID -> accepted orphan record

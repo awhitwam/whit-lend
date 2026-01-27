@@ -26,7 +26,8 @@ export function calculateScheduleDuration({ loan, product, options, currentPrinc
   let scheduleEndDate = options.endDate ? new Date(options.endDate) : today;
   scheduleEndDate.setHours(0, 0, 0, 0);
 
-  const isSettledLoan = options.endDate && currentPrincipalOutstanding <= 0.01;
+  // Don't treat auto_extend loans as settled - they should always have future periods
+  const isSettledLoan = options.endDate && currentPrincipalOutstanding <= 0.01 && !loan.auto_extend;
   const baseDuration = options.duration !== undefined ? options.duration : loan.duration;
 
   let scheduleDuration;
