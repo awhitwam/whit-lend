@@ -687,6 +687,10 @@ export default function BankReconciliation() {
   const [showDeleteUnreconciledDialog, setShowDeleteUnreconciledDialog] = useState(false);
   const [isDeletingUnreconciled, setIsDeletingUnreconciled] = useState(false);
 
+  // Delete selected entries state
+  const [showDeleteSelectedDialog, setShowDeleteSelectedDialog] = useState(false);
+  const [isDeletingSelected, setIsDeletingSelected] = useState(false);
+
   // Mark as unreconcilable state
   const [showUnreconcilableDialog, setShowUnreconcilableDialog] = useState(false);
   const [unreconcilableReason, setUnreconcilableReason] = useState('');
@@ -5377,6 +5381,49 @@ export default function BankReconciliation() {
     }
   };
 
+  // Delete selected unreconciled bank statement entries
+  const handleDeleteSelectedUnreconciled = async () => {
+    setIsDeletingSelected(true);
+    try {
+      // Get selected unreconciled entries
+      const entriesToDelete = bankStatements.filter(s =>
+        selectedEntries.has(s.id) && !s.is_reconciled
+      );
+
+      if (entriesToDelete.length === 0) {
+        setShowDeleteSelectedDialog(false);
+        return;
+      }
+
+      let deleted = 0;
+      for (const entry of entriesToDelete) {
+        // Delete any reconciliation entries just in case
+        await api.entities.ReconciliationEntry.deleteWhere({ bank_statement_id: entry.id });
+        // Delete the bank statement entry
+        await api.entities.BankStatement.delete(entry.id);
+        deleted++;
+      }
+
+      // Clear selections and refresh data
+      setSelectedEntries(new Set());
+      queryClient.invalidateQueries({ queryKey: ['bank-statements'] });
+      queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
+
+      setShowDeleteSelectedDialog(false);
+
+      // Log audit event
+      logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
+        action: 'delete_selected_entries',
+        entry_count: deleted
+      });
+    } catch (error) {
+      console.error('Error deleting selected entries:', error);
+      alert(`Error deleting entries: ${error.message}`);
+    } finally {
+      setIsDeletingSelected(false);
+    }
+  };
+
   // Mark selected entries as unreconcilable
   const handleMarkUnreconcilable = async () => {
     if (!unreconcilableReason.trim()) return;
@@ -6036,6 +6083,24 @@ export default function BankReconciliation() {
                     >
                       <Ban className="w-4 h-4 mr-2" />
                       Mark Unreconcilable ({selectedUnreconciledCount})
+                    </Button>
+                  );
+                })()}
+                {/* Delete Selected - permanently delete unmatched entries */}
+                {(() => {
+                  const selectedUnreconciledCount = [...selectedEntries].filter(id => {
+                    const entry = bankStatements.find(s => s.id === id);
+                    return entry && !entry.is_reconciled;
+                  }).length;
+                  return selectedUnreconciledCount > 0 && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setShowDeleteSelectedDialog(true)}
+                      className="border-red-300 text-red-700 hover:bg-red-50"
+                    >
+                      <Trash2 className="w-4 h-4 mr-2" />
+                      Delete ({selectedUnreconciledCount})
                     </Button>
                   );
                 })()}
@@ -8771,6 +8836,50 @@ export default function BankReconciliation() {
                   <>
                     <Trash2 className="w-4 h-4 mr-2" />
                     Delete {totals.unreconciled} Entries
+                  </>
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Delete Selected Unreconciled Dialog */}
+        <AlertDialog open={showDeleteSelectedDialog} onOpenChange={setShowDeleteSelectedDialog}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                <Trash2 className="w-5 h-5" />
+                Delete Selected Entries?
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                This will permanently delete {[...selectedEntries].filter(id => {
+                  const entry = bankStatements.find(s => s.id === id);
+                  return entry && !entry.is_reconciled;
+                }).length} selected bank statement entries.
+                This action cannot be undone.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="py-2">
+              <div className="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-800">
+                <strong>Note:</strong> You can always reimport these entries later from your bank CSV if needed.
+              </div>
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={isDeletingSelected}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={handleDeleteSelectedUnreconciled}
+                disabled={isDeletingSelected}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                {isDeletingSelected ? (
+                  <>
+                    <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="w-4 h-4 mr-2" />
+                    Delete Entries
                   </>
                 )}
               </AlertDialogAction>

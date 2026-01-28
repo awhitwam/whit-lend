@@ -643,8 +643,8 @@ function GroupTypeIcons({ typeCounts }) {
  * Shows month name and summary totals
  */
 function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
-  // Green for negative (ahead), default for positive/zero
-  const balanceColorClass = group.endingInterestBalance < -0.01 ? 'text-emerald-600' : '';
+  // Red for positive (owing), black for negative/zero (ahead or settled)
+  const balanceColorClass = group.endingInterestBalance > 0.01 ? 'text-red-600' : '';
 
   return (
     <TableRow
@@ -789,8 +789,8 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
  * Standalone TODAY row - appears between month groups at the correct chronological position
  */
 function TodayStandaloneRow({ row, monthlyInterest }) {
-  // Green for negative (ahead), default for positive/zero
-  const balanceColorClass = row.interestBalance < -0.01 ? 'text-emerald-600' : '';
+  // Red for positive (owing), black for negative/zero (ahead or settled)
+  const balanceColorClass = row.interestBalance > 0.01 ? 'text-red-600' : '';
 
   return (
     <TableRow className="bg-amber-100 border-y-2 border-amber-400">
@@ -871,8 +871,8 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
   const isRollUpPeriod = row.scheduleEntry?.is_roll_up_period;
   const isServicedPeriod = row.scheduleEntry?.is_serviced_period;
 
-  // Green for negative (ahead), default for positive/zero
-  const balanceColorClass = row.interestBalance < -0.01 ? 'text-emerald-600' : '';
+  // Red for positive (owing), black for negative/zero (ahead or settled)
+  const balanceColorClass = row.interestBalance > 0.01 ? 'text-red-600' : '';
 
   // Determine if payment was made
   const hasPrincipalChange = Math.abs(row.principalChange) > 0.01;
