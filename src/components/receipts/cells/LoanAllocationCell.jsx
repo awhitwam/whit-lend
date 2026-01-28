@@ -211,10 +211,10 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
         <div className="flex items-center gap-1 px-1 py-1 text-[10px] text-slate-500 uppercase font-medium">
           <div className="w-4 shrink-0"></div>{/* Checkbox spacer */}
           <div className="w-[300px] shrink-0">Loan</div>
-          <div className="flex-1 min-w-[120px]">Note</div>
           <div className="w-20 text-right">Interest</div>
           <div className="w-20 text-right">Capital</div>
           <div className="w-16 text-right">Fees</div>
+          <div className="flex-1 min-w-[120px]">Note</div>
         </div>
       )}
 
@@ -326,20 +326,6 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                 </HoverCard>
               </div>
 
-              {/* Description Input */}
-              <Input
-                ref={el => inputRefs.current[`${loan.id}-description`] = el}
-                type="text"
-                value={alloc.description || ''}
-                onChange={(e) => handleAllocationChange(loan.id, 'description', e.target.value)}
-                placeholder="Note..."
-                disabled={!isSelected}
-                className={cn(
-                  'h-7 flex-1 min-w-[120px] text-xs px-1',
-                  !isSelected && 'bg-slate-100 text-slate-400'
-                )}
-              />
-
               {/* Allocation Inputs - aligned with header columns (Interest, Capital, Fees) */}
               <div className="flex items-center gap-1">
                 <Input
@@ -387,6 +373,20 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   )}
                 />
               </div>
+
+              {/* Note Input */}
+              <Input
+                ref={el => inputRefs.current[`${loan.id}-description`] = el}
+                type="text"
+                value={alloc.description || ''}
+                onChange={(e) => handleAllocationChange(loan.id, 'description', e.target.value)}
+                placeholder="Note..."
+                disabled={!isSelected}
+                className={cn(
+                  'h-7 flex-1 min-w-[120px] text-xs px-1',
+                  !isSelected && 'bg-slate-100 text-slate-400'
+                )}
+              />
             </div>
           );
         })}

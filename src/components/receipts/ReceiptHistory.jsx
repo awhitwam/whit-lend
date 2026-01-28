@@ -234,7 +234,7 @@ export default function ReceiptHistory() {
                         <SortIcon field="date" />
                       </Button>
                     </TableHead>
-                    <TableHead>
+                    <TableHead className="w-[240px]">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -245,8 +245,8 @@ export default function ReceiptHistory() {
                         <SortIcon field="borrower" />
                       </Button>
                     </TableHead>
-                    <TableHead>Loan</TableHead>
-                    <TableHead className="text-right">
+                    <TableHead className="w-[80px]">Loan</TableHead>
+                    <TableHead className="text-right w-[100px]">
                       <Button
                         variant="ghost"
                         size="sm"
@@ -257,10 +257,10 @@ export default function ReceiptHistory() {
                         <SortIcon field="amount" />
                       </Button>
                     </TableHead>
-                    <TableHead className="text-right">Principal</TableHead>
-                    <TableHead className="text-right">Interest</TableHead>
-                    <TableHead className="text-right">Fees</TableHead>
-                    <TableHead className="w-[180px]">Reference</TableHead>
+                    <TableHead className="text-right w-[90px]">Principal</TableHead>
+                    <TableHead className="text-right w-[90px]">Interest</TableHead>
+                    <TableHead className="text-right w-[70px] pr-8">Fees</TableHead>
+                    <TableHead>Reference</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -274,25 +274,25 @@ export default function ReceiptHistory() {
                         <TableCell className="text-sm">
                           {tx.date ? format(parseISO(tx.date), 'dd MMM yyyy') : '-'}
                         </TableCell>
-                        <TableCell className="text-sm">
+                        <TableCell className="text-sm truncate max-w-[240px]" title={borrower?.business || borrower?.full_name}>
                           {borrower?.business || borrower?.full_name || '-'}
                         </TableCell>
                         <TableCell className="text-sm text-slate-600">
                           {loan?.loan_number || '-'}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm font-medium text-emerald-600">
+                        <TableCell className="text-right font-mono text-sm font-medium text-emerald-600 w-[100px]">
                           {formatCurrency(tx.amount)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm text-slate-600">
+                        <TableCell className="text-right font-mono text-sm text-slate-600 w-[90px]">
                           {formatCurrency(tx.principal_applied || 0)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm text-slate-600">
+                        <TableCell className="text-right font-mono text-sm text-slate-600 w-[90px]">
                           {formatCurrency(tx.interest_applied || 0)}
                         </TableCell>
-                        <TableCell className="text-right font-mono text-sm text-slate-600">
+                        <TableCell className="text-right font-mono text-sm text-slate-600 w-[70px] pr-8">
                           {formatCurrency(tx.fees_applied || 0)}
                         </TableCell>
-                        <TableCell className="text-sm text-slate-500 truncate max-w-[180px]" title={tx.reference}>
+                        <TableCell className="text-sm text-slate-500 truncate" title={tx.reference}>
                           {tx.reference || '-'}
                         </TableCell>
                       </TableRow>
