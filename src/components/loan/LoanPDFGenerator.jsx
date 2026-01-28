@@ -341,7 +341,8 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
   }
 
   // 5. Sort all rows by date, then by type order
-  const typeOrder = { disbursement: 0, repayment: 1, adjustment: 2, due_date: 3, rate_change: 4 };
+  // Expected amounts (due_date) should appear BEFORE payments (repayment) on same date
+  const typeOrder = { disbursement: 0, due_date: 1, repayment: 2, adjustment: 3, rate_change: 4 };
   rows.sort((a, b) => {
     const dateCompare = a.date.localeCompare(b.date);
     if (dateCompare !== 0) return dateCompare;

@@ -149,9 +149,9 @@ function buildTimeline({ loan, product, schedule, transactions }) {
   }
 
   // 4. Sort all rows by date, then by type order:
-  // Capital first (disbursements), then capital repayments, then adjustments/due dates, rate changes last
-  // This ensures interest adjustments appear AFTER any transactions on the same date
-  const typeOrder = { disbursement: 0, repayment: 1, adjustment: 2, due_date: 3, rate_change: 4 };
+  // Capital first (disbursements), then expected amounts (due dates), then repayments, then adjustments, rate changes last
+  // This ensures expected amounts appear BEFORE payments on the same date
+  const typeOrder = { disbursement: 0, due_date: 1, repayment: 2, adjustment: 3, rate_change: 4 };
 
   rows.sort((a, b) => {
     const dateCompare = a.date.localeCompare(b.date);
@@ -1285,7 +1285,8 @@ export default function InterestOnlyScheduleView({
   // When descending, sort by date DESC but maintain within-day order (typeOrder)
   const sortedTimelineRows = useMemo(() => {
     if (sortOrder === 'desc') {
-      const typeOrder = { disbursement: 0, adjustment: 1, due_date: 2, repayment: 3 };
+      // Expected amounts (due_date) should appear BEFORE payments (repayment) on same date
+      const typeOrder = { disbursement: 0, due_date: 1, repayment: 2, adjustment: 3 };
       return [...timelineRows].sort((a, b) => {
         // Sort dates descending (b before a)
         const dateCompare = b.date.localeCompare(a.date);
@@ -1306,7 +1307,8 @@ export default function InterestOnlyScheduleView({
     if (sortOrder === 'desc') {
       // Reverse the groups order, and re-sort rows within each group
       // to have dates descending but within-day order preserved
-      const typeOrder = { disbursement: 0, adjustment: 1, due_date: 2, repayment: 3 };
+      // Expected amounts (due_date) should appear BEFORE payments (repayment) on same date
+      const typeOrder = { disbursement: 0, due_date: 1, repayment: 2, adjustment: 3 };
       const result = groups.map(group => {
         if (group.isMonthGroup) {
           const sortedRows = [...group.rows].sort((a, b) => {
