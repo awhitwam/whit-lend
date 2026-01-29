@@ -266,6 +266,9 @@ export default function Dashboard() {
     return sum + remaining;
   }, 0);
 
+  // Other deducted fees = additional fees deducted at source (admin fees, broker fees, etc.)
+  const otherDeductedFees = liveLoans.reduce((sum, loan) => sum + (loan.additional_deducted_fees || 0), 0);
+
   // Total outstanding investor capital (what we owe investors)
   const totalInvestorOutstanding = investors
     .filter(inv => inv.status === 'Active')
@@ -317,6 +320,11 @@ export default function Dashboard() {
       .filter(d => d.value > 0)
       .sort((a, b) => b.value - a.value),
 
+    otherDeductedFees: liveLoans
+      .filter(loan => (loan.additional_deducted_fees || 0) > 0)
+      .map(loan => ({ loan, value: loan.additional_deducted_fees || 0 }))
+      .sort((a, b) => b.value - a.value),
+
     interestDue: loanMetrics
       .filter(m => m.interestRemaining > 0)
       .map(m => ({ loan: m.loan, value: Math.max(0, m.interestRemaining) }))
@@ -335,6 +343,7 @@ export default function Dashboard() {
     netDisbursed: 'Net Disbursed Breakdown',
     feesDue: 'Arrangement Fees Breakdown',
     exitFeesDue: 'Exit Fees Breakdown',
+    otherDeductedFees: 'Other Deducted Fees Breakdown',
     interestDue: 'Interest Due Breakdown',
     principalOS: 'Principal Outstanding Breakdown',
     borrowers: 'Active Loans'
@@ -345,6 +354,7 @@ export default function Dashboard() {
     netDisbursed: 'Cash paid out to each borrower',
     feesDue: 'Arrangement fees for each loan',
     exitFeesDue: 'Exit fees for each loan',
+    otherDeductedFees: 'Additional fees deducted at source (broker, admin, etc.)',
     interestDue: 'Accrued interest outstanding per loan',
     principalOS: 'Remaining principal balance per loan',
     borrowers: 'All live loans in the portfolio'
@@ -758,7 +768,7 @@ export default function Dashboard() {
               </div>
 
               {/* Fees and Interest row */}
-              <div className="grid grid-cols-4 gap-3 pt-3 border-t border-white/10">
+              <div className="grid grid-cols-5 gap-3 pt-3 border-t border-white/10">
                 <div
                   className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
                   onClick={() => setActiveBreakdown('feesDue')}
@@ -772,6 +782,13 @@ export default function Dashboard() {
                 >
                   <p className="text-slate-400 text-xs">Exit Fees</p>
                   <p className="text-base font-semibold">{formatCurrency(exitFeesDue)}</p>
+                </div>
+                <div
+                  className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
+                  onClick={() => setActiveBreakdown('otherDeductedFees')}
+                >
+                  <p className="text-slate-400 text-xs">Other Fees</p>
+                  <p className="text-base font-semibold">{formatCurrency(otherDeductedFees)}</p>
                 </div>
                 <div
                   className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
