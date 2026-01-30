@@ -15,7 +15,9 @@ import { registerScheduler } from '../registry.js';
 import { format, addMonths, differenceInDays, startOfMonth } from 'date-fns';
 
 // Import the shared view component
+console.log('[RollUpServicedScheduler] About to import InterestOnlyScheduleView (shared)');
 import InterestOnlyScheduleView from '@/components/loan/InterestOnlyScheduleView';
+console.log('[RollUpServicedScheduler] Imported InterestOnlyScheduleView:', InterestOnlyScheduleView?.name || 'undefined');
 
 export class RollUpServicedScheduler extends BaseScheduler {
   static id = 'roll_up_serviced';

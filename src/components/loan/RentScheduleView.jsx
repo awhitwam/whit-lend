@@ -409,8 +409,12 @@ export default function RentScheduleView({ schedule, transactions = [], loan, pr
 
 // Self-register with RentScheduler to avoid circular import issues
 // (RentScheduler can't import this component directly)
+console.log('[RentScheduleView] About to self-register with RentScheduler');
 import { getScheduler } from '@/lib/schedule';
 const RentSchedulerClass = getScheduler('rent');
 if (RentSchedulerClass) {
   RentSchedulerClass.ViewComponent = RentScheduleView;
+  console.log('[RentScheduleView] Registered ViewComponent with RentScheduler');
+} else {
+  console.log('[RentScheduleView] Warning: RentScheduler not found in registry');
 }

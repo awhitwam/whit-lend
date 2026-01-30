@@ -6,7 +6,17 @@ import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Loader2, Calculator, ChevronRight, Zap, Coins, Info } from 'lucide-react';
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList
+} from "@/components/ui/command";
+import { Loader2, Calculator, ChevronRight, Zap, Coins, Info, ChevronsUpDown, Check, Building2, User } from 'lucide-react';
+import { cn } from "@/lib/utils";
 import { generateRepaymentSchedule, calculateLoanSummary, formatCurrency } from './LoanCalculator';
 import { format, addMonths } from 'date-fns';
 import { calculateRollUpAmount } from '@/lib/loanCalculations';
@@ -43,6 +53,10 @@ export default function LoanApplicationForm({
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [previewSchedule, setPreviewSchedule] = useState(null);
   const [summary, setSummary] = useState(null);
+  const [borrowerOpen, setBorrowerOpen] = useState(false);
+
+  // Filter active borrowers for the selector
+  const activeBorrowers = borrowers.filter(b => b.status === 'Active');
 
   // Helper to check product type
   const isFixedCharge = selectedProduct?.product_type === 'Fixed Charge';
@@ -397,21 +411,94 @@ export default function LoanApplicationForm({
 
           <div className="space-y-2">
             <Label htmlFor="borrower">Borrower *</Label>
-            <Select
-              value={formData.borrower_id}
-              onValueChange={(value) => handleChange('borrower_id', value)}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Select borrower" />
-              </SelectTrigger>
-              <SelectContent>
-                {borrowers.filter(b => b.status === 'Active').map((borrower) => (
-                  <SelectItem key={borrower.id} value={borrower.id}>
-                    {borrower.business || `${borrower.first_name} ${borrower.last_name}`} - {borrower.phone}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <Popover open={borrowerOpen} onOpenChange={setBorrowerOpen}>
+              <PopoverTrigger asChild>
+                <Button
+                  variant="outline"
+                  role="combobox"
+                  aria-expanded={borrowerOpen}
+                  className="w-full justify-between font-normal"
+                >
+                  {formData.borrower_id ? (
+                    (() => {
+                      const borrower = activeBorrowers.find(b => b.id === formData.borrower_id);
+                      if (!borrower) return "Select borrower...";
+                      const contactName = borrower.full_name || `${borrower.first_name || ''} ${borrower.last_name || ''}`.trim();
+                      return (
+                        <span className="flex items-center gap-2 truncate">
+                          {borrower.business ? (
+                            <>
+                              <Building2 className="h-4 w-4 shrink-0 text-slate-400" />
+                              <span className="font-medium">{borrower.business}</span>
+                              {contactName && <span className="text-slate-500">({contactName})</span>}
+                            </>
+                          ) : (
+                            <>
+                              <User className="h-4 w-4 shrink-0 text-slate-400" />
+                              <span className="font-medium">{contactName}</span>
+                            </>
+                          )}
+                        </span>
+                      );
+                    })()
+                  ) : (
+                    <span className="text-muted-foreground">Select borrower...</span>
+                  )}
+                  <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-[400px] p-0" align="start">
+                <Command>
+                  <CommandInput placeholder="Search by name or business..." />
+                  <CommandList>
+                    <CommandEmpty>No borrower found.</CommandEmpty>
+                    <CommandGroup>
+                      {activeBorrowers.map((borrower) => {
+                        const contactName = borrower.full_name || `${borrower.first_name || ''} ${borrower.last_name || ''}`.trim();
+                        return (
+                          <CommandItem
+                            key={borrower.id}
+                            value={`${borrower.business || ''} ${contactName} ${borrower.phone || ''}`}
+                            onSelect={() => {
+                              handleChange('borrower_id', borrower.id);
+                              setBorrowerOpen(false);
+                            }}
+                          >
+                            <Check
+                              className={cn(
+                                "mr-2 h-4 w-4",
+                                formData.borrower_id === borrower.id ? "opacity-100" : "opacity-0"
+                              )}
+                            />
+                            <div className="flex flex-col">
+                              <div className="flex items-center gap-2">
+                                {borrower.business ? (
+                                  <>
+                                    <Building2 className="h-4 w-4 text-slate-400" />
+                                    <span className="font-medium">{borrower.business}</span>
+                                  </>
+                                ) : (
+                                  <>
+                                    <User className="h-4 w-4 text-slate-400" />
+                                    <span className="font-medium">{contactName}</span>
+                                  </>
+                                )}
+                              </div>
+                              {borrower.business && contactName && (
+                                <span className="text-xs text-slate-500 ml-6">{contactName}</span>
+                              )}
+                              {borrower.phone && (
+                                <span className="text-xs text-slate-400 ml-6">{borrower.phone}</span>
+                              )}
+                            </div>
+                          </CommandItem>
+                        );
+                      })}
+                    </CommandGroup>
+                  </CommandList>
+                </Command>
+              </PopoverContent>
+            </Popover>
           </div>
 
           <div className="space-y-2">

@@ -25,20 +25,48 @@ interface DriveItem {
   parentPath?: string
 }
 
+// Get folder metadata to determine if it's in a shared drive
+async function getFolderDriveId(accessToken: string, folderId: string): Promise<string | null> {
+  try {
+    const response = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${folderId}?fields=driveId&supportsAllDrives=true`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    )
+    const data = await response.json()
+    if (data.error) {
+      console.log('[GoogleDriveFiles] Could not get folder driveId:', data.error.message)
+      return null
+    }
+    return data.driveId || null
+  } catch (e) {
+    console.log('[GoogleDriveFiles] Error getting folder driveId:', e)
+    return null
+  }
+}
+
 // List files and folders in a parent folder
 async function listFilesAndFolders(
   accessToken: string,
   folderId: string,
   driveId?: string
 ): Promise<{ items: DriveItem[], nextPageToken?: string }> {
+  // If no driveId provided, try to detect it from the folder
+  let effectiveDriveId = driveId
+  if (!effectiveDriveId) {
+    effectiveDriveId = await getFolderDriveId(accessToken, folderId) || undefined
+    if (effectiveDriveId) {
+      console.log('[GoogleDriveFiles] Detected shared drive:', effectiveDriveId)
+    }
+  }
+
   const query = `'${folderId}' in parents and trashed=false`
   const fields = 'nextPageToken,files(id,name,mimeType,size,modifiedTime,webViewLink)'
 
   let apiUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(query)}&fields=${encodeURIComponent(fields)}&pageSize=100&orderBy=folder,name`
 
   // For shared drives, need additional parameters
-  if (driveId && driveId !== 'root') {
-    apiUrl += `&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=drive&driveId=${driveId}`
+  if (effectiveDriveId && effectiveDriveId !== 'root') {
+    apiUrl += `&supportsAllDrives=true&includeItemsFromAllDrives=true&corpora=drive&driveId=${effectiveDriveId}`
   } else {
     apiUrl += `&supportsAllDrives=true&includeItemsFromAllDrives=true`
   }
@@ -75,16 +103,22 @@ async function listFilesRecursive(
   driveId?: string,
   parentPath: string = ''
 ): Promise<DriveItem[]> {
+  // Detect driveId on first call if not provided
+  let effectiveDriveId = driveId
+  if (!effectiveDriveId && !parentPath) {
+    effectiveDriveId = await getFolderDriveId(accessToken, folderId) || undefined
+  }
+
   const result: DriveItem[] = []
-  const { items } = await listFilesAndFolders(accessToken, folderId, driveId)
+  const { items } = await listFilesAndFolders(accessToken, folderId, effectiveDriveId)
 
   for (const item of items) {
     if (item.isFolder) {
-      // Recurse into subfolder
+      // Recurse into subfolder, passing the driveId
       const subItems = await listFilesRecursive(
         accessToken,
         item.id,
-        driveId,
+        effectiveDriveId,
         parentPath ? `${parentPath}/${item.name}` : item.name
       )
       result.push(...subItems)

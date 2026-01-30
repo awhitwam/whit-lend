@@ -10,11 +10,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
-import { Loader2, Building2, Plus, Search, Landmark } from 'lucide-react';
+import { Loader2, Building2, Plus, Search, Landmark, FileText, Settings } from 'lucide-react';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { logPropertyEvent, logLoanPropertyEvent, AuditAction } from '@/lib/auditLog';
 import FirstChargeHolderModal from './FirstChargeHolderModal';
+import PropertyDocuments from './PropertyDocuments';
 
 export default function PropertyModal({
   isOpen,
@@ -29,6 +30,7 @@ export default function PropertyModal({
   const [mode, setMode] = useState('new'); // 'new' or 'existing'
   const [selectedPropertyId, setSelectedPropertyId] = useState('');
   const [isFirstChargeHolderModalOpen, setIsFirstChargeHolderModalOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState('details'); // 'details' or 'documents'
 
   const [formData, setFormData] = useState({
     address: '',
@@ -57,6 +59,14 @@ export default function PropertyModal({
     queryFn: () => api.entities.FirstChargeHolder.list(),
     enabled: isOpen
   });
+
+  // Load borrower for Google Drive integration (needed for folder structure)
+  const { data: borrowers = [] } = useQuery({
+    queryKey: ['borrowers'],
+    queryFn: () => api.entities.Borrower.list(),
+    enabled: isOpen && isEdit
+  });
+  const borrower = borrowers.find(b => b.id === loan?.borrower_id);
 
   // Get already linked properties to exclude from selection
   // Use a different query key to avoid overwriting the enriched data in SecurityTab
@@ -105,6 +115,7 @@ export default function PropertyModal({
       });
       setSelectedPropertyId('');
       setMode('new');
+      setActiveTab('details');
     }
   }, [existingLoanProperty, isOpen]);
 
@@ -248,6 +259,32 @@ export default function PropertyModal({
             </DialogDescription>
           </DialogHeader>
 
+          {/* Edit mode tabs for Details vs Documents */}
+          {isEdit && (
+            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+              <TabsList className="grid w-full grid-cols-2 mb-4">
+                <TabsTrigger value="details">
+                  <Settings className="w-4 h-4 mr-2" />
+                  Details
+                </TabsTrigger>
+                <TabsTrigger value="documents">
+                  <FileText className="w-4 h-4 mr-2" />
+                  Documents
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="documents" className="mt-0">
+                <PropertyDocuments
+                  propertyId={existingLoanProperty?.property_id}
+                  loan={loan}
+                  borrower={borrower}
+                />
+              </TabsContent>
+            </Tabs>
+          )}
+
+          {/* Show form for details tab (edit) or always (create) */}
+          {(!isEdit || activeTab === 'details') && (
           <form onSubmit={handleSubmit} className="space-y-4">
             {!isEdit && (
               <Tabs value={mode} onValueChange={setMode}>
@@ -477,6 +514,16 @@ export default function PropertyModal({
               </Button>
             </DialogFooter>
           </form>
+          )}
+
+          {/* Show close button when viewing documents tab */}
+          {isEdit && activeTab === 'documents' && (
+            <DialogFooter>
+              <Button type="button" variant="outline" onClick={onClose}>
+                Close
+              </Button>
+            </DialogFooter>
+          )}
         </DialogContent>
       </Dialog>
 

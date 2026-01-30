@@ -100,7 +100,7 @@ export default function ValuationHistoryModal({
         notes: ''
       });
       queryClient.invalidateQueries({ queryKey: ['value-history', loanProperty?.property_id] });
-      queryClient.invalidateQueries({ queryKey: ['loan-properties'] });
+      queryClient.invalidateQueries({ queryKey: ['loan-properties', loanProperty?.loan_id] });
       queryClient.invalidateQueries({ queryKey: ['properties'] });
       onSuccess?.();
     },
@@ -162,7 +162,7 @@ export default function ValuationHistoryModal({
       toast.success('Valuation updated');
       cancelEdit();
       queryClient.invalidateQueries({ queryKey: ['value-history', loanProperty?.property_id] });
-      queryClient.invalidateQueries({ queryKey: ['loan-properties'] });
+      queryClient.invalidateQueries({ queryKey: ['loan-properties', loanProperty?.loan_id] });
       queryClient.invalidateQueries({ queryKey: ['properties'] });
       onSuccess?.();
     },

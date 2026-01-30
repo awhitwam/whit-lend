@@ -51,7 +51,9 @@ const tableMap = {
   LoanComment: 'loan_comments',
   // Letter templates
   LetterTemplate: 'letter_templates',
-  GeneratedLetter: 'generated_letters'
+  GeneratedLetter: 'generated_letters',
+  // Property documents (images and links)
+  PropertyDocument: 'property_documents'
 };
 
 // Tables that should have organization_id filter applied
@@ -67,7 +69,8 @@ const orgScopedTables = [
   'Investor',
   'InvestorTransaction',
   'investor_products',
-  'audit_logs',
+  // Note: audit_logs is NOT included here - RLS policy handles access control
+  // and allows viewing logs for all orgs the user belongs to (plus null org_id entries)
   'invitations',  // SECURITY: Invitations are org-scoped
   // Security/Property tables
   'properties',
@@ -93,7 +96,9 @@ const orgScopedTables = [
   'loan_comments',
   // Letter templates
   'letter_templates',
-  'generated_letters'
+  'generated_letters',
+  // Property documents
+  'property_documents'
 ];
 
 // Map column names that differ between code and database

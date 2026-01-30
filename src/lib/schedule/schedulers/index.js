@@ -5,6 +5,8 @@
  * Import this file to ensure all schedulers are registered with the registry.
  */
 
+console.log('[Schedulers] === Starting scheduler registration ===');
+
 // Import all schedulers - they self-register on import
 import './IrregularIncomeScheduler.js';
 import './FixedChargeScheduler.js';
@@ -14,6 +16,8 @@ import './FlatRateScheduler.js';
 import './ReducingBalanceScheduler.js';
 import './RentScheduler.js';
 import './RollUpServicedScheduler.js';
+
+console.log('[Schedulers] === All schedulers registered ===');
 
 // Re-export scheduler classes for direct access if needed
 export { IrregularIncomeScheduler } from './IrregularIncomeScheduler.js';

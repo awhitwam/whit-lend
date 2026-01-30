@@ -16,6 +16,7 @@ import { registerScheduler } from '../registry.js';
 import { format, addMonths, addQuarters, differenceInDays, differenceInMonths, startOfQuarter, endOfQuarter, subQuarters } from 'date-fns';
 
 // ViewComponent is set by RentScheduleView.jsx when it loads (avoids circular import)
+console.log('[RentScheduler] Loaded - ViewComponent will be set by RentScheduleView when it loads');
 let RentScheduleViewComponent = null;
 
 export class RentScheduler extends BaseScheduler {

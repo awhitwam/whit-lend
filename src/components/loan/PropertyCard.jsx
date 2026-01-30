@@ -1,8 +1,10 @@
+import { useState, useEffect } from 'react';
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { formatCurrency } from './LoanCalculator';
-import { format, differenceInMonths } from 'date-fns';
+import { differenceInMonths } from 'date-fns';
+import { supabase } from '@/lib/supabaseClient';
 import {
   Building2,
   Edit,
@@ -16,14 +18,22 @@ import {
   TreePine,
   Warehouse,
   TrendingUp,
-  MessageSquare
+  MessageSquare,
+  ExternalLink
 } from 'lucide-react';
+import { usePropertyDocumentCounts, DOCUMENT_TYPES } from './PropertyDocuments';
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 export default function PropertyCard({
   loanProperty,
@@ -35,8 +45,30 @@ export default function PropertyCard({
   onRemove
 }) {
   const { property, firstChargeHolder } = loanProperty;
+  const { documents } = usePropertyDocumentCounts(property?.id);
+  const [thumbnailUrl, setThumbnailUrl] = useState(null);
+  const [showImageLightbox, setShowImageLightbox] = useState(false);
   const STALE_VALUATION_MONTHS = 12;
   const STALE_BALANCE_MONTHS = 6;
+
+  // Get the first photo for the thumbnail
+  const firstPhoto = documents.find(d => d.document_type === 'photo' && d.storage_path && d.mime_type?.startsWith('image/'));
+
+  // Load thumbnail for first photo
+  useEffect(() => {
+    if (firstPhoto?.storage_path) {
+      supabase.storage
+        .from('property-documents')
+        .createSignedUrl(firstPhoto.storage_path, 3600)
+        .then(({ data, error }) => {
+          if (!error && data?.signedUrl) {
+            setThumbnailUrl(data.signedUrl);
+          }
+        });
+    } else {
+      setThumbnailUrl(null);
+    }
+  }, [firstPhoto?.storage_path]);
 
   // Calculate security value
   const propertyValue = property?.current_value || 0;
@@ -113,9 +145,23 @@ export default function PropertyCard({
         {/* Header with address and menu */}
         <div className="flex items-start justify-between mb-3">
           <div className="flex items-start gap-3">
-            <div className={`p-2 rounded-lg ${getPropertyTypeColor(property?.property_type)}`}>
-              {getPropertyTypeIcon(property?.property_type)}
-            </div>
+            {/* Property thumbnail or type icon */}
+            {thumbnailUrl ? (
+              <button
+                onClick={() => setShowImageLightbox(true)}
+                className="w-16 h-16 rounded-lg overflow-hidden flex-shrink-0 bg-slate-100 hover:ring-2 hover:ring-blue-400 transition-all cursor-pointer"
+              >
+                <img
+                  src={thumbnailUrl}
+                  alt={property?.address}
+                  className="w-full h-full object-cover"
+                />
+              </button>
+            ) : (
+              <div className={`w-16 h-16 rounded-lg flex items-center justify-center ${getPropertyTypeColor(property?.property_type)}`}>
+                {getPropertyTypeIcon(property?.property_type)}
+              </div>
+            )}
             <div>
               <h3 className="font-semibold text-slate-900">{property?.address}</h3>
               <p className="text-sm text-slate-500">
@@ -198,6 +244,11 @@ export default function PropertyCard({
                 <span className="text-slate-600 whitespace-pre-wrap">{loanProperty.notes}</span>
               </div>
             )}
+
+            {/* Document links display */}
+            {documents.some(d => d.external_url) && (
+              <PropertyDocumentsDisplay documents={documents} />
+            )}
           </div>
 
           {/* Right side: Age indicator cards */}
@@ -226,6 +277,61 @@ export default function PropertyCard({
           </div>
         </div>
       </CardContent>
+
+      {/* Image Lightbox */}
+      <Dialog open={showImageLightbox} onOpenChange={setShowImageLightbox}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>{property?.address}</DialogTitle>
+          </DialogHeader>
+          {thumbnailUrl && (
+            <div className="flex items-center justify-center">
+              <img
+                src={thumbnailUrl}
+                alt={property?.address}
+                className="max-w-full max-h-[70vh] object-contain rounded-lg"
+              />
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </Card>
+  );
+}
+
+// Component to display document links on the card
+function PropertyDocumentsDisplay({ documents }) {
+  // Only show linked documents (external URLs)
+  const linkDocuments = documents.filter(d => d.external_url);
+
+  const handleOpenLink = (url) => {
+    window.open(url, '_blank', 'noopener,noreferrer');
+  };
+
+  if (linkDocuments.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="mt-3">
+      <div className="flex flex-wrap gap-1.5">
+        {linkDocuments.map((doc) => {
+          const typeConfig = DOCUMENT_TYPES[doc.document_type] || DOCUMENT_TYPES.other;
+          const Icon = typeConfig.icon;
+          return (
+            <button
+              key={doc.id}
+              onClick={() => handleOpenLink(doc.external_url)}
+              className="inline-flex items-center gap-1 px-2 py-1 text-xs rounded-md bg-slate-100 hover:bg-slate-200 text-slate-600 hover:text-slate-800 transition-colors"
+              title={doc.title}
+            >
+              <Icon className="w-3 h-3" />
+              <span className="truncate max-w-[80px]">{typeConfig.label}</span>
+              <ExternalLink className="w-2.5 h-2.5 text-slate-400" />
+            </button>
+          );
+        })}
+      </div>
+    </div>
   );
 }
