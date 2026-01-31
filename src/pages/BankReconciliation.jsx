@@ -3948,7 +3948,8 @@ export default function BankReconciliation() {
       // Handle loan transactions
       if (re.loan_transaction_id) {
         const tx = loanTransactions.find(t => t.id === re.loan_transaction_id);
-        if (tx) {
+        // Check both existence and soft-delete status
+        if (tx && !tx.is_deleted) {
           const loan = loans.find(l => l.id === tx.loan_id);
           const borrowerName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
           results.push({
@@ -3971,7 +3972,7 @@ export default function BankReconciliation() {
             createdAt: re.created_at
           });
         } else {
-          // Broken link - loan transaction was deleted
+          // Broken link - loan transaction was deleted or soft-deleted
           results.push({
             reconciliationEntry: re,
             linkedEntity: null,
@@ -6227,14 +6228,19 @@ export default function BankReconciliation() {
                                     for (const recon of firstRecons) {
                                       if (recon.loan_transaction_id) {
                                         const tx = loanTransactions.find(t => t.id === recon.loan_transaction_id);
-                                        const loan = tx ? loans.find(l => l.id === tx.loan_id) : null;
-                                        groupLinks.push({
-                                          type: 'loan',
-                                          label: loan ? `${tx?.type || 'Loan'}: ${loan.borrower_name}` : (tx?.type || 'Loan Transaction'),
-                                          loanNumber: loan?.loan_number,
-                                          loanId: loan?.id,
-                                          txDate: tx?.date
-                                        });
+                                        // Check for soft-deleted transactions
+                                        if (tx && !tx.is_deleted) {
+                                          const loan = loans.find(l => l.id === tx.loan_id);
+                                          groupLinks.push({
+                                            type: 'loan',
+                                            label: loan ? `${tx.type || 'Loan'}: ${loan.borrower_name}` : (tx.type || 'Loan Transaction'),
+                                            loanNumber: loan?.loan_number,
+                                            loanId: loan?.id,
+                                            txDate: tx.date
+                                          });
+                                        } else {
+                                          groupLinks.push({ type: 'broken', label: 'Deleted Loan Transaction', isBroken: true });
+                                        }
                                       }
                                       if (recon.investor_transaction_id) {
                                         const tx = investorTransactions.find(t => t.id === recon.investor_transaction_id);
@@ -6294,6 +6300,16 @@ export default function BankReconciliation() {
                                             ) : (
                                               <div className="space-y-0.5">
                                                 {groupLinks.map((link, idx) => {
+                                                  // Handle broken links first
+                                                  if (link.isBroken) {
+                                                    return (
+                                                      <div key={idx} className="text-xs truncate text-red-600 flex items-center gap-1" title="Linked entity was deleted - un-reconcile to re-match">
+                                                        <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                                                        <span className="font-medium">{link.label}</span>
+                                                      </div>
+                                                    );
+                                                  }
+
                                                   let linkHref = link.href;
                                                   if (link.type === 'loan' && link.loanId) {
                                                     linkHref = `/LoanDetails?id=${link.loanId}`;
@@ -6386,15 +6402,20 @@ export default function BankReconciliation() {
                                   for (const recon of recons) {
                                     if (recon.loan_transaction_id) {
                                       const tx = loanTransactions.find(t => t.id === recon.loan_transaction_id);
-                                      const loan = tx ? loans.find(l => l.id === tx.loan_id) : null;
-                                      links.push({
-                                        type: 'loan',
-                                        label: loan ? `${tx?.type || 'Loan'}: ${loan.borrower_name}` : (tx?.type || 'Loan Transaction'),
-                                        loanNumber: loan?.loan_number,
-                                        loanId: loan?.id,
-                                        amount: recon.amount,
-                                        txDate: tx?.date
-                                      });
+                                      // Check for soft-deleted transactions
+                                      if (tx && !tx.is_deleted) {
+                                        const loan = loans.find(l => l.id === tx.loan_id);
+                                        links.push({
+                                          type: 'loan',
+                                          label: loan ? `${tx.type || 'Loan'}: ${loan.borrower_name}` : (tx.type || 'Loan Transaction'),
+                                          loanNumber: loan?.loan_number,
+                                          loanId: loan?.id,
+                                          amount: recon.amount,
+                                          txDate: tx.date
+                                        });
+                                      } else {
+                                        links.push({ type: 'broken', label: 'Deleted Loan Transaction', isBroken: true });
+                                      }
                                     }
                                     if (recon.investor_transaction_id) {
                                       const tx = investorTransactions.find(t => t.id === recon.investor_transaction_id);
@@ -6502,6 +6523,16 @@ export default function BankReconciliation() {
                                         ) : (
                                           <div className="space-y-0.5">
                                             {links.map((link, idx) => {
+                                              // Handle broken links first
+                                              if (link.isBroken) {
+                                                return (
+                                                  <div key={idx} className="text-xs truncate text-red-600 flex items-center gap-1" title="Linked entity was deleted - un-reconcile to re-match">
+                                                    <AlertTriangle className="w-3 h-3 flex-shrink-0" />
+                                                    <span className="font-medium">{link.label}</span>
+                                                  </div>
+                                                );
+                                              }
+
                                               // Determine the href for the link
                                               let linkHref = link.href;
                                               if (link.type === 'loan' && link.loanId) {
@@ -6826,7 +6857,8 @@ export default function BankReconciliation() {
                                 for (const recon of recons) {
                                   if (recon.loan_transaction_id) {
                                     const tx = loanTransactions.find(t => t.id === recon.loan_transaction_id);
-                                    if (tx) {
+                                    // Check both existence and soft-delete status
+                                    if (tx && !tx.is_deleted) {
                                       const loan = loans.find(l => l.id === tx.loan_id);
                                       links.push({
                                         type: 'loan',

@@ -74,18 +74,21 @@ export default function ReceiptEntryContent({
     queryFn: () => api.entities.Loan.list('-created_at')
   });
 
-  // Filter loans based on mode
+  // Filter loans based on mode (always exclude deleted loans)
   const loans = useMemo(() => {
+    // First, filter out deleted loans
+    const activeLoans = allLoans.filter(l => !l.is_deleted);
+
     if (lockedLoanId) {
       // Loan mode: only the locked loan
-      return allLoans.filter(l => l.id === lockedLoanId);
+      return activeLoans.filter(l => l.id === lockedLoanId);
     }
     if (lockedBorrowerId) {
       // Borrower mode: only loans for this borrower
-      return allLoans.filter(l => l.borrower_id === lockedBorrowerId);
+      return activeLoans.filter(l => l.borrower_id === lockedBorrowerId);
     }
-    // Standalone: all loans
-    return allLoans;
+    // Standalone: all active loans
+    return activeLoans;
   }, [allLoans, lockedBorrowerId, lockedLoanId]);
 
   // Load transactions for last payment info

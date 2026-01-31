@@ -112,7 +112,7 @@ export default function NewLoan() {
         loan_id: loan.id
       }));
 
-      await api.entities.RepaymentSchedule.bulkCreate(scheduleWithLoanId);
+      await api.entities.RepaymentSchedule.createMany(scheduleWithLoanId);
 
       // Create initial Disbursement transaction if loan is released (has start_date)
       if (loan.start_date && loan.status !== 'Pending') {

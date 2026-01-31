@@ -666,6 +666,7 @@ export default function LoanApplicationForm({
                   placeholder="Enter loan amount"
                   min={selectedProduct?.min_amount || 0}
                   max={selectedProduct?.max_amount || undefined}
+                  step="0.01"
                   required
                 />
               </div>

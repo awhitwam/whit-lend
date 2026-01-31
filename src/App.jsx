@@ -111,33 +111,28 @@ const AuthenticatedApp = () => {
   const { isLoadingOrgs, currentOrganization } = useOrganization();
   const location = useLocation();
 
-
   // Check for password recovery token in URL hash FIRST, before anything else
   // This prevents the app from redirecting to login before Supabase can process the token
   const hashParams = new URLSearchParams(window.location.hash.substring(1));
   const isRecoveryFlow = hashParams.get('type') === 'recovery';
 
-  // Redirect to ResetPassword page if this is a recovery flow
-  useEffect(() => {
-    if (isRecoveryFlow && location.pathname !== '/ResetPassword') {
-      // Preserve the hash when redirecting
-      console.log('[App] Recovery flow detected, redirecting to ResetPassword');
-      window.location.href = '/ResetPassword' + window.location.hash;
-    }
-  }, [isRecoveryFlow, location.pathname]);
-
-  // If this is a recovery flow, show loading and let the redirect happen
-  // The AuthContext will also fire PASSWORD_RECOVERY event which redirects to /ResetPassword
-  if (isRecoveryFlow && location.pathname !== '/ResetPassword') {
-    return (
-      <div className="fixed inset-0 flex items-center justify-center">
-        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
-      </div>
-    );
-  }
+  // DEBUG: Log all hash params
+  console.log('[App/AuthenticatedApp] URL check:', {
+    fullUrl: window.location.href,
+    hash: window.location.hash,
+    type: hashParams.get('type'),
+    hasAccessToken: !!hashParams.get('access_token'),
+    isRecoveryFlow,
+    isLoadingAuth,
+    isAuthenticated
+  });
 
   // Emergency logout via query parameter
+  // NOTE: This must be called BEFORE any conditional returns to satisfy React's rules of hooks
   useEffect(() => {
+    // Skip if we're in recovery flow
+    if (isRecoveryFlow) return;
+
     const params = new URLSearchParams(location.search);
     if (params.get('force_logout') === 'true') {
       console.log('Force logout requested');
@@ -147,7 +142,16 @@ const AuthenticatedApp = () => {
         window.location.href = '/Login';
       });
     }
-  }, [location.search]);
+  }, [location.search, isRecoveryFlow, logout]);
+
+  // If this is a recovery flow, render ResetPassword directly WITHOUT redirecting
+  // IMPORTANT: We must NOT redirect because the recovery token is ONE-TIME USE.
+  // If we do window.location.href redirect, the token gets consumed on the first page load,
+  // and then when the page reloads for the redirect, the token is already invalid.
+  if (isRecoveryFlow) {
+    console.log('[App] Recovery flow detected, rendering ResetPassword directly');
+    return <ResetPassword />;
+  }
 
   // Show loading spinner while checking auth
   if (isLoadingAuth) {

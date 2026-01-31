@@ -301,13 +301,20 @@ export default function OrphanedEntries() {
     const bankStatementMap = new Map(bankStatements.map(bs => [bs.id, bs]));
 
     // Build lookup sets for existing entities
+    // Note: Filter out soft-deleted transactions - they should be treated as "deleted" for orphan detection
     const existingExpenseIds = new Set(expenses.map(e => e.id));
-    const existingLoanTxIds = new Set(loanTransactions.map(t => t.id));
+    const existingLoanTxIds = new Set(loanTransactions.filter(t => !t.is_deleted).map(t => t.id));
     const existingInvestorTxIds = new Set(investorTransactions.map(t => t.id));
     const existingInterestIds = new Set(investorInterest.map(i => i.id));
     const existingOtherIncomeIds = new Set(otherIncome.map(o => o.id));
 
-    reconciliationEntries.forEach(re => {
+    // Filter to only reconciliation entries where we can find the bank statement
+    // (reconciliation_entries isn't org-scoped, so we filter by bank statement which IS org-scoped)
+    const orgReconciliationEntries = reconciliationEntries.filter(re =>
+      bankStatementMap.has(re.bank_statement_id)
+    );
+
+    orgReconciliationEntries.forEach(re => {
       let isOrphaned = false;
       let expectedType = null;
 
@@ -356,7 +363,7 @@ export default function OrphanedEntries() {
           ...re,
           type: 'null_reference',
           expectedType,
-          bankStatement
+          bankStatement  // Guaranteed to exist since we filtered orgReconciliationEntries
         });
       }
     });

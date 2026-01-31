@@ -284,12 +284,16 @@ export class BaseScheduler {
   }
 
   /**
-   * Get the effective interest rate (loan override or product rate)
+   * Get the effective interest rate (loan override, loan rate, or product rate)
    */
   getEffectiveInterestRate(loan, product) {
-    return loan.override_interest_rate && loan.overridden_rate != null
-      ? loan.overridden_rate
-      : product.interest_rate;
+    // 1. If override is enabled, use the override rate
+    if (loan.override_interest_rate && loan.overridden_rate != null) {
+      return loan.overridden_rate;
+    }
+    // 2. Use loan's interest_rate if set (allows editing loan rate directly)
+    // 3. Fall back to product rate only if loan rate is null/undefined
+    return loan.interest_rate ?? product.interest_rate;
   }
 
   // ============ Display Methods ============
