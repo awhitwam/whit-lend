@@ -6,7 +6,10 @@ import { Progress } from "@/components/ui/progress";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, XCircle, Save, MapPin, Phone, Mail, Globe, Download, Upload, HardDrive, Image, UserCog, Search } from 'lucide-react';
+import { ShieldCheck, Building2, Trash2, AlertTriangle, Loader2, Receipt, TrendingUp, FileSpreadsheet, RefreshCw, CheckCircle, CheckCircle2, XCircle, Save, MapPin, Phone, Mail, Globe, Download, Upload, HardDrive, Image, UserCog, Search, Cloud, FolderOpen } from 'lucide-react';
+import { Checkbox } from "@/components/ui/checkbox";
+import { useGoogleDrive } from '@/hooks/useGoogleDrive';
+import GoogleDriveFolderPicker from '@/components/settings/GoogleDriveFolderPicker';
 import { useRef } from 'react';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useAuth } from '@/lib/AuthContext';
@@ -70,6 +73,10 @@ export default function OrgAdmin() {
   const [restoreProgress, setRestoreProgress] = useState({ current: 0, total: 0, step: '' });
   const [restorePreview, setRestorePreview] = useState(null);
   const [restoreConfirmText, setRestoreConfirmText] = useState('');
+
+  // Google Drive backup state
+  const { isConnected: driveConnected, backupFolderId, backupFolderPath, uploadFileToFolder, refresh: refreshDriveStatus } = useGoogleDrive();
+  const [backupFolderPickerOpen, setBackupFolderPickerOpen] = useState(false);
 
   // Change borrower state
   const [changeBorrowerLoans, setChangeBorrowerLoans] = useState([]);
@@ -347,7 +354,7 @@ export default function OrgAdmin() {
           let effectiveEndDate = null;
           if (loan.status === 'Closed') {
             // For closed loans, find the settlement date from the last principal payment (like LoanDetails does)
-            const txs = await api.entities.Transaction.filter({ loan_id: loan.id, is_deleted: false });
+            const txs = await api.entities.Transaction.filterAll({ loan_id: loan.id, is_deleted: false });
             const principalPayments = txs
               .filter(t => t.type === 'Repayment' && t.principal_applied > 0)
               .sort((a, b) => new Date(b.date) - new Date(a.date));
@@ -373,7 +380,7 @@ export default function OrgAdmin() {
 
           // REAPPLY PAYMENTS - this was the missing step!
           // Fetch all active repayment transactions for this loan
-          const allTxs = await api.entities.Transaction.filter({ loan_id: loan.id, is_deleted: false });
+          const allTxs = await api.entities.Transaction.filterAll({ loan_id: loan.id, is_deleted: false });
           const activeTransactions = allTxs
             .filter(t => t.type === 'Repayment')
             .sort((a, b) => new Date(a.date) - new Date(b.date));
@@ -382,7 +389,7 @@ export default function OrgAdmin() {
             console.log(`[RegenerateSchedules]   → Reapplying ${activeTransactions.length} payments...`);
 
             // Fetch fresh schedule rows
-            const newScheduleRows = await api.entities.RepaymentSchedule.filter({ loan_id: loan.id }, 'installment_number');
+            const newScheduleRows = await api.entities.RepaymentSchedule.filterAll({ loan_id: loan.id }, 'installment_number');
 
             // Reapply each payment using the waterfall
             for (const tx of activeTransactions) {
@@ -1293,7 +1300,9 @@ export default function OrgAdmin() {
       'nightly_job_runs': 'NightlyJobRun',
       'organization_summary': 'OrganizationSummary',
       'letter_templates': 'LetterTemplate',
-      'generated_letters': 'GeneratedLetter'
+      'generated_letters': 'GeneratedLetter',
+      'property_documents': 'PropertyDocument',
+      'user_profiles': 'UserProfile'
     };
     return map[tableName] || tableName;
   };
@@ -1321,7 +1330,7 @@ export default function OrgAdmin() {
       'borrowers', 'properties', 'Investor',
       'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
       'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
-      'value_history', 'bank_statements', 'other_income',
+      'value_history', 'bank_statements', 'other_income', 'property_documents',
       'borrower_loan_preferences', 'receipt_drafts',
       'reconciliation_patterns', 'reconciliation_entries',
       'accepted_orphans',
@@ -1354,13 +1363,17 @@ export default function OrgAdmin() {
         }
       }
 
-      // Generate and download file
-      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      // Generate backup JSON
+      const backupJson = JSON.stringify(backup, null, 2);
+      const safeName = currentOrganization.name.replace(/[^a-zA-Z0-9]/g, '-');
+      const fileName = `backup-${safeName}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.json`;
+
+      // Download file locally
+      const blob = new Blob([backupJson], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const safeName = currentOrganization.name.replace(/[^a-zA-Z0-9]/g, '-');
-      a.download = `backup-${safeName}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.json`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -1370,6 +1383,23 @@ export default function OrgAdmin() {
       const totalRecords = Object.values(backup.metadata.recordCounts).reduce((a, b) => a + b, 0);
       addLog(`Backup complete! ${totalRecords} total records exported.`);
 
+      // Upload to Google Drive if folder is configured
+      let driveUploadSuccess = false;
+      if (backupFolderId && driveConnected) {
+        addLog('Uploading to Google Drive...');
+        setExportProgress({ current: 0, total: 0, step: 'Uploading to Google Drive...' });
+        try {
+          // Convert to base64 for upload
+          const base64Content = btoa(unescape(encodeURIComponent(backupJson)));
+          await uploadFileToFolder(backupFolderId, fileName, base64Content, 'application/json');
+          addLog('Successfully uploaded to Google Drive!');
+          driveUploadSuccess = true;
+        } catch (driveErr) {
+          addLog(`Warning: Google Drive upload failed: ${driveErr.message}`);
+          toast.error('Backup saved locally, but Google Drive upload failed: ' + driveErr.message);
+        }
+      }
+
       // Log audit
       await logAudit({
         action: AuditAction.ORG_BACKUP_EXPORT,
@@ -1378,11 +1408,16 @@ export default function OrgAdmin() {
         entityName: currentOrganization.name,
         details: {
           totalRecords,
-          recordCounts: backup.metadata.recordCounts
+          recordCounts: backup.metadata.recordCounts,
+          uploadedToDrive: driveUploadSuccess
         }
       });
 
-      toast.success(`Backup exported successfully (${totalRecords} records)`);
+      if (driveUploadSuccess) {
+        toast.success(`Backup exported and uploaded to Google Drive (${totalRecords} records)`);
+      } else {
+        toast.success(`Backup exported successfully (${totalRecords} records)`);
+      }
     } catch (err) {
       addLog(`Error: ${err.message}`);
       toast.error('Failed to export backup');
@@ -1450,7 +1485,7 @@ export default function OrgAdmin() {
         'borrowers', 'properties', 'Investor',
         'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
         'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
-        'value_history', 'bank_statements', 'other_income',
+        'value_history', 'bank_statements', 'other_income', 'property_documents',
         'borrower_loan_preferences', 'receipt_drafts',
         'reconciliation_patterns', 'reconciliation_entries',
         'accepted_orphans',
@@ -1496,6 +1531,7 @@ export default function OrgAdmin() {
         'expenses': ['type_id', 'loan_id'],  // type_id for expense type, loan_id for loan reference
         'reconciliation_patterns': ['expense_type_id'],  // patterns table DOES use expense_type_id
         'value_history': ['loan_property_id'],
+        'property_documents': ['property_id'],
         'borrower_loan_preferences': ['borrower_id', 'loan_id'],
         'receipt_drafts': ['loan_id', 'borrower_id'],
         'reconciliation_entries': ['bank_statement_id', 'loan_transaction_id', 'investor_transaction_id', 'expense_id', 'other_income_id', 'interest_id'],
@@ -2151,6 +2187,210 @@ export default function OrgAdmin() {
           </Card>
 
         </div>
+
+        {/* Backup & Restore */}
+        <Card className="mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-blue-600" />
+              Backup & Restore
+            </CardTitle>
+            <CardDescription>
+              Export and import organization data
+            </CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-6">
+            {/* Google Drive Backup Settings */}
+            <div className="space-y-3 p-4 bg-slate-50 rounded-lg border">
+              <div className="flex items-center gap-2 text-sm font-medium text-slate-700">
+                <Cloud className="w-4 h-4" />
+                Google Drive Backup
+              </div>
+
+              {!driveConnected ? (
+                <p className="text-sm text-slate-500">
+                  Connect Google Drive in Settings to enable cloud backups.
+                </p>
+              ) : (
+                <div className="space-y-3">
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-sm font-medium">Backup Folder</p>
+                      {backupFolderPath ? (
+                        <p className="text-sm text-slate-600 flex items-center gap-1">
+                          <FolderOpen className="w-3 h-3" />
+                          {backupFolderPath}
+                        </p>
+                      ) : (
+                        <p className="text-sm text-slate-400">No folder selected</p>
+                      )}
+                    </div>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setBackupFolderPickerOpen(true)}
+                    >
+                      {backupFolderPath ? 'Change' : 'Select Folder'}
+                    </Button>
+                  </div>
+
+                  {backupFolderId && (
+                    <p className="text-sm text-emerald-600 flex items-center gap-1">
+                      <CheckCircle2 className="w-3 h-3" />
+                      Backups will automatically upload to Google Drive
+                    </p>
+                  )}
+                </div>
+              )}
+            </div>
+
+            {/* Export/Import Buttons */}
+            <div className="grid gap-4 md:grid-cols-2">
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Export Backup</p>
+                <p className="text-xs text-slate-500 mb-2">
+                  Download a complete backup of all organization data.
+                </p>
+                <Button
+                  onClick={handleExportBackup}
+                  disabled={isExporting || isRestoring}
+                  className="w-full"
+                >
+                  {isExporting ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      {exportProgress.step || 'Exporting...'}
+                    </>
+                  ) : (
+                    <>
+                      <Download className="w-4 h-4 mr-2" />
+                      Export Backup
+                    </>
+                  )}
+                </Button>
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Restore from Backup</p>
+                <p className="text-xs text-slate-500 mb-2">
+                  Upload a backup file to restore organization data.
+                </p>
+                <input
+                  type="file"
+                  accept=".json"
+                  onChange={handleRestoreFileSelect}
+                  disabled={isExporting || isRestoring}
+                  className="block w-full text-sm text-slate-500
+                    file:mr-4 file:py-2 file:px-4
+                    file:rounded-md file:border-0
+                    file:text-sm file:font-medium
+                    file:bg-slate-100 file:text-slate-700
+                    hover:file:bg-slate-200
+                    disabled:opacity-50"
+                />
+              </div>
+            </div>
+
+            {/* Restore Preview */}
+            {restorePreview && (
+              <div className="space-y-4 p-4 border rounded-lg bg-amber-50 border-amber-200">
+                <div className="flex items-start gap-2">
+                  <AlertTriangle className="w-5 h-5 text-amber-600 flex-shrink-0 mt-0.5" />
+                  <div>
+                    <p className="font-medium text-amber-900">Restore Preview</p>
+                    <p className="text-sm text-amber-800 mt-1">
+                      This will <strong>delete all existing data</strong> and replace it with the backup.
+                    </p>
+                  </div>
+                </div>
+
+                <div className="grid gap-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">File:</span>
+                    <span className="font-medium">{restorePreview.fileName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Backup Date:</span>
+                    <span className="font-medium">{restorePreview.exportDate ? format(new Date(restorePreview.exportDate), 'PPpp') : 'Unknown'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Source Organization:</span>
+                    <span className="font-medium">{restorePreview.organizationName}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Total Records:</span>
+                    <span className="font-medium">{restorePreview.totalRecords?.toLocaleString()}</span>
+                  </div>
+                </div>
+
+                {restorePreview.analysis && (
+                  <div className="text-xs text-amber-700 space-y-1">
+                    <p className="font-medium">Schema Analysis:</p>
+                    <p>{getAnalysisSummary(restorePreview.analysis)}</p>
+                  </div>
+                )}
+
+                <div className="space-y-2">
+                  <Label htmlFor="confirmRestore" className="text-amber-900">
+                    Type <strong>RESTORE {currentOrganization?.name}</strong> to confirm:
+                  </Label>
+                  <Input
+                    id="confirmRestore"
+                    value={restoreConfirmText}
+                    onChange={(e) => setRestoreConfirmText(e.target.value)}
+                    placeholder={`RESTORE ${currentOrganization?.name}`}
+                    className="bg-white"
+                  />
+                </div>
+
+                <div className="flex gap-2">
+                  <Button
+                    variant="outline"
+                    onClick={() => {
+                      setRestorePreview(null);
+                      setRestoreConfirmText('');
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                  <Button
+                    variant="destructive"
+                    onClick={executeRestore}
+                    disabled={isRestoring || restoreConfirmText !== `RESTORE ${currentOrganization?.name}`}
+                  >
+                    {isRestoring ? (
+                      <>
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                        {restoreProgress.step || 'Restoring...'}
+                      </>
+                    ) : (
+                      'Restore Backup'
+                    )}
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {/* Log Output */}
+            {logs.length > 0 && (
+              <div className="bg-slate-900 text-slate-100 p-4 rounded-lg max-h-60 overflow-y-auto font-mono text-xs">
+                {logs.map((log, i) => (
+                  <div key={i} className="whitespace-pre-wrap">{log}</div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Google Drive Folder Picker Modal */}
+        <GoogleDriveFolderPicker
+          open={backupFolderPickerOpen}
+          onClose={() => setBackupFolderPickerOpen(false)}
+          onSelect={() => {
+            refreshDriveStatus();
+          }}
+          folderType="backup"
+        />
       </div>
     </div>
   );

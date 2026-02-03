@@ -35,7 +35,7 @@ import {
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { parseBankStatement, getBankSources, parseCSV, detectBankFormat } from '@/lib/bankStatementParsers';
-import { logReconciliationEvent, AuditAction } from '@/lib/auditLog';
+import { logReconciliationEvent, logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 
 // Fuzzy matching utilities
 function extractKeywords(text) {
@@ -1254,9 +1254,6 @@ export default function BankReconciliation() {
           return datesWithinDays(entry.statement_date, other.statement_date, 3);
         });
 
-        console.log('[GroupedRepayment] Entry:', entry.id, entry.description?.substring(0, 40), entryAmount);
-        console.log('[GroupedRepayment] nearbyCredits:', nearbyCredits.length, nearbyCredits.map(c => ({ id: c.id, amount: c.amount })));
-
         // Need at least 2 entries to form a group
         if (nearbyCredits.length >= 2) {
           // For each Repayment transaction, check if any subset of credits sums to it
@@ -1266,19 +1263,11 @@ export default function BankReconciliation() {
 
             const repaymentAmount = Math.abs(tx.amount);
 
-            console.log('[GroupedRepayment] Checking repayment tx:', tx.id, repaymentAmount);
-
             // Skip if this single entry already matches (handled above)
-            if (amountsMatch(entryAmount, repaymentAmount, 1)) {
-              console.log('[GroupedRepayment] Skipped - single entry already matches');
-              continue;
-            }
+            if (amountsMatch(entryAmount, repaymentAmount, 1)) continue;
 
             // Skip if this entry is larger than the repayment
-            if (entryAmount > repaymentAmount * 1.01) {
-              console.log('[GroupedRepayment] Skipped - entry larger than repayment');
-              continue;
-            }
+            if (entryAmount > repaymentAmount * 1.01) continue;
 
             // Find subset of credits that sum to repayment (must include current entry)
             const matchingSubset = findSubsetSum(
@@ -1286,8 +1275,6 @@ export default function BankReconciliation() {
               repaymentAmount,
               entry.id // Must include this entry
             );
-
-            console.log('[GroupedRepayment] findSubsetSum result:', matchingSubset?.length || 0, matchingSubset?.map(e => e.amount));
 
             if (matchingSubset && matchingSubset.length >= 2) {
               const loan = loans.find(l => l.id === tx.loan_id);
@@ -1300,10 +1287,7 @@ export default function BankReconciliation() {
                 datesWithinDays(e.statement_date, txDate, maxDaysFromTransaction)
               );
 
-              if (!allEntriesNearTransaction) {
-                console.log('[GroupedRepayment] Skipped - entries not near transaction date');
-                continue;
-              }
+              if (!allEntriesNearTransaction) continue;
 
               // Validate that grouped entries are related
               const entriesAreRelated = groupHasRelatedDescriptions(matchingSubset);
@@ -1312,13 +1296,8 @@ export default function BankReconciliation() {
                 descriptionContainsName(e.description, borrowerName, borrower?.business) > 0.5
               );
 
-              console.log('[GroupedRepayment] entriesAreRelated:', entriesAreRelated, 'hasBorrowerName:', hasBorrowerName, 'borrowerName:', borrowerName);
-
               // Skip if entries don't appear to be related
-              if (!entriesAreRelated && !hasBorrowerName) {
-                console.log('[GroupedRepayment] Skipped - entries not related and no borrower name match');
-                continue;
-              }
+              if (!entriesAreRelated && !hasBorrowerName) continue;
 
               const allSameDay = matchingSubset.every(e =>
                 datesWithinDays(e.statement_date, entry.statement_date, 0)
@@ -1342,7 +1321,6 @@ export default function BankReconciliation() {
               }
 
               if (score > bestScore) {
-                console.log('[GroupedRepayment] MATCH FOUND! Adding grouped_repayment match with score:', score);
                 bestScore = score;
                 const borrowerDisplayName = loan ? getBorrowerName(loan.borrower_id) : 'Unknown';
                 const groupTotal = matchingSubset.reduce((sum, e) => sum + Math.abs(e.amount), 0);
@@ -3769,6 +3747,20 @@ export default function BankReconciliation() {
           };
           const created = await api.entities.OtherIncome.create(otherIncomeData);
           otherIncomeId = created.id;
+
+          // Audit log for other income creation
+          await logAudit({
+            action: AuditAction.OTHER_INCOME_CREATE,
+            entityType: EntityType.OTHER_INCOME,
+            entityId: created.id,
+            entityName: `Other Income - ${formatCurrency(amount)}`,
+            details: {
+              amount: amount,
+              date: selectedEntry.statement_date,
+              description: selectedEntry.description,
+              source: 'bank_reconciliation'
+            }
+          });
         } else if (reconciliationType === 'offset') {
           // Handle offset reconciliation - mark all entries as reconciled together
           const allEntries = [selectedEntry, ...selectedOffsetEntries];
@@ -5258,6 +5250,20 @@ export default function BankReconciliation() {
           amount: amount,
           date: entry.statement_date,
           description: entry.description
+        });
+
+        // Audit log for other income creation
+        await logAudit({
+          action: AuditAction.OTHER_INCOME_CREATE,
+          entityType: EntityType.OTHER_INCOME,
+          entityId: otherIncome.id,
+          entityName: `Other Income - ${formatCurrency(amount)}`,
+          details: {
+            amount: amount,
+            date: entry.statement_date,
+            description: entry.description,
+            source: 'bulk_bank_reconciliation'
+          }
         });
 
         // Create reconciliation entry

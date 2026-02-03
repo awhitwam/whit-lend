@@ -14,6 +14,7 @@ import MFASetup from '@/pages/MFASetup';
 import MFAVerify from '@/pages/MFAVerify';
 import ResetPassword from '@/pages/ResetPassword';
 import SessionTimeoutWarning from '@/components/SessionTimeoutWarning';
+import SessionErrorDialog from '@/components/SessionErrorDialog';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -116,17 +117,6 @@ const AuthenticatedApp = () => {
   const hashParams = new URLSearchParams(window.location.hash.substring(1));
   const isRecoveryFlow = hashParams.get('type') === 'recovery';
 
-  // DEBUG: Log all hash params
-  console.log('[App/AuthenticatedApp] URL check:', {
-    fullUrl: window.location.href,
-    hash: window.location.hash,
-    type: hashParams.get('type'),
-    hasAccessToken: !!hashParams.get('access_token'),
-    isRecoveryFlow,
-    isLoadingAuth,
-    isAuthenticated
-  });
-
   // Emergency logout via query parameter
   // NOTE: This must be called BEFORE any conditional returns to satisfy React's rules of hooks
   useEffect(() => {
@@ -149,7 +139,6 @@ const AuthenticatedApp = () => {
   // If we do window.location.href redirect, the token gets consumed on the first page load,
   // and then when the page reloads for the redirect, the token is already invalid.
   if (isRecoveryFlow) {
-    console.log('[App] Recovery flow detected, rendering ResetPassword directly');
     return <ResetPassword />;
   }
 
@@ -197,6 +186,9 @@ const AuthenticatedApp = () => {
     <>
       {/* Session timeout warning for authenticated users */}
       {isAuthenticated && <SessionTimeoutWarning />}
+
+      {/* Session error dialog (RLS/JWT failures) */}
+      {isAuthenticated && <SessionErrorDialog />}
 
       <Routes>
         {/* Public routes - no layout wrapper */}

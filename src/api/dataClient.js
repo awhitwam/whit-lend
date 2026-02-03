@@ -8,6 +8,35 @@ export const setOrganizationIdGetter = (getter) => {
   getCurrentOrganizationId = getter;
 };
 
+// Session error callback - set by AuthContext to handle RLS/auth failures
+let onSessionError = null;
+
+export const setSessionErrorHandler = (handler) => {
+  onSessionError = handler;
+};
+
+// Check if error is an RLS/auth failure that indicates session problems
+const isSessionError = (error) => {
+  if (!error) return false;
+  // RLS policy violation - often means JWT expired/invalid
+  if (error.code === '42501') return true;
+  // JWT expired
+  if (error.code === 'PGRST301') return true;
+  // Invalid JWT
+  if (error.message?.includes('JWT') && error.message?.includes('expired')) return true;
+  if (error.message?.includes('Invalid JWT')) return true;
+  return false;
+};
+
+// Wrap Supabase errors to detect session issues
+const handleSupabaseError = (error) => {
+  if (isSessionError(error) && onSessionError) {
+    console.error('[dataClient] Session error detected:', error.code, error.message);
+    onSessionError(error);
+  }
+  throw error;
+};
+
 // Map entity names to Supabase table names (matching actual database schema)
 const tableMap = {
   Borrower: 'borrowers',
@@ -167,7 +196,7 @@ function createEntityHandler(tableName) {
       }
 
       const { data, error } = await query;
-      if (error) throw error;
+      if (error) handleSupabaseError(error);
       return data || [];
     },
 
@@ -192,7 +221,7 @@ function createEntityHandler(tableName) {
         query = query.range(offset, offset + PAGE_SIZE - 1);
 
         const { data, error } = await query;
-        if (error) throw error;
+        if (error) handleSupabaseError(error);
 
         if (data && data.length > 0) {
           allData = allData.concat(data);
@@ -225,7 +254,7 @@ function createEntityHandler(tableName) {
       }
 
       const { data, error} = await query;
-      if (error) throw error;
+      if (error) handleSupabaseError(error);
       return data || [];
     },
 
@@ -254,7 +283,7 @@ function createEntityHandler(tableName) {
         query = query.range(offset, offset + PAGE_SIZE - 1);
 
         const { data, error } = await query;
-        if (error) throw error;
+        if (error) handleSupabaseError(error);
 
         if (data && data.length > 0) {
           allData = allData.concat(data);
@@ -285,7 +314,7 @@ function createEntityHandler(tableName) {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) handleSupabaseError(error);
       return created;
     },
 
@@ -301,7 +330,7 @@ function createEntityHandler(tableName) {
 
       const { data: updated, error } = await query.select().single();
 
-      if (error) throw error;
+      if (error) handleSupabaseError(error);
       return updated;
     },
 
@@ -317,7 +346,7 @@ function createEntityHandler(tableName) {
 
       const { error } = await query;
 
-      if (error) throw error;
+      if (error) handleSupabaseError(error);
       return true;
     },
 
@@ -346,7 +375,7 @@ function createEntityHandler(tableName) {
           .insert(batch)
           .select();
 
-        if (error) throw error;
+        if (error) handleSupabaseError(error);
         if (created) allCreated = allCreated.concat(created);
       }
 
@@ -365,7 +394,7 @@ function createEntityHandler(tableName) {
       }
 
       const { error } = await query;
-      if (error) throw error;
+      if (error) handleSupabaseError(error);
       return true;
     }
   };
@@ -389,7 +418,7 @@ function createOrganizationSummaryHandler() {
         .eq('organization_id', orgId)
         .single();
 
-      if (error && error.code !== 'PGRST116') throw error; // PGRST116 = no rows
+      if (error && error.code !== 'PGRST116') handleSupabaseError(error); // PGRST116 = no rows
       return data || null;
     },
 
@@ -405,7 +434,7 @@ function createOrganizationSummaryHandler() {
         .select('*')
         .eq('organization_id', orgId);
 
-      if (error) throw error;
+      if (error) handleSupabaseError(error);
       return data || [];
     },
 
@@ -431,7 +460,7 @@ function createOrganizationSummaryHandler() {
         .select()
         .single();
 
-      if (error) throw error;
+      if (error) handleSupabaseError(error);
       return data;
     },
 

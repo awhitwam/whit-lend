@@ -1,7 +1,9 @@
 /**
  * Google Drive Folder Picker Modal
  *
- * Allows users to browse and select a base folder for correspondence storage
+ * Allows users to browse and select a folder for various purposes:
+ * - 'base': Base folder for correspondence storage (default)
+ * - 'backup': Backup folder for database backups
  */
 
 import { useState, useEffect } from 'react';
@@ -26,8 +28,23 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 
-export default function GoogleDriveFolderPicker({ open, onClose, onSelect }) {
-  const { listSharedDrives, listFolders, saveBaseFolder } = useGoogleDrive();
+// Configuration for different folder types
+const FOLDER_CONFIGS = {
+  base: {
+    title: 'Select Base Folder',
+    description: 'Choose the folder where correspondence will be saved. Subfolders will be created for each borrower and loan.',
+    successMessage: 'Base folder saved'
+  },
+  backup: {
+    title: 'Select Backup Folder',
+    description: 'Choose the folder where database backups will be uploaded.',
+    successMessage: 'Backup folder saved'
+  }
+};
+
+export default function GoogleDriveFolderPicker({ open, onClose, onSelect, folderType = 'base' }) {
+  const { listSharedDrives, listFolders, saveBaseFolder, saveBackupFolder } = useGoogleDrive();
+  const config = FOLDER_CONFIGS[folderType] || FOLDER_CONFIGS.base;
 
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
@@ -143,8 +160,13 @@ export default function GoogleDriveFolderPicker({ open, onClose, onSelect }) {
 
     setIsSaving(true);
     try {
-      await saveBaseFolder(selectedFolder.id, selectedFolder.path);
-      toast.success('Base folder saved');
+      // Use appropriate save function based on folder type
+      if (folderType === 'backup') {
+        await saveBackupFolder(selectedFolder.id, selectedFolder.path);
+      } else {
+        await saveBaseFolder(selectedFolder.id, selectedFolder.path);
+      }
+      toast.success(config.successMessage);
       onSelect?.(selectedFolder);
       onClose();
     } catch (err) {
@@ -159,10 +181,9 @@ export default function GoogleDriveFolderPicker({ open, onClose, onSelect }) {
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Select Base Folder</DialogTitle>
+          <DialogTitle>{config.title}</DialogTitle>
           <DialogDescription>
-            Choose the folder where correspondence will be saved.
-            Subfolders will be created for each borrower and loan.
+            {config.description}
           </DialogDescription>
         </DialogHeader>
 

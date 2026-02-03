@@ -60,13 +60,19 @@ export default function PropertyModal({
     enabled: isOpen
   });
 
-  // Load borrower for Google Drive integration (needed for folder structure)
+  // Load borrower for Google Drive integration and audit logging
   const { data: borrowers = [] } = useQuery({
     queryKey: ['borrowers'],
     queryFn: () => api.entities.Borrower.list(),
-    enabled: isOpen && isEdit
+    enabled: isOpen && !!loan?.borrower_id
   });
   const borrower = borrowers.find(b => b.id === loan?.borrower_id);
+
+  // Create loan info object for audit logging
+  const loanInfo = loan ? {
+    loan_number: loan.loan_number,
+    borrower_name: borrower?.name
+  } : null;
 
   // Get already linked properties to exclude from selection
   // Use a different query key to avoid overwriting the enriched data in SecurityTab
@@ -136,14 +142,14 @@ export default function PropertyModal({
         };
 
         if (isEdit && existingLoanProperty?.property_id) {
-          const oldValue = existingLoanProperty.property?.current_value;
+          const oldProperty = existingLoanProperty.property;
           const newValue = parseFloat(formData.current_value) || 0;
 
           property = await api.entities.Property.update(existingLoanProperty.property_id, propertyData);
           propertyId = existingLoanProperty.property_id;
 
           // If the value changed, create a new valuation history record
-          if (oldValue !== newValue) {
+          if (oldProperty?.current_value !== newValue) {
             await api.entities.ValueHistory.create({
               property_id: propertyId,
               value_type: 'Property Valuation',
@@ -153,7 +159,22 @@ export default function PropertyModal({
             });
           }
 
-          await logPropertyEvent(AuditAction.PROPERTY_UPDATE, property);
+          // Log with previous/new values and loan context
+          const previousValues = {
+            address: oldProperty?.address,
+            city: oldProperty?.city,
+            postcode: oldProperty?.postcode,
+            property_type: oldProperty?.property_type,
+            current_value: oldProperty?.current_value
+          };
+          const newValues = {
+            address: propertyData.address,
+            city: propertyData.city,
+            postcode: propertyData.postcode,
+            property_type: propertyData.property_type,
+            current_value: propertyData.current_value
+          };
+          await logPropertyEvent(AuditAction.PROPERTY_UPDATE, property, loanInfo, null, previousValues, newValues);
         } else {
           property = await api.entities.Property.create(propertyData);
           propertyId = property.id;
@@ -167,7 +188,10 @@ export default function PropertyModal({
             notes: 'Initial valuation'
           });
 
-          await logPropertyEvent(AuditAction.PROPERTY_CREATE, property);
+          await logPropertyEvent(AuditAction.PROPERTY_CREATE, property, loanInfo, {
+            current_value: parseFloat(formData.current_value) || 0,
+            valuation_date: formData.valuation_date
+          });
         }
       } else {
         // Using existing property
@@ -194,7 +218,9 @@ export default function PropertyModal({
         loanProperty = await api.entities.LoanProperty.update(existingLoanProperty.id, loanPropertyData);
       } else {
         loanProperty = await api.entities.LoanProperty.create(loanPropertyData);
-        await logLoanPropertyEvent(AuditAction.LOAN_PROPERTY_LINK, loanProperty, loan, property);
+        await logLoanPropertyEvent(AuditAction.LOAN_PROPERTY_LINK, loanProperty, loan, property, borrower, {
+          current_value: property?.current_value || parseFloat(formData.current_value) || 0
+        });
       }
 
       // Handle first charge balance history for second charges

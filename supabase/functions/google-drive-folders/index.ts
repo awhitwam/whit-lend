@@ -8,6 +8,7 @@
 //   GET ?action=list&folderId=xxx - List folders in a folder
 //   GET ?action=shared-drives - List accessible shared drives
 //   POST ?action=save-base - Save selected base folder
+//   POST ?action=save-backup - Save selected backup folder
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 import { refreshTokenIfNeeded, getUserTokens } from '../_shared/tokenManagement.ts'
@@ -142,6 +143,55 @@ Deno.serve(async (req) => {
 
       if (updateError) {
         throw new Error('Failed to save folder selection')
+      }
+
+      return jsonResponse({ success: true })
+
+    } else if (action === 'save-backup') {
+      // Save backup folder selection (organization-level, org admin required)
+      const body = await req.json()
+      const { folderId, folderPath, organizationId } = body
+
+      if (!folderId) {
+        return errorResponse('Missing folderId', 400)
+      }
+
+      if (!organizationId) {
+        return errorResponse('Missing organizationId', 400)
+      }
+
+      // Verify user is org admin or super admin
+      const { data: membership, error: membershipError } = await supabaseAdmin
+        .from('organization_members')
+        .select('role')
+        .eq('user_id', user.id)
+        .eq('organization_id', organizationId)
+        .single()
+
+      const { data: profile } = await supabaseAdmin
+        .from('user_profiles')
+        .select('is_super_admin')
+        .eq('id', user.id)
+        .single()
+
+      const isOrgAdmin = membership?.role === 'admin'
+      const isSuperAdmin = profile?.is_super_admin === true
+
+      if (!isOrgAdmin && !isSuperAdmin) {
+        return errorResponse('Admin access required', 403)
+      }
+
+      // Save to organizations table
+      const { error: updateError } = await supabaseAdmin
+        .from('organizations')
+        .update({
+          google_drive_backup_folder_id: folderId,
+          google_drive_backup_folder_path: folderPath || folderId
+        })
+        .eq('id', organizationId)
+
+      if (updateError) {
+        throw new Error('Failed to save backup folder selection')
       }
 
       return jsonResponse({ success: true })

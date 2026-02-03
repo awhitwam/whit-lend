@@ -107,7 +107,9 @@ export default function SecurityTab({ loan }) {
         AuditAction.LOAN_PROPERTY_REMOVE,
         loanProperty,
         loan,
-        loanProperty.property
+        loanProperty.property,
+        borrower,
+        { property_value: loanProperty.property?.current_value }
       );
     },
     onSuccess: () => {

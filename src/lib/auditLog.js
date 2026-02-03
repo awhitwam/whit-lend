@@ -135,7 +135,10 @@ export const AuditAction = {
 
   // Letters
   LETTER_CREATE: 'letter_create',
-  LETTER_DELETE: 'letter_delete'
+  LETTER_DELETE: 'letter_delete',
+
+  // Other Income
+  OTHER_INCOME_CREATE: 'other_income_create'
 };
 
 // Entity types for categorization
@@ -156,7 +159,8 @@ export const EntityType = {
   FIRST_CHARGE_HOLDER: 'first_charge_holder',
   BULK_IMPORT: 'bulk_import',
   RECONCILIATION: 'reconciliation',
-  LETTER: 'letter'
+  LETTER: 'letter',
+  OTHER_INCOME: 'other_income'
 };
 
 /**
@@ -308,16 +312,34 @@ export async function logLoanEvent(action, loan, details = null, previousValues 
 
 /**
  * Helper to log transaction events
+ * @param {string} action - The action (use AuditAction constants)
+ * @param {Object} transaction - The transaction object
+ * @param {Object} [loanInfo] - Optional loan information { loan_number, borrower_name }
+ * @param {Object} [details] - Additional details
  */
 export async function logTransactionEvent(action, transaction, loanInfo = null, details = null) {
+  // Build entity name with loan/borrower context if provided
+  // Format: "1000040 (Borrower Name) - Repayment - £1,000"
+  const amount = Number(transaction.amount || 0).toLocaleString('en-GB', { style: 'currency', currency: 'GBP' });
+  let entityName = `${transaction.type} - ${amount}`;
+
+  if (loanInfo?.loan_number) {
+    if (loanInfo.borrower_name) {
+      entityName = `${loanInfo.loan_number} (${loanInfo.borrower_name}) - ${transaction.type} - ${amount}`;
+    } else {
+      entityName = `${loanInfo.loan_number} - ${transaction.type} - ${amount}`;
+    }
+  }
+
   await logAudit({
     action,
     entityType: EntityType.TRANSACTION,
     entityId: transaction.id,
-    entityName: `${transaction.type} - ${transaction.amount}`,
+    entityName,
     details: {
       loan_id: transaction.loan_id,
       loan_number: loanInfo?.loan_number,
+      borrower_name: loanInfo?.borrower_name,
       ...details
     }
   });
@@ -367,31 +389,67 @@ export async function logPageAccess(pageName, path) {
 
 /**
  * Helper to log property events
+ * @param {string} action - The action (use AuditAction constants)
+ * @param {Object} property - The property object
+ * @param {Object} [loanInfo] - Optional loan information { loan_number, borrower_name }
+ * @param {Object} [details] - Additional details
+ * @param {Object} [previousValues] - Previous values before update
+ * @param {Object} [newValues] - New values after update
  */
-export async function logPropertyEvent(action, property, details = null, previousValues = null) {
+export async function logPropertyEvent(action, property, loanInfo = null, details = null, previousValues = null, newValues = null) {
+  // Build entity name with loan/borrower context if provided
+  let entityName = property.address;
+  if (loanInfo?.loan_number) {
+    entityName = `${loanInfo.loan_number} - ${property.address}`;
+    if (loanInfo.borrower_name) {
+      entityName = `${loanInfo.loan_number} (${loanInfo.borrower_name}) - ${property.address}`;
+    }
+  }
+
   await logAudit({
     action,
     entityType: EntityType.PROPERTY,
     entityId: property.id,
-    entityName: property.address,
-    details,
+    entityName,
+    details: {
+      property_address: property.address,
+      property_type: property.property_type,
+      loan_number: loanInfo?.loan_number,
+      borrower_name: loanInfo?.borrower_name,
+      ...details
+    },
     previousValues,
-    newValues: action.includes('update') ? details : null
+    newValues: newValues || (action.includes('update') ? details : null)
   });
 }
 
 /**
  * Helper to log loan-property link events
+ * @param {string} action - The action (use AuditAction constants)
+ * @param {Object} loanProperty - The loan-property link object
+ * @param {Object} [loan] - The loan object
+ * @param {Object} [property] - The property object
+ * @param {Object} [borrower] - The borrower object (optional)
+ * @param {Object} [details] - Additional details
  */
-export async function logLoanPropertyEvent(action, loanProperty, loan = null, property = null, details = null) {
+export async function logLoanPropertyEvent(action, loanProperty, loan = null, property = null, borrower = null, details = null) {
+  // Build entity name with loan, borrower, and property context
+  let entityName = `${loan?.loan_number || 'Loan'} - ${property?.address || 'Property'}`;
+  if (loan?.loan_number && borrower?.name) {
+    entityName = `${loan.loan_number} (${borrower.name}) - ${property?.address || 'Property'}`;
+  }
+
   await logAudit({
     action,
     entityType: EntityType.LOAN_PROPERTY,
     entityId: loanProperty.id,
-    entityName: `${loan?.loan_number || 'Loan'} - ${property?.address || 'Property'}`,
+    entityName,
     details: {
       loan_id: loanProperty.loan_id,
+      loan_number: loan?.loan_number,
+      borrower_name: borrower?.name,
       property_id: loanProperty.property_id,
+      property_address: property?.address,
       charge_type: loanProperty.charge_type,
       ...details
     }

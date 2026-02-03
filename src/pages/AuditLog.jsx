@@ -590,7 +590,7 @@ export default function AuditLog() {
                       <TableHead className="w-[130px]">Action</TableHead>
                       <TableHead className="w-[120px]">Sub-Action</TableHead>
                       <TableHead className="w-[90px]">Entity</TableHead>
-                      <TableHead className="w-[160px]">Name</TableHead>
+                      <TableHead className="min-w-[200px]">Name</TableHead>
                       <TableHead>Details</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -621,8 +621,10 @@ export default function AuditLog() {
                         <TableCell className="text-sm font-medium">
                           {log.entity_type}
                         </TableCell>
-                        <TableCell className="text-sm text-slate-600 truncate max-w-[160px]" title={log.entity_name}>
-                          {log.entity_name || '-'}
+                        <TableCell className="text-sm text-slate-600 max-w-[400px]" title={log.entity_name}>
+                          <div className="whitespace-normal break-words">
+                            {log.entity_name || '-'}
+                          </div>
                         </TableCell>
                         <TableCell className="max-w-xs">
                           {formatChanges(log)}

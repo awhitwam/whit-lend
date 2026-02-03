@@ -4,6 +4,7 @@ import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
+import { useGoogleDrive } from '@/hooks/useGoogleDrive';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -48,6 +49,7 @@ export default function Dashboard() {
   const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { currentOrganization, isLoadingOrgs, currentTheme } = useOrganization();
+  const { isConnected: driveConnected, backupFolderId, uploadFileToFolder } = useGoogleDrive();
   const [activeBreakdown, setActiveBreakdown] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isBackingUp, setIsBackingUp] = useState(false);
@@ -529,6 +531,7 @@ export default function Dashboard() {
       'properties': 'Property',
       'Investor': 'Investor',
       'loans': 'Loan',
+      'loan_comments': 'LoanComment',
       'InvestorTransaction': 'InvestorTransaction',
       'investor_interest': 'InvestorInterest',
       'transactions': 'Transaction',
@@ -538,12 +541,19 @@ export default function Dashboard() {
       'value_history': 'ValueHistory',
       'bank_statements': 'BankStatement',
       'other_income': 'OtherIncome',
+      'property_documents': 'PropertyDocument',
       'borrower_loan_preferences': 'BorrowerLoanPreference',
       'receipt_drafts': 'ReceiptDraft',
       'reconciliation_patterns': 'ReconciliationPattern',
       'reconciliation_entries': 'ReconciliationEntry',
       'accepted_orphans': 'AcceptedOrphan',
-      'audit_logs': 'AuditLog'
+      'audit_logs': 'AuditLog',
+      'invitations': 'Invitation',
+      'nightly_job_runs': 'NightlyJobRun',
+      'organization_summary': 'OrganizationSummary',
+      'letter_templates': 'LetterTemplate',
+      'generated_letters': 'GeneratedLetter',
+      'user_profiles': 'UserProfile'
     };
     return map[tableName] || tableName;
   };
@@ -554,31 +564,41 @@ export default function Dashboard() {
     setIsBackingUp(true);
 
     const backup = {
-      version: '1.0',
+      version: '2.0',
       schemaVersion: CURRENT_SCHEMA_VERSION,
       exportDate: new Date().toISOString(),
       organizationId: currentOrganization.id,
       organizationName: currentOrganization.name,
+      organizationSettings: currentOrganization.settings || {},
       tables: {},
       metadata: { recordCounts: {} }
     };
 
+    // Tables to export in FK-safe order (all org-scoped data for full rebuild)
     const tables = [
       'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
       'borrowers', 'properties', 'Investor',
-      'loans', 'InvestorTransaction', 'investor_interest',
+      'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
       'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
-      'value_history', 'bank_statements', 'other_income',
+      'value_history', 'bank_statements', 'other_income', 'property_documents',
       'borrower_loan_preferences', 'receipt_drafts',
       'reconciliation_patterns', 'reconciliation_entries',
-      'accepted_orphans', 'audit_logs', 'nightly_job_runs', 'organization_summary'
+      'accepted_orphans',
+      'audit_logs',
+      'invitations',
+      'nightly_job_runs',
+      'organization_summary',
+      'letter_templates',
+      'generated_letters',
+      'user_profiles'
     ];
 
     try {
       for (const table of tables) {
         const entityName = getEntityName(table);
         try {
-          const data = await api.entities[entityName].list();
+          // Use listAll to get ALL records (no 1000-row limit)
+          const data = await api.entities[entityName].listAll();
           backup.tables[table] = data;
           backup.metadata.recordCounts[table] = data.length;
         } catch {
@@ -587,13 +607,17 @@ export default function Dashboard() {
         }
       }
 
-      // Generate and download file
-      const blob = new Blob([JSON.stringify(backup, null, 2)], { type: 'application/json' });
+      // Generate backup JSON
+      const backupJson = JSON.stringify(backup, null, 2);
+      const safeName = currentOrganization.name.replace(/[^a-zA-Z0-9]/g, '-');
+      const fileName = `backup-${safeName}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.json`;
+
+      // Download file locally
+      const blob = new Blob([backupJson], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      const safeName = currentOrganization.name.replace(/[^a-zA-Z0-9]/g, '-');
-      a.download = `backup-${safeName}-${format(new Date(), 'yyyy-MM-dd-HHmm')}.json`;
+      a.download = fileName;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);
@@ -601,16 +625,33 @@ export default function Dashboard() {
 
       const totalRecords = Object.values(backup.metadata.recordCounts).reduce((a, b) => a + b, 0);
 
+      // Upload to Google Drive if folder is configured
+      let driveUploadSuccess = false;
+      if (backupFolderId && driveConnected) {
+        try {
+          const base64Content = btoa(unescape(encodeURIComponent(backupJson)));
+          await uploadFileToFolder(backupFolderId, fileName, base64Content, 'application/json');
+          driveUploadSuccess = true;
+        } catch (driveErr) {
+          console.error('Google Drive upload failed:', driveErr);
+          // Don't fail the whole backup, just note it wasn't uploaded
+        }
+      }
+
       // Log audit
       await logAudit({
         action: AuditAction.ORG_BACKUP_EXPORT,
         entityType: EntityType.ORGANIZATION,
         entityId: currentOrganization.id,
         entityName: currentOrganization.name,
-        details: { totalRecords, recordCounts: backup.metadata.recordCounts }
+        details: { totalRecords, recordCounts: backup.metadata.recordCounts, uploadedToDrive: driveUploadSuccess }
       });
 
-      toast.success(`Backup complete (${totalRecords.toLocaleString()} records)`);
+      if (driveUploadSuccess) {
+        toast.success(`Backup complete and uploaded to Google Drive (${totalRecords.toLocaleString()} records)`);
+      } else {
+        toast.success(`Backup complete (${totalRecords.toLocaleString()} records)`);
+      }
       queryClient.invalidateQueries(['last-backup']);
     } catch (err) {
       toast.error('Backup failed: ' + err.message);

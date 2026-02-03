@@ -42,6 +42,8 @@ export function useGoogleDrive() {
   const [email, setEmail] = useState(null);
   const [baseFolderId, setBaseFolderId] = useState(null);
   const [baseFolderPath, setBaseFolderPath] = useState(null);
+  const [backupFolderId, setBackupFolderId] = useState(null);
+  const [backupFolderPath, setBackupFolderPath] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
   // Load connection status from user profile + base folder from organization
@@ -66,11 +68,11 @@ export function useGoogleDrive() {
       setIsConnected(userData?.google_drive_connected || false);
       setEmail(userData?.google_drive_email || null);
 
-      // Get base folder from organization (org-level, set by super admin)
+      // Get folder settings from organization (org-level)
       if (currentOrganization?.id) {
         const { data: orgData, error: orgError } = await supabase
           .from('organizations')
-          .select('google_drive_base_folder_id, google_drive_base_folder_path')
+          .select('google_drive_base_folder_id, google_drive_base_folder_path, google_drive_backup_folder_id, google_drive_backup_folder_path')
           .eq('id', currentOrganization.id)
           .single();
 
@@ -80,9 +82,13 @@ export function useGoogleDrive() {
 
         setBaseFolderId(orgData?.google_drive_base_folder_id || null);
         setBaseFolderPath(orgData?.google_drive_base_folder_path || null);
+        setBackupFolderId(orgData?.google_drive_backup_folder_id || null);
+        setBackupFolderPath(orgData?.google_drive_backup_folder_path || null);
       } else {
         setBaseFolderId(null);
         setBaseFolderPath(null);
+        setBackupFolderId(null);
+        setBackupFolderPath(null);
       }
     } catch (err) {
       console.error('Error loading Google Drive status:', err);
@@ -400,6 +406,45 @@ export function useGoogleDrive() {
   }, [isSuperAdmin, currentOrganization?.id, loadConnectionStatus]);
 
   /**
+   * Save backup folder selection (organization-level, org admin or super admin)
+   */
+  const saveBackupFolder = useCallback(async (folderId, folderPath) => {
+    if (!currentOrganization?.id) {
+      throw new Error('No organization selected');
+    }
+
+    const accessToken = await getAccessToken();
+
+    const response = await fetch(
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-folders?action=save-backup`,
+      {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${accessToken}`,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ folderId, folderPath, organizationId: currentOrganization.id })
+      }
+    );
+
+    const result = await response.json();
+
+    if (result.error) {
+      // If auth error, refresh connection status to update UI
+      if (isAuthError(result.error)) {
+        await loadConnectionStatus();
+      }
+      throw new Error(result.error);
+    }
+
+    // Update local state
+    setBackupFolderId(folderId);
+    setBackupFolderPath(folderPath);
+
+    return result;
+  }, [currentOrganization?.id, loadConnectionStatus]);
+
+  /**
    * List files and folders in a folder (for file browser)
    */
   const listFiles = useCallback(async (folderId, driveId = null) => {
@@ -561,6 +606,8 @@ export function useGoogleDrive() {
     email,
     baseFolderId,
     baseFolderPath,
+    backupFolderId,
+    backupFolderPath,
     isLoading,
     canEditBaseFolder: isSuperAdmin, // Only super admins can change the org base folder
 
@@ -573,6 +620,7 @@ export function useGoogleDrive() {
     listSharedDrives,
     listFolders,
     saveBaseFolder,
+    saveBackupFolder,
     refresh: loadConnectionStatus,
 
     // File browser actions

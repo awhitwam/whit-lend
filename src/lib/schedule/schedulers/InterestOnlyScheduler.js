@@ -722,7 +722,8 @@ export class InterestOnlyScheduler extends BaseScheduler {
    * Used to preserve past paid entries during regeneration
    */
   async fetchExistingSchedule(loanId) {
-    const entries = await api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'due_date');
+    // Use filterAll to handle loans with >1000 schedule entries
+    const entries = await api.entities.RepaymentSchedule.filterAll({ loan_id: loanId }, 'due_date');
     return entries || [];
   }
 

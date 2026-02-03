@@ -92,6 +92,7 @@ const navigation = [
       { name: 'Ledger', href: 'Ledger', icon: Building2 },
       { name: 'Receipts', href: 'Receipts', icon: Receipt },
       { name: 'Bank Reconciliation', href: 'BankReconciliation', icon: FileCheck },
+      { name: 'Simple Reconciliation', href: 'BankReconciliationSimple', icon: List },
       { name: 'Orphaned Entries', href: 'OrphanedEntries', icon: AlertCircle },
       { name: 'Expenses', href: 'Expenses', icon: Banknote },
       { name: 'Other Income', href: 'OtherIncome', icon: Coins },
@@ -225,7 +226,7 @@ export default function Layout({ children, currentPageName }) {
   const filteredNavigation = getFilteredNavigation(canAdmin(), isSuperAdmin);
 
   // Determine if we should show a back button (detail pages, not main nav pages)
-  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'OrphanedEntries', 'Expenses', 'OtherIncome', 'Products', 'Config', 'LetterTemplates', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportComments', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
+  const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'BankReconciliationSimple', 'OrphanedEntries', 'Expenses', 'OtherIncome', 'Products', 'Config', 'LetterTemplates', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportComments', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
   // Show back button on detail pages OR on Loans page when filtering by borrower
   const isLoansWithBorrowerFilter = currentPageName === 'Loans' &&
     (location.search.includes('borrower_ids') || location.search.includes('borrower='));

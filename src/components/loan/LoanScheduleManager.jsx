@@ -112,9 +112,10 @@ export async function regenerateLoanSchedule(loanId, options = {}) {
     return { loan, schedule: [], summary: { totalInterest: 0, totalRepayable: loan.principal_amount } };
   }
 
-  const transactions = await api.entities.Transaction.filter({ 
-    loan_id: loanId, 
-    is_deleted: false 
+  // Use filterAll to handle loans with >1000 transactions
+  const transactions = await api.entities.Transaction.filterAll({
+    loan_id: loanId,
+    is_deleted: false
   }, 'date'); // Sorted by date ascending
 
   // Determine effective interest rate - use loan override if set, otherwise product rate

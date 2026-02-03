@@ -118,6 +118,10 @@ export default function ReceiptHistory() {
       switch (sortField) {
         case 'date':
           comparison = new Date(a.date || 0) - new Date(b.date || 0);
+          // Secondary sort by created_at when dates are equal (most recent entry first)
+          if (comparison === 0) {
+            comparison = new Date(a.created_at || 0) - new Date(b.created_at || 0);
+          }
           break;
         case 'borrower':
           // Get borrower from tx.borrower_id or fall back to loan.borrower_id

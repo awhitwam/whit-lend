@@ -1,6 +1,7 @@
 import React, { createContext, useState, useContext, useEffect, useRef, useCallback } from 'react';
 import { supabase } from '@/lib/supabaseClient';
 import { logAuthEvent, AuditAction } from '@/lib/auditLog';
+import { setSessionErrorHandler } from '@/api/dataClient';
 
 const AuthContext = createContext();
 
@@ -78,6 +79,52 @@ export const AuthProvider = ({ children }) => {
   const [showTimeoutWarning, setShowTimeoutWarning] = useState(false);
   const [timeoutSecondsRemaining, setTimeoutSecondsRemaining] = useState(0);
 
+  // Session error state (RLS/JWT failures detected by dataClient)
+  const [sessionError, setSessionError] = useState(null);
+  const sessionErrorTriggeredRef = useRef(false); // Guard to prevent multiple error prompts
+
+  // Handle session errors from dataClient (RLS/JWT failures)
+  const handleSessionError = useCallback((error) => {
+    // Guard: Only show error once to prevent multiple prompts
+    if (sessionErrorTriggeredRef.current) return;
+    sessionErrorTriggeredRef.current = true;
+
+    console.error('[AuthContext] Session error from dataClient:', error);
+    setSessionError({
+      code: error.code,
+      message: error.message || 'Your session has expired. Please log in again.'
+    });
+  }, []);
+
+  // Set up session error handler for dataClient
+  useEffect(() => {
+    setSessionErrorHandler(handleSessionError);
+    return () => setSessionErrorHandler(null);
+  }, [handleSessionError]);
+
+  // Clear session error (called when user dismisses or re-logs in)
+  const clearSessionError = useCallback(() => {
+    setSessionError(null);
+    sessionErrorTriggeredRef.current = false;
+  }, []);
+
+  // Force re-login after session error
+  const forceRelogin = useCallback(async () => {
+    // Clear error state
+    clearSessionError();
+    // Clear session markers
+    sessionStorage.removeItem('currentOrganizationId');
+    sessionStorage.removeItem(SESSION_ALIVE_KEY);
+    sessionStorage.removeItem(TAB_SESSION_ID_KEY);
+    // Sign out and redirect
+    try {
+      await supabase.auth.signOut();
+    } catch (e) {
+      console.error('[AuthContext] signOut on session error failed:', e);
+    }
+    window.location.href = '/Login?session_expired=true';
+  }, [clearSessionError]);
+
   // Check if user is a super admin - defined before useEffect to avoid hoisting issues
   const checkSuperAdminStatus = async (userId) => {
     try {
@@ -111,27 +158,20 @@ export const AuthProvider = ({ children }) => {
   };
 
   useEffect(() => {
-    console.log('[AuthContext] useEffect running - setting up auth listener');
-    console.log('[AuthContext] Initial URL:', window.location.href);
-
     // Check for existing session
     checkSession();
 
     // Listen for auth changes
     const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
-      console.log('[AuthContext] onAuthStateChange:', event, session ? `User: ${session.user?.email}` : 'No session');
-
       // Handle password recovery event
       // NOTE: We do NOT redirect here - App.jsx handles the redirect and preserves the URL hash
       // which contains the recovery token. If we redirect here without the hash, we lose the token.
       if (event === 'PASSWORD_RECOVERY') {
-        console.log('[AuthContext] PASSWORD_RECOVERY event received, session:', !!session);
         // Set flag to prevent browser restart detection from signing out
         // This is critical because Supabase clears the URL hash BEFORE checkSession runs
         passwordRecoveryInProgressRef.current = true;
         // Also set the SESSION_ALIVE_KEY to prevent future sign-outs
         sessionStorage.setItem(SESSION_ALIVE_KEY, 'true');
-        // Just return - let App.jsx handle the redirect with the hash preserved
         return;
       }
 
@@ -203,11 +243,6 @@ export const AuthProvider = ({ children }) => {
     try {
       setIsLoadingAuth(true);
 
-      // DEBUG: Log URL hash for recovery flow detection
-      console.log('[AuthContext] checkSession starting...');
-      console.log('[AuthContext] Current URL:', window.location.href);
-      console.log('[AuthContext] URL hash:', window.location.hash);
-
       // Add timeout to prevent infinite loading if SDK hangs
       const timeoutPromise = new Promise((_, reject) =>
         setTimeout(() => reject(new Error('Session check timeout')), 10000)
@@ -216,8 +251,6 @@ export const AuthProvider = ({ children }) => {
       const sessionPromise = supabase.auth.getSession();
       const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
 
-      console.log('[AuthContext] getSession result:', session ? `User: ${session.user?.email}` : 'No session');
-
       // Check if this is a password recovery flow - indicated by recovery token in URL hash
       // IMPORTANT: Do NOT apply browser restart check for recovery flows because:
       // 1. User clicks email link which opens a new tab (fresh sessionStorage)
@@ -225,12 +258,6 @@ export const AuthProvider = ({ children }) => {
       // 3. Without this check, we'd sign out the valid recovery session
       const hashParams = new URLSearchParams(window.location.hash.substring(1));
       const isRecoveryFlow = hashParams.get('type') === 'recovery' || hashParams.get('access_token');
-
-      console.log('[AuthContext] Recovery flow check:', {
-        type: hashParams.get('type'),
-        hasAccessToken: !!hashParams.get('access_token'),
-        isRecoveryFlow
-      });
 
       // Check for browser restart: Supabase session exists but SESSION_ALIVE_KEY is missing
       // sessionStorage is cleared when browser closes, localStorage (where Supabase stores JWT) persists
@@ -241,17 +268,8 @@ export const AuthProvider = ({ children }) => {
       // BEFORE this code runs, so the hash check alone is not reliable
       const hasSessionAliveKey = !!sessionStorage.getItem(SESSION_ALIVE_KEY);
       const skipBrowserRestartCheck = isRecoveryFlow || passwordRecoveryInProgressRef.current;
-      console.log('[AuthContext] Browser restart check:', {
-        hasSession: !!session?.user,
-        hasSessionAliveKey,
-        isRecoveryFlow,
-        passwordRecoveryInProgress: passwordRecoveryInProgressRef.current,
-        skipBrowserRestartCheck,
-        willSignOut: session?.user && !hasSessionAliveKey && !skipBrowserRestartCheck
-      });
 
       if (session?.user && !hasSessionAliveKey && !skipBrowserRestartCheck) {
-        console.log('[AuthContext] Browser restart detected, signing out stale session');
         try {
           await supabase.auth.signOut();
         } catch (e) {
@@ -493,6 +511,72 @@ export const AuthProvider = ({ children }) => {
   const getLastActivityTime = useCallback(() => {
     return lastActivityRef.current;
   }, []);
+
+  // Proactive session health check - periodically verify session is still valid
+  // This helps catch JWT expiry issues before they cause RLS errors
+  const sessionHealthCheckRef = useRef(null);
+
+  useEffect(() => {
+    if (!isAuthenticated) {
+      // Clear health check when not authenticated
+      if (sessionHealthCheckRef.current) {
+        clearInterval(sessionHealthCheckRef.current);
+        sessionHealthCheckRef.current = null;
+      }
+      return;
+    }
+
+    // Check session health every 5 minutes
+    const checkSessionHealth = async () => {
+      try {
+        // Try to get current session
+        const { data: { session }, error } = await supabase.auth.getSession();
+
+        if (error) {
+          console.error('[AuthContext] Session health check error:', error);
+          handleSessionError({ code: 'SESSION_INVALID', message: error.message });
+          return;
+        }
+
+        if (!session) {
+          console.error('[AuthContext] Session health check: No session');
+          handleSessionError({ code: 'SESSION_INVALID', message: 'Session no longer valid' });
+          return;
+        }
+
+        // Check if session is expiring soon (within 5 minutes)
+        const expiresAt = session.expires_at * 1000;
+        const fiveMinutes = 5 * 60 * 1000;
+
+        if (expiresAt - Date.now() < fiveMinutes) {
+          console.log('[AuthContext] Session expiring soon, attempting refresh...');
+          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+
+          if (refreshError) {
+            console.error('[AuthContext] Session refresh failed:', refreshError);
+            // Don't trigger error dialog yet - let Supabase auto-refresh try again
+            // Only trigger if the next health check also fails
+          } else if (refreshData?.session?.expires_at) {
+            setSessionExpiresAt(refreshData.session.expires_at * 1000);
+            console.log('[AuthContext] Session refreshed successfully');
+          }
+        }
+      } catch (err) {
+        console.error('[AuthContext] Session health check exception:', err);
+      }
+    };
+
+    // Run immediately, then every 5 minutes
+    checkSessionHealth();
+    sessionHealthCheckRef.current = setInterval(checkSessionHealth, 5 * 60 * 1000);
+
+    return () => {
+      if (sessionHealthCheckRef.current) {
+        clearInterval(sessionHealthCheckRef.current);
+        sessionHealthCheckRef.current = null;
+      }
+    };
+  }, [isAuthenticated, handleSessionError]);
 
   // Load session timeout setting from app_settings
   const loadSessionTimeoutSetting = useCallback(async () => {
@@ -891,7 +975,11 @@ export const AuthProvider = ({ children }) => {
       removeTrustedDevice,
       // Super admin
       isSuperAdmin,
-      checkSuperAdminStatus
+      checkSuperAdminStatus,
+      // Session error handling (RLS/JWT failures)
+      sessionError,
+      clearSessionError,
+      forceRelogin
     }}>
       {children}
     </AuthContext.Provider>

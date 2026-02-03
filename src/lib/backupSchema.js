@@ -283,6 +283,13 @@ export const tableSchemas = {
     }
   },
 
+  property_documents: {
+    columns: ['id', 'organization_id', 'property_id', 'title', 'document_type',
+              'notes', 'external_url', 'storage_path', 'mime_type', 'file_size',
+              'created_at', 'updated_at', 'created_by'],
+    defaults: {}
+  },
+
   google_drive_tokens: {
     columns: ['id', 'user_id', 'access_token_encrypted', 'refresh_token_encrypted',
               'token_expiry', 'created_at', 'updated_at'],

@@ -2,7 +2,7 @@ import { useCallback, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
 import { v4 as uuidv4 } from 'uuid';
-import { logTransactionEvent, logLoanEvent, AuditAction } from '@/lib/auditLog';
+import { logTransactionEvent, AuditAction } from '@/lib/auditLog';
 
 /**
  * Hook for managing receipt drafts
@@ -118,6 +118,13 @@ export function useReceiptDrafts() {
           const [loan] = await api.entities.Loan.filter({ id: loanId });
           if (!loan) continue;
 
+          // Get borrower name for audit log
+          let borrowerName = null;
+          if (loan.borrower_id) {
+            const [borrower] = await api.entities.Borrower.filter({ id: loan.borrower_id });
+            borrowerName = borrower?.name || null;
+          }
+
           // Build reference from bank statement details if available (amount + description)
           let txReference = draft.reference;
           if (bankEntry) {
@@ -144,7 +151,7 @@ export function useReceiptDrafts() {
           await logTransactionEvent(
             AuditAction.TRANSACTION_CREATE,
             { id: transaction.id, type: 'Repayment', amount: totalAmount, loan_id: loanId },
-            { loan_number: loan.loan_number },
+            { loan_number: loan.loan_number, borrower_name: borrowerName },
             {
               source: 'receipt_draft_filing',
               draft_id: draftId,
@@ -176,21 +183,6 @@ export function useReceiptDrafts() {
             principal_paid: previousPrincipalPaid + principal,
             interest_paid: previousInterestPaid + interest
           });
-
-          // Audit log: loan payment update
-          await logLoanEvent(
-            AuditAction.LOAN_UPDATE,
-            { id: loanId, loan_number: loan.loan_number },
-            {
-              source: 'receipt_draft_filing',
-              principal_paid: previousPrincipalPaid + principal,
-              interest_paid: previousInterestPaid + interest
-            },
-            {
-              principal_paid: previousPrincipalPaid,
-              interest_paid: previousInterestPaid
-            }
-          );
         }
 
         // Mark bank statement as reconciled if linked

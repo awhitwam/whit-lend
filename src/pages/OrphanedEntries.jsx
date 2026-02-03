@@ -47,7 +47,7 @@ export default function OrphanedEntries() {
   // Query bank statements to show details for orphaned reconciliation entries
   const { data: bankStatements = [] } = useQuery({
     queryKey: ['bank-statements-all'],
-    queryFn: () => api.entities.BankStatement.listAll('-date')
+    queryFn: () => api.entities.BankStatement.listAll('-statement_date')
   });
 
   // Query accepted orphans

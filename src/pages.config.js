@@ -29,6 +29,7 @@ import AuditLog from './pages/AuditLog';
 import SuperAdmin from './pages/SuperAdmin';
 import OrgAdmin from './pages/OrgAdmin';
 import BankReconciliation from './pages/BankReconciliation';
+import BankReconciliationSimple from './pages/BankReconciliationSimple';
 import OtherIncome from './pages/OtherIncome';
 import OrphanedEntries from './pages/OrphanedEntries';
 import Receipts from './pages/Receipts';
@@ -73,6 +74,7 @@ export const PAGES = {
     "SuperAdmin": SuperAdmin,
     "OrgAdmin": OrgAdmin,
     "BankReconciliation": BankReconciliation,
+    "BankReconciliationSimple": BankReconciliationSimple,
     "OtherIncome": OtherIncome,
     "OrphanedEntries": OrphanedEntries,
     "Receipts": Receipts,

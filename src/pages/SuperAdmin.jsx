@@ -453,18 +453,35 @@ export default function SuperAdmin() {
     try {
       const selectedOrg = allOrganizations.find(o => o.id === selectedOrgForSchedules);
 
-      // Fetch Live loans for selected organization
-      const { data: liveLoans, error } = await supabase
-        .from('loans')
-        .select('id, loan_number')
-        .eq('organization_id', selectedOrgForSchedules)
-        .eq('status', 'Live')
-        .eq('is_deleted', false);
+      // Fetch ALL Live loans for selected organization using pagination
+      // Supabase has a default 1000 row limit, so we need to paginate
+      const PAGE_SIZE = 1000;
+      let allLiveLoans = [];
+      let offset = 0;
+      let hasMore = true;
 
-      if (error) throw error;
+      while (hasMore) {
+        const { data: batch, error } = await supabase
+          .from('loans')
+          .select('id, loan_number')
+          .eq('organization_id', selectedOrgForSchedules)
+          .eq('status', 'Live')
+          .eq('is_deleted', false)
+          .range(offset, offset + PAGE_SIZE - 1);
+
+        if (error) throw error;
+
+        if (batch && batch.length > 0) {
+          allLiveLoans = allLiveLoans.concat(batch);
+          offset += batch.length;
+          hasMore = batch.length === PAGE_SIZE;
+        } else {
+          hasMore = false;
+        }
+      }
 
       // Process each loan
-      for (const loan of (liveLoans || [])) {
+      for (const loan of allLiveLoans) {
         result.processed++;
         try {
           await regenerateLoanSchedule(loan.id, {

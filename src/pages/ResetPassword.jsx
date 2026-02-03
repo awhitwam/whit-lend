@@ -25,10 +25,6 @@ export default function ResetPassword() {
     let isMounted = true;
     let authSubscription = null;
 
-    console.log('[ResetPassword] Component mounted');
-    console.log('[ResetPassword] Current URL:', window.location.href);
-    console.log('[ResetPassword] URL hash:', window.location.hash);
-
     const checkRecoverySession = async () => {
       try {
         // Check URL hash for error parameters first
@@ -36,16 +32,7 @@ export default function ResetPassword() {
         const urlError = hashParams.get('error');
         const errorDescription = hashParams.get('error_description');
 
-        console.log('[ResetPassword] Hash params:', {
-          error: urlError,
-          errorDescription,
-          type: hashParams.get('type'),
-          hasAccessToken: !!hashParams.get('access_token'),
-          hasRefreshToken: !!hashParams.get('refresh_token')
-        });
-
         if (urlError) {
-          console.log('[ResetPassword] URL contains error:', urlError, errorDescription);
           if (isMounted) {
             setErrorMessage(errorDescription || 'The password reset link is invalid or has expired.');
             setStatus('error');
@@ -58,18 +45,14 @@ export default function ResetPassword() {
         const tokenType = hashParams.get('type');
         const hasRecoveryToken = accessToken && tokenType === 'recovery';
 
-        console.log('[ResetPassword] Checking session, hasRecoveryToken:', hasRecoveryToken);
-
         // Set up auth state listener FIRST
         // This will catch the session when Supabase processes the recovery token
         const sessionPromise = new Promise((resolve) => {
           const timeoutId = setTimeout(() => {
-            console.log('[ResetPassword] Auth state timeout reached');
             resolve(null);
           }, 10000); // 10 second timeout
 
           const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
-            console.log('[ResetPassword] Auth state change:', event, !!session);
             if (event === 'SIGNED_IN' || event === 'PASSWORD_RECOVERY' || event === 'TOKEN_REFRESHED') {
               clearTimeout(timeoutId);
               resolve(session);
@@ -81,7 +64,6 @@ export default function ResetPassword() {
           // Also check immediately in case session is already there
           supabase.auth.getSession().then(({ data: { session } }) => {
             if (session) {
-              console.log('[ResetPassword] Immediate session found:', session.user?.email);
               clearTimeout(timeoutId);
               resolve(session);
             }
@@ -94,12 +76,10 @@ export default function ResetPassword() {
         if (!isMounted) return;
 
         if (session) {
-          console.log('[ResetPassword] Valid session established, user:', session.user?.email);
           // Mark session as alive for this tab (prevents browser restart detection from signing us out)
           sessionStorage.setItem('whit_lend_session_alive', 'true');
           setStatus('ready');
         } else {
-          console.log('[ResetPassword] No session found after waiting');
           setErrorMessage('Unable to verify your password reset link. It may have expired or already been used. Please request a new one.');
           setStatus('error');
         }
@@ -145,7 +125,6 @@ export default function ResetPassword() {
       const { data: { session }, error: sessionError } = await supabase.auth.getSession();
 
       if (sessionError || !session) {
-        console.error('[ResetPassword] Session lost before password update:', sessionError);
         setPasswordError('Your session has expired. Please request a new password reset link.');
         setStatus('error');
         setErrorMessage('Your session has expired. Please request a new password reset link.');
@@ -153,23 +132,12 @@ export default function ResetPassword() {
         return;
       }
 
-      console.log('[ResetPassword] Session verified, proceeding with password update');
-
       // Try to call edge function to unenroll MFA using admin API
       // This bypasses the AAL2 requirement that blocks password changes when MFA is enrolled
-      // Only attempt if session exists
       try {
-        console.log('[ResetPassword] Calling unenroll-mfa edge function...');
-        const { data: unenrollData, error: unenrollError } = await supabase.functions.invoke('unenroll-mfa');
-
-        if (unenrollError) {
-          console.log('[ResetPassword] MFA unenroll edge function error:', unenrollError.message);
-        } else {
-          console.log('[ResetPassword] MFA unenroll result:', unenrollData);
-        }
+        await supabase.functions.invoke('unenroll-mfa');
       } catch (mfaError) {
-        // If MFA unenroll fails, log but continue - might not have MFA or function not deployed
-        console.log('[ResetPassword] MFA unenroll skipped:', mfaError.message);
+        // If MFA unenroll fails, continue - might not have MFA or function not deployed
       }
 
       // Now update the password

@@ -142,25 +142,40 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
     );
   };
 
-  // Auto-fill based on last transaction for each loan
-  // Only fills loans that have previous payment data, skips loans with no history
+  // Auto-fill allocation amounts
+  // - Single loan: Fill remaining amount into interest (most common case)
+  // - Multiple loans: Copy from each loan's last payment pattern
   const handleAutoDistribute = () => {
     const selectedLoans = borrowerLoans.filter(l => (row.selectedLoanIds || []).includes(l.id));
     if (selectedLoans.length === 0) return;
 
     const newAllocations = { ...row.allocations };
+    const receiptAmount = parseFloat(row.amount) || 0;
 
-    for (const loan of selectedLoans) {
-      const lastPayment = lastPayments[loan.id];
-      if (lastPayment && (lastPayment.principal || lastPayment.interest || lastPayment.fees)) {
-        // Use the last transaction's allocation breakdown
-        newAllocations[loan.id] = {
-          principal: lastPayment.principal || 0,
-          interest: lastPayment.interest || 0,
-          fees: lastPayment.fees || 0
-        };
+    // SINGLE LOAN: Put remaining amount into interest
+    if (selectedLoans.length === 1) {
+      const loan = selectedLoans[0];
+      const currentAlloc = newAllocations[loan.id] || { principal: 0, interest: 0, fees: 0, description: '' };
+      const principalAllocated = parseFloat(currentAlloc.principal) || 0;
+      const feesAllocated = parseFloat(currentAlloc.fees) || 0;
+      const remaining = receiptAmount - principalAllocated - feesAllocated;
+
+      newAllocations[loan.id] = {
+        ...currentAlloc,
+        interest: remaining > 0 ? remaining : 0
+      };
+    } else {
+      // MULTIPLE LOANS: Use last payment pattern
+      for (const loan of selectedLoans) {
+        const lastPayment = lastPayments[loan.id];
+        if (lastPayment && (lastPayment.principal || lastPayment.interest || lastPayment.fees)) {
+          newAllocations[loan.id] = {
+            principal: lastPayment.principal || 0,
+            interest: lastPayment.interest || 0,
+            fees: lastPayment.fees || 0
+          };
+        }
       }
-      // If no previous payment data, skip this loan (don't invent figures)
     }
 
     onUpdate({ allocations: newAllocations });

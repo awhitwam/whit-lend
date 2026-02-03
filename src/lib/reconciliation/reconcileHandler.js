@@ -322,7 +322,7 @@ export async function reconcileSingleMatch({ bankEntry, suggestion }) {
     investorTransactionId,
     expenseId,
     interestId,
-    amount,
+    amount: bankAmount,
     reconciliationType: suggestion.type,
     notes: 'Matched to existing transaction',
     wasCreated: false
@@ -333,7 +333,7 @@ export async function reconcileSingleMatch({ bankEntry, suggestion }) {
   logReconciliationEvent(AuditAction.RECONCILIATION_MATCH, {
     bank_statement_id: bankEntry.id,
     description: bankEntry.description,
-    amount,
+    amount: bankAmount,
     match_type: suggestion.type
   });
 }

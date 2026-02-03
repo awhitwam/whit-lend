@@ -146,7 +146,8 @@ export class BaseScheduler {
    * Fetch all required data for schedule generation
    */
   async fetchLoanData(loanId) {
-    const transactions = await api.entities.Transaction.filter({
+    // Use filterAll to handle loans with >1000 transactions
+    const transactions = await api.entities.Transaction.filterAll({
       loan_id: loanId,
       is_deleted: false
     }, 'date');

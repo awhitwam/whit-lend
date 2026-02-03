@@ -2,7 +2,7 @@ import { useState, useCallback, useMemo, useEffect } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
 import { toast } from 'sonner';
-import { logTransactionEvent, logLoanEvent, AuditAction } from '@/lib/auditLog';
+import { logTransactionEvent, AuditAction } from '@/lib/auditLog';
 import { maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -357,11 +357,15 @@ export default function ReceiptEntryContent({
               notes: alloc.description || null
             });
 
+            // Get borrower name for audit log
+            const borrower = borrowers?.find(b => b.id === loan.borrower_id) || lockedBorrower;
+            const borrowerName = borrower?.name || null;
+
             // Audit log: transaction creation
             await logTransactionEvent(
               AuditAction.TRANSACTION_CREATE,
               { id: newTransaction.id, type: 'Repayment', amount: totalAmount, loan_id: loanId },
-              { loan_number: loan.loan_number },
+              { loan_number: loan.loan_number, borrower_name: borrowerName },
               {
                 source: 'receipt_filing',
                 principal_applied: principal,
@@ -380,21 +384,6 @@ export default function ReceiptEntryContent({
               principal_paid: previousPrincipalPaid + principal,
               interest_paid: previousInterestPaid + interest
             });
-
-            // Audit log: loan payment update
-            await logLoanEvent(
-              AuditAction.LOAN_UPDATE,
-              { id: loanId, loan_number: loan.loan_number },
-              {
-                source: 'receipt_filing',
-                principal_paid: previousPrincipalPaid + principal,
-                interest_paid: previousInterestPaid + interest
-              },
-              {
-                principal_paid: previousPrincipalPaid,
-                interest_paid: previousInterestPaid
-              }
-            );
 
             // Regenerate schedule if principal was applied (affects capital)
             if (principal > 0) {
