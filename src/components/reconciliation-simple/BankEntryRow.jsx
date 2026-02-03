@@ -37,11 +37,13 @@ import InlineExpenseForm from './InlineExpenseForm';
 export default function BankEntryRow({
   entry,
   suggestions,
+  expenseTypeSuggestion,
   type, // 'receipt' or 'expenditure'
   loans,
   borrowers,
   investors,
   expenseTypes,
+  patterns = [],
   onReconciled
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -464,6 +466,8 @@ export default function BankEntryRow({
               <InlineExpenseForm
                 bankEntry={entry}
                 expenseTypes={expenseTypes}
+                expenseTypeSuggestion={expenseTypeSuggestion}
+                patterns={patterns}
                 onSuccess={handleFormSuccess}
                 onCancel={handleFormClose}
               />

@@ -14,6 +14,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import BankEntryRow from './BankEntryRow';
+import { extractVendorKeywords, levenshteinSimilarity } from '@/lib/reconciliation/scoring';
 
 export default function ExpenditurePanel({
   entries,
@@ -25,6 +26,7 @@ export default function ExpenditurePanel({
   investorInterestEntries = [],
   expenses,
   expenseTypes,
+  patterns = [],
   reconciliationEntries = [],
   onReconciled
 }) {
@@ -42,6 +44,75 @@ export default function ExpenditurePanel({
     return ids;
   }, [reconciliationEntries]);
 
+  // Generate expense type suggestions from learned patterns
+  const expenseTypeSuggestions = useMemo(() => {
+    const suggestions = new Map(); // Map<entryId, { expenseTypeId, expenseTypeName, confidence, reason }>
+
+    entries.forEach(entry => {
+      const entryKeywords = extractVendorKeywords(entry.description);
+      if (entryKeywords.length === 0) return;
+
+      let bestMatch = null;
+      let bestScore = 0;
+
+      // Check patterns that have expense_type_id set
+      for (const pattern of patterns) {
+        if (!pattern.expense_type_id) continue;
+        if (pattern.transaction_type && pattern.transaction_type !== 'DBIT') continue;
+
+        const patternKeywords = extractVendorKeywords(pattern.description_pattern);
+        if (patternKeywords.length === 0) continue;
+
+        // Calculate match score using fuzzy matching
+        let matchCount = 0;
+        for (const entryKw of entryKeywords) {
+          for (const patternKw of patternKeywords) {
+            // Check exact match, partial match, or fuzzy match
+            if (entryKw === patternKw) {
+              matchCount += 1;
+            } else if (entryKw.includes(patternKw) || patternKw.includes(entryKw)) {
+              matchCount += 0.7;
+            } else if (levenshteinSimilarity(entryKw, patternKw) >= 0.75) {
+              matchCount += 0.5;
+            }
+          }
+        }
+
+        const keywordScore = matchCount / Math.max(patternKeywords.length, 1);
+
+        // Check amount range if pattern has it
+        const entryAmount = Math.abs(entry.amount);
+        const inAmountRange = (!pattern.amount_min || entryAmount >= pattern.amount_min * 0.8) &&
+                              (!pattern.amount_max || entryAmount <= pattern.amount_max * 1.2);
+
+        // Require at least 50% keyword match and reasonable amount
+        if (keywordScore >= 0.5 && inAmountRange) {
+          // Boost score based on pattern usage count
+          const usageBoost = Math.min((pattern.match_count || 1) / 20, 0.15);
+          const totalScore = keywordScore * 0.7 + (pattern.confidence_score || 0.5) * 0.2 + usageBoost;
+
+          if (totalScore > bestScore) {
+            bestScore = totalScore;
+            const expenseType = expenseTypes.find(t => t.id === pattern.expense_type_id);
+            bestMatch = {
+              expenseTypeId: pattern.expense_type_id,
+              expenseTypeName: expenseType?.name || 'Unknown',
+              confidence: Math.min(totalScore, 0.95),
+              reason: `Pattern: "${pattern.description_pattern}" (used ${pattern.match_count || 1}x)`,
+              patternId: pattern.id
+            };
+          }
+        }
+      }
+
+      if (bestMatch && bestMatch.confidence >= 0.5) {
+        suggestions.set(entry.id, bestMatch);
+      }
+    });
+
+    return suggestions;
+  }, [entries, patterns, expenseTypes]);
+
   // Generate suggestions for each entry and sort
   const entriesWithSuggestions = useMemo(() => {
     const withSuggestions = entries.map(entry => {
@@ -56,7 +127,9 @@ export default function ExpenditurePanel({
         expenses,
         reconciledTxIds
       );
-      return { entry, suggestions };
+      // Include expense type suggestion from patterns
+      const expenseTypeSuggestion = expenseTypeSuggestions.get(entry.id);
+      return { entry, suggestions, expenseTypeSuggestion };
     });
 
     // Sort by date
@@ -67,7 +140,7 @@ export default function ExpenditurePanel({
     });
 
     return withSuggestions;
-  }, [entries, loans, borrowers, investors, transactions, investorTransactions, investorInterestEntries, expenses, reconciledTxIds, sortOrder]);
+  }, [entries, loans, borrowers, investors, transactions, investorTransactions, investorInterestEntries, expenses, reconciledTxIds, sortOrder, expenseTypeSuggestions]);
 
   const toggleSort = () => {
     setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -108,16 +181,18 @@ export default function ExpenditurePanel({
 
       {/* Entry List */}
       <Card className="overflow-hidden">
-        {entriesWithSuggestions.map(({ entry, suggestions }) => (
+        {entriesWithSuggestions.map(({ entry, suggestions, expenseTypeSuggestion }) => (
           <BankEntryRow
             key={entry.id}
             entry={entry}
             suggestions={suggestions}
+            expenseTypeSuggestion={expenseTypeSuggestion}
             type="expenditure"
             loans={loans}
             borrowers={borrowers}
             investors={investors}
             expenseTypes={expenseTypes}
+            patterns={patterns}
             onReconciled={onReconciled}
           />
         ))}

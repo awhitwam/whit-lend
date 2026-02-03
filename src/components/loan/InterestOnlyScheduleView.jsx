@@ -214,15 +214,54 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       } else {
         // Use schedule entry's stored interest amount if available
         const storedInterest = scheduleEntry.interest_amount || 0;
-        // For display, use the stored calculation values if available
-        const displayPrincipal = scheduleEntry.calculation_principal_start || principalForCalc;
-        const displayDailyRate = displayPrincipal * (effectiveRate / 100 / 365);
+        // Get stored and current principal for comparison
+        const storedPrincipal = scheduleEntry.calculation_principal_start;
+        const currentPrincipal = principalForCalc;
+
+        // Detect mid-period capital change by comparing stored vs current principal
+        const hasMidPeriodChange = storedPrincipal && currentPrincipal &&
+          Math.abs(storedPrincipal - currentPrincipal) > 1;
 
         // Build breakdown string with roll-up prefix if applicable
         const isRollUpPeriod = scheduleEntry.is_roll_up_period;
         const isServicedPeriod = scheduleEntry.is_serviced_period;
         let breakdownStr = '';
-        if (days > 0 && displayDailyRate > 0) {
+        let displayPrincipal = storedPrincipal || currentPrincipal;
+        let displayDailyRate = displayPrincipal * (effectiveRate / 100 / 365);
+
+        if (days > 0 && hasMidPeriodChange && !isRollUpPeriod && !isServicedPeriod) {
+          // Capital has changed - check if the change happened IN this period or BEFORE
+          const periodEnd = new Date(scheduleEntry.due_date);
+          const periodStart = new Date(periodEnd);
+          periodStart.setDate(periodStart.getDate() - days);
+
+          // Find capital transactions in this period
+          const capitalChangeTx = (transactions || []).find(tx =>
+            !tx.is_deleted &&
+            (tx.type === 'Disbursement' || (tx.type === 'Repayment' && tx.principal_applied > 0)) &&
+            new Date(tx.date) > periodStart &&
+            new Date(tx.date) <= periodEnd
+          );
+
+          if (capitalChangeTx) {
+            // Capital change IN this period - show segmented breakdown
+            const changeDate = new Date(capitalChangeTx.date);
+            const daysBefore = differenceInDays(changeDate, periodStart);
+            const daysAfter = days - daysBefore;
+
+            const oldDailyRate = storedPrincipal * (effectiveRate / 100 / 365);
+            const newDailyRate = currentPrincipal * (effectiveRate / 100 / 365);
+
+            breakdownStr = `${daysBefore}d × ${formatCurrency(oldDailyRate)} + ${daysAfter}d × ${formatCurrency(newDailyRate)}/day (${effectiveRate}% pa)`;
+            displayPrincipal = currentPrincipal;
+            displayDailyRate = newDailyRate;
+          } else {
+            // Capital change was BEFORE this period - use current principal for full period
+            displayPrincipal = currentPrincipal;
+            displayDailyRate = currentPrincipal * (effectiveRate / 100 / 365);
+            breakdownStr = `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`;
+          }
+        } else if (days > 0 && displayDailyRate > 0) {
           const calcStr = `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`;
           if (isRollUpPeriod) {
             // Show roll-up period length in months (approximate from days)

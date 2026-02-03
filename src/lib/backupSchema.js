@@ -1,7 +1,7 @@
 // Schema definitions for backup/restore compatibility
 // Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
 
-export const CURRENT_SCHEMA_VERSION = 72;
+export const CURRENT_SCHEMA_VERSION = 84;
 
 // Define columns and defaults for each table
 // When adding new columns to tables, add them here with appropriate defaults

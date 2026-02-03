@@ -114,6 +114,12 @@ export default function BankReconciliationSimple() {
     queryFn: () => api.entities.ReconciliationEntry.list()
   });
 
+  // Load reconciliation patterns for expense type learning
+  const { data: patterns = [] } = useQuery({
+    queryKey: ['reconciliation-patterns'],
+    queryFn: () => api.entities.ReconciliationPattern.list('-match_count')
+  });
+
   // Load other income for linking display
   const { data: otherIncome = [] } = useQuery({
     queryKey: ['other-income'],
@@ -512,6 +518,7 @@ export default function BankReconciliationSimple() {
                 investorInterestEntries={investorInterestEntries}
                 expenses={expenses}
                 expenseTypes={expenseTypes}
+                patterns={patterns}
                 reconciliationEntries={reconciliationEntries}
                 onReconciled={handleRefresh}
               />

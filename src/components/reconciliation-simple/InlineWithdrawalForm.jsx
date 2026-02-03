@@ -1,5 +1,6 @@
 /**
- * InlineWithdrawalForm - Compact investor withdrawal form with capital/interest split
+ * InlineWithdrawalForm - Investor withdrawal form with capital/interest split
+ * Improved layout with description field
  */
 
 import { useState, useMemo, useEffect } from 'react';
@@ -7,7 +8,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Loader2, X, Check } from 'lucide-react';
+import { Loader2, X, Check, AlertCircle } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatters';
 import { toast } from 'sonner';
 import { api } from '@/api/dataClient';
@@ -117,6 +118,7 @@ export default function InlineWithdrawalForm({
   const [selectedInvestorId, setSelectedInvestorId] = useState(suggestedInvestorId);
   const [capital, setCapital] = useState(amount.toString());
   const [interest, setInterest] = useState('0');
+  const [description, setDescription] = useState(bankEntry.description || '');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Update selection when suggestion changes (e.g., when data loads)
@@ -129,10 +131,17 @@ export default function InlineWithdrawalForm({
   // Get selected investor
   const selectedInvestor = investors.find(i => i.id === selectedInvestorId);
   const investorProduct = investorProducts.find(p => p.id === selectedInvestor?.investor_product_id);
+  const investorBalance = parseFloat(selectedInvestor?.current_capital_balance) || 0;
 
   // Calculate totals
-  const totalAllocation = (parseFloat(capital) || 0) + (parseFloat(interest) || 0);
+  const capitalNum = parseFloat(capital) || 0;
+  const interestNum = parseFloat(interest) || 0;
+  const totalAllocation = capitalNum + interestNum;
   const isBalanced = Math.abs(totalAllocation - amount) < 0.01;
+  const remaining = amount - totalAllocation;
+
+  // Check if capital exceeds investor balance
+  const capitalExceedsBalance = capitalNum > investorBalance;
 
   // Handle submit
   const handleSubmit = async () => {
@@ -146,6 +155,11 @@ export default function InlineWithdrawalForm({
       return;
     }
 
+    if (capitalExceedsBalance) {
+      toast.error('Capital amount exceeds investor balance');
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const investor = investors.find(i => i.id === selectedInvestorId);
@@ -155,10 +169,11 @@ export default function InlineWithdrawalForm({
         bankEntry,
         investor,
         split: {
-          capital: parseFloat(capital) || 0,
-          interest: parseFloat(interest) || 0
+          capital: capitalNum,
+          interest: interestNum
         },
-        investorProduct
+        investorProduct,
+        description: description.trim() || undefined
       });
 
       toast.success('Investor withdrawal created and reconciled');
@@ -171,61 +186,129 @@ export default function InlineWithdrawalForm({
     }
   };
 
+  // Handle enter key
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && isBalanced && selectedInvestorId && !capitalExceedsBalance) {
+      handleSubmit();
+    }
+  };
+
   return (
-    <div className="flex items-center gap-2 p-2 bg-white rounded-lg shadow-sm flex-wrap">
-      <span className="text-sm font-medium text-slate-600 shrink-0">Withdrawal:</span>
-      <Select value={selectedInvestorId} onValueChange={setSelectedInvestorId}>
-        <SelectTrigger className="h-8 w-[180px]">
-          <SelectValue placeholder="Select investor" />
-        </SelectTrigger>
-        <SelectContent>
-          {activeInvestors.map(i => (
-            <SelectItem key={i.id} value={i.id}>
-              {i.business_name || i.name} ({formatCurrency(i.current_capital_balance || 0)})
-            </SelectItem>
-          ))}
-        </SelectContent>
-      </Select>
-      <div className="flex items-center gap-1">
-        <span className="text-xs text-slate-500">Cap:</span>
-        <Input
-          type="number"
-          step="0.01"
-          value={capital}
-          onChange={(e) => setCapital(e.target.value)}
-          className="h-8 w-[90px]"
-        />
-      </div>
-      <div className="flex items-center gap-1">
-        <span className="text-xs text-slate-500">Int:</span>
-        <Input
-          type="number"
-          step="0.01"
-          value={interest}
-          onChange={(e) => setInterest(e.target.value)}
-          className="h-8 w-[90px]"
-        />
-      </div>
-      {!isBalanced && (
-        <span className="text-xs text-red-500">
-          ≠ {formatCurrency(amount)}
-        </span>
-      )}
-      <Button
-        size="sm"
-        className="h-8"
-        onClick={handleSubmit}
-        disabled={isSubmitting || !isBalanced || !selectedInvestorId}
-      >
-        {isSubmitting ? (
-          <Loader2 className="w-4 h-4 animate-spin" />
-        ) : (
-          <Check className="w-4 h-4" />
+    <div className="p-3 bg-white rounded-lg shadow-sm space-y-3">
+      {/* Row 1: Investor selection and balance info */}
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium text-slate-600 shrink-0 w-20">Investor:</span>
+        <Select value={selectedInvestorId} onValueChange={setSelectedInvestorId}>
+          <SelectTrigger className="h-9 flex-1 max-w-[280px]">
+            <SelectValue placeholder="Select investor" />
+          </SelectTrigger>
+          <SelectContent>
+            {activeInvestors.map(i => (
+              <SelectItem key={i.id} value={i.id}>
+                {i.business_name || i.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+        {selectedInvestor && (
+          <div className="text-sm text-slate-500">
+            Balance: <span className="font-mono font-medium text-slate-700">{formatCurrency(investorBalance)}</span>
+          </div>
         )}
-      </Button>
-      <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onCancel}>
-        <X className="w-4 h-4" />
-      </Button>
+      </div>
+
+      {/* Row 2: Description */}
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium text-slate-600 shrink-0 w-20">Details:</span>
+        <Input
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="Withdrawal description"
+          className="h-9 flex-1"
+        />
+      </div>
+
+      {/* Row 3: Capital/Interest split and actions */}
+      <div className="flex items-center gap-3">
+        <span className="text-sm font-medium text-slate-600 shrink-0 w-20">Split:</span>
+
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1.5 bg-blue-50 px-2 py-1 rounded">
+            <span className="text-xs font-medium text-blue-700">Capital:</span>
+            <Input
+              type="number"
+              step="0.01"
+              value={capital}
+              onChange={(e) => setCapital(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className={`h-7 w-[100px] font-mono ${capitalExceedsBalance ? 'border-red-400 bg-red-50' : ''}`}
+            />
+          </div>
+
+          <span className="text-slate-400">+</span>
+
+          <div className="flex items-center gap-1.5 bg-emerald-50 px-2 py-1 rounded">
+            <span className="text-xs font-medium text-emerald-700">Interest:</span>
+            <Input
+              type="number"
+              step="0.01"
+              value={interest}
+              onChange={(e) => setInterest(e.target.value)}
+              onKeyDown={handleKeyDown}
+              className="h-7 w-[100px] font-mono"
+            />
+          </div>
+
+          <span className="text-slate-400">=</span>
+
+          <div className={`font-mono text-sm font-medium px-2 py-1 rounded ${
+            isBalanced
+              ? 'bg-green-100 text-green-700'
+              : 'bg-red-100 text-red-700'
+          }`}>
+            {formatCurrency(totalAllocation)}
+          </div>
+        </div>
+
+        {/* Remaining indicator */}
+        {!isBalanced && (
+          <div className="flex items-center gap-1 text-xs text-red-600">
+            <AlertCircle className="w-3.5 h-3.5" />
+            <span>{remaining > 0 ? `${formatCurrency(remaining)} remaining` : `${formatCurrency(Math.abs(remaining))} over`}</span>
+          </div>
+        )}
+
+        {/* Actions */}
+        <div className="flex items-center gap-1 ml-auto">
+          <Button
+            size="sm"
+            className="h-8"
+            onClick={handleSubmit}
+            disabled={isSubmitting || !isBalanced || !selectedInvestorId || capitalExceedsBalance}
+          >
+            {isSubmitting ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <>
+                <Check className="w-4 h-4 mr-1" />
+                Create
+              </>
+            )}
+          </Button>
+          <Button variant="ghost" size="sm" className="h-8 w-8 p-0" onClick={onCancel}>
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+
+      {/* Warning if capital exceeds balance */}
+      {capitalExceedsBalance && (
+        <div className="flex items-center gap-2 text-xs text-red-600 bg-red-50 px-3 py-2 rounded">
+          <AlertCircle className="w-4 h-4 shrink-0" />
+          <span>Capital amount ({formatCurrency(capitalNum)}) exceeds investor balance ({formatCurrency(investorBalance)})</span>
+        </div>
+      )}
     </div>
   );
 }

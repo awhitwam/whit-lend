@@ -526,7 +526,7 @@ export const AuthProvider = ({ children }) => {
       return;
     }
 
-    // Check session health every 5 minutes
+    // Check session health every 2 minutes (more frequent to catch expiring tokens)
     const checkSessionHealth = async () => {
       try {
         // Try to get current session
@@ -544,11 +544,25 @@ export const AuthProvider = ({ children }) => {
           return;
         }
 
-        // Check if session is expiring soon (within 5 minutes)
+        // Check if session has already expired or is expiring soon (within 3 minutes)
         const expiresAt = session.expires_at * 1000;
-        const fiveMinutes = 5 * 60 * 1000;
+        const threeMinutes = 3 * 60 * 1000;
+        const timeUntilExpiry = expiresAt - Date.now();
 
-        if (expiresAt - Date.now() < fiveMinutes) {
+        if (timeUntilExpiry <= 0) {
+          // Token already expired - refresh immediately
+          console.log('[AuthContext] Session already expired, attempting refresh...');
+          const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+
+          if (refreshError) {
+            console.error('[AuthContext] Session refresh failed (expired):', refreshError);
+            handleSessionError({ code: 'SESSION_EXPIRED', message: 'Session expired and could not be refreshed' });
+          } else if (refreshData?.session?.expires_at) {
+            setSessionExpiresAt(refreshData.session.expires_at * 1000);
+            console.log('[AuthContext] Expired session refreshed successfully');
+          }
+        } else if (timeUntilExpiry < threeMinutes) {
+          // Token expiring soon - proactively refresh
           console.log('[AuthContext] Session expiring soon, attempting refresh...');
           const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
 
@@ -566,9 +580,9 @@ export const AuthProvider = ({ children }) => {
       }
     };
 
-    // Run immediately, then every 5 minutes
+    // Run immediately, then every 2 minutes
     checkSessionHealth();
-    sessionHealthCheckRef.current = setInterval(checkSessionHealth, 5 * 60 * 1000);
+    sessionHealthCheckRef.current = setInterval(checkSessionHealth, 2 * 60 * 1000);
 
     return () => {
       if (sessionHealthCheckRef.current) {

@@ -515,9 +515,10 @@ export async function createInvestorCredit({ bankEntry, investor }) {
  * @param {Object} params.investorProduct - The investor's product (for manual interest handling)
  * @returns {Promise<Object>} Created transaction(s)
  */
-export async function createInvestorWithdrawal({ bankEntry, investor, split, investorProduct }) {
+export async function createInvestorWithdrawal({ bankEntry, investor, split, investorProduct, description }) {
   const capitalAmount = split.capital || 0;
   const interestAmount = split.interest || 0;
+  const txDescription = description || bankEntry.description;
   let investorTransactionId = null;
   let interestId = null;
 
@@ -528,7 +529,7 @@ export async function createInvestorWithdrawal({ bankEntry, investor, split, inv
       type: 'capital_out',
       amount: capitalAmount,
       date: bankEntry.statement_date,
-      description: bankEntry.description,
+      description: txDescription,
       reference: bankEntry.external_reference
     };
     const created = await api.entities.InvestorTransaction.create(txData);
@@ -550,7 +551,7 @@ export async function createInvestorWithdrawal({ bankEntry, investor, split, inv
         type: 'credit',
         amount: interestAmount,
         date: bankEntry.statement_date,
-        description: `Interest accrued (auto-created): ${bankEntry.description}`,
+        description: `Interest accrued (auto-created): ${txDescription}`,
         reference: bankEntry.external_reference
       });
     }
@@ -561,7 +562,7 @@ export async function createInvestorWithdrawal({ bankEntry, investor, split, inv
       type: 'debit',
       amount: interestAmount,
       date: bankEntry.statement_date,
-      description: bankEntry.description,
+      description: txDescription,
       reference: bankEntry.external_reference
     });
     interestId = interestEntry.id;
