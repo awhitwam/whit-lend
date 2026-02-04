@@ -119,6 +119,7 @@ const ReceiptRow = forwardRef(function ReceiptRow({
             ref={(el) => setCellRef(COLS.BORROWER, el)}
             row={row}
             borrowers={borrowers}
+            loans={loans}
             isFocused={isCellFocused(COLS.BORROWER)}
             isEditing={isEditing && isCellFocused(COLS.BORROWER)}
             onUpdate={handleUpdate}

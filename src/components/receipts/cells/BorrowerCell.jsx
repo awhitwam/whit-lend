@@ -20,10 +20,12 @@ import { cn } from '@/lib/utils';
  * Cell for selecting a borrower
  * Features searchable dropdown with borrower name/business display
  * Supports locked mode for dialog contexts
+ * Shows indicator for borrowers with active loans vs settled only
  */
 const BorrowerCell = forwardRef(function BorrowerCell({
   row,
   borrowers = [],
+  loans = [],
   isFocused,
   isEditing: _isEditing,
   onUpdate,
@@ -41,25 +43,65 @@ const BorrowerCell = forwardRef(function BorrowerCell({
     }
   }));
 
+  // Calculate which borrowers have active loans
+  const borrowerLoanStatus = useMemo(() => {
+    const status = new Map(); // borrowerId -> { hasActive: boolean, hasSettled: boolean }
+    const activeStatuses = ['Live', 'Active', 'Defaulted'];
+    const settledStatuses = ['Closed', 'Settled', 'Restructured', 'Written Off'];
+
+    for (const loan of loans) {
+      if (!loan.borrower_id || loan.is_deleted) continue;
+      const current = status.get(loan.borrower_id) || { hasActive: false, hasSettled: false };
+
+      if (activeStatuses.includes(loan.status)) {
+        current.hasActive = true;
+      } else if (settledStatuses.includes(loan.status)) {
+        current.hasSettled = true;
+      }
+
+      status.set(loan.borrower_id, current);
+    }
+
+    return status;
+  }, [loans]);
+
   // Find selected borrower
   const selectedBorrower = useMemo(() => {
     return borrowers.find(b => b.id === row.borrowerId);
   }, [borrowers, row.borrowerId]);
 
-  // Filter borrowers by search (includes name, business, and keywords)
+  // Filter and sort borrowers - active loan holders first
   const filteredBorrowers = useMemo(() => {
-    if (!search) return borrowers.slice(0, 50);
-    const searchLower = search.toLowerCase();
-    return borrowers
-      .filter(b => {
+    let filtered = borrowers;
+
+    if (search) {
+      const searchLower = search.toLowerCase();
+      filtered = borrowers.filter(b => {
         const name = (b.full_name || '').toLowerCase();
         const business = (b.business || '').toLowerCase();
         const keywords = b.keywords || [];
         const keywordMatch = keywords.some(k => k.toLowerCase().includes(searchLower));
         return name.includes(searchLower) || business.includes(searchLower) || keywordMatch;
+      });
+    }
+
+    // Sort: active loan holders first, then settled only, then no loans
+    return filtered
+      .map(b => ({
+        ...b,
+        _loanStatus: borrowerLoanStatus.get(b.id) || { hasActive: false, hasSettled: false }
+      }))
+      .sort((a, b) => {
+        // Active loans first
+        if (a._loanStatus.hasActive && !b._loanStatus.hasActive) return -1;
+        if (!a._loanStatus.hasActive && b._loanStatus.hasActive) return 1;
+        // Then settled loans
+        if (a._loanStatus.hasSettled && !b._loanStatus.hasSettled) return -1;
+        if (!a._loanStatus.hasSettled && b._loanStatus.hasSettled) return 1;
+        return 0;
       })
       .slice(0, 50);
-  }, [borrowers, search]);
+  }, [borrowers, search, borrowerLoanStatus]);
 
   // Get display name for a borrower
   const getBorrowerDisplay = (borrower) => {
@@ -166,6 +208,7 @@ const BorrowerCell = forwardRef(function BorrowerCell({
               <CommandGroup>
                 {filteredBorrowers.map((borrower) => {
                   const bDisplay = getBorrowerDisplay(borrower);
+                  const loanStatus = borrower._loanStatus || { hasActive: false, hasSettled: false };
                   return (
                     <CommandItem
                       key={borrower.id}
@@ -184,6 +227,16 @@ const BorrowerCell = forwardRef(function BorrowerCell({
                           <div className="text-xs text-slate-500 truncate">{bDisplay.secondary}</div>
                         )}
                       </div>
+                      {/* Loan status indicator */}
+                      {loanStatus.hasActive ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-100 text-green-700 font-medium">
+                          Active
+                        </span>
+                      ) : loanStatus.hasSettled ? (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100 text-slate-500 font-medium">
+                          Settled
+                        </span>
+                      ) : null}
                       {row.borrowerId === borrower.id && (
                         <Check className="w-4 h-4 text-blue-500" />
                       )}

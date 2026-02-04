@@ -225,7 +225,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
       {!isSingleLoanMode && (
         <div className="flex items-center gap-1 px-1 py-1 text-[10px] text-slate-500 uppercase font-medium">
           <div className="w-4 shrink-0"></div>{/* Checkbox spacer */}
-          <div className="w-[300px] shrink-0">Loan</div>
+          <div className="w-[380px] shrink-0">Loan</div>
           <div className="w-20 text-right">Interest</div>
           <div className="w-20 text-right">Capital</div>
           <div className="w-16 text-right">Fees</div>
@@ -267,7 +267,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
               )}
 
               {/* Loan Info Section */}
-              <div className="flex items-center gap-1 w-[300px] shrink-0">
+              <div className="flex items-center gap-1.5 w-[380px] shrink-0">
                 {/* Loan Number */}
                 <span className="font-medium text-sm whitespace-nowrap">#{loan.loan_number}</span>
 
@@ -278,31 +278,34 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   </span>
                 )}
 
-                {/* Description - truncated */}
-                {loan.description && (
-                  <span className="text-xs text-slate-500 truncate max-w-[80px]" title={loan.description}>
-                    {loan.description}
+                {/* Outstanding Principal */}
+                {outstanding.principal > 0 && (
+                  <span className="text-xs font-medium text-blue-600 whitespace-nowrap">
+                    {formatCurrency(outstanding.principal)}
                   </span>
                 )}
 
                 {/* Last Payment */}
-                <span className="text-xs text-slate-400 whitespace-nowrap">
-                  {lastPayment ? (
-                    <>
-                      <span className="text-green-600 font-medium">{formatCurrency(lastPayment.amount)}</span>
-                      <span className="text-slate-400 ml-1">({formatDate(lastPayment.date)})</span>
-                    </>
-                  ) : (
-                    <span className="italic">No payments</span>
-                  )}
-                </span>
+                {lastPayment && (
+                  <span className="text-xs text-slate-400 whitespace-nowrap">
+                    (<span className="text-green-600">{formatCurrency(lastPayment.amount)}</span>
+                    <span className="ml-0.5">{formatDate(lastPayment.date)}</span>)
+                  </span>
+                )}
+
+                {/* Description - if exists */}
+                {loan.description && (
+                  <span className="text-xs text-slate-500 truncate max-w-[100px]" title={loan.description}>
+                    - {loan.description}
+                  </span>
+                )}
 
                 {/* Info icon */}
                 <HoverCard openDelay={200}>
                   <HoverCardTrigger asChild>
                     <button
                       type="button"
-                      className="p-0.5 hover:bg-slate-200 rounded"
+                      className="p-0.5 hover:bg-slate-200 rounded ml-auto"
                       onClick={(e) => e.stopPropagation()}
                     >
                       <Info className="w-3.5 h-3.5 text-slate-400" />
@@ -311,6 +314,9 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   <HoverCardContent className="w-64" align="start">
                     <div className="space-y-2 text-sm">
                       <div className="font-medium">#{loan.loan_number} Details</div>
+                      {loan.description && (
+                        <div className="text-xs text-slate-600">{loan.description}</div>
+                      )}
                       <div className="grid grid-cols-2 gap-1 text-xs">
                         {outstanding.principal > 0 && (
                           <div>
@@ -325,6 +331,13 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                           </div>
                         )}
                       </div>
+                      {lastPayment && (
+                        <div className="pt-1 border-t text-xs">
+                          <span className="text-slate-500">Last Payment:</span>
+                          <span className="ml-1 text-green-600 font-medium">{formatCurrency(lastPayment.amount)}</span>
+                          <span className="text-slate-400 ml-1">({formatDate(lastPayment.date)})</span>
+                        </div>
+                      )}
                       {nextSchedule && (
                         <div className="pt-1 border-t text-xs">
                           <span className="text-slate-500">Next Due:</span>

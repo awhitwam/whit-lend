@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { formatCurrency } from './LoanCalculator';
 import { differenceInMonths } from 'date-fns';
 import { supabase } from '@/lib/supabaseClient';
+import { useOrganization } from '@/lib/OrganizationContext';
 import {
   Building2,
   Edit,
@@ -34,6 +35,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 
 export default function PropertyCard({
   loanProperty,
@@ -46,10 +48,15 @@ export default function PropertyCard({
 }) {
   const { property, firstChargeHolder } = loanProperty;
   const { documents } = usePropertyDocumentCounts(property?.id);
+  const { currentOrganization } = useOrganization();
   const [thumbnailUrl, setThumbnailUrl] = useState(null);
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const STALE_VALUATION_MONTHS = 12;
   const STALE_BALANCE_MONTHS = 6;
+
+  // Security valuation discount
+  const discountPercent = currentOrganization?.settings?.security_valuation_discount || 0;
+  const hasDiscount = discountPercent > 0;
 
   // Get the first photo for the thumbnail
   const firstPhoto = documents.find(d => d.document_type === 'photo' && d.storage_path && d.mime_type?.startsWith('image/'));
@@ -75,6 +82,7 @@ export default function PropertyCard({
   const securityValue = loanProperty.charge_type === 'Second Charge'
     ? Math.max(0, propertyValue - (loanProperty.first_charge_balance || 0))
     : propertyValue;
+  const discountedSecurityValue = securityValue * (1 - discountPercent / 100);
 
   // Check if valuation is stale
   const isStale = lastValuationDate
@@ -207,7 +215,23 @@ export default function PropertyCard({
               </div>
               <div>
                 <p className="text-xs text-slate-500">Security Value</p>
-                <p className="font-semibold text-emerald-600">{formatCurrency(securityValue)}</p>
+                <p className="font-semibold text-emerald-600">
+                  {formatCurrency(securityValue)}
+                  {hasDiscount && (
+                    <TooltipProvider>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <span className="text-sm font-medium text-emerald-500 ml-1 cursor-help">
+                            ({formatCurrency(discountedSecurityValue)})
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent>
+                          <p>{discountPercent}% security discount applied</p>
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )}
+                </p>
               </div>
             </div>
 

@@ -6,6 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -122,6 +123,15 @@ export default function SecurityTab({ loan }) {
     }
   });
 
+  // Security valuation discount helpers
+  const getDiscountPercent = () =>
+    currentOrganization?.settings?.security_valuation_discount || 0;
+
+  const applyDiscount = (value) =>
+    value * (1 - getDiscountPercent() / 100);
+
+  const hasDiscount = () => getDiscountPercent() > 0;
+
   // Calculate security metrics
   const calculateSecurityMetrics = () => {
     let totalSecurityValue = 0;
@@ -168,21 +178,25 @@ export default function SecurityTab({ loan }) {
       }
     });
 
-    // Initial LTV - based on original loan amount
-    const initialLtv = totalSecurityValue > 0
-      ? ((loan.principal_amount || 0) / totalSecurityValue) * 100
+    // Apply security valuation discount for LTV calculations
+    const totalSecurityValueDiscounted = applyDiscount(totalSecurityValue);
+
+    // Initial LTV - based on original loan amount (uses discounted security)
+    const initialLtv = totalSecurityValueDiscounted > 0
+      ? ((loan.principal_amount || 0) / totalSecurityValueDiscounted) * 100
       : 0;
 
     // Current LTV - based on total outstanding (principal + interest)
     // Use principal_remaining and interest_remaining fields (populated by nightly jobs/balance cache)
     const totalOutstanding = (loan.principal_remaining ?? loan.principal_amount ?? 0)
       + (loan.interest_remaining ?? 0);
-    const ltv = totalSecurityValue > 0
-      ? (totalOutstanding / totalSecurityValue) * 100
+    const ltv = totalSecurityValueDiscounted > 0
+      ? (totalOutstanding / totalSecurityValueDiscounted) * 100
       : 0;
 
     return {
       totalSecurityValue,
+      totalSecurityValueDiscounted,
       initialLtv,
       ltv,
       propertyCount: activeProperties.length,
@@ -214,6 +228,20 @@ export default function SecurityTab({ loan }) {
             </div>
             <p className="text-2xl font-bold text-blue-900">
               {formatCurrency(metrics.totalSecurityValue)}
+              {hasDiscount() && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <span className="text-lg font-semibold text-blue-700 ml-1 cursor-help">
+                        ({formatCurrency(metrics.totalSecurityValueDiscounted)})
+                      </span>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>{getDiscountPercent()}% security discount applied</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
             </p>
           </CardContent>
         </Card>

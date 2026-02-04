@@ -288,6 +288,7 @@ export default function Loans() {
   }, [allProperties]);
 
   // Calculate LTV for a loan based on its linked properties
+  // Applies security valuation discount from organization settings
   const calculateLoanLtv = (loan) => {
     const loanProps = allLoanProperties.filter(lp => lp.loan_id === loan.id);
     if (loanProps.length === 0) return null;
@@ -305,9 +306,15 @@ export default function Loans() {
 
     if (totalSecurityValue === 0) return null;
 
+    // Apply security valuation discount from org settings
+    const discountPercent = currentOrganization?.settings?.security_valuation_discount || 0;
+    const discountedSecurityValue = totalSecurityValue * (1 - discountPercent / 100);
+
+    if (discountedSecurityValue === 0) return null;
+
     const totalOutstanding = (loan.principal_remaining ?? loan.principal_amount ?? 0)
       + (loan.interest_remaining ?? 0);
-    return (totalOutstanding / totalSecurityValue) * 100;
+    return (totalOutstanding / discountedSecurityValue) * 100;
   };
 
   // Get the oldest valuation age (in months) among all properties linked to a loan

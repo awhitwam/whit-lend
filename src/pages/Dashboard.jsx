@@ -483,10 +483,14 @@ export default function Dashboard() {
   const totalThisMonthDisbursements = thisMonthDisbursements + thisMonthNewLoans;
 
   // Security metrics
+  // Applies security valuation discount from organization settings for LTV calculations
   const calculateSecurityMetrics = () => {
     const LTV_THRESHOLD = 80;
     let loansWithHighLTV = 0;
     let totalSecurityValue = 0;
+
+    // Get discount percentage from org settings
+    const discountPercent = currentOrganization?.settings?.security_valuation_discount || 0;
 
     liveLoans.forEach(loan => {
       const loanProps = loanProperties.filter(lp => lp.loan_id === loan.id);
@@ -503,8 +507,11 @@ export default function Dashboard() {
       });
 
       totalSecurityValue += loanSecurityValue;
+
+      // Apply discount for LTV calculation
+      const discountedSecurityValue = loanSecurityValue * (1 - discountPercent / 100);
       const outstandingPrincipal = (loan.principal_amount || 0) - (getRepaymentsForLoan(loan.id).principal);
-      const ltv = loanSecurityValue > 0 ? (outstandingPrincipal / loanSecurityValue) * 100 : 0;
+      const ltv = discountedSecurityValue > 0 ? (outstandingPrincipal / discountedSecurityValue) * 100 : 0;
       if (ltv > LTV_THRESHOLD) loansWithHighLTV++;
     });
 

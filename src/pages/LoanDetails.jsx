@@ -225,6 +225,9 @@ export default function LoanDetails() {
   const ltvMetrics = (() => {
     if (loanProperties.length === 0) return { ltv: null, totalSecurityValue: 0, oldestValuationAge: null };
 
+    // Get security valuation discount from organization settings
+    const discountPercent = currentOrganization?.settings?.security_valuation_discount || 0;
+
     let totalSecurityValue = 0;
     let oldestValuationDate = null;
 
@@ -246,10 +249,15 @@ export default function LoanDetails() {
 
     if (totalSecurityValue === 0) return { ltv: null, totalSecurityValue: 0, oldestValuationAge: null };
 
+    // Apply security valuation discount for LTV calculation
+    const totalSecurityValueDiscounted = totalSecurityValue * (1 - discountPercent / 100);
+
     // Use principal_remaining and interest_remaining for total outstanding
     const totalOutstanding = (loan?.principal_remaining ?? loan?.principal_amount ?? 0)
       + (loan?.interest_remaining ?? 0);
-    const ltv = (totalOutstanding / totalSecurityValue) * 100;
+    const ltv = totalSecurityValueDiscounted > 0
+      ? (totalOutstanding / totalSecurityValueDiscounted) * 100
+      : 0;
 
     // Calculate oldest valuation age in months
     const oldestValuationAge = oldestValuationDate

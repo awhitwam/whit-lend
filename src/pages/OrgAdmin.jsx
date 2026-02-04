@@ -58,7 +58,8 @@ export default function OrgAdmin() {
     email: '',
     website: '',
     next_loan_number: '',
-    next_borrower_number: ''
+    next_borrower_number: '',
+    security_valuation_discount: ''
   });
   const [orgDetailsChanged, setOrgDetailsChanged] = useState(false);
 
@@ -111,7 +112,8 @@ export default function OrgAdmin() {
         email: currentOrganization.email || '',
         website: currentOrganization.website || '',
         next_loan_number: currentOrganization.settings?.next_loan_number || '',
-        next_borrower_number: currentOrganization.settings?.next_borrower_number || ''
+        next_borrower_number: currentOrganization.settings?.next_borrower_number || '',
+        security_valuation_discount: currentOrganization.settings?.security_valuation_discount || ''
       });
       setOrgDetailsChanged(false);
     }
@@ -214,7 +216,8 @@ export default function OrgAdmin() {
           settings: {
             ...currentOrganization.settings,
             next_loan_number: details.next_loan_number ? parseInt(details.next_loan_number) : null,
-            next_borrower_number: details.next_borrower_number ? parseInt(details.next_borrower_number) : null
+            next_borrower_number: details.next_borrower_number ? parseInt(details.next_borrower_number) : null,
+            security_valuation_discount: details.security_valuation_discount ? parseFloat(details.security_valuation_discount) : null
           }
         })
         .eq('id', currentOrganization.id);
@@ -1842,6 +1845,22 @@ export default function OrgAdmin() {
                     placeholder="1000001"
                   />
                   <p className="text-xs text-slate-500">The next borrower created will be assigned this number (then auto-increments)</p>
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="org-security-discount" className="flex items-center gap-1">
+                    <ShieldCheck className="w-3 h-3" /> Security Valuation Discount (%)
+                  </Label>
+                  <Input
+                    id="org-security-discount"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.1"
+                    value={orgDetails.security_valuation_discount}
+                    onChange={(e) => handleOrgDetailsChange('security_valuation_discount', e.target.value)}
+                    placeholder="0"
+                  />
+                  <p className="text-xs text-slate-500">Discount applied to all security values for LTV calculations. E.g., 10% discount: a £800,000 property calculates as £720,000.</p>
                 </div>
               </div>
 
