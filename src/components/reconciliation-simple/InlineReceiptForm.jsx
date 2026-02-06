@@ -28,10 +28,10 @@ export default function InlineReceiptForm({
   const [fees, setFees] = useState('0');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Get active loans
+  // Get active loans (excludes Written Off)
   const activeLoans = useMemo(() => {
     return loans.filter(l =>
-      l.status === 'Live' || l.status === 'Active' || l.status === 'Defaulted'
+      l.status === 'Live' || l.status === 'Active'
     );
   }, [loans]);
 

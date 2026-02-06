@@ -49,7 +49,8 @@ import {
   MessageSquare,
   FolderPlus,
   FolderOpen,
-  Home
+  Home,
+  Ban
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -99,6 +100,7 @@ export default function LoanDetails() {
   const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
   const [regenerateEndDate, setRegenerateEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+  const [isWriteOffDialogOpen, setIsWriteOffDialogOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [deleteAuthorized, setDeleteAuthorized] = useState(false);
@@ -635,6 +637,81 @@ export default function LoanDetails() {
       toast.error('Failed to update status', { id: 'update-status' });
     }
   });
+
+  // Settle loan: zero outstanding balances, close loan, audit trail records previous balances
+  // No ledger transaction is created — Closed loans are excluded from balance cache refreshes
+  // so directly setting the cached fields is safe and avoids a misleading "repayment" entry
+  const handleSettleLoan = async ({ settlementDate, settlement }) => {
+    try {
+      toast.loading('Settling loan...', { id: 'settle' });
+
+      const principalOS = settlement.principalRemaining || 0;
+      const interestOS = settlement.interestRemaining || 0;
+
+      // 1. Mark remaining schedule entries as Paid
+      const remainingEntries = schedule.filter(s =>
+        !s.is_deleted && s.status !== 'Paid'
+      );
+      for (const entry of remainingEntries) {
+        await api.entities.RepaymentSchedule.update(entry.id, {
+          status: 'Paid',
+          interest_paid: entry.interest_amount,
+          principal_paid: entry.principal_amount
+        });
+      }
+
+      // 2. Calculate total principal including further advances
+      const furtherAdvanceTotal = transactions
+        .filter(t => !t.is_deleted && t.type === 'Disbursement')
+        .sort((a, b) => new Date(a.date) - new Date(b.date))
+        .slice(1)
+        .reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
+      const loanTotalPrincipal = loan.principal_amount + furtherAdvanceTotal;
+
+      // 3. Update loan: status to Closed, zero balances
+      await api.entities.Loan.update(loanId, {
+        status: 'Closed',
+        principal_paid: loanTotalPrincipal,
+        interest_paid: (loan.interest_paid || 0) + interestOS,
+        principal_remaining: 0,
+        interest_remaining: 0,
+        balance_updated_at: new Date().toISOString()
+      });
+
+      // 4. Audit: log the settlement event with previous balances
+      await logLoanEvent(
+        AuditAction.LOAN_SETTLE,
+        { id: loanId, loan_number: loan.loan_number },
+        {
+          status: 'Closed',
+          settlement_date: settlementDate,
+          principal_written_off: principalOS,
+          interest_written_off: interestOS
+        },
+        {
+          status: loan.status,
+          principal_remaining: principalOS,
+          interest_remaining: interestOS,
+          previous_principal_paid: loan.principal_paid || 0,
+          previous_interest_paid: loan.interest_paid || 0
+        }
+      );
+
+      // 5. Refresh all data
+      await Promise.all([
+        queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-schedule', loanId] }),
+        queryClient.refetchQueries({ queryKey: ['loan-transactions', loanId] }),
+        queryClient.invalidateQueries({ queryKey: ['loans'] })
+      ]);
+
+      setIsSettleOpen(false);
+      toast.success('Loan settled successfully', { id: 'settle' });
+    } catch (error) {
+      console.error('Error settling loan:', error);
+      toast.error(`Failed to settle loan: ${error.message}`, { id: 'settle' });
+    }
+  };
 
   const toggleAutoExtendMutation = useMutation({
     mutationFn: () => {
@@ -1386,7 +1463,7 @@ export default function LoanDetails() {
       'Pending': 'bg-slate-100 text-slate-700',
       'Live': 'bg-emerald-100 text-emerald-700',
       'Closed': 'bg-purple-100 text-purple-700',
-      'Defaulted': 'bg-red-100 text-red-700'
+      'Written Off': 'bg-red-100 text-red-700'
     };
     return colors[status] || colors['Pending'];
   };
@@ -1680,7 +1757,16 @@ export default function LoanDetails() {
                         {loan.auto_extend ? 'Disable' : 'Enable'} Auto-Extend
                       </DropdownMenuItem>
                     )}
-                    <DropdownMenuItem 
+                    {(loan.status === 'Active' || loan.status === 'Live') && (
+                      <DropdownMenuItem
+                        className="text-red-600"
+                        onClick={() => setIsWriteOffDialogOpen(true)}
+                      >
+                        <Ban className="w-4 h-4 mr-2" />
+                        Write Off Loan
+                      </DropdownMenuItem>
+                    )}
+                    <DropdownMenuItem
                       className="text-red-600"
                       onClick={() => setIsDeleteDialogOpen(true)}
                     >
@@ -2131,6 +2217,10 @@ export default function LoanDetails() {
               activityCount={activityCount}
               reconciliationMap={reconciliationMap}
               reconciledTransactionIds={reconciledTransactionIds}
+              onDeleteTransaction={(tx) => {
+                setDeleteTransactionTarget(tx);
+                setDeleteTransactionDialogOpen(true);
+              }}
             />
           )}
 
@@ -2894,6 +2984,55 @@ export default function LoanDetails() {
               >
                 <Trash2 className="w-4 h-4 mr-2" />
                 Delete Loan
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
+        {/* Write Off Loan Dialog */}
+        <AlertDialog open={isWriteOffDialogOpen} onOpenChange={setIsWriteOffDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle className="flex items-center gap-2 text-red-600">
+                <Ban className="w-5 h-5" />
+                Write Off Loan
+              </AlertDialogTitle>
+              <AlertDialogDescription className="text-left">
+                This will mark the loan as written off. The loan will be removed from active calculations but all balances will be preserved for record keeping.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <div className="bg-slate-50 rounded-lg p-3 text-sm">
+              <p className="font-medium text-slate-700 mb-2">Loan Details</p>
+              <div className="grid grid-cols-2 gap-2 text-xs">
+                <div>
+                  <span className="text-slate-500">Loan Number:</span>
+                  <span className="ml-1 font-mono font-semibold">{loan?.loan_number || 'N/A'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Borrower:</span>
+                  <span className="ml-1 font-medium">{loan?.borrower_name}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Principal Outstanding:</span>
+                  <span className="ml-1 font-mono">{formatCurrency(loan?.principal_remaining ?? loan?.principal_amount ?? 0)}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500">Interest Outstanding:</span>
+                  <span className="ml-1 font-mono">{formatCurrency(loan?.interest_remaining ?? 0)}</span>
+                </div>
+              </div>
+            </div>
+            <AlertDialogFooter>
+              <AlertDialogCancel>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-red-600 hover:bg-red-700"
+                onClick={() => {
+                  updateStatusMutation.mutate('Written Off');
+                  setIsWriteOffDialogOpen(false);
+                }}
+              >
+                <Ban className="w-4 h-4 mr-2" />
+                Write Off
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -3817,6 +3956,7 @@ export default function LoanDetails() {
               transactions={transactions}
               schedule={schedule}
               product={product}
+              onSettle={handleSettleLoan}
             />
           </div>
         )}

@@ -404,7 +404,7 @@ export default function BankReconciliationSimple() {
                 <p className="text-lg font-semibold text-green-600">{formatCurrency(stats.totalCredits)}</p>
               </div>
             </div>
-            <p className="text-xs text-slate-400 mt-1">{stats.creditCount} entries</p>
+            <p className={`text-xs mt-1 ${stats.creditCount > 0 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>{stats.creditCount} {stats.creditCount === 1 ? 'entry' : 'entries'} to process</p>
           </CardContent>
         </Card>
         <Card>
@@ -416,7 +416,7 @@ export default function BankReconciliationSimple() {
                 <p className="text-lg font-semibold text-red-600">{formatCurrency(stats.totalDebits)}</p>
               </div>
             </div>
-            <p className="text-xs text-slate-400 mt-1">{stats.debitCount} entries</p>
+            <p className={`text-xs mt-1 ${stats.debitCount > 0 ? 'text-red-500 font-semibold' : 'text-slate-400'}`}>{stats.debitCount} {stats.debitCount === 1 ? 'entry' : 'entries'} to process</p>
           </CardContent>
         </Card>
         <Card>
@@ -465,12 +465,12 @@ export default function BankReconciliationSimple() {
             <TabsTrigger value="receipts" className="flex items-center gap-2">
               <ArrowDownCircle className="w-4 h-4" />
               Receipts
-              <Badge variant="secondary" className="ml-1">{stats.creditCount}</Badge>
+              <Badge variant={stats.creditCount > 0 ? "destructive" : "secondary"} className={`ml-1 ${stats.creditCount > 0 ? 'animate-pulse' : ''}`}>{stats.creditCount}</Badge>
             </TabsTrigger>
             <TabsTrigger value="expenditure" className="flex items-center gap-2">
               <ArrowUpCircle className="w-4 h-4" />
               Expenditure
-              <Badge variant="secondary" className="ml-1">{stats.debitCount}</Badge>
+              <Badge variant={stats.debitCount > 0 ? "destructive" : "secondary"} className={`ml-1 ${stats.debitCount > 0 ? 'animate-pulse' : ''}`}>{stats.debitCount}</Badge>
             </TabsTrigger>
             <TabsTrigger value="reconciled" className="flex items-center gap-2">
               <History className="w-4 h-4" />

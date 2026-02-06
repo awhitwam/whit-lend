@@ -367,7 +367,7 @@ export default function BorrowerDetails() {
       'Live': 'bg-emerald-100 text-emerald-700',
       'Active': 'bg-emerald-100 text-emerald-700',
       'Closed': 'bg-purple-100 text-purple-700',
-      'Defaulted': 'bg-red-100 text-red-700'
+      'Written Off': 'bg-red-100 text-red-700'
     };
     return colors[status] || colors['Pending'];
   };
@@ -376,7 +376,7 @@ export default function BorrowerDetails() {
     const labels = {
       'Closed': 'Settled',
       'Restructured': 'Restruct',
-      'Defaulted': 'Default'
+      'Written Off': 'W/O'
     };
     return labels[status] || status;
   };
@@ -699,8 +699,8 @@ export default function BorrowerDetails() {
   const activeLoans = loans.filter(l => l.status === 'Active' || l.status === 'Live');
   const totalRepaid = transactions.filter(t => t.type === 'Repayment').reduce((sum, t) => sum + (t.amount || 0), 0);
 
-  // Calculate exposure totals for live/defaulted loans
-  const exposureLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active' || l.status === 'Defaulted');
+  // Calculate exposure totals for live loans (excludes Written Off)
+  const exposureLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active');
   const disbursements = transactions
     .filter(t => t.type === 'Disbursement' && !t.is_deleted && exposureLoans.some(l => l.id === t.loan_id))
     .reduce((sum, t) => sum + (t.amount || 0), 0);

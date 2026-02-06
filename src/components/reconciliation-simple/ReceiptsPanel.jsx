@@ -347,9 +347,9 @@ function generateReceiptSuggestions(entry, loans, borrowers, investors, transact
     });
   }
 
-  // 3. Suggest matching to active loans by borrower name
+  // 3. Suggest matching to active loans by borrower name (excludes Written Off)
   const activeLoans = loans.filter(l =>
-    l.status === 'Live' || l.status === 'Active' || l.status === 'Defaulted'
+    l.status === 'Live' || l.status === 'Active'
   );
 
   for (const loan of activeLoans) {

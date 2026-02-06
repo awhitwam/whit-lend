@@ -616,7 +616,7 @@ export default function Loans() {
     Pending: loans.filter(l => l.status === 'Pending').length,
     Live: loans.filter(l => l.status === 'Live' || l.status === 'Active').length,
     Settled: loans.filter(l => l.status === 'Closed' || l.status === 'Fully Paid').length,
-    Defaulted: loans.filter(l => l.status === 'Defaulted' || l.status === 'Default').length,
+    'Written Off': loans.filter(l => l.status === 'Written Off').length,
   };
 
   // Handler for refreshing all balance caches
@@ -1198,8 +1198,8 @@ export default function Loans() {
                   <TabsTrigger value="Pending" className="text-xs h-7 px-2 data-[state=active]:bg-amber-500 data-[state=active]:text-white data-[state=active]:font-semibold">
                     Pend ({statusCounts.Pending})
                   </TabsTrigger>
-                  <TabsTrigger value="Defaulted" className="text-xs h-7 px-2 data-[state=active]:bg-red-600 data-[state=active]:text-white data-[state=active]:font-semibold">
-                    Def ({statusCounts.Defaulted})
+                  <TabsTrigger value="Written Off" className="text-xs h-7 px-2 data-[state=active]:bg-red-600 data-[state=active]:text-white data-[state=active]:font-semibold">
+                    W/O ({statusCounts['Written Off']})
                   </TabsTrigger>
                 </TabsList>
               </Tabs>

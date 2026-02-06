@@ -98,8 +98,8 @@ const orgScopedTables = [
   'Investor',
   'InvestorTransaction',
   'investor_products',
-  // Note: audit_logs is NOT included here - RLS policy handles access control
-  // and allows viewing logs for all orgs the user belongs to (plus null org_id entries)
+  // Audit logs - must be org-scoped to prevent cross-organization data leakage
+  'audit_logs',
   'invitations',  // SECURITY: Invitations are org-scoped
   // Security/Property tables
   'properties',

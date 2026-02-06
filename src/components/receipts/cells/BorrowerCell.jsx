@@ -46,7 +46,7 @@ const BorrowerCell = forwardRef(function BorrowerCell({
   // Calculate which borrowers have active loans
   const borrowerLoanStatus = useMemo(() => {
     const status = new Map(); // borrowerId -> { hasActive: boolean, hasSettled: boolean }
-    const activeStatuses = ['Live', 'Active', 'Defaulted'];
+    const activeStatuses = ['Live', 'Active'];
     const settledStatuses = ['Closed', 'Settled', 'Restructured', 'Written Off'];
 
     for (const loan of loans) {

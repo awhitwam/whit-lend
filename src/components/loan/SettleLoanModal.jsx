@@ -4,7 +4,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import { Calculator, Calendar, TrendingDown, FileText, Download, ChevronDown, ArrowRight, Receipt, X } from 'lucide-react';
+import { Calculator, Calendar, TrendingDown, FileText, Download, ChevronDown, ArrowRight, Receipt, X, AlertTriangle, CheckCircle, Loader2 } from 'lucide-react';
 import { formatCurrency, calculateSettlementAmount, buildSettlementData } from './LoanCalculator';
 import { generateSettlementStatementPDF } from './LoanPDFGenerator';
 import { format, isValid } from 'date-fns';
@@ -18,12 +18,15 @@ export default function SettleLoanModal({
   borrower,
   transactions = [],
   schedule = [],
-  product = null
+  product = null,
+  onSettle = null
 }) {
   const { currentOrganization } = useOrganization();
   const [settlementDate, setSettlementDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [showInterestDetails, setShowInterestDetails] = useState(false);
   const [showTransactions, setShowTransactions] = useState(false);
+  const [isConfirming, setIsConfirming] = useState(false);
+  const [isSettling, setIsSettling] = useState(false);
 
   const settlement = loan ? calculateSettlementAmount(loan, settlementDate, transactions, schedule, product) : null;
 
@@ -398,6 +401,108 @@ export default function SettleLoanModal({
                 </CollapsibleContent>
               </Card>
             </Collapsible>
+          )}
+
+          {/* Mark as Settled Action */}
+          {onSettle && loan.status !== 'Closed' && (
+            (() => {
+              const hasOutstanding = settlement.principalRemaining > 0.01 || settlement.interestRemaining > 0.01;
+              return (
+                <Card className={hasOutstanding ? "border-red-200 bg-red-50" : "border-green-200 bg-green-50"}>
+                  <CardContent className="p-4">
+                    {hasOutstanding ? (
+                      <>
+                        <div className="flex items-center gap-2 text-red-700 font-medium mb-3">
+                          <AlertTriangle className="w-4 h-4" />
+                          Outstanding Balances Will Be Written Off
+                        </div>
+                        <div className="grid grid-cols-2 gap-2 text-sm mb-3">
+                          {settlement.principalRemaining > 0.01 && (
+                            <div>
+                              <span className="text-red-600">Principal:</span>{' '}
+                              <span className="font-bold text-red-800">{formatCurrency(settlement.principalRemaining)}</span>
+                            </div>
+                          )}
+                          {settlement.interestRemaining > 0.01 && (
+                            <div>
+                              <span className="text-red-600">Interest:</span>{' '}
+                              <span className="font-bold text-red-800">{formatCurrency(settlement.interestRemaining)}</span>
+                            </div>
+                          )}
+                          {settlement.exitFee > 0 && (
+                            <div>
+                              <span className="text-red-600">Exit Fee:</span>{' '}
+                              <span className="font-bold text-red-800">{formatCurrency(settlement.exitFee)}</span>
+                            </div>
+                          )}
+                        </div>
+                        <p className="text-xs text-red-600 mb-3">
+                          These amounts will be permanently written off and the loan marked as settled.
+                        </p>
+                      </>
+                    ) : (
+                      <div className="flex items-center gap-2 text-green-700 font-medium mb-3">
+                        <CheckCircle className="w-4 h-4" />
+                        All balances are cleared — ready to settle
+                      </div>
+                    )}
+
+                    {!isConfirming ? (
+                      <Button
+                        className={cn(
+                          "w-full",
+                          hasOutstanding
+                            ? "bg-red-600 hover:bg-red-700"
+                            : "bg-green-600 hover:bg-green-700"
+                        )}
+                        onClick={() => setIsConfirming(true)}
+                      >
+                        Mark as Settled
+                      </Button>
+                    ) : (
+                      <div className="space-y-2 border-t border-red-200 pt-3 mt-2">
+                        <p className="text-sm font-medium text-slate-800">
+                          {hasOutstanding
+                            ? "Are you sure? This will permanently write off the outstanding amounts and close the loan."
+                            : "Confirm marking this loan as settled."}
+                        </p>
+                        <div className="flex gap-2">
+                          <Button
+                            variant="outline"
+                            onClick={() => setIsConfirming(false)}
+                            className="flex-1"
+                            disabled={isSettling}
+                          >
+                            Cancel
+                          </Button>
+                          <Button
+                            className={cn(
+                              "flex-1",
+                              hasOutstanding
+                                ? "bg-red-600 hover:bg-red-700"
+                                : "bg-green-600 hover:bg-green-700"
+                            )}
+                            onClick={async () => {
+                              setIsSettling(true);
+                              try {
+                                await onSettle({ settlementDate, settlement });
+                              } finally {
+                                setIsSettling(false);
+                                setIsConfirming(false);
+                              }
+                            }}
+                            disabled={isSettling}
+                          >
+                            {isSettling && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                            Confirm Settlement
+                          </Button>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              );
+            })()
           )}
 
           </>

@@ -59,10 +59,10 @@ export default function InlineReceiptFormFull({
     return result;
   }, [transactions]);
 
-  // Filter to active loans only
+  // Filter to active loans only (excludes Written Off)
   const activeLoans = useMemo(() => {
     return loans.filter(l =>
-      !l.is_deleted && (l.status === 'Live' || l.status === 'Active' || l.status === 'Defaulted')
+      !l.is_deleted && (l.status === 'Live' || l.status === 'Active')
     );
   }, [loans]);
 

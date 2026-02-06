@@ -228,9 +228,9 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
                               {counts.pending} Pending
                             </Badge>
                           )}
-                          {counts.defaulted > 0 && (
+                          {counts.writtenOff > 0 && (
                             <Badge className="bg-red-100 text-red-700 hover:bg-red-200 text-xs">
-                              {counts.defaulted} Defaulted
+                              {counts.writtenOff} W/O
                             </Badge>
                           )}
                         </div>

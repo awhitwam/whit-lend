@@ -141,7 +141,7 @@ export default function Dashboard() {
   const liveLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active');
   const settledLoans = loans.filter(l => l.status === 'Closed');
   const pendingLoans = loans.filter(l => l.status === 'Pending');
-  const defaultedLoans = loans.filter(l => l.status === 'Defaulted' || l.status === 'Default');
+  const writtenOffLoans = loans.filter(l => l.status === 'Written Off');
 
   // Calculate live metrics for each loan using daily accrual
   // Uses cached principal_remaining from database when available for performance
@@ -747,10 +747,10 @@ export default function Dashboard() {
                   <span className="text-sm font-medium">{pendingLoans.length} Pending</span>
                 </Link>
               )}
-              {defaultedLoans.length > 0 && (
-                <Link to={createPageUrl('Loans?status=Defaulted')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-100 text-red-700 hover:bg-red-200 transition-colors">
+              {writtenOffLoans.length > 0 && (
+                <Link to={createPageUrl('Loans?status=Written Off')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-red-100 text-red-700 hover:bg-red-200 transition-colors">
                   <AlertTriangle className="w-3.5 h-3.5" />
-                  <span className="text-sm font-medium">{defaultedLoans.length} Defaulted</span>
+                  <span className="text-sm font-medium">{writtenOffLoans.length} Written Off</span>
                 </Link>
               )}
             </div>

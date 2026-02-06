@@ -2502,7 +2502,7 @@ export function queueBalanceCacheUpdate(loanId, skipOrgSummary = false) {
  */
 export async function updateAllLoanBalanceCaches(organizationId, onProgress = null) {
   const loans = await api.entities.Loan.filter({ organization_id: organizationId });
-  const activeLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active');
+  const activeLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active' || l.status === 'Written Off');
 
   let processed = 0;
   let failed = 0;

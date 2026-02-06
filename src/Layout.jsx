@@ -71,7 +71,7 @@ const navigation = [
       { name: 'Settled', href: 'Loans?status=Closed', icon: CheckCircle2 },
       { name: 'Restructured', href: 'Loans?status=Restructured', icon: RefreshCw },
       { name: 'Pending', href: 'Loans?status=Pending', icon: Clock },
-      { name: 'Defaulted', href: 'Loans?status=Defaulted', icon: AlertTriangle },
+      { name: 'Written Off', href: 'Loans?status=Written Off', icon: AlertTriangle },
       { name: 'All Loans', href: 'Loans?status=all', icon: LayoutList },
     ]
   },

@@ -54,7 +54,7 @@ export default function Borrowers() {
           live: 0,
           settled: 0,
           pending: 0,
-          defaulted: 0,
+          writtenOff: 0,
           totalPrincipal: 0,
           totalInterest: 0,
           principalPaid: 0,
@@ -74,11 +74,9 @@ export default function Borrowers() {
         metrics[loan.borrower_id].settled++;
       } else if (loan.status === 'Pending') {
         metrics[loan.borrower_id].pending++;
-      } else if (loan.status === 'Defaulted') {
-        metrics[loan.borrower_id].defaulted++;
-        // Include defaulted in exposure
-        metrics[loan.borrower_id].totalPrincipal += loan.principal_amount || 0;
-        metrics[loan.borrower_id].totalInterest += loan.total_interest || 0;
+      } else if (loan.status === 'Written Off') {
+        metrics[loan.borrower_id].writtenOff++;
+        // Written off loans are NOT included in exposure calculations
       }
     });
 
@@ -105,9 +103,9 @@ export default function Borrowers() {
     allTransactions.filter(t => !t.is_deleted).forEach(transaction => {
       if (!transaction.borrower_id || !metrics[transaction.borrower_id]) return;
 
-      // Find the loan for this transaction
+      // Find the loan for this transaction (only include Live/Active loans in exposure)
       const loan = activeLoans.find(l => l.id === transaction.loan_id);
-      if (!loan || (loan.status !== 'Live' && loan.status !== 'Active' && loan.status !== 'Defaulted')) return;
+      if (!loan || (loan.status !== 'Live' && loan.status !== 'Active')) return;
 
       if (transaction.type === 'Disbursement') {
         // Only count further advances (not the initial disbursement)
@@ -143,7 +141,7 @@ export default function Borrowers() {
         live: m.live,
         settled: m.settled,
         pending: m.pending,
-        defaulted: m.defaulted
+        writtenOff: m.writtenOff
       };
     });
     return counts;
