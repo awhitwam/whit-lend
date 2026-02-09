@@ -75,6 +75,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         // Ledger data
         principalChange: grossAmount,
         interestPaid: 0,
+        feesPaid: 0,
         transaction: tx,
         // No schedule data for transaction rows
         expectedInterest: 0,
@@ -91,13 +92,15 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       const dateKey = getDateKey(tx.date);
       let principalPaid = tx.principal_applied || 0;
       let interestPaid = tx.interest_applied || 0;
+      let feesPaid = tx.fees_applied || 0;
 
-      // Fallback: derive interest when split fields aren't fully populated
-      if (interestPaid === 0 && tx.amount > 0) {
-        if (principalPaid > 0) {
-          interestPaid = Math.max(0, tx.amount - principalPaid);
-        } else {
-          interestPaid = tx.amount;
+      // Fallback: if no split fields populated, derive interest from remainder
+      if (interestPaid === 0 && feesPaid === 0 && principalPaid === 0 && tx.amount > 0) {
+        interestPaid = tx.amount;
+      } else if (interestPaid === 0 && tx.amount > 0) {
+        const allocated = principalPaid + feesPaid;
+        if (tx.amount > allocated + 0.01) {
+          interestPaid = tx.amount - allocated;
         }
       }
 
@@ -108,6 +111,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         // Ledger data
         principalChange: -principalPaid,
         interestPaid,
+        feesPaid,
         transaction: tx,
         // No schedule data for transaction rows
         expectedInterest: 0,
@@ -128,6 +132,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       // No ledger data for schedule rows
       principalChange: 0,
       interestPaid: 0,
+      feesPaid: 0,
       transaction: null,
       // Schedule data
       expectedInterest: scheduleEntry.interest_amount || 0,
@@ -147,6 +152,7 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       // No ledger data
       principalChange: 0,
       interestPaid: 0,
+      feesPaid: 0,
       transaction: null,
       // Rate change data
       expectedInterest: 0,
@@ -435,6 +441,7 @@ function groupRowsByMonth(rows) {
           disbursements: 0,
           interestRepayments: 0,
           capitalRepayments: 0,
+          feeRepayments: 0,
           adjustments: 0,
           rateChanges: 0,
           rollUpPeriods: 0
@@ -455,8 +462,11 @@ function groupRowsByMonth(rows) {
       if (row.interestPaid > 0.01) {
         group.typeCounts.interestRepayments++;
       }
+      if (row.feesPaid > 0.01) {
+        group.typeCounts.feeRepayments++;
+      }
       // If neither split field is set, count as interest repayment (legacy)
-      if (!(row.transaction?.principal_applied > 0) && !(row.interestPaid > 0.01)) {
+      if (!(row.transaction?.principal_applied > 0) && !(row.interestPaid > 0.01) && !(row.feesPaid > 0.01)) {
         group.typeCounts.interestRepayments++;
       }
     } else if (row.primaryType === 'adjustment') {
@@ -471,6 +481,7 @@ function groupRowsByMonth(rows) {
   // Calculate totals for each group
   for (const group of groups.values()) {
     group.totalInterestPaid = group.rows.reduce((sum, r) => sum + r.interestPaid, 0);
+    group.totalFeesPaid = group.rows.reduce((sum, r) => sum + (r.feesPaid || 0), 0);
     group.totalPrincipalChange = group.rows.reduce((sum, r) => sum + r.principalChange, 0);
     group.totalExpectedInterest = group.rows.reduce((sum, r) => sum + (r.isDueDate ? r.expectedInterest : 0), 0);
     const lastRow = group.rows[group.rows.length - 1];
@@ -610,10 +621,20 @@ function TypeIcon({ row }) {
       break;
     case 'repayment':
       icon = <ArrowLeftCircle className="w-4 h-4" />;
-      // Blue for capital receipts (principal applied), green for interest receipts
+      // Blue for capital receipts, green for interest receipts, purple for fee receipts
       const hasPrincipal = row.transaction?.principal_applied > 0;
-      tooltip = hasPrincipal ? 'Capital repayment received' : 'Interest payment received';
-      colorClass = hasPrincipal ? 'text-blue-600' : 'text-emerald-600';
+      const hasFees = (row.feesPaid || 0) > 0.01;
+      const hasInterest = row.interestPaid > 0.01;
+      if (hasPrincipal) {
+        tooltip = 'Capital repayment received';
+        colorClass = 'text-blue-600';
+      } else if (hasFees && !hasInterest) {
+        tooltip = 'Fee payment received';
+        colorClass = 'text-purple-600';
+      } else {
+        tooltip = 'Interest payment received';
+        colorClass = 'text-emerald-600';
+      }
       break;
     default:
       icon = <CircleDot className="w-4 h-4" />;
@@ -661,6 +682,13 @@ function GroupTypeIcons({ typeCounts }) {
   for (let i = 0; i < typeCounts.interestRepayments; i++) {
     icons.push(
       <ArrowLeftCircle key={`int-${i}`} className="w-4 h-4 text-emerald-600" />
+    );
+  }
+
+  // Fee repayments (purple left arrows - fee received)
+  for (let i = 0; i < (typeCounts.feeRepayments || 0); i++) {
+    icons.push(
+      <ArrowLeftCircle key={`fee-${i}`} className="w-4 h-4 text-purple-600" />
     );
   }
 
@@ -744,6 +772,13 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
           </span>
           <BalanceGauge balance={group.endingInterestBalance} monthlyInterest={monthlyInterest} />
         </div>
+      </TableCell>
+
+      {/* Fees total */}
+      <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
+        {group.totalFeesPaid > 0 && (
+          <span className="text-purple-600">-{formatCurrency(group.totalFeesPaid)}</span>
+        )}
       </TableCell>
 
       {/* Principal Change total */}
@@ -933,6 +968,7 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
   // Determine if payment was made
   const hasPrincipalChange = Math.abs(row.principalChange) > 0.01;
   const hasInterestPaid = row.interestPaid > 0.01;
+  const hasFeesPaid = (row.feesPaid || 0) > 0.01;
 
   // Only show principal balance on first row, last row, or when there's a change
   const showPrincipalBalance = isFirst || isLast || hasPrincipalChange || isToday || isRateChange;
@@ -949,7 +985,8 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
           {format(new Date(row.date), 'dd/MM/yy')}
         </TableCell>
 
-        {/* Empty cells for Int Received, Expected, Int Bal, Principal, Prin Bal */}
+        {/* Empty cells for Int Received, Expected, Int Bal, Fees, Principal, Prin Bal */}
+        <TableCell className="py-0.5"></TableCell>
         <TableCell className="py-0.5"></TableCell>
         <TableCell className="py-0.5"></TableCell>
         <TableCell className="py-0.5"></TableCell>
@@ -1090,6 +1127,15 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
           </span>
           <BalanceGauge balance={row.interestBalance} monthlyInterest={monthlyInterest} />
         </div>
+      </TableCell>
+
+      {/* Fees Paid */}
+      <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
+        {hasFeesPaid ? (
+          <span className="text-purple-600">-{formatCurrency(row.feesPaid)}</span>
+        ) : (
+          <span className="text-slate-300">—</span>
+        )}
       </TableCell>
 
       {/* Principal Change (Reality) - with disbursement/capital icon */}
@@ -1249,6 +1295,7 @@ function TotalsRow({ rows }) {
 
   // Calculate totals
   const totalInterestPaid = rows.reduce((sum, r) => sum + r.interestPaid, 0);
+  const totalFeesPaid = rows.reduce((sum, r) => sum + (r.feesPaid || 0), 0);
   const totalExpected = lastRow.totalExpectedToDate;
   const principalBalance = lastRow.principalBalance;
 
@@ -1265,6 +1312,9 @@ function TotalsRow({ rows }) {
         {formatCurrency(totalExpected)}
       </TableCell>
       <TableCell className="py-2"></TableCell>
+      <TableCell className="text-right font-mono text-base text-purple-600 py-2 whitespace-nowrap underline">
+        {totalFeesPaid > 0 && formatCurrency(totalFeesPaid)}
+      </TableCell>
       <TableCell className="py-2"></TableCell>
       <TableCell className="text-right font-mono text-base py-2 whitespace-nowrap underline">
         {formatCurrency(principalBalance)}
@@ -1452,6 +1502,7 @@ export default function InterestOnlyScheduleView({
             <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Int Received</TableHead>
             <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Expected</TableHead>
             <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Int Bal</TableHead>
+            <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Fees</TableHead>
             <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">Principal</TableHead>
             <TableHead className="text-xs text-right py-0.5 whitespace-nowrap">
               <div className="flex items-center justify-end gap-1">

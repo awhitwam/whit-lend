@@ -79,6 +79,7 @@ import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange } fro
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
 import DisbursementsTab from '@/components/loan/DisbursementsTab';
+import RepaymentsTab from '@/components/loan/RepaymentsTab';
 import LoanActivityPanel from '@/components/loan/LoanActivityPanel';
 import LoanFilesPanel from '@/components/loan/LoanFilesPanel';
 import { getScheduler } from '@/lib/schedule';
@@ -2291,6 +2292,18 @@ export default function LoanDetails() {
                       </Button>
                     )}
                     <Button
+                      variant={activeTab === 'repayments' ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setActiveTab('repayments')}
+                      className="gap-1 h-6 text-xs px-2"
+                    >
+                      <Receipt className="w-3 h-3" />
+                      Repayments
+                      <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                        {transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}
+                      </Badge>
+                    </Button>
+                    <Button
                       variant={activeTab === 'security' ? "default" : "ghost"}
                       size="sm"
                       onClick={() => setActiveTab('security')}
@@ -2358,6 +2371,27 @@ export default function LoanDetails() {
               setEditDisbursementTarget={setEditDisbursementTarget}
               setEditDisbursementValues={setEditDisbursementValues}
               setEditDisbursementDialogOpen={setEditDisbursementDialogOpen}
+            />
+          )}
+
+          {activeTab === 'repayments' && (
+            <RepaymentsTab
+              transactions={transactions}
+              loan={loan}
+              reconciledTransactionIds={reconciledTransactionIds}
+              reconciliationMap={reconciliationMap}
+              onEditRepayment={(tx) => {
+                setEditReceiptTarget(tx);
+                setEditReceiptValues({
+                  principal: tx.principal_applied || 0,
+                  interest: tx.interest_applied || 0,
+                  fees: tx.fees_applied || 0,
+                  amount: tx.amount || 0,
+                  date: tx.date?.split('T')[0] || '',
+                  reference: tx.reference || ''
+                });
+                setEditReceiptDialogOpen(true);
+              }}
             />
           )}
 

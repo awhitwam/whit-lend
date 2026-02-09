@@ -218,6 +218,20 @@ export default function Loans() {
     }
   }, [searchParams]);
 
+  // Sync status filter back to URL so browser back preserves tab
+  useEffect(() => {
+    const urlStatus = searchParams.get('status');
+    if (statusFilter !== (urlStatus || 'Live')) {
+      const newParams = new URLSearchParams(searchParams);
+      if (statusFilter === 'Live') {
+        newParams.delete('status');
+      } else {
+        newParams.set('status', statusFilter);
+      }
+      setSearchParams(newParams, { replace: true });
+    }
+  }, [statusFilter]);
+
 
   const { data: allLoans = [], isLoading } = useQuery({
     queryKey: ['loans', currentOrganization?.id],

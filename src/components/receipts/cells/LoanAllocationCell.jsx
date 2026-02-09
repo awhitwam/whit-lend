@@ -152,16 +152,25 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
     const newAllocations = { ...row.allocations };
     const receiptAmount = parseFloat(row.amount) || 0;
 
-    // SINGLE LOAN: Put remaining amount into interest
+    // SINGLE LOAN: Put remaining amount into interest (and fees if exit fee applies)
     if (selectedLoans.length === 1) {
       const loan = selectedLoans[0];
       const currentAlloc = newAllocations[loan.id] || { principal: 0, interest: 0, fees: 0, description: '' };
       const principalAllocated = parseFloat(currentAlloc.principal) || 0;
-      const feesAllocated = parseFloat(currentAlloc.fees) || 0;
+      let feesAllocated = parseFloat(currentAlloc.fees) || 0;
+
+      // Auto-include exit fee when: loan has exit fee, fees not yet allocated,
+      // and receipt is large enough to cover principal + exit fee
+      if (loan.exit_fee > 0 && feesAllocated === 0 && principalAllocated > 0
+          && receiptAmount >= principalAllocated + loan.exit_fee) {
+        feesAllocated = loan.exit_fee;
+      }
+
       const remaining = receiptAmount - principalAllocated - feesAllocated;
 
       newAllocations[loan.id] = {
         ...currentAlloc,
+        fees: feesAllocated,
         interest: remaining > 0 ? remaining : 0
       };
     } else {
@@ -330,6 +339,18 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                             <span className="ml-1 font-medium">{formatCurrency(outstanding.interest)}</span>
                           </div>
                         )}
+                        {loan.exit_fee > 0 && (
+                          <div>
+                            <span className="text-slate-500">Exit Fee:</span>
+                            <span className="ml-1 font-medium text-purple-600">{formatCurrency(loan.exit_fee)}</span>
+                          </div>
+                        )}
+                        {loan.arrangement_fee > 0 && (
+                          <div>
+                            <span className="text-slate-500">Arr. Fee:</span>
+                            <span className="ml-1 font-medium">{formatCurrency(loan.arrangement_fee)}</span>
+                          </div>
+                        )}
                       </div>
                       {lastPayment && (
                         <div className="pt-1 border-t text-xs">
@@ -391,13 +412,15 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   type="number"
                   value={alloc.fees || ''}
                   onChange={(e) => handleAllocationChange(loan.id, 'fees', e.target.value)}
-                  placeholder="0.00"
+                  placeholder={loan.exit_fee > 0 ? loan.exit_fee.toFixed(2) : '0.00'}
+                  title={loan.exit_fee > 0 ? `Exit fee: ${formatCurrency(loan.exit_fee)}` : ''}
                   step="0.01"
                   min="0"
                   disabled={!isSelected}
                   className={cn(
                     'h-7 w-16 text-sm text-right px-1',
-                    !isSelected && 'bg-slate-100 text-slate-400'
+                    !isSelected && 'bg-slate-100 text-slate-400',
+                    loan.exit_fee > 0 && !alloc.fees && isSelected && 'placeholder:text-purple-400'
                   )}
                 />
               </div>

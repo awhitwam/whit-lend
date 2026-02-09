@@ -576,6 +576,18 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                 </Button>
               )}
               <Button
+                variant={activeTab === 'repayments' ? "default" : "ghost"}
+                size="sm"
+                onClick={() => onTabChange?.('repayments')}
+                className="gap-1 h-6 text-xs px-2"
+              >
+                <Receipt className="w-3 h-3" />
+                Repayments
+                <Badge variant="secondary" className="ml-1 h-4 px-1 text-[10px]">
+                  {transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length}
+                </Badge>
+              </Button>
+              <Button
                 variant={activeTab === 'security' ? "default" : "ghost"}
                 size="sm"
                 onClick={() => onTabChange?.('security')}
@@ -799,7 +811,9 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                             {tx.interest_applied ? formatCurrency(tx.interest_applied) : '—'}
                           </TableCell>
                           <TableCell className="text-sm text-right font-mono py-0.5">
-                            {tx.fees_applied ? formatCurrency(tx.fees_applied) : '—'}
+                            {tx.fees_applied ? (
+                              <span className="text-purple-600">{formatCurrency(tx.fees_applied)}</span>
+                            ) : '—'}
                           </TableCell>
                           <TableCell className="text-sm text-right font-mono py-0.5">
                             {formatCurrency(tx.runningBalance)}
@@ -882,7 +896,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
                         <TableCell className="text-sm text-right font-mono text-emerald-600 py-0.5">
                           {formatCurrency(totalInterestPaid)}
                         </TableCell>
-                        <TableCell className="text-sm text-right font-mono py-0.5">
+                        <TableCell className="text-sm text-right font-mono text-purple-600 py-0.5">
                           {totalFeesPaid > 0 ? formatCurrency(totalFeesPaid) : '—'}
                         </TableCell>
                         <TableCell className="text-sm text-right font-mono py-0.5">
