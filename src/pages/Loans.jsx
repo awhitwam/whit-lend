@@ -147,6 +147,8 @@ export default function Loans() {
     product: 85,
     principal_bal: 95,
     interest_os: 85,
+    total_interest_rcvd: 95,
+    total_fees_rcvd: 95,
     ltv: 55,
     last_payment: 160,
     next_due: 80,
@@ -448,6 +450,8 @@ export default function Loans() {
     let totalInterestOutstanding = 0;
     let totalArrFees = 0;
     let totalExitFees = 0;
+    let totalInterestReceived = 0;
+    let totalFeesReceived = 0;
 
     loansToSum.forEach(loan => {
       // Use cached values from loan record
@@ -469,6 +473,17 @@ export default function Loans() {
       totalPrincipalBalance += Math.max(0, principalRemaining);
       totalArrFees += loan.arrangement_fee || 0;
       totalExitFees += loan.exit_fee || 0;
+
+      // For settled view totals
+      const loanTxns = allTransactions.filter(t => t.loan_id === loan.id);
+      let intRcvd = loanTxns
+        .filter(t => !t.is_deleted && t.type === 'Repayment')
+        .reduce((sum, t) => sum + (t.interest_amount || 0), 0);
+      if (intRcvd === 0 && loan.total_interest) {
+        intRcvd = loan.total_interest - (loan.interest_remaining || 0);
+      }
+      totalInterestReceived += intRcvd;
+      totalFeesReceived += (loan.arrangement_fee || 0) + (loan.exit_fee || 0) + (loan.additional_deducted_fees || 0);
     });
 
     const totalOutstanding = totalPrincipalBalance + totalInterestOutstanding + totalExitFees;
@@ -479,7 +494,9 @@ export default function Loans() {
       totalPrincipalBalance,
       totalInterestOutstanding,
       totalArrFees,
-      totalExitFees
+      totalExitFees,
+      totalInterestReceived,
+      totalFeesReceived
     };
   }, [borrowerFilter, borrowerIdsFilter, filteredLoans, allTransactions]);
 
@@ -585,6 +602,19 @@ export default function Loans() {
           } else {
             bVal = calculateLoanLtv(b) ?? Infinity;
           }
+          break;
+        case 'total_interest_rcvd': {
+          const aRepayments = allTransactions.filter(t => t.loan_id === a.id && !t.is_deleted && t.type === 'Repayment');
+          aVal = aRepayments.reduce((sum, t) => sum + (t.interest_amount || 0), 0);
+          if (aVal === 0 && a.total_interest) aVal = a.total_interest - (a.interest_remaining || 0);
+          const bRepayments = allTransactions.filter(t => t.loan_id === b.id && !t.is_deleted && t.type === 'Repayment');
+          bVal = bRepayments.reduce((sum, t) => sum + (t.interest_amount || 0), 0);
+          if (bVal === 0 && b.total_interest) bVal = b.total_interest - (b.interest_remaining || 0);
+          break;
+        }
+        case 'total_fees_rcvd':
+          aVal = (a.arrangement_fee || 0) + (a.exit_fee || 0) + (a.additional_deducted_fees || 0);
+          bVal = (b.arrangement_fee || 0) + (b.exit_fee || 0) + (b.additional_deducted_fees || 0);
           break;
         case 'created_date':
         default:
@@ -894,6 +924,26 @@ export default function Loans() {
         );
       }
     },
+    total_interest_rcvd: {
+      header: 'Int Rcvd',
+      sortKey: 'total_interest_rcvd',
+      align: 'right',
+      render: (loan, { totalInterestReceived }) => (
+        <span className={`font-mono text-sm font-semibold ${totalInterestReceived > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+          {totalInterestReceived > 0 ? formatCurrency(totalInterestReceived) : '-'}
+        </span>
+      )
+    },
+    total_fees_rcvd: {
+      header: 'Fees Rcvd',
+      sortKey: 'total_fees_rcvd',
+      align: 'right',
+      render: (loan, { totalFeesReceived }) => (
+        <span className={`font-mono text-sm font-semibold ${totalFeesReceived > 0 ? 'text-emerald-600' : 'text-slate-400'}`}>
+          {totalFeesReceived > 0 ? formatCurrency(totalFeesReceived) : '-'}
+        </span>
+      )
+    },
     ltv: {
       header: 'LTV',
       sortKey: 'ltv',
@@ -990,6 +1040,17 @@ export default function Loans() {
       )
     },
   };
+
+  // For Settled view, swap principal_bal → total_interest_rcvd and interest_os → total_fees_rcvd
+  const isSettledView = statusFilter === 'Closed';
+  const effectiveColumnOrder = useMemo(() => {
+    if (!isSettledView) return columnOrder;
+    return columnOrder.map(col => {
+      if (col === 'principal_bal') return 'total_interest_rcvd';
+      if (col === 'interest_os') return 'total_fees_rcvd';
+      return col;
+    });
+  }, [columnOrder, isSettledView]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100">
@@ -1236,14 +1297,14 @@ export default function Loans() {
                   <table className="w-full text-sm table-fixed" style={{ minWidth: '800px' }}>
                     <thead>
                       <tr className="bg-slate-50 border-b border-slate-200">
-                        {columnOrder.map((colKey) => {
+                        {effectiveColumnOrder.map((colKey) => {
                           const col = columnDefs[colKey];
                           if (!col) return null;
                           return (
                             <th
                               key={colKey}
                               className={`relative group px-2 py-2 font-medium text-slate-600 cursor-grab active:cursor-grabbing select-none text-${col.align} overflow-hidden`}
-                              style={{ width: columnWidths[colKey] }}
+                              style={{ width: columnWidths[colKey] || defaultColumnWidths[colKey] }}
                               draggable
                               onDragStart={(e) => handleDragStart(e, colKey)}
                               onDragEnd={handleDragEnd}
@@ -1299,7 +1360,23 @@ export default function Loans() {
                         const loanLtv = calculateLoanLtv(loan);
                         const valuationAgeMonths = getOldestValuationAge(loan);
 
-                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr, borrower, loanLtv, valuationAgeMonths, loanTransactions };
+                        // For settled view: calculate total interest & fees received
+                        let totalInterestReceived = 0;
+                        let totalFeesReceived = 0;
+                        if (isSettledView) {
+                          // Sum interest from repayment transactions
+                          totalInterestReceived = loanTransactions
+                            .filter(t => !t.is_deleted && t.type === 'Repayment')
+                            .reduce((sum, t) => sum + (t.interest_amount || 0), 0);
+                          // If no per-transaction breakdown, fall back to loan.total_interest
+                          if (totalInterestReceived === 0 && loan.total_interest) {
+                            totalInterestReceived = loan.total_interest - (loan.interest_remaining || 0);
+                          }
+                          // Total fees = arrangement + exit + additional deducted
+                          totalFeesReceived = (loan.arrangement_fee || 0) + (loan.exit_fee || 0) + (loan.additional_deducted_fees || 0);
+                        }
+
+                        const cellContext = { columnWidths, totalPrincipal, principalRemaining, interestRemaining, chargesOutstanding, lastPayment, lastScheduleEntry, productAbbr, borrower, loanLtv, valuationAgeMonths, loanTransactions, totalInterestReceived, totalFeesReceived };
 
                         return (
                           <tr
@@ -1307,7 +1384,7 @@ export default function Loans() {
                             className="hover:bg-slate-50 cursor-pointer h-9"
                             onClick={() => navigate(createPageUrl(`LoanDetails?id=${loan.id}`))}
                           >
-                            {columnOrder.map((colKey) => {
+                            {effectiveColumnOrder.map((colKey) => {
                               const col = columnDefs[colKey];
                               if (!col) return null;
                               return (
@@ -1331,7 +1408,7 @@ export default function Loans() {
                     {filterTotals && (
                       <tfoot>
                         <tr className="bg-slate-100 border-t-2 border-slate-300 font-semibold">
-                          {columnOrder.map((colKey) => {
+                          {effectiveColumnOrder.map((colKey) => {
                             const col = columnDefs[colKey];
                             if (!col) return null;
                             const width = columnWidths[colKey] || defaultColumnWidths[colKey] || 100;
@@ -1343,6 +1420,10 @@ export default function Loans() {
                               content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalPrincipalBalance)}</span>;
                             } else if (colKey === 'interest_os') {
                               content = <span className="font-mono text-sm">{formatCurrency(filterTotals.totalInterestOutstanding)}</span>;
+                            } else if (colKey === 'total_interest_rcvd') {
+                              content = <span className="font-mono text-sm text-emerald-600">{formatCurrency(filterTotals.totalInterestReceived || 0)}</span>;
+                            } else if (colKey === 'total_fees_rcvd') {
+                              content = <span className="font-mono text-sm text-emerald-600">{formatCurrency(filterTotals.totalFeesReceived || 0)}</span>;
                             }
 
                             return (

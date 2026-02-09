@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
+import DOMPurify from 'dompurify';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -858,7 +859,7 @@ export default function LetterGeneratorModal({
                   {/* Body - render HTML content */}
                   <div className="text-sm bg-slate-50 p-4 rounded min-h-[200px] prose prose-sm max-w-none letter-preview-body">
                     {renderedBody ? (
-                      <div dangerouslySetInnerHTML={{ __html: renderedBody }} />
+                      <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderedBody) }} />
                     ) : (
                       <span className="text-slate-400 italic">No content</span>
                     )}

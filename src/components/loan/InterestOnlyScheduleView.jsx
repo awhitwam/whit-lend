@@ -89,13 +89,25 @@ function buildTimeline({ loan, product, schedule, transactions }) {
     .filter(tx => tx.type === 'Repayment' && !tx.is_deleted)
     .forEach(tx => {
       const dateKey = getDateKey(tx.date);
+      let principalPaid = tx.principal_applied || 0;
+      let interestPaid = tx.interest_applied || 0;
+
+      // Fallback: derive interest when split fields aren't fully populated
+      if (interestPaid === 0 && tx.amount > 0) {
+        if (principalPaid > 0) {
+          interestPaid = Math.max(0, tx.amount - principalPaid);
+        } else {
+          interestPaid = tx.amount;
+        }
+      }
+
       rows.push({
         id: `tx-${tx.id}`,
         date: dateKey,
         primaryType: 'repayment',
         // Ledger data
-        principalChange: -(tx.principal_applied || 0),
-        interestPaid: tx.interest_applied || 0,
+        principalChange: -principalPaid,
+        interestPaid,
         transaction: tx,
         // No schedule data for transaction rows
         expectedInterest: 0,
@@ -436,10 +448,15 @@ function groupRowsByMonth(rows) {
     if (row.primaryType === 'disbursement') {
       group.typeCounts.disbursements++;
     } else if (row.primaryType === 'repayment') {
-      // Distinguish capital vs interest repayments
+      // Count capital and interest repayments (a single transaction can be both)
       if (row.transaction?.principal_applied > 0) {
         group.typeCounts.capitalRepayments++;
-      } else {
+      }
+      if (row.interestPaid > 0.01) {
+        group.typeCounts.interestRepayments++;
+      }
+      // If neither split field is set, count as interest repayment (legacy)
+      if (!(row.transaction?.principal_applied > 0) && !(row.interestPaid > 0.01)) {
         group.typeCounts.interestRepayments++;
       }
     } else if (row.primaryType === 'adjustment') {
@@ -732,7 +749,7 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
       {/* Principal Change total */}
       <TableCell className="text-right font-mono text-base py-0.5 whitespace-nowrap">
         {group.totalPrincipalChange !== 0 && (
-          <span className={group.totalPrincipalChange > 0 ? 'text-red-600' : ''}>
+          <span className={group.totalPrincipalChange > 0 ? 'text-red-600' : 'text-emerald-600'}>
             {group.totalPrincipalChange > 0 ? '+' : ''}{formatCurrency(group.totalPrincipalChange)}
           </span>
         )}
@@ -1137,7 +1154,7 @@ function TimelineRow({ row, product, isFirst, isLast, monthlyInterest, isNested 
                     <p>{iconTooltip}</p>
                   </TooltipContent>
                 </Tooltip>
-                <span className={isDisbursement ? 'text-red-600' : 'text-slate-700'}>
+                <span className={isDisbursement ? 'text-red-600' : 'text-emerald-600'}>
                   {isDisbursement ? '+' : ''}{formatCurrency(row.principalChange)}
                 </span>
               </div>

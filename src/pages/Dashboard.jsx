@@ -1,52 +1,35 @@
-import { useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useState, useMemo, useCallback } from 'react';
+import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { useGoogleDrive } from '@/hooks/useGoogleDrive';
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
-import { Input } from "@/components/ui/input";
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-  DialogDescription,
-} from "@/components/ui/dialog";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 import { CURRENT_SCHEMA_VERSION } from '@/lib/backupSchema';
 import { toast } from 'sonner';
 import {
-  Wallet,
-  TrendingUp,
-  TrendingDown,
   AlertTriangle,
   Plus,
   Clock,
   CheckCircle2,
-  ArrowDownLeft,
-  ArrowUpRight as ArrowUpRightIcon,
-  Shield,
-  ChevronRight,
   CircleDot,
-  Building2,
-  CreditCard,
-  Flame,
-  Search,
-  X,
-  Calendar,
   HardDrive,
   Loader2
 } from 'lucide-react';
 import { isPast, isToday, format, startOfMonth, endOfMonth, isWithinInterval, subMonths, differenceInDays } from 'date-fns';
+import QuickStatsRow from '@/components/dashboard/QuickStatsRow';
+import KeyMetricsGrid from '@/components/dashboard/KeyMetricsGrid';
+import RecentPaymentsTable from '@/components/dashboard/RecentPaymentsTable';
+import InvestorSummaryTable from '@/components/dashboard/InvestorSummaryTable';
+import AlertsSection from '@/components/dashboard/AlertsSection';
+import BreakdownModal from '@/components/dashboard/BreakdownModal';
 
 export default function Dashboard() {
-  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { currentOrganization, isLoadingOrgs, currentTheme } = useOrganization();
   const { isConnected: driveConnected, backupFolderId, uploadFileToFolder } = useGoogleDrive();
@@ -138,14 +121,14 @@ export default function Dashboard() {
   });
 
   // Calculate metrics
-  const liveLoans = loans.filter(l => l.status === 'Live' || l.status === 'Active');
-  const settledLoans = loans.filter(l => l.status === 'Closed');
-  const pendingLoans = loans.filter(l => l.status === 'Pending');
-  const writtenOffLoans = loans.filter(l => l.status === 'Written Off');
+  const liveLoans = useMemo(() => loans.filter(l => l.status === 'Live' || l.status === 'Active'), [loans]);
+  const settledLoans = useMemo(() => loans.filter(l => l.status === 'Closed'), [loans]);
+  const pendingLoans = useMemo(() => loans.filter(l => l.status === 'Pending'), [loans]);
+  const writtenOffLoans = useMemo(() => loans.filter(l => l.status === 'Written Off'), [loans]);
 
   // Calculate live metrics for each loan using daily accrual
   // Uses cached principal_remaining from database when available for performance
-  const loanMetrics = liveLoans.map(loan => {
+  const loanMetrics = useMemo(() => liveLoans.map(loan => {
     // Transactions only needed for Fixed Charge and Irregular Income product types
     const loanTransactions = transactions.filter(t => t.loan_id === loan.id);
 
@@ -210,21 +193,25 @@ export default function Dashboard() {
       interestAccrued: 0,
       interestPaid: 0
     };
-  });
+  }), [liveLoans, transactions]);
 
   // Calculate totals from live metrics
   // Use cached org summary when available for faster rendering, otherwise calculate live
-  const calculatedPrincipalOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.principalRemaining), 0);
-  const calculatedInterestOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.interestRemaining), 0);
+  const { principalOutstanding, interestOutstanding, totalOutstanding } = useMemo(() => {
+    const calculatedPrincipalOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.principalRemaining), 0);
+    const calculatedInterestOutstanding = loanMetrics.reduce((sum, m) => sum + Math.max(0, m.interestRemaining), 0);
 
-  // Use per-loan cached values summed up (not orgSummary - it's calculated differently by nightly job)
-  const principalOutstanding = calculatedPrincipalOutstanding;
-  const interestOutstanding = calculatedInterestOutstanding;
-  const totalOutstanding = principalOutstanding + interestOutstanding;
+    // Use per-loan cached values summed up (not orgSummary - it's calculated differently by nightly job)
+    return {
+      principalOutstanding: calculatedPrincipalOutstanding,
+      interestOutstanding: calculatedInterestOutstanding,
+      totalOutstanding: calculatedPrincipalOutstanding + calculatedInterestOutstanding
+    };
+  }, [loanMetrics]);
 
   // Calculate live portfolio financial metrics
   // Use cached principal_remaining for accurate balances
-  const livePortfolioMetrics = liveLoans.reduce((acc, loan) => {
+  const livePortfolioMetrics = useMemo(() => liveLoans.reduce((acc, loan) => {
     // Use cached principal_remaining if available (most accurate)
     const loanMetric = loanMetrics.find(m => m.loan.id === loan.id);
     const currentPrincipalBalance = loanMetric?.principalRemaining ?? loan.principal_remaining ?? loan.principal_amount ?? 0;
@@ -246,53 +233,53 @@ export default function Dashboard() {
       netDisbursed: acc.netDisbursed + netOutstanding,
       feesDeducted: acc.feesDeducted + totalDeductions
     };
-  }, { grossDisbursed: 0, netDisbursed: 0, feesDeducted: 0 });
+  }, { grossDisbursed: 0, netDisbursed: 0, feesDeducted: 0 }), [liveLoans, loanMetrics]);
 
   // Fees due = arrangement fees from live loans
-  const feesDue = liveLoans.reduce((sum, loan) => sum + (loan.arrangement_fee || 0), 0);
+  const feesDue = useMemo(() => liveLoans.reduce((sum, loan) => sum + (loan.arrangement_fee || 0), 0), [liveLoans]);
 
   // Exit fees due = exit fees from live loans minus fees already received
   // Calculate fees received per loan from transactions
-  const feesReceivedByLoan = transactions.reduce((acc, t) => {
+  const feesReceivedByLoan = useMemo(() => transactions.reduce((acc, t) => {
     const feesApplied = parseFloat(t.fees_applied) || 0;
     if (t.type === 'Repayment' && feesApplied > 0) {
       acc[t.loan_id] = (acc[t.loan_id] || 0) + feesApplied;
     }
     return acc;
-  }, {});
+  }, {}), [transactions]);
 
-  const exitFeesDue = liveLoans.reduce((sum, loan) => {
+  const exitFeesDue = useMemo(() => liveLoans.reduce((sum, loan) => {
     const exitFee = loan.exit_fee || 0;
     const feesReceived = feesReceivedByLoan[loan.id] || 0;
     const remaining = Math.max(0, exitFee - feesReceived);
     return sum + remaining;
-  }, 0);
+  }, 0), [liveLoans, feesReceivedByLoan]);
 
   // Other deducted fees = additional fees deducted at source (admin fees, broker fees, etc.)
-  const otherDeductedFees = liveLoans.reduce((sum, loan) => sum + (loan.additional_deducted_fees || 0), 0);
+  const otherDeductedFees = useMemo(() => liveLoans.reduce((sum, loan) => sum + (loan.additional_deducted_fees || 0), 0), [liveLoans]);
 
   // Total outstanding investor capital (what we owe investors)
-  const totalInvestorOutstanding = investors
+  const totalInvestorOutstanding = useMemo(() => investors
     .filter(inv => inv.status === 'Active')
-    .reduce((sum, inv) => sum + (inv.current_capital_balance || 0), 0);
+    .reduce((sum, inv) => sum + (inv.current_capital_balance || 0), 0), [investors]);
 
   // Organization health metrics
-  const healthMetrics = {
+  const healthMetrics = useMemo(() => ({
     netDisbursed: livePortfolioMetrics.netDisbursed,
     investorOutstanding: totalInvestorOutstanding,
     difference: livePortfolioMetrics.netDisbursed - totalInvestorOutstanding,
     ratio: totalInvestorOutstanding > 0
       ? (livePortfolioMetrics.netDisbursed / totalInvestorOutstanding) * 100
       : 0
-  };
+  }), [livePortfolioMetrics.netDisbursed, totalInvestorOutstanding]);
 
   // Expected profit = gross disbursed + fees + interest outstanding - net disbursed
   // This shows: what borrowers owe (gross + fees + interest) minus what we actually paid out (net)
-  const expectedProfit = livePortfolioMetrics.grossDisbursed + feesDue + interestOutstanding - livePortfolioMetrics.netDisbursed;
+  const expectedProfit = useMemo(() => livePortfolioMetrics.grossDisbursed + feesDue + interestOutstanding - livePortfolioMetrics.netDisbursed, [livePortfolioMetrics.grossDisbursed, livePortfolioMetrics.netDisbursed, feesDue, interestOutstanding]);
 
   // Create breakdown data for each clickable metric
   // Use cached principal_remaining for accurate balances
-  const breakdownData = {
+  const breakdownData = useMemo(() => ({
     grossDisbursed: loanMetrics
       .filter(m => m.principalRemaining > 0)
       .map(m => ({ loan: m.loan, value: Math.max(0, m.principalRemaining) }))
@@ -338,7 +325,7 @@ export default function Dashboard() {
       .sort((a, b) => b.value - a.value),
 
     borrowers: liveLoans.map(loan => ({ loan, value: 1 }))
-  };
+  }), [loanMetrics, liveLoans, feesReceivedByLoan]);
 
   const breakdownTitles = {
     grossDisbursed: 'Gross Disbursed Breakdown',
@@ -363,56 +350,56 @@ export default function Dashboard() {
   };
 
   // Filter breakdown data by search term
-  const getFilteredBreakdown = (key) => {
+  const getFilteredBreakdown = useCallback((key) => {
     if (!breakdownData[key]) return [];
     return breakdownData[key].filter(item =>
       item.loan.borrower_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
       item.loan.loan_number?.toLowerCase().includes(searchTerm.toLowerCase())
     );
-  };
+  }, [breakdownData, searchTerm]);
 
   // Borrowers in credit (negative interest = overpaid)
-  const borrowersInCredit = loanMetrics
+  const borrowersInCredit = useMemo(() => loanMetrics
     .filter(m => m.interestRemaining < -0.01) // More than 1p credit
     .map(m => ({
       loan: m.loan,
       creditAmount: Math.abs(m.interestRemaining)
     }))
-    .sort((a, b) => b.creditAmount - a.creditAmount);
+    .sort((a, b) => b.creditAmount - a.creditAmount), [loanMetrics]);
 
   // Highest interest balances (excluding Fixed Charge and Irregular Income)
-  const highestInterestBalances = loanMetrics
+  const highestInterestBalances = useMemo(() => loanMetrics
     .filter(m => !m.isFixedCharge && !m.isIrregularIncome && m.interestRemaining > 0)
     .sort((a, b) => b.interestRemaining - a.interestRemaining)
-    .slice(0, 5);
+    .slice(0, 5), [loanMetrics]);
 
   // Highest principal balances
-  const highestPrincipalBalances = loanMetrics
+  const highestPrincipalBalances = useMemo(() => loanMetrics
     .filter(m => m.principalRemaining > 0)
     .sort((a, b) => b.principalRemaining - a.principalRemaining)
-    .slice(0, 5);
+    .slice(0, 5), [loanMetrics]);
 
   // Get recent repayments (last 10)
-  const recentRepayments = transactions
+  const recentRepayments = useMemo(() => transactions
     .filter(t => !t.is_deleted && t.type === 'Repayment')
     .sort((a, b) => new Date(b.date) - new Date(a.date))
     .slice(0, 10)
     .map(tx => {
       const loan = loans.find(l => l.id === tx.loan_id);
       return { ...tx, loan };
-    });
+    }), [transactions, loans]);
 
   // Calculate further advances per loan (for backward compat with other calculations)
-  const getDisbursementsForLoan = (loanId) => {
+  const getDisbursementsForLoan = useCallback((loanId) => {
     const disbursements = transactions
       .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Disbursement')
       .sort((a, b) => new Date(a.date) - new Date(b.date));
     const furtherAdvances = disbursements.slice(1);
     return furtherAdvances.reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
-  };
+  }, [transactions]);
 
   // Calculate repayments from transactions
-  const getRepaymentsForLoan = (loanId) => {
+  const getRepaymentsForLoan = useCallback((loanId) => {
     return transactions
       .filter(t => t.loan_id === loanId && !t.is_deleted && t.type === 'Repayment')
       .reduce((acc, t) => ({
@@ -420,20 +407,20 @@ export default function Dashboard() {
         interest: acc.interest + (t.interest_applied || 0),
         total: acc.total + (t.amount || 0)
       }), { principal: 0, interest: 0, total: 0 });
-  };
+  }, [transactions]);
 
   // Total ever disbursed
-  const totalDisbursed = loans.reduce((sum, l) => {
+  const totalDisbursed = useMemo(() => loans.reduce((sum, l) => {
     return sum + (l.principal_amount || 0) + getDisbursementsForLoan(l.id);
-  }, 0);
+  }, 0), [loans, getDisbursementsForLoan]);
 
   // Total repaid
-  const totalRepaid = transactions
+  const totalRepaid = useMemo(() => transactions
     .filter(t => !t.is_deleted && t.type === 'Repayment')
-    .reduce((sum, t) => sum + (t.amount || 0), 0);
+    .reduce((sum, t) => sum + (t.amount || 0), 0), [transactions]);
 
   // Calculate arrears
-  const arrears = schedules
+  const arrears = useMemo(() => schedules
     .filter(s => {
       const loan = loans.find(l => l.id === s.loan_id);
       if (!loan || (loan.status !== 'Live' && loan.status !== 'Active')) return false;
@@ -443,48 +430,48 @@ export default function Dashboard() {
     .reduce((sum, s) => {
       const totalPaid = (s.principal_paid || 0) + (s.interest_paid || 0);
       return sum + Math.max(0, (s.total_due || 0) - totalPaid);
-    }, 0);
+    }, 0), [schedules, loans]);
 
   // Loans maturing soon (next 30 days)
-  const today = new Date();
-  const loansMaturing = liveLoans.filter(l => {
+  const today = useMemo(() => new Date(), []);
+  const loansMaturing = useMemo(() => liveLoans.filter(l => {
     if (!l.maturity_date) return false;
     const maturityDate = new Date(l.maturity_date);
     const daysUntil = differenceInDays(maturityDate, today);
     return daysUntil >= 0 && daysUntil <= 30;
-  });
+  }), [liveLoans, today]);
 
   // This month's collections
-  const thisMonth = { start: startOfMonth(today), end: endOfMonth(today) };
-  const lastMonth = { start: startOfMonth(subMonths(today, 1)), end: endOfMonth(subMonths(today, 1)) };
+  const thisMonth = useMemo(() => ({ start: startOfMonth(today), end: endOfMonth(today) }), [today]);
+  const lastMonth = useMemo(() => ({ start: startOfMonth(subMonths(today, 1)), end: endOfMonth(subMonths(today, 1)) }), [today]);
 
-  const thisMonthCollections = transactions
+  const thisMonthCollections = useMemo(() => transactions
     .filter(t => !t.is_deleted && t.type === 'Repayment' && isWithinInterval(new Date(t.date), thisMonth))
-    .reduce((sum, t) => sum + (t.amount || 0), 0);
+    .reduce((sum, t) => sum + (t.amount || 0), 0), [transactions, thisMonth]);
 
-  const lastMonthCollections = transactions
+  const lastMonthCollections = useMemo(() => transactions
     .filter(t => !t.is_deleted && t.type === 'Repayment' && isWithinInterval(new Date(t.date), lastMonth))
-    .reduce((sum, t) => sum + (t.amount || 0), 0);
+    .reduce((sum, t) => sum + (t.amount || 0), 0), [transactions, lastMonth]);
 
-  const collectionsChange = lastMonthCollections > 0
+  const collectionsChange = useMemo(() => lastMonthCollections > 0
     ? ((thisMonthCollections - lastMonthCollections) / lastMonthCollections) * 100
-    : 0;
+    : 0, [thisMonthCollections, lastMonthCollections]);
 
   // This month's disbursements
-  const thisMonthDisbursements = transactions
+  const thisMonthDisbursements = useMemo(() => transactions
     .filter(t => !t.is_deleted && t.type === 'Disbursement' && isWithinInterval(new Date(t.date), thisMonth))
-    .reduce((sum, t) => sum + (t.amount || 0), 0);
+    .reduce((sum, t) => sum + (t.amount || 0), 0), [transactions, thisMonth]);
 
   // Add initial loan disbursements for this month
-  const thisMonthNewLoans = loans
+  const thisMonthNewLoans = useMemo(() => loans
     .filter(l => isWithinInterval(new Date(l.start_date), thisMonth))
-    .reduce((sum, l) => sum + (l.principal_amount || 0), 0);
+    .reduce((sum, l) => sum + (l.principal_amount || 0), 0), [loans, thisMonth]);
 
-  const totalThisMonthDisbursements = thisMonthDisbursements + thisMonthNewLoans;
+  const totalThisMonthDisbursements = useMemo(() => thisMonthDisbursements + thisMonthNewLoans, [thisMonthDisbursements, thisMonthNewLoans]);
 
   // Security metrics
   // Applies security valuation discount from organization settings for LTV calculations
-  const calculateSecurityMetrics = () => {
+  const securityMetrics = useMemo(() => {
     const LTV_THRESHOLD = 80;
     let loansWithHighLTV = 0;
     let totalSecurityValue = 0;
@@ -516,9 +503,7 @@ export default function Dashboard() {
     });
 
     return { loansWithHighLTV, totalSecurityValue };
-  };
-
-  const securityMetrics = calculateSecurityMetrics();
+  }, [liveLoans, loanProperties, properties, currentOrganization?.settings?.security_valuation_discount, getRepaymentsForLoan]);
 
   // Calculate if backup is needed (more than 5 days since last backup)
   const BACKUP_WARNING_DAYS = 5;
@@ -566,7 +551,7 @@ export default function Dashboard() {
   };
 
   // Handle backup export
-  const handleBackupNow = async () => {
+  const handleBackupNow = useCallback(async () => {
     if (isBackingUp) return;
     setIsBackingUp(true);
 
@@ -665,7 +650,7 @@ export default function Dashboard() {
     } finally {
       setIsBackingUp(false);
     }
-  };
+  }, [isBackingUp, currentOrganization, backupFolderId, driveConnected, uploadFileToFolder, queryClient, getEntityName]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-50 to-slate-100">
@@ -857,510 +842,41 @@ export default function Dashboard() {
         </Card>
 
         {/* Quick Stats Row */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <Card className="bg-white border-slate-200 hover:shadow-md transition-shadow">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-emerald-100">
-                  <ArrowDownLeft className="w-5 h-5 text-emerald-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-slate-500 truncate">This Month Collections</p>
-                  <p className="text-lg font-bold text-slate-900">{formatCurrency(thisMonthCollections)}</p>
-                  {collectionsChange !== 0 && (
-                    <div className={`flex items-center gap-1 text-xs ${collectionsChange > 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                      {collectionsChange > 0 ? <TrendingUp className="w-3 h-3" /> : <TrendingDown className="w-3 h-3" />}
-                      <span>{Math.abs(collectionsChange).toFixed(0)}% vs last month</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-white border-slate-200 hover:shadow-md transition-shadow">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-blue-100">
-                  <ArrowUpRightIcon className="w-5 h-5 text-blue-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-slate-500 truncate">This Month Disbursed</p>
-                  <p className="text-lg font-bold text-slate-900">{formatCurrency(totalThisMonthDisbursements)}</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-white border-slate-200 hover:shadow-md transition-shadow">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-purple-100">
-                  <CheckCircle2 className="w-5 h-5 text-purple-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-slate-500 truncate">Settled Loans</p>
-                  <p className="text-lg font-bold text-slate-900">{settledLoans.length}</p>
-                  <p className="text-xs text-slate-400">{formatCurrency(totalRepaid)} repaid</p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-white border-slate-200 hover:shadow-md transition-shadow">
-            <CardContent className="p-4">
-              <div className="flex items-center gap-3">
-                <div className="p-2.5 rounded-xl bg-amber-100">
-                  <Clock className="w-5 h-5 text-amber-600" />
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs text-slate-500 truncate">Pending Approval</p>
-                  <p className="text-lg font-bold text-slate-900">{pendingLoans.length}</p>
-                  <p className="text-xs text-slate-400">
-                    {pendingLoans.length > 0
-                      ? formatCurrency(pendingLoans.reduce((s, l) => s + (l.principal_amount || 0), 0))
-                      : 'No pending'}
-                  </p>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        <QuickStatsRow
+          thisMonthCollections={thisMonthCollections}
+          collectionsChange={collectionsChange}
+          totalThisMonthDisbursements={totalThisMonthDisbursements}
+          settledLoansCount={settledLoans.length}
+          totalRepaid={totalRepaid}
+          pendingLoans={pendingLoans}
+        />
 
         {/* Key Metrics Grid - Highest Balances & Credits */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {/* Highest Interest Balances */}
-          <Card className="bg-white border-slate-200">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <Flame className="w-5 h-5 text-orange-500" />
-                  Highest Interest O/S
-                </CardTitle>
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Live accrued interest balances</p>
-            </CardHeader>
-            <CardContent className="p-0">
-              {highestInterestBalances.length === 0 ? (
-                <div className="p-4 text-center text-sm text-slate-500">
-                  No interest outstanding
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {highestInterestBalances.map((m, idx) => (
-                    <Link
-                      key={m.loan.id}
-                      to={createPageUrl(`LoanDetails?id=${m.loan.id}`)}
-                      className="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors"
-                    >
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                        idx === 0 ? 'bg-orange-100 text-orange-700' :
-                        idx === 1 ? 'bg-slate-200 text-slate-700' :
-                        'bg-slate-100 text-slate-500'
-                      }`}>
-                        {idx + 1}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-900 truncate">
-                          {m.loan.borrower_name}
-                        </p>
-                        <p className="text-xs text-slate-500">#{m.loan.loan_number}</p>
-                      </div>
-                      <p className="text-sm font-semibold text-red-600">
-                        {formatCurrency(m.interestRemaining)}
-                      </p>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Highest Principal Balances */}
-          <Card className="bg-white border-slate-200">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <Wallet className="w-5 h-5 text-blue-500" />
-                  Highest Principal O/S
-                </CardTitle>
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Largest outstanding balances</p>
-            </CardHeader>
-            <CardContent className="p-0">
-              {highestPrincipalBalances.length === 0 ? (
-                <div className="p-4 text-center text-sm text-slate-500">
-                  No principal outstanding
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {highestPrincipalBalances.map((m, idx) => (
-                    <Link
-                      key={m.loan.id}
-                      to={createPageUrl(`LoanDetails?id=${m.loan.id}`)}
-                      className="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors"
-                    >
-                      <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold ${
-                        idx === 0 ? 'bg-blue-100 text-blue-700' :
-                        idx === 1 ? 'bg-slate-200 text-slate-700' :
-                        'bg-slate-100 text-slate-500'
-                      }`}>
-                        {idx + 1}
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-900 truncate">
-                          {m.loan.borrower_name}
-                        </p>
-                        <p className="text-xs text-slate-500">#{m.loan.loan_number}</p>
-                      </div>
-                      <p className="text-sm font-semibold text-slate-900">
-                        {formatCurrency(m.principalRemaining)}
-                      </p>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-
-          {/* Borrowers in Credit */}
-          <Card className="bg-white border-slate-200">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <CreditCard className="w-5 h-5 text-emerald-500" />
-                  Borrowers in Credit
-                </CardTitle>
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Interest overpaid (credit balance)</p>
-            </CardHeader>
-            <CardContent className="p-0">
-              {borrowersInCredit.length === 0 ? (
-                <div className="p-4 text-center text-sm text-slate-500">
-                  No borrowers in credit
-                </div>
-              ) : (
-                <div className="divide-y divide-slate-100">
-                  {borrowersInCredit.slice(0, 5).map((item) => (
-                    <Link
-                      key={item.loan.id}
-                      to={createPageUrl(`LoanDetails?id=${item.loan.id}`)}
-                      className="flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors"
-                    >
-                      <div className="p-1.5 rounded-full bg-emerald-100">
-                        <ArrowDownLeft className="w-3 h-3 text-emerald-600" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-slate-900 truncate">
-                          {item.loan.borrower_name}
-                        </p>
-                        <p className="text-xs text-slate-500">#{item.loan.loan_number}</p>
-                      </div>
-                      <p className="text-sm font-semibold text-emerald-600">
-                        +{formatCurrency(item.creditAmount)}
-                      </p>
-                    </Link>
-                  ))}
-                </div>
-              )}
-            </CardContent>
-          </Card>
-        </div>
+        <KeyMetricsGrid
+          highestInterestBalances={highestInterestBalances}
+          highestPrincipalBalances={highestPrincipalBalances}
+          borrowersInCredit={borrowersInCredit}
+        />
 
         {/* Recent Payments */}
-        <Card className="bg-white border-slate-200">
-          <CardHeader className="pb-3">
-            <div className="flex items-center justify-between">
-              <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                <ArrowDownLeft className="w-5 h-5 text-emerald-500" />
-                Recent Payments
-              </CardTitle>
-              <Link to={createPageUrl('Ledger')}>
-                <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-900">
-                  View Ledger
-                  <ChevronRight className="w-4 h-4 ml-1" />
-                </Button>
-              </Link>
-            </div>
-          </CardHeader>
-          <CardContent className="p-0">
-            {recentRepayments.length === 0 ? (
-              <div className="p-4 text-center text-sm text-slate-500">
-                No recent payments
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-t bg-slate-50">
-                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Date</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Borrower</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Loan</th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase">Principal</th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase">Interest</th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase">Total</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {recentRepayments.map(tx => (
-                      <tr key={tx.id} className="hover:bg-slate-50">
-                        <td className="px-4 py-2.5 text-sm text-slate-600">
-                          {format(new Date(tx.date), 'dd MMM')}
-                        </td>
-                        <td className="px-4 py-2.5">
-                          <Link
-                            to={createPageUrl(`LoanDetails?id=${tx.loan_id}`)}
-                            className="text-sm font-medium text-slate-900 hover:text-blue-600"
-                          >
-                            {tx.loan?.borrower_name || 'Unknown'}
-                          </Link>
-                        </td>
-                        <td className="px-4 py-2.5 text-sm text-slate-500">
-                          #{tx.loan?.loan_number}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono text-slate-600">
-                          {tx.principal_applied > 0 ? formatCurrency(tx.principal_applied) : '-'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono text-slate-600">
-                          {tx.interest_applied > 0 ? formatCurrency(tx.interest_applied) : '-'}
-                        </td>
-                        <td className="px-4 py-2.5 text-right text-sm font-mono font-semibold text-emerald-600">
-                          {formatCurrency(tx.amount)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardContent>
-        </Card>
+        <RecentPaymentsTable recentRepayments={recentRepayments} />
 
         {/* Investor Summary Card */}
-        {investors.length > 0 && (
-          <Card className="bg-white border-slate-200">
-            <CardHeader className="pb-3">
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-lg font-semibold flex items-center gap-2">
-                  <Building2 className="w-5 h-5 text-purple-600" />
-                  Investor Accounts
-                </CardTitle>
-                <Link to={createPageUrl('Investors')}>
-                  <Button variant="ghost" size="sm" className="text-slate-500 hover:text-slate-900">
-                    View All
-                    <ChevronRight className="w-4 h-4 ml-1" />
-                  </Button>
-                </Link>
-              </div>
-              <div className="flex items-center gap-4 mt-2">
-                <div className="text-sm text-slate-500">
-                  Total Balance: <span className="font-semibold text-slate-900">{formatCurrency(investors.reduce((sum, inv) => sum + (inv.current_capital_balance || 0), 0))}</span>
-                </div>
-                <div className="text-sm text-slate-500">
-                  {investors.length} investor{investors.length !== 1 ? 's' : ''}
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full">
-                  <thead>
-                    <tr className="border-b border-t bg-slate-50">
-                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Business Name</th>
-                      <th className="px-4 py-2 text-right text-xs font-medium text-slate-500 uppercase">Balance</th>
-                      <th className="px-4 py-2 text-left text-xs font-medium text-slate-500 uppercase">Last Transaction</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y">
-                    {investors
-                      .filter(inv => inv.status === 'Active')
-                      .sort((a, b) => (b.current_capital_balance || 0) - (a.current_capital_balance || 0))
-                      .slice(0, 8)
-                      .map(investor => {
-                        const lastTx = investorTransactions.find(tx => tx.investor_id === investor.id);
-                        return (
-                          <tr key={investor.id} className="hover:bg-slate-50">
-                            <td className="px-4 py-2.5">
-                              <Link to={createPageUrl(`InvestorDetails?id=${investor.id}`)} className="hover:text-purple-600">
-                                <p className="font-medium text-slate-900">{investor.business_name || investor.name}</p>
-                                {investor.business_name && investor.name !== investor.business_name && (
-                                  <p className="text-xs text-slate-500">{investor.name}</p>
-                                )}
-                              </Link>
-                            </td>
-                            <td className="px-4 py-2.5 text-right">
-                              <p className="font-semibold text-purple-600">{formatCurrency(investor.current_capital_balance || 0)}</p>
-                            </td>
-                            <td className="px-4 py-2.5">
-                              {lastTx ? (
-                                <div className="flex items-center gap-2">
-                                  <Badge
-                                    variant="outline"
-                                    className={
-                                      lastTx.type === 'capital_in' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                                      lastTx.type === 'capital_out' ? 'bg-red-50 text-red-700 border-red-200' :
-                                      lastTx.type === 'interest_accrual' ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                                      'bg-blue-50 text-blue-700 border-blue-200'
-                                    }
-                                  >
-                                    {lastTx.type === 'capital_in' ? 'In' :
-                                     lastTx.type === 'capital_out' ? 'Out' :
-                                     lastTx.type === 'interest_accrual' ? 'Accrued' : 'Interest'}
-                                  </Badge>
-                                  <span className="text-sm text-slate-600">{formatCurrency(lastTx.amount)}</span>
-                                  <span className="text-xs text-slate-400">{format(new Date(lastTx.date), 'dd MMM')}</span>
-                                </div>
-                              ) : (
-                                <span className="text-sm text-slate-400">No transactions</span>
-                              )}
-                            </td>
-                          </tr>
-                        );
-                      })}
-                  </tbody>
-                </table>
-              </div>
-            </CardContent>
-          </Card>
-        )}
+        <InvestorSummaryTable investors={investors} investorTransactions={investorTransactions} />
 
         {/* Alerts Section */}
-        {(securityMetrics.loansWithHighLTV > 0 || loansMaturing.length > 0) && (
-          <div className="space-y-4">
-            {securityMetrics.loansWithHighLTV > 0 && (
-              <Card className="bg-gradient-to-r from-red-50 to-orange-50 border-red-200">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 rounded-xl bg-red-100">
-                      <Shield className="w-5 h-5 text-red-600" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-red-900">High LTV Warning</h3>
-                      <p className="text-sm text-red-700">
-                        {securityMetrics.loansWithHighLTV} loan{securityMetrics.loansWithHighLTV !== 1 ? 's' : ''} with LTV over 80%
-                      </p>
-                    </div>
-                    <Link to={createPageUrl('Loans?status=Live')}>
-                      <Button variant="outline" size="sm" className="border-red-300 text-red-700 hover:bg-red-100">
-                        Review
-                      </Button>
-                    </Link>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-
-            {loansMaturing.length > 0 && (
-              <Card className="bg-gradient-to-r from-blue-50 to-indigo-50 border-blue-200">
-                <CardContent className="p-4">
-                  <div className="flex items-center gap-4">
-                    <div className="p-3 rounded-xl bg-blue-100">
-                      <Calendar className="w-5 h-5 text-blue-600" />
-                    </div>
-                    <div className="flex-1">
-                      <h3 className="font-semibold text-blue-900">Upcoming Maturities</h3>
-                      <p className="text-sm text-blue-700">
-                        {loansMaturing.length} loan{loansMaturing.length !== 1 ? 's' : ''} maturing in the next 30 days
-                      </p>
-                    </div>
-                    <Link to={createPageUrl('Loans?status=Live')}>
-                      <Button variant="outline" size="sm" className="border-blue-300 text-blue-700 hover:bg-blue-100">
-                        View
-                      </Button>
-                    </Link>
-                  </div>
-                </CardContent>
-              </Card>
-            )}
-          </div>
-        )}
+        <AlertsSection securityMetrics={securityMetrics} loansMaturing={loansMaturing} />
 
         {/* Breakdown Modal */}
-        <Dialog open={!!activeBreakdown} onOpenChange={(open) => { if (!open) { setActiveBreakdown(null); setSearchTerm(''); } }}>
-          <DialogContent className="max-w-2xl max-h-[80vh] overflow-hidden flex flex-col">
-            <DialogHeader>
-              <DialogTitle>{breakdownTitles[activeBreakdown]}</DialogTitle>
-              <DialogDescription>
-                {breakdownDescriptions[activeBreakdown]} - Click a row to view loan details
-              </DialogDescription>
-            </DialogHeader>
-
-            {/* Search Box */}
-            <div className="relative mb-4">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 w-4 h-4 text-slate-400" />
-              <Input
-                placeholder="Search by borrower or loan #..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="pl-9 pr-9"
-              />
-              {searchTerm && (
-                <button
-                  onClick={() => setSearchTerm('')}
-                  className="absolute right-3 top-1/2 transform -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-
-            {/* Results Table */}
-            <div className="flex-1 overflow-auto">
-              <table className="w-full">
-                <thead className="sticky top-0 bg-white">
-                  <tr className="border-b">
-                    <th className="text-left py-2 px-2 text-sm font-medium text-slate-500">Loan #</th>
-                    <th className="text-left py-2 px-2 text-sm font-medium text-slate-500">Borrower</th>
-                    <th className="text-right py-2 px-2 text-sm font-medium text-slate-500">
-                      {activeBreakdown === 'borrowers' ? 'Status' : 'Amount'}
-                    </th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {getFilteredBreakdown(activeBreakdown).map(item => (
-                    <tr
-                      key={item.loan.id}
-                      className="border-b hover:bg-slate-50 cursor-pointer transition-colors"
-                      onClick={() => {
-                        navigate(createPageUrl(`LoanDetails?id=${item.loan.id}`));
-                        setActiveBreakdown(null);
-                        setSearchTerm('');
-                      }}
-                    >
-                      <td className="py-2.5 px-2 text-sm font-mono text-slate-600">#{item.loan.loan_number}</td>
-                      <td className="py-2.5 px-2 text-sm font-medium text-slate-900">{item.loan.borrower_name}</td>
-                      <td className="py-2.5 px-2 text-right text-sm font-mono font-semibold text-slate-700">
-                        {activeBreakdown === 'borrowers' ? (
-                          <span className="text-emerald-600">{item.loan.status}</span>
-                        ) : (
-                          formatCurrency(item.value)
-                        )}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-                {activeBreakdown !== 'borrowers' && (
-                  <tfoot className="sticky bottom-0 bg-white border-t-2">
-                    <tr className="font-bold">
-                      <td colSpan={2} className="py-2.5 px-2 text-sm text-slate-900">
-                        Total ({getFilteredBreakdown(activeBreakdown).length} loans)
-                      </td>
-                      <td className="py-2.5 px-2 text-right text-sm font-mono text-slate-900">
-                        {formatCurrency(getFilteredBreakdown(activeBreakdown).reduce((sum, d) => sum + (d.value || 0), 0))}
-                      </td>
-                    </tr>
-                  </tfoot>
-                )}
-              </table>
-
-              {getFilteredBreakdown(activeBreakdown).length === 0 && (
-                <div className="py-8 text-center text-slate-500">
-                  {searchTerm ? 'No loans match your search' : 'No data available'}
-                </div>
-              )}
-            </div>
-          </DialogContent>
-        </Dialog>
+        <BreakdownModal
+          activeBreakdown={activeBreakdown}
+          setActiveBreakdown={setActiveBreakdown}
+          searchTerm={searchTerm}
+          setSearchTerm={setSearchTerm}
+          breakdownTitles={breakdownTitles}
+          breakdownDescriptions={breakdownDescriptions}
+          getFilteredBreakdown={getFilteredBreakdown}
+        />
       </div>
     </div>
   );

@@ -1,11 +1,11 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { Toaster } from "@/components/ui/toaster"
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import VisualEditAgent from '@/lib/VisualEditAgent'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
-import { BrowserRouter as Router, Route, Routes, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter as Router, Route, Routes, Navigate, Outlet, useLocation } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
 import { OrganizationProvider, useOrganization } from '@/lib/OrganizationContext';
@@ -15,14 +15,38 @@ import MFAVerify from '@/pages/MFAVerify';
 import ResetPassword from '@/pages/ResetPassword';
 import SessionTimeoutWarning from '@/components/SessionTimeoutWarning';
 import SessionErrorDialog from '@/components/SessionErrorDialog';
+import ErrorBoundary from '@/components/ErrorBoundary';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
 
-const LayoutWrapper = ({ children, currentPageName }) => Layout ?
-  <Layout currentPageName={currentPageName}>{children}</Layout>
-  : <>{children}</>;
+const PageLoadingSpinner = () => (
+  <div className="flex items-center justify-center min-h-[50vh]">
+    <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+  </div>
+);
+
+const ProtectedLayout = () => (
+  <>
+    <MFAProtectedApp />
+    {Layout ? (
+      <Layout>
+        <Suspense fallback={<PageLoadingSpinner />}>
+          <ErrorBoundary>
+            <Outlet />
+          </ErrorBoundary>
+        </Suspense>
+      </Layout>
+    ) : (
+      <Suspense fallback={<PageLoadingSpinner />}>
+        <ErrorBoundary>
+          <Outlet />
+        </ErrorBoundary>
+      </Suspense>
+    )}
+  </>
+);
 
 // Set to false to disable MFA enforcement (for debugging or if Supabase plan doesn't support it)
 // Disabled: MFA conflicts with password reset (AAL2 required to change password)
@@ -191,43 +215,27 @@ const AuthenticatedApp = () => {
       {isAuthenticated && <SessionErrorDialog />}
 
       <Routes>
-        {/* Public routes - no layout wrapper */}
-        <Route path="/Login" element={<Pages.Login />} />
-        <Route path="/AcceptInvitation" element={<Pages.AcceptInvitation />} />
-        <Route path="/ResetPassword" element={<ResetPassword />} />
-        <Route path="/UpdatePassword" element={<Pages.UpdatePassword />} />
+          {/* Public routes - no layout wrapper */}
+          <Route path="/Login" element={<Suspense fallback={<PageLoadingSpinner />}><ErrorBoundary><Pages.Login /></ErrorBoundary></Suspense>} />
+          <Route path="/AcceptInvitation" element={<Suspense fallback={<PageLoadingSpinner />}><ErrorBoundary><Pages.AcceptInvitation /></ErrorBoundary></Suspense>} />
+          <Route path="/ResetPassword" element={<ResetPassword />} />
+          <Route path="/UpdatePassword" element={<Suspense fallback={<PageLoadingSpinner />}><ErrorBoundary><Pages.UpdatePassword /></ErrorBoundary></Suspense>} />
 
-        {/* MFA routes - require auth but not MFA completion */}
-        <Route path="/mfa-setup" element={<MFASetup />} />
-        <Route path="/mfa-verify" element={<MFAVerify />} />
+          {/* MFA routes - require auth but not MFA completion */}
+          <Route path="/mfa-setup" element={<MFASetup />} />
+          <Route path="/mfa-verify" element={<MFAVerify />} />
 
-        {/* Protected routes - require auth AND MFA */}
-        <Route path="/" element={
-          <>
-            <MFAProtectedApp />
-            <LayoutWrapper currentPageName={mainPageKey}>
-              <MainPage />
-            </LayoutWrapper>
-          </>
-        } />
-        {Object.entries(Pages)
-          .filter(([path]) => !['Login', 'AcceptInvitation', 'ResetPassword', 'UpdatePassword'].includes(path))
-          .map(([path, Page]) => (
-            <Route
-              key={path}
-              path={`/${path}`}
-              element={
-                <>
-                  <MFAProtectedApp />
-                  <LayoutWrapper currentPageName={path}>
-                    <Page />
-                  </LayoutWrapper>
-                </>
-              }
-            />
-          ))}
-        <Route path="*" element={<PageNotFound />} />
-      </Routes>
+          {/* Protected routes - Layout stays mounted, only Outlet content changes */}
+          <Route element={<ProtectedLayout />}>
+            <Route index element={<MainPage />} />
+            {Object.entries(Pages)
+              .filter(([path]) => !['Login', 'AcceptInvitation', 'ResetPassword', 'UpdatePassword'].includes(path))
+              .map(([path, Page]) => (
+                <Route key={path} path={path} element={<Page />} />
+              ))}
+          </Route>
+          <Route path="*" element={<PageNotFound />} />
+        </Routes>
     </>
   );
 };

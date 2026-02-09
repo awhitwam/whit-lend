@@ -43,7 +43,7 @@ import {
   Star,
   FileBarChart
 } from 'lucide-react';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo, useCallback } from 'react';
 import OrganizationSwitcher from '@/components/organization/OrganizationSwitcher';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
@@ -204,7 +204,7 @@ const getFilteredNavigation = (canAdmin, isSuperAdmin) => {
     });
 };
 
-export default function Layout({ children, currentPageName }) {
+export default function Layout({ children }) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     const saved = getOrgItem('sidebarCollapsed');
@@ -221,9 +221,10 @@ export default function Layout({ children, currentPageName }) {
   const { isSuperAdmin } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const currentPageName = location.pathname.split('/')[1] || 'Dashboard';
 
   // Get filtered navigation based on user permissions
-  const filteredNavigation = getFilteredNavigation(canAdmin(), isSuperAdmin);
+  const filteredNavigation = useMemo(() => getFilteredNavigation(canAdmin(), isSuperAdmin), [canAdmin, isSuperAdmin]);
 
   // Determine if we should show a back button (detail pages, not main nav pages)
   const mainPages = ['Dashboard', 'Borrowers', 'Loans', 'Investors', 'InvestorProducts', 'Ledger', 'Receipts', 'BankReconciliation', 'BankReconciliationSimple', 'OrphanedEntries', 'Expenses', 'OtherIncome', 'Products', 'Config', 'LetterTemplates', 'Users', 'ImportLoandisc', 'ImportExpenses', 'ImportComments', 'ImportHistoricalDisbursements', 'ImportInvestors', 'ImportInvestorTransactions', 'AuditLog', 'SuperAdmin', 'OrgAdmin', 'About'];
@@ -245,7 +246,7 @@ export default function Layout({ children, currentPageName }) {
   }, [favorites]);
 
   // Toggle favorite status for a menu item
-  const toggleFavorite = (item, e) => {
+  const toggleFavorite = useCallback((item, e) => {
     e.preventDefault();
     e.stopPropagation();
     setFavorites(prev => {
@@ -265,11 +266,11 @@ export default function Layout({ children, currentPageName }) {
         iconName
       }];
     });
-  };
+  }, []);
 
-  const isFavorite = (href) => favorites.some(f => f.href === href);
+  const isFavorite = useCallback((href) => favorites.some(f => f.href === href), [favorites]);
 
-  const isActive = (pageName) => {
+  const isActive = useCallback((pageName) => {
     if (!pageName) return false;
     // Handle query params in href (e.g., 'Loans?status=Live')
     const [basePage, queryString] = pageName.split('?');
@@ -290,9 +291,9 @@ export default function Layout({ children, currentPageName }) {
       return true;
     }
     return false;
-  };
+  }, [currentPageName, location.search]);
 
-  const isChildActive = (item) => {
+  const isChildActive = useCallback((item) => {
     if (!item.children) return false;
     return item.children.some(child => {
       if (child.children) {
@@ -300,21 +301,21 @@ export default function Layout({ children, currentPageName }) {
       }
       return isActive(child.href);
     });
-  };
+  }, [isActive]);
 
-  const toggleMenu = (menuName) => {
+  const toggleMenu = useCallback((menuName) => {
     setExpandedMenus(prev =>
       prev.includes(menuName)
         ? prev.filter(m => m !== menuName)
         : [...prev, menuName]
     );
-  };
+  }, []);
 
   const sidebarWidth = sidebarCollapsed ? 'w-16' : 'w-64';
   const mainPadding = sidebarCollapsed ? 'md:pl-16' : 'md:pl-64';
 
   // Render a single nav item (either a link or a submenu)
-  const renderNavItem = (item, isMobile = false) => {
+  const renderNavItem = useCallback((item, isMobile = false) => {
     const hasChildren = item.children && item.children.length > 0;
     const isExpanded = expandedMenus.includes(item.name);
     const childActive = isChildActive(item);
@@ -560,7 +561,7 @@ export default function Layout({ children, currentPageName }) {
     }
 
     return linkContent;
-  };
+  }, [expandedMenus, sidebarCollapsed, isChildActive, isActive, toggleMenu, toggleFavorite, isFavorite]);
 
   return (
     <TooltipProvider delayDuration={0}>

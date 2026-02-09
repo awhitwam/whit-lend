@@ -3,6 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import ReactQuill from 'react-quill';
 import 'react-quill/dist/quill.snow.css';
+import DOMPurify from 'dompurify';
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -786,7 +787,7 @@ Yours sincerely,
                       {/* Body */}
                       <div className="text-sm prose prose-sm max-w-none template-preview-body">
                         {renderedBody ? (
-                          <div dangerouslySetInnerHTML={{ __html: renderedBody }} />
+                          <div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(renderedBody) }} />
                         ) : (
                           <span className="text-slate-400 italic">Enter letter content to see preview...</span>
                         )}
