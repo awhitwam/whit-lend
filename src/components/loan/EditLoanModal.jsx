@@ -47,6 +47,7 @@ export default function EditLoanPanel({
     // Roll-Up & Serviced fields
     roll_up_length: loan?.roll_up_length ?? '',
     roll_up_amount: loan?.roll_up_amount ?? '',
+    roll_up_amount_override: loan?.roll_up_amount_override ?? false,
     // Additional deducted fees
     additional_deducted_fees: loan?.additional_deducted_fees ?? '',
     additional_deducted_fees_note: loan?.additional_deducted_fees_note || ''
@@ -383,6 +384,11 @@ export default function EditLoanPanel({
       changes.roll_up_amount = formData.roll_up_amount ? parseFloat(formData.roll_up_amount) : null;
     }
 
+    // Roll-up amount override flag
+    if (formData.roll_up_amount_override !== (loan.roll_up_amount_override ?? false)) {
+      changes.roll_up_amount_override = formData.roll_up_amount_override;
+    }
+
     // NEVER recalculate net_disbursed - it should only be changed if user explicitly edits it
     // or through the disbursement transaction editing
 
@@ -422,13 +428,18 @@ export default function EditLoanPanel({
     setFormData(prev => {
       const updated = { ...prev, [field]: value };
 
-      // Auto-recalculate roll-up amount when dependencies change
+      // Mark as override when user manually edits the roll-up amount
+      if (field === 'roll_up_amount') {
+        updated.roll_up_amount_override = true;
+      }
+
+      // Auto-recalculate roll-up amount when dependencies change (only if not manually overridden)
       // Uses shared utility - principal IS the gross amount (no additional fees added)
       if (['principal_amount', 'interest_rate', 'overridden_rate', 'roll_up_length', 'override_interest_rate'].includes(field)) {
         const product = products.find(p => p.id === updated.product_id);
         const productIsRollUp = product?.product_type === 'Roll-Up & Serviced' || updated.product_type === 'Roll-Up & Serviced';
 
-        if (productIsRollUp && updated.roll_up_length) {
+        if (productIsRollUp && updated.roll_up_length && !updated.roll_up_amount_override) {
           const effectiveRate = updated.override_interest_rate && updated.overridden_rate
             ? updated.overridden_rate
             : updated.interest_rate;
@@ -710,7 +721,33 @@ export default function EditLoanPanel({
                   <p className="text-xs text-slate-500">Interest rolls up for this period</p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="roll_up_amount">Roll-Up Amount</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="roll_up_amount">Roll-Up Amount</Label>
+                    {formData.roll_up_amount_override && (
+                      <button
+                        type="button"
+                        className="text-xs text-indigo-600 hover:text-indigo-800 underline"
+                        onClick={() => {
+                          const product = products.find(p => p.id === formData.product_id);
+                          const effectiveRate = formData.override_interest_rate && formData.overridden_rate
+                            ? formData.overridden_rate
+                            : formData.interest_rate;
+                          const calculated = calculateRollUpAmount(
+                            formData.principal_amount,
+                            effectiveRate,
+                            formData.roll_up_length
+                          );
+                          setFormData(prev => ({
+                            ...prev,
+                            roll_up_amount: calculated,
+                            roll_up_amount_override: false
+                          }));
+                        }}
+                      >
+                        Reset to auto
+                      </button>
+                    )}
+                  </div>
                   <Input
                     id="roll_up_amount"
                     type="number"
@@ -718,8 +755,11 @@ export default function EditLoanPanel({
                     onChange={(e) => handleChange('roll_up_amount', e.target.value)}
                     placeholder="Auto-calculated"
                     step="0.01"
+                    className={formData.roll_up_amount_override ? 'border-amber-400 bg-amber-50' : ''}
                   />
-                  <p className="text-xs text-slate-500">Auto-calculated, edit to override</p>
+                  <p className="text-xs text-slate-500">
+                    {formData.roll_up_amount_override ? 'Manually overridden' : 'Auto-calculated, edit to override'}
+                  </p>
                 </div>
               </div>
             </div>

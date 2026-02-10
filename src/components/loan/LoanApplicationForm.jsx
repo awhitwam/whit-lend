@@ -45,6 +45,7 @@ export default function LoanApplicationForm({
     // Roll-Up & Serviced fields
     roll_up_length: '',
     roll_up_amount: '',
+    roll_up_amount_override: false,
     // Additional deducted fees (applies to all products)
     additional_deducted_fees: '',
     additional_deducted_fees_note: ''
@@ -80,8 +81,8 @@ export default function LoanApplicationForm({
         selectedProduct.interest_rate,
         formData.roll_up_length
       );
-      // Only auto-update if the field is empty or hasn't been manually edited
-      if (!formData.roll_up_amount) {
+      // Only auto-update if not manually overridden
+      if (!formData.roll_up_amount_override) {
         setFormData(prev => ({ ...prev, roll_up_amount: calculated }));
       }
     }
@@ -91,9 +92,14 @@ export default function LoanApplicationForm({
     setFormData(prev => {
       const updated = { ...prev, [field]: value };
 
-      // Auto-recalculate roll-up amount when dependencies change (unless manually editing roll_up_amount)
+      // Mark as override when user manually edits the roll-up amount
+      if (field === 'roll_up_amount') {
+        updated.roll_up_amount_override = true;
+      }
+
+      // Auto-recalculate roll-up amount when dependencies change (only if not manually overridden)
       // Uses shared utility - principal IS the gross amount (no additional fees added)
-      if (field !== 'roll_up_amount' && isRollUpServiced && selectedProduct) {
+      if (field !== 'roll_up_amount' && !updated.roll_up_amount_override && isRollUpServiced && selectedProduct) {
         const principal = field === 'principal_amount' ? value : prev.principal_amount;
         const rollUpLength = field === 'roll_up_length' ? value : prev.roll_up_length;
 
@@ -388,7 +394,8 @@ export default function LoanApplicationForm({
       interest_paid: 0,
       // Roll-Up & Serviced fields
       roll_up_length: formData.roll_up_length ? parseInt(formData.roll_up_length) : null,
-      roll_up_amount: formData.roll_up_amount ? parseFloat(formData.roll_up_amount) : null
+      roll_up_amount: formData.roll_up_amount ? parseFloat(formData.roll_up_amount) : null,
+      roll_up_amount_override: formData.roll_up_amount_override ?? false
     }, previewSchedule);
   };
 
@@ -707,7 +714,37 @@ export default function LoanApplicationForm({
                   <p className="text-xs text-slate-500">Interest rolls up for this period</p>
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="roll_up_amount">Roll-Up Amount</Label>
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="roll_up_amount">Roll-Up Amount</Label>
+                    {formData.roll_up_amount_override && (
+                      <button
+                        type="button"
+                        className="text-xs text-indigo-600 hover:text-indigo-800 underline"
+                        onClick={() => {
+                          if (selectedProduct && formData.principal_amount && formData.roll_up_length) {
+                            const calculated = calculateRollUpAmount(
+                              formData.principal_amount,
+                              selectedProduct.interest_rate,
+                              formData.roll_up_length
+                            );
+                            setFormData(prev => ({
+                              ...prev,
+                              roll_up_amount: calculated,
+                              roll_up_amount_override: false
+                            }));
+                          } else {
+                            setFormData(prev => ({
+                              ...prev,
+                              roll_up_amount: '',
+                              roll_up_amount_override: false
+                            }));
+                          }
+                        }}
+                      >
+                        Reset to auto
+                      </button>
+                    )}
+                  </div>
                   <Input
                     id="roll_up_amount"
                     type="number"
@@ -715,8 +752,11 @@ export default function LoanApplicationForm({
                     onChange={(e) => handleChange('roll_up_amount', e.target.value)}
                     placeholder="Auto-calculated"
                     step="0.01"
+                    className={formData.roll_up_amount_override ? 'border-amber-400 bg-amber-50' : ''}
                   />
-                  <p className="text-xs text-slate-500">Auto-calculated, edit to override</p>
+                  <p className="text-xs text-slate-500">
+                    {formData.roll_up_amount_override ? 'Manually overridden' : 'Auto-calculated, edit to override'}
+                  </p>
                 </div>
               </div>
             </div>

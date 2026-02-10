@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
+import { supabase } from '@/lib/supabaseClient';
 import { useAuth } from '@/lib/AuthContext';
 import { useOrganization } from '@/lib/OrganizationContext';
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -94,6 +95,21 @@ export default function LoanActivityPanel({ loan }) {
   const [deleteConfirmLetter, setDeleteConfirmLetter] = useState(null);
   const [filterType, setFilterType] = useState('all'); // 'all' | 'comments' | 'letters'
 
+  // Fetch user's display name from user_profiles
+  const { data: userProfile } = useQuery({
+    queryKey: ['user-profile-name', user?.id],
+    queryFn: async () => {
+      const { data } = await supabase
+        .from('user_profiles')
+        .select('full_name')
+        .eq('id', user.id)
+        .single();
+      return data;
+    },
+    enabled: !!user?.id,
+    staleTime: Infinity
+  });
+
   // Fetch comments for this loan
   const { data: comments = [], isLoading: isLoadingComments } = useQuery({
     queryKey: ['loan-comments', loan.id],
@@ -143,7 +159,7 @@ export default function LoanActivityPanel({ loan }) {
       return api.entities.LoanComment.create({
         loan_id: loan.id,
         user_id: user?.id || null,
-        user_name: user?.user_metadata?.full_name || user?.email || 'Unknown',
+        user_name: userProfile?.full_name || user?.user_metadata?.full_name || user?.email || 'Unknown',
         comment: commentText
       });
     },

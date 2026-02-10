@@ -50,7 +50,8 @@ import {
   FolderPlus,
   FolderOpen,
   Home,
-  Ban
+  Ban,
+  ChevronDown
 } from 'lucide-react';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -69,6 +70,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
 import DisbursementModal from '@/components/loan/DisbursementModal';
@@ -99,6 +101,7 @@ export default function LoanDetails() {
   const [isPaymentOpen, setIsPaymentOpen] = useState(false);
   const [isEditOpen, setIsEditOpen] = useState(false);
   const [isSettleOpen, setIsSettleOpen] = useState(false);
+  const [showLoanDetails, setShowLoanDetails] = useState(false);
   const [isRegenerateDialogOpen, setIsRegenerateDialogOpen] = useState(false);
   const [regenerateEndDate, setRegenerateEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
@@ -2224,6 +2227,132 @@ export default function LoanDetails() {
               </div>
             </div>
           </CardContent>
+          {/* Expandable Loan Details Panel */}
+          <Collapsible open={showLoanDetails} onOpenChange={setShowLoanDetails}>
+            <CollapsibleTrigger asChild>
+              <button className="w-full flex items-center justify-center gap-1.5 py-1 bg-slate-50 hover:bg-slate-100 border-t border-slate-200 transition-colors text-xs text-slate-400 hover:text-slate-600">
+                <span>Details</span>
+                <ChevronDown className={cn("w-3 h-3 transition-transform", showLoanDetails && "rotate-180")} />
+              </button>
+            </CollapsibleTrigger>
+            <CollapsibleContent>
+              <div className="px-4 py-2 bg-slate-50 border-t border-slate-100">
+                <div className="flex flex-wrap gap-x-6 gap-y-1 text-xs">
+                  {loan.description && (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-slate-400">Description:</span>
+                      <span className="text-slate-700">{loan.description}</span>
+                    </div>
+                  )}
+                  {!isSpecialType && (
+                    <>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-slate-400">Rate:</span>
+                        <span className="font-medium">
+                          {loan.override_interest_rate && loan.overridden_rate != null
+                            ? <>{loan.overridden_rate}% <span className="text-amber-600">(Custom)</span></>
+                            : <>{loan.interest_rate}%</>
+                          }
+                          {' '}{loan.interest_type}
+                        </span>
+                      </div>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-slate-400">Period:</span>
+                        <span className="font-medium">{loan.period || 'Monthly'}</span>
+                      </div>
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-slate-400">Term:</span>
+                        <span className="font-medium">
+                          {loan.original_term || loan.duration} {loan.period === 'Weekly' ? 'wk' : 'mo'}
+                          {loan.original_term && loan.original_term !== loan.duration && (
+                            <span className="text-slate-400 ml-1">({loan.duration}{loan.period === 'Weekly' ? 'wk' : 'mo'} now)</span>
+                          )}
+                        </span>
+                      </div>
+                      {loan.interest_only_period > 0 && (
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-slate-400">IO Period:</span>
+                          <span className="font-medium">{loan.interest_only_period}mo</span>
+                        </div>
+                      )}
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-slate-400">Auto-Extend:</span>
+                        <span className="font-medium">{loan.auto_extend ? 'Yes' : 'No'}</span>
+                      </div>
+                    </>
+                  )}
+                  {loan.has_penalty_rate && loan.penalty_rate && (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-slate-400">Penalty:</span>
+                      <span className="font-medium text-amber-600">
+                        {loan.penalty_rate}%
+                        {loan.penalty_rate_from && (
+                          <span className="text-slate-400 ml-1">from {format(new Date(loan.penalty_rate_from), 'dd/MM/yy')}</span>
+                        )}
+                      </span>
+                    </div>
+                  )}
+                  {loan.arrangement_fee > 0 && (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-slate-400">Arr. Fee:</span>
+                      <span className="font-medium">{formatCurrency(loan.arrangement_fee)}</span>
+                    </div>
+                  )}
+                  {loan.exit_fee > 0 && (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-slate-400">Exit Fee:</span>
+                      <span className="font-medium">{formatCurrency(loan.exit_fee)}</span>
+                    </div>
+                  )}
+                  {loan.additional_deducted_fees > 0 && (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-slate-400">Addtl Fees:</span>
+                      <span className="font-medium">{formatCurrency(loan.additional_deducted_fees)}</span>
+                      {loan.additional_deducted_fees_note && (
+                        <span className="text-slate-400">({loan.additional_deducted_fees_note})</span>
+                      )}
+                    </div>
+                  )}
+                  {!isSpecialType && (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-slate-400">Net Disbursed:</span>
+                      <span className="font-medium">{formatCurrency(totalNetDisbursed)}</span>
+                    </div>
+                  )}
+                  {(loan.product_type === 'Roll-Up & Serviced' || loan.interest_type === 'Roll-Up & Serviced') && (
+                    <>
+                      {loan.roll_up_length && (
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-slate-400">Roll-Up:</span>
+                          <span className="font-medium text-indigo-600">{loan.roll_up_length}mo</span>
+                        </div>
+                      )}
+                      {loan.roll_up_amount && (
+                        <div className="flex items-baseline gap-1">
+                          <span className="text-slate-400">Roll-Up Amt:</span>
+                          <span className="font-medium text-indigo-600">
+                            {formatCurrency(loan.roll_up_amount)}
+                            {loan.roll_up_amount_override && <span className="text-amber-500 ml-1">(Override)</span>}
+                          </span>
+                        </div>
+                      )}
+                    </>
+                  )}
+                  {product && (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-slate-400">Product:</span>
+                      <span className="font-medium">{product.name}</span>
+                      <span className="text-slate-400">
+                        ({product.interest_calculation_method === 'daily' ? 'Daily' : 'Monthly'}
+                        {' • '}
+                        {product.interest_paid_in_advance ? 'Advance' : 'Arrears'})
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </CollapsibleContent>
+          </Collapsible>
         </Card>
 
         {/* Content area with unified header */}

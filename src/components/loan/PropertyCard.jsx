@@ -20,7 +20,8 @@ import {
   Warehouse,
   TrendingUp,
   MessageSquare,
-  ExternalLink
+  ExternalLink,
+  Loader2
 } from 'lucide-react';
 import { usePropertyDocumentCounts, DOCUMENT_TYPES } from './PropertyDocuments';
 import {
@@ -50,6 +51,7 @@ export default function PropertyCard({
   const { documents } = usePropertyDocumentCounts(property?.id);
   const { currentOrganization } = useOrganization();
   const [thumbnailUrl, setThumbnailUrl] = useState(null);
+  const [fullSizeUrl, setFullSizeUrl] = useState(null);
   const [showImageLightbox, setShowImageLightbox] = useState(false);
   const STALE_VALUATION_MONTHS = 12;
   const STALE_BALANCE_MONTHS = 6;
@@ -61,12 +63,15 @@ export default function PropertyCard({
   // Get the first photo for the thumbnail
   const firstPhoto = documents.find(d => d.document_type === 'photo' && d.storage_path && d.mime_type?.startsWith('image/'));
 
-  // Load thumbnail for first photo
+  // Load small thumbnail for first photo (128x128 server-resized)
   useEffect(() => {
     if (firstPhoto?.storage_path) {
+      setFullSizeUrl(null);
       supabase.storage
         .from('property-documents')
-        .createSignedUrl(firstPhoto.storage_path, 3600)
+        .createSignedUrl(firstPhoto.storage_path, 3600, {
+          transform: { width: 128, height: 128, resize: 'cover' }
+        })
         .then(({ data, error }) => {
           if (!error && data?.signedUrl) {
             setThumbnailUrl(data.signedUrl);
@@ -76,6 +81,20 @@ export default function PropertyCard({
       setThumbnailUrl(null);
     }
   }, [firstPhoto?.storage_path]);
+
+  // Lazy-load full-size image only when lightbox is opened
+  useEffect(() => {
+    if (showImageLightbox && firstPhoto?.storage_path && !fullSizeUrl) {
+      supabase.storage
+        .from('property-documents')
+        .createSignedUrl(firstPhoto.storage_path, 3600)
+        .then(({ data, error }) => {
+          if (!error && data?.signedUrl) {
+            setFullSizeUrl(data.signedUrl);
+          }
+        });
+    }
+  }, [showImageLightbox, firstPhoto?.storage_path, fullSizeUrl]);
 
   // Calculate security value
   const propertyValue = property?.current_value || 0;
@@ -163,6 +182,7 @@ export default function PropertyCard({
                   src={thumbnailUrl}
                   alt={property?.address}
                   className="w-full h-full object-cover"
+                  loading="lazy"
                 />
               </button>
             ) : (
@@ -308,15 +328,17 @@ export default function PropertyCard({
           <DialogHeader>
             <DialogTitle>{property?.address}</DialogTitle>
           </DialogHeader>
-          {thumbnailUrl && (
-            <div className="flex items-center justify-center">
+          <div className="flex items-center justify-center min-h-[200px]">
+            {fullSizeUrl ? (
               <img
-                src={thumbnailUrl}
+                src={fullSizeUrl}
                 alt={property?.address}
                 className="max-w-full max-h-[70vh] object-contain rounded-lg"
               />
-            </div>
-          )}
+            ) : (
+              <Loader2 className="w-8 h-8 animate-spin text-slate-400" />
+            )}
+          </div>
         </DialogContent>
       </Dialog>
     </Card>

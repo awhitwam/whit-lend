@@ -9,6 +9,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { ArrowLeft, Edit, TrendingUp, TrendingDown, DollarSign, Plus, Trash2, Loader2, Percent, Building2, Pencil, RefreshCw, Landmark, ShieldCheck } from 'lucide-react';
+import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -27,6 +28,7 @@ export default function InvestorDetails() {
   const [isInterestDialogOpen, setIsInterestDialogOpen] = useState(false);
   const [editingTransaction, setEditingTransaction] = useState(null);
   const [editingInterest, setEditingInterest] = useState(null);
+  const [hideInterest, setHideInterest] = useState(false);
   const [interestFormData, setInterestFormData] = useState({
     type: 'credit',
     amount: '',
@@ -489,6 +491,12 @@ export default function InvestorDetails() {
     return items;
   }, [capitalTransactions, interestEntries]);
 
+  // Filter merged items based on toggle visibility
+  const displayedItems = useMemo(() => {
+    if (!hideInterest) return mergedItems;
+    return mergedItems.filter(item => item.itemType !== 'interest');
+  }, [mergedItems, hideInterest]);
+
   // Calculate which interest entries should be struck out (matched credit/debit pairs in same month)
   const struckOutIds = useMemo(() => {
     const struckOut = new Set();
@@ -842,7 +850,15 @@ export default function InvestorDetails() {
           <CardHeader>
             <div className="flex items-center justify-between">
               <CardTitle>Transactions & Interest</CardTitle>
-              <div className="flex items-center gap-2">
+              <div className="flex items-center gap-4">
+                <label className="flex items-center gap-1.5 cursor-pointer text-sm text-slate-600">
+                  <Switch
+                    checked={hideInterest}
+                    onCheckedChange={setHideInterest}
+                    className="scale-75"
+                  />
+                  <span>Hide Interest</span>
+                </label>
                 <Button size="sm" variant="outline" onClick={() => openInterestDialog()}>
                   <Percent className="w-4 h-4 mr-2" />
                   Add Interest Entry
@@ -855,7 +871,7 @@ export default function InvestorDetails() {
             </div>
           </CardHeader>
           <CardContent>
-            {mergedItems.length === 0 ? (
+            {displayedItems.length === 0 ? (
               <div className="text-center py-12 text-slate-500">
                 <DollarSign className="w-12 h-12 mx-auto mb-3 text-slate-300" />
                 <p>No transactions yet</p>
@@ -876,7 +892,7 @@ export default function InvestorDetails() {
 
                 {/* Flat transaction list */}
                 <TooltipProvider>
-                {mergedItems.map((item) => {
+                {displayedItems.map((item) => {
                   const isInterest = item.itemType === 'interest';
                   const isDebit = isInterest ? item.type === 'debit' : item.type === 'capital_out';
                   const isCredit = isInterest ? item.type === 'credit' : item.type === 'capital_in';
