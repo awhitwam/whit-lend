@@ -11,7 +11,7 @@
 //   POST ?action=save-backup - Save selected backup folder
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { refreshTokenIfNeeded, getUserTokens } from '../_shared/tokenManagement.ts'
+import { refreshTokenIfNeeded, getOrgTokens } from '../_shared/tokenManagement.ts'
 import { jsonResponse, errorResponse, handleCors } from '../_shared/cors.ts'
 
 Deno.serve(async (req) => {
@@ -43,24 +43,40 @@ Deno.serve(async (req) => {
       return errorResponse('Invalid user token', 401)
     }
 
-    // Get tokens
-    const tokenData = await getUserTokens(supabaseAdmin, user.id)
+    const url = new URL(req.url)
+    const action = url.searchParams.get('action') || 'list'
+
+    // Get organizationId from query params (GET) or will get from body (POST)
+    let organizationId = url.searchParams.get('organizationId')
+
+    // For POST actions, parse body to get organizationId
+    let parsedBody: any = null
+    if (req.method === 'POST') {
+      parsedBody = await req.json()
+      if (!organizationId) {
+        organizationId = parsedBody.organizationId
+      }
+    }
+
+    if (!organizationId) {
+      return errorResponse('Missing organizationId', 400)
+    }
+
+    // Get org tokens
+    const tokenData = await getOrgTokens(supabaseAdmin, organizationId)
 
     if (!tokenData) {
-      return errorResponse('Google Drive not connected', 400)
+      return errorResponse('Google Drive not connected for this organization', 400)
     }
 
     const accessToken = await refreshTokenIfNeeded({
       supabaseAdmin,
-      userId: user.id,
+      organizationId,
       tokenData,
       encryptionKey,
       googleClientId,
       googleClientSecret
     })
-
-    const url = new URL(req.url)
-    const action = url.searchParams.get('action') || 'list'
 
     if (action === 'shared-drives') {
       // List shared drives
@@ -110,15 +126,10 @@ Deno.serve(async (req) => {
 
     } else if (action === 'save-base') {
       // Save base folder selection (organization-level, super admin only)
-      const body = await req.json()
-      const { folderId, folderPath, organizationId } = body
+      const { folderId, folderPath } = parsedBody
 
       if (!folderId) {
         return errorResponse('Missing folderId', 400)
-      }
-
-      if (!organizationId) {
-        return errorResponse('Missing organizationId', 400)
       }
 
       // Verify user is super admin
@@ -149,15 +160,10 @@ Deno.serve(async (req) => {
 
     } else if (action === 'save-backup') {
       // Save backup folder selection (organization-level, org admin required)
-      const body = await req.json()
-      const { folderId, folderPath, organizationId } = body
+      const { folderId, folderPath } = parsedBody
 
       if (!folderId) {
         return errorResponse('Missing folderId', 400)
-      }
-
-      if (!organizationId) {
-        return errorResponse('Missing organizationId', 400)
       }
 
       // Verify user is org admin or super admin

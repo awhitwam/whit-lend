@@ -3,6 +3,8 @@
  *
  * Handles token refresh logic with automatic retry and user disconnection
  * on permanent failures.
+ *
+ * Tokens are stored per-organization (not per-user).
  */
 
 import { encryptToken, decryptToken } from './crypto.ts'
@@ -15,7 +17,7 @@ export interface TokenData {
 
 export interface TokenRefreshConfig {
   supabaseAdmin: any
-  userId: string
+  organizationId: string
   tokenData: TokenData
   encryptionKey: string
   googleClientId: string
@@ -33,7 +35,7 @@ export interface TokenRefreshConfig {
 export async function refreshTokenIfNeeded(config: TokenRefreshConfig): Promise<string> {
   const {
     supabaseAdmin,
-    userId,
+    organizationId,
     tokenData,
     encryptionKey,
     googleClientId,
@@ -65,11 +67,11 @@ export async function refreshTokenIfNeeded(config: TokenRefreshConfig): Promise<
   const newTokens = await refreshResponse.json()
 
   if (newTokens.error) {
-    // Mark user as disconnected when token refresh fails
+    // Mark organization as disconnected when token refresh fails
     await supabaseAdmin
-      .from('user_profiles')
+      .from('organizations')
       .update({ google_drive_connected: false })
-      .eq('id', userId)
+      .eq('id', organizationId)
 
     throw new Error('Google Drive session expired. Please reconnect in Settings.')
   }
@@ -85,26 +87,26 @@ export async function refreshTokenIfNeeded(config: TokenRefreshConfig): Promise<
       token_expiry: newExpiry,
       updated_at: new Date().toISOString()
     })
-    .eq('user_id', userId)
+    .eq('organization_id', organizationId)
 
   return newTokens.access_token
 }
 
 /**
- * Get user's Google Drive tokens from database
+ * Get organization's Google Drive tokens from database
  *
  * @param supabaseAdmin - Supabase admin client
- * @param userId - User ID to fetch tokens for
+ * @param organizationId - Organization ID to fetch tokens for
  * @returns Token data or null if not found
  */
-export async function getUserTokens(
+export async function getOrgTokens(
   supabaseAdmin: any,
-  userId: string
+  organizationId: string
 ): Promise<TokenData | null> {
   const { data, error } = await supabaseAdmin
     .from('google_drive_tokens')
     .select('access_token_encrypted, refresh_token_encrypted, token_expiry')
-    .eq('user_id', userId)
+    .eq('organization_id', organizationId)
     .single()
 
   if (error || !data) {

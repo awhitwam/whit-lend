@@ -1392,8 +1392,9 @@ export default function OrgAdmin() {
         addLog('Uploading to Google Drive...');
         setExportProgress({ current: 0, total: 0, step: 'Uploading to Google Drive...' });
         try {
-          // Convert to base64 for upload
-          const base64Content = btoa(unescape(encodeURIComponent(backupJson)));
+          // Use compact JSON for Drive upload (much smaller than pretty-printed)
+          const compactJson = JSON.stringify(backup);
+          const base64Content = btoa(unescape(encodeURIComponent(compactJson)));
           await uploadFileToFolder(backupFolderId, fileName, base64Content, 'application/json');
           addLog('Successfully uploaded to Google Drive!');
           driveUploadSuccess = true;

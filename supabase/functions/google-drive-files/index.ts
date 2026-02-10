@@ -11,7 +11,7 @@
 //   - upload: Upload a file to a specific folder
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { refreshTokenIfNeeded, getUserTokens } from '../_shared/tokenManagement.ts'
+import { refreshTokenIfNeeded, getOrgTokens } from '../_shared/tokenManagement.ts'
 import { jsonResponse, errorResponse, handleCors } from '../_shared/cors.ts'
 
 interface DriveItem {
@@ -250,28 +250,33 @@ Deno.serve(async (req) => {
       return errorResponse('Invalid user token', 401)
     }
 
-    // Get tokens
-    const tokenData = await getUserTokens(supabaseAdmin, user.id)
-
-    if (!tokenData) {
-      return errorResponse('Google Drive not connected', 400)
-    }
-
-    const accessToken = await refreshTokenIfNeeded({
-      supabaseAdmin,
-      userId: user.id,
-      tokenData,
-      encryptionKey,
-      googleClientId,
-      googleClientSecret
-    })
-
     // Handle GET requests (list actions)
     if (req.method === 'GET') {
       const url = new URL(req.url)
       const action = url.searchParams.get('action') || 'list'
       const folderId = url.searchParams.get('folderId')
       const driveId = url.searchParams.get('driveId')
+      const organizationId = url.searchParams.get('organizationId')
+
+      if (!organizationId) {
+        return errorResponse('Missing organizationId parameter', 400)
+      }
+
+      // Get org tokens
+      const tokenData = await getOrgTokens(supabaseAdmin, organizationId)
+
+      if (!tokenData) {
+        return errorResponse('Google Drive not connected for this organization', 400)
+      }
+
+      const accessToken = await refreshTokenIfNeeded({
+        supabaseAdmin,
+        organizationId,
+        tokenData,
+        encryptionKey,
+        googleClientId,
+        googleClientSecret
+      })
 
       if (!folderId) {
         return errorResponse('Missing folderId parameter', 400)
@@ -293,7 +298,27 @@ Deno.serve(async (req) => {
     // Handle POST requests (create-folder, upload)
     if (req.method === 'POST') {
       const body = await req.json()
-      const { action, folderId, driveId, folderName, fileName, fileContent, mimeType } = body
+      const { action, folderId, driveId, folderName, fileName, fileContent, mimeType, compressed, organizationId } = body
+
+      if (!organizationId) {
+        return errorResponse('Missing organizationId', 400)
+      }
+
+      // Get org tokens
+      const tokenData = await getOrgTokens(supabaseAdmin, organizationId)
+
+      if (!tokenData) {
+        return errorResponse('Google Drive not connected for this organization', 400)
+      }
+
+      const accessToken = await refreshTokenIfNeeded({
+        supabaseAdmin,
+        organizationId,
+        tokenData,
+        encryptionKey,
+        googleClientId,
+        googleClientSecret
+      })
 
       if (action === 'create-folder') {
         if (!folderId || !folderName) {
@@ -308,12 +333,37 @@ Deno.serve(async (req) => {
           return errorResponse('Missing folderId, fileName, or fileContent', 400)
         }
 
+        let uploadContent = fileContent
+        const effectiveMimeType = mimeType || 'application/octet-stream'
+
+        // If content is gzip-compressed, decompress before uploading
+        if (compressed === 'gzip') {
+          console.log('[GoogleDriveFiles] Decompressing gzip content')
+          const binaryStr = atob(fileContent)
+          const bytes = new Uint8Array(binaryStr.length)
+          for (let i = 0; i < binaryStr.length; i++) {
+            bytes[i] = binaryStr.charCodeAt(i)
+          }
+          const decompressedStream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('gzip'))
+          const rawContent = await new Response(decompressedStream).arrayBuffer()
+          // Re-encode decompressed content as base64 for the multipart upload
+          const rawBytes = new Uint8Array(rawContent)
+          let binary = ''
+          const chunkSize = 8192
+          for (let i = 0; i < rawBytes.length; i += chunkSize) {
+            const chunk = rawBytes.subarray(i, Math.min(i + chunkSize, rawBytes.length))
+            binary += String.fromCharCode.apply(null, [...chunk])
+          }
+          uploadContent = btoa(binary)
+          console.log(`[GoogleDriveFiles] Decompressed: ${fileContent.length} → ${uploadContent.length} chars`)
+        }
+
         const file = await uploadFile(
           accessToken,
           folderId,
           fileName,
-          fileContent,
-          mimeType || 'application/octet-stream'
+          uploadContent,
+          effectiveMimeType
         )
         return jsonResponse({ success: true, file })
 

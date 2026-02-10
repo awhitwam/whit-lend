@@ -15,7 +15,7 @@
 //   GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, TOKEN_ENCRYPTION_KEY
 
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
-import { refreshTokenIfNeeded, getUserTokens } from '../_shared/tokenManagement.ts'
+import { refreshTokenIfNeeded, getOrgTokens } from '../_shared/tokenManagement.ts'
 import { jsonResponse, errorResponse, handleCors } from '../_shared/cors.ts'
 
 interface Folder {
@@ -215,23 +215,16 @@ Deno.serve(async (req) => {
       return errorResponse('Invalid action. Use "upload" or "create-folders"', 400)
     }
 
-    // Get user's Google Drive connection status (user-level)
-    const { data: profile, error: profileError } = await supabaseAdmin
-      .from('user_profiles')
-      .select('google_drive_connected')
-      .eq('id', user.id)
-      .single()
-
-    if (profileError || !profile?.google_drive_connected) {
-      return errorResponse('Google Drive not connected', 400)
-    }
-
-    // Get organization's base folder (org-level)
+    // Get organization's Google Drive connection status and base folder
     const { data: orgData, error: orgError } = await supabaseAdmin
       .from('organizations')
-      .select('google_drive_base_folder_id')
+      .select('google_drive_connected, google_drive_base_folder_id')
       .eq('id', organizationId)
       .single()
+
+    if (orgError || !orgData?.google_drive_connected) {
+      return errorResponse('Google Drive not connected for this organization', 400)
+    }
 
     if (orgError || !orgData?.google_drive_base_folder_id) {
       return errorResponse('No base folder configured for this organization. Please select a base folder in Settings.', 400)
@@ -239,17 +232,17 @@ Deno.serve(async (req) => {
 
     const baseFolderId = orgData.google_drive_base_folder_id
 
-    // Get tokens
-    const tokenData = await getUserTokens(supabaseAdmin, user.id)
+    // Get org tokens
+    const tokenData = await getOrgTokens(supabaseAdmin, organizationId)
 
     if (!tokenData) {
-      return errorResponse('No Google Drive tokens found. Please reconnect.', 400)
+      return errorResponse('No Google Drive tokens found for this organization. Please reconnect.', 400)
     }
 
     // Get valid access token (refresh if needed)
     const accessToken = await refreshTokenIfNeeded({
       supabaseAdmin,
-      userId: user.id,
+      organizationId,
       tokenData,
       encryptionKey,
       googleClientId,

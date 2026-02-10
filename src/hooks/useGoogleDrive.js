@@ -8,8 +8,8 @@
  * - Folder browsing for picker
  * - Disconnect functionality
  *
- * Base folder is organization-level (managed by super admins)
- * User connection (OAuth tokens) is user-level
+ * Google Drive connections are per-organization.
+ * Each org has its own Google account connection and folder settings.
  */
 
 import { useState, useEffect, useCallback } from 'react';
@@ -29,7 +29,7 @@ async function getAccessToken() {
 // Check if error indicates auth/token issue
 const isAuthError = (errorMessage) => {
   if (!errorMessage) return false;
-  const authKeywords = ['reconnect', 'expired', 'session', 'unauthorized', 'invalid token'];
+  const authKeywords = ['reconnect', 'expired', 'session', 'unauthorized', 'invalid token', 'scopes'];
   return authKeywords.some(keyword =>
     errorMessage.toLowerCase().includes(keyword)
   );
@@ -46,50 +46,37 @@ export function useGoogleDrive() {
   const [backupFolderPath, setBackupFolderPath] = useState(null);
   const [isLoading, setIsLoading] = useState(true);
 
-  // Load connection status from user profile + base folder from organization
+  // Load connection status and folder settings from organization
   const loadConnectionStatus = useCallback(async () => {
-    if (!user?.id) {
+    if (!user?.id || !currentOrganization?.id) {
+      setIsConnected(false);
+      setEmail(null);
+      setBaseFolderId(null);
+      setBaseFolderPath(null);
+      setBackupFolderId(null);
+      setBackupFolderPath(null);
       setIsLoading(false);
       return;
     }
 
     try {
-      // Get user's Google Drive connection status (user-level)
-      const { data: userData, error: userError } = await supabase
-        .from('user_profiles')
-        .select('google_drive_connected, google_drive_email')
-        .eq('id', user.id)
+      // Get everything from the organization (connection status + folder settings)
+      const { data: orgData, error: orgError } = await supabase
+        .from('organizations')
+        .select('google_drive_connected, google_drive_email, google_drive_base_folder_id, google_drive_base_folder_path, google_drive_backup_folder_id, google_drive_backup_folder_path')
+        .eq('id', currentOrganization.id)
         .single();
 
-      if (userError) {
-        console.error('Error loading Google Drive user status:', userError);
+      if (orgError) {
+        console.error('Error loading Google Drive org settings:', orgError);
       }
 
-      setIsConnected(userData?.google_drive_connected || false);
-      setEmail(userData?.google_drive_email || null);
-
-      // Get folder settings from organization (org-level)
-      if (currentOrganization?.id) {
-        const { data: orgData, error: orgError } = await supabase
-          .from('organizations')
-          .select('google_drive_base_folder_id, google_drive_base_folder_path, google_drive_backup_folder_id, google_drive_backup_folder_path')
-          .eq('id', currentOrganization.id)
-          .single();
-
-        if (orgError) {
-          console.error('Error loading Google Drive org settings:', orgError);
-        }
-
-        setBaseFolderId(orgData?.google_drive_base_folder_id || null);
-        setBaseFolderPath(orgData?.google_drive_base_folder_path || null);
-        setBackupFolderId(orgData?.google_drive_backup_folder_id || null);
-        setBackupFolderPath(orgData?.google_drive_backup_folder_path || null);
-      } else {
-        setBaseFolderId(null);
-        setBaseFolderPath(null);
-        setBackupFolderId(null);
-        setBackupFolderPath(null);
-      }
+      setIsConnected(orgData?.google_drive_connected || false);
+      setEmail(orgData?.google_drive_email || null);
+      setBaseFolderId(orgData?.google_drive_base_folder_id || null);
+      setBaseFolderPath(orgData?.google_drive_base_folder_path || null);
+      setBackupFolderId(orgData?.google_drive_backup_folder_id || null);
+      setBackupFolderPath(orgData?.google_drive_backup_folder_path || null);
     } catch (err) {
       console.error('Error loading Google Drive status:', err);
     } finally {
@@ -102,7 +89,7 @@ export function useGoogleDrive() {
   }, [loadConnectionStatus]);
 
   /**
-   * Initiate OAuth flow to connect Google Drive
+   * Initiate OAuth flow to connect Google Drive for current organization
    */
   const initiateOAuth = useCallback(() => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
@@ -111,14 +98,18 @@ export function useGoogleDrive() {
       return;
     }
 
+    if (!currentOrganization?.id) {
+      console.error('No organization selected');
+      return;
+    }
+
     const redirectUri = `${window.location.origin}/GoogleDriveCallback`;
-    // Scopes needed:
-    // - drive.file: Create/access files created by this app
-    // - drive: Full access to browse folders and shared drives (required for folder picker)
-    // - userinfo.email: Get user's email for display
     const scope = encodeURIComponent(
       'https://www.googleapis.com/auth/drive https://www.googleapis.com/auth/userinfo.email'
     );
+
+    // Pass organization_id through OAuth state parameter
+    const state = encodeURIComponent(currentOrganization.id);
 
     const authUrl =
       `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -127,15 +118,18 @@ export function useGoogleDrive() {
       `&response_type=code` +
       `&scope=${scope}` +
       `&access_type=offline` +
-      `&prompt=consent`;
+      `&prompt=consent` +
+      `&state=${state}`;
 
     window.location.href = authUrl;
-  }, []);
+  }, [currentOrganization?.id]);
 
   /**
    * Exchange authorization code for tokens (called from callback page)
+   * @param {string} code - Authorization code from Google
+   * @param {string} organizationId - Organization ID from OAuth state parameter
    */
-  const exchangeCode = useCallback(async (code) => {
+  const exchangeCode = useCallback(async (code, organizationId) => {
     const accessToken = await getAccessToken();
 
     const redirectUri = `${window.location.origin}/GoogleDriveCallback`;
@@ -148,7 +142,7 @@ export function useGoogleDrive() {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({ code, redirect_uri: redirectUri })
+        body: JSON.stringify({ code, redirect_uri: redirectUri, organization_id: organizationId })
       }
     );
 
@@ -165,9 +159,13 @@ export function useGoogleDrive() {
   }, [loadConnectionStatus]);
 
   /**
-   * Disconnect Google Drive
+   * Disconnect Google Drive for current organization
    */
   const disconnect = useCallback(async () => {
+    if (!currentOrganization?.id) {
+      throw new Error('No organization selected');
+    }
+
     const accessToken = await getAccessToken();
 
     const response = await fetch(
@@ -178,7 +176,7 @@ export function useGoogleDrive() {
           'Authorization': `Bearer ${accessToken}`,
           'Content-Type': 'application/json'
         },
-        body: JSON.stringify({})
+        body: JSON.stringify({ organization_id: currentOrganization.id })
       }
     );
 
@@ -191,11 +189,9 @@ export function useGoogleDrive() {
     // Clear local state
     setIsConnected(false);
     setEmail(null);
-    setBaseFolderId(null);
-    setBaseFolderPath(null);
 
     return result;
-  }, []);
+  }, [currentOrganization?.id]);
 
   /**
    * Upload file to Google Drive
@@ -311,7 +307,7 @@ export function useGoogleDrive() {
     const accessToken = await getAccessToken();
 
     const response = await fetch(
-      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-folders?action=shared-drives`,
+      `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-folders?action=shared-drives&organizationId=${currentOrganization?.id}`,
       {
         headers: {
           'Authorization': `Bearer ${accessToken}`
@@ -322,7 +318,6 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
-      // If auth error, refresh connection status to update UI
       if (isAuthError(result.error)) {
         await loadConnectionStatus();
       }
@@ -330,7 +325,7 @@ export function useGoogleDrive() {
     }
 
     return result.drives || [];
-  }, [loadConnectionStatus]);
+  }, [currentOrganization?.id, loadConnectionStatus]);
 
   /**
    * List folders in a folder
@@ -338,7 +333,7 @@ export function useGoogleDrive() {
   const listFolders = useCallback(async (folderId = 'root', driveId = null) => {
     const accessToken = await getAccessToken();
 
-    let url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-folders?action=list&folderId=${folderId}`;
+    let url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-folders?action=list&folderId=${folderId}&organizationId=${currentOrganization?.id}`;
     if (driveId) {
       url += `&driveId=${driveId}`;
     }
@@ -352,7 +347,6 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
-      // If auth error, refresh connection status to update UI
       if (isAuthError(result.error)) {
         await loadConnectionStatus();
       }
@@ -360,7 +354,7 @@ export function useGoogleDrive() {
     }
 
     return result.folders || [];
-  }, [loadConnectionStatus]);
+  }, [currentOrganization?.id, loadConnectionStatus]);
 
   /**
    * Save base folder selection (organization-level, super admin only)
@@ -450,7 +444,7 @@ export function useGoogleDrive() {
   const listFiles = useCallback(async (folderId, driveId = null) => {
     const accessToken = await getAccessToken();
 
-    let url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-files?action=list&folderId=${folderId}`;
+    let url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-files?action=list&folderId=${folderId}&organizationId=${currentOrganization?.id}`;
     if (driveId) {
       url += `&driveId=${driveId}`;
     }
@@ -464,7 +458,6 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
-      // If auth error, refresh connection status to update UI
       if (isAuthError(result.error)) {
         await loadConnectionStatus();
       }
@@ -472,7 +465,7 @@ export function useGoogleDrive() {
     }
 
     return result.items || [];
-  }, [loadConnectionStatus]);
+  }, [currentOrganization?.id, loadConnectionStatus]);
 
   /**
    * List all files recursively (for flat view)
@@ -480,7 +473,7 @@ export function useGoogleDrive() {
   const listFilesFlat = useCallback(async (folderId, driveId = null) => {
     const accessToken = await getAccessToken();
 
-    let url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-files?action=list-recursive&folderId=${folderId}`;
+    let url = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/google-drive-files?action=list-recursive&folderId=${folderId}&organizationId=${currentOrganization?.id}`;
     if (driveId) {
       url += `&driveId=${driveId}`;
     }
@@ -494,7 +487,6 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
-      // If auth error, refresh connection status to update UI
       if (isAuthError(result.error)) {
         await loadConnectionStatus();
       }
@@ -502,7 +494,7 @@ export function useGoogleDrive() {
     }
 
     return result.items || [];
-  }, [loadConnectionStatus]);
+  }, [currentOrganization?.id, loadConnectionStatus]);
 
   /**
    * Create a subfolder in a folder
@@ -522,7 +514,8 @@ export function useGoogleDrive() {
           action: 'create-folder',
           folderId: parentFolderId,
           folderName,
-          driveId
+          driveId,
+          organizationId: currentOrganization?.id
         })
       }
     );
@@ -530,7 +523,6 @@ export function useGoogleDrive() {
     const result = await response.json();
 
     if (result.error) {
-      // If auth error, refresh connection status to update UI
       if (isAuthError(result.error)) {
         await loadConnectionStatus();
       }
@@ -538,12 +530,13 @@ export function useGoogleDrive() {
     }
 
     return result.folder;
-  }, [loadConnectionStatus]);
+  }, [currentOrganization?.id, loadConnectionStatus]);
 
   /**
    * Upload a file to a specific folder (for file browser uploads)
+   * Supports gzip-compressed content via options.compressed = 'gzip'
    */
-  const uploadFileToFolder = useCallback(async (folderId, fileName, fileContent, mimeType = 'application/octet-stream') => {
+  const uploadFileToFolder = useCallback(async (folderId, fileName, fileContent, mimeType = 'application/octet-stream', options = {}) => {
     const accessToken = await getAccessToken();
 
     const response = await fetch(
@@ -559,15 +552,31 @@ export function useGoogleDrive() {
           folderId,
           fileName,
           fileContent,
-          mimeType
+          mimeType,
+          organizationId: currentOrganization?.id,
+          ...(options.compressed && { compressed: options.compressed })
         })
       }
     );
 
+    if (!response.ok) {
+      let errorMsg = `Upload failed (HTTP ${response.status})`;
+      try {
+        const errBody = await response.json();
+        if (errBody.error) errorMsg = errBody.error;
+      } catch {
+        const text = await response.text().catch(() => '');
+        if (text) errorMsg += `: ${text.slice(0, 200)}`;
+      }
+      if (isAuthError(errorMsg)) {
+        await loadConnectionStatus();
+      }
+      throw new Error(errorMsg);
+    }
+
     const result = await response.json();
 
     if (result.error) {
-      // If auth error, refresh connection status to update UI
       if (isAuthError(result.error)) {
         await loadConnectionStatus();
       }
@@ -575,7 +584,7 @@ export function useGoogleDrive() {
     }
 
     return result.file;
-  }, [loadConnectionStatus]);
+  }, [currentOrganization?.id, loadConnectionStatus]);
 
   /**
    * Get or create loan folder structure and return folder IDs

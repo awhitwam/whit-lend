@@ -1,5 +1,6 @@
 // Supabase Edge Function: Google Drive Authentication
 // Handles OAuth token exchange, refresh, and disconnect for Google Drive integration
+// Tokens are stored per-organization (not per-user)
 //
 // Deployment:
 //   supabase functions deploy google-drive-auth
@@ -56,13 +57,17 @@ Deno.serve(async (req) => {
     if (action === 'callback') {
       // Exchange authorization code for tokens
       const body = await req.json()
-      const { code, redirect_uri } = body
+      const { code, redirect_uri, organization_id } = body
 
       if (!code || !redirect_uri) {
         return errorResponse('Missing code or redirect_uri', 400)
       }
 
-      console.log('[GoogleDriveAuth] Exchanging code for tokens')
+      if (!organization_id) {
+        return errorResponse('Missing organization_id', 400)
+      }
+
+      console.log('[GoogleDriveAuth] Exchanging code for tokens, org:', organization_id)
 
       // Exchange code for tokens
       const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
@@ -90,37 +95,38 @@ Deno.serve(async (req) => {
       })
       const googleUser = await userInfoResponse.json()
 
-      console.log('[GoogleDriveAuth] Connected Google account:', googleUser.email)
+      console.log('[GoogleDriveAuth] Connected Google account:', googleUser.email, 'for org:', organization_id)
 
-      // Encrypt and store tokens
+      // Encrypt and store tokens (keyed by organization_id)
       const tokenExpiry = new Date(Date.now() + (tokens.expires_in * 1000)).toISOString()
 
       const { error: upsertError } = await supabaseAdmin
         .from('google_drive_tokens')
         .upsert({
           user_id: user.id,
+          organization_id,
           access_token_encrypted: encryptToken(tokens.access_token, encryptionKey),
           refresh_token_encrypted: encryptToken(tokens.refresh_token, encryptionKey),
           token_expiry: tokenExpiry,
           updated_at: new Date().toISOString()
-        }, { onConflict: 'user_id' })
+        }, { onConflict: 'organization_id' })
 
       if (upsertError) {
         console.error('[GoogleDriveAuth] Failed to store tokens:', upsertError)
         return errorResponse('Failed to store tokens', 500)
       }
 
-      // Update user profile
-      const { error: profileError } = await supabaseAdmin
-        .from('user_profiles')
+      // Update organization (not user_profiles)
+      const { error: orgError } = await supabaseAdmin
+        .from('organizations')
         .update({
           google_drive_connected: true,
           google_drive_email: googleUser.email
         })
-        .eq('id', user.id)
+        .eq('id', organization_id)
 
-      if (profileError) {
-        console.error('[GoogleDriveAuth] Failed to update profile:', profileError)
+      if (orgError) {
+        console.error('[GoogleDriveAuth] Failed to update organization:', orgError)
       }
 
       return jsonResponse({
@@ -130,13 +136,20 @@ Deno.serve(async (req) => {
 
     } else if (action === 'refresh') {
       // Refresh expired access token
-      console.log('[GoogleDriveAuth] Refreshing token for user:', user.id)
+      const body = await req.json()
+      const { organization_id } = body
 
-      // Get stored tokens
+      if (!organization_id) {
+        return errorResponse('Missing organization_id', 400)
+      }
+
+      console.log('[GoogleDriveAuth] Refreshing token for org:', organization_id)
+
+      // Get stored tokens by organization
       const { data: tokenData, error: tokenError } = await supabaseAdmin
         .from('google_drive_tokens')
         .select('refresh_token_encrypted')
-        .eq('user_id', user.id)
+        .eq('organization_id', organization_id)
         .single()
 
       if (tokenError || !tokenData) {
@@ -161,11 +174,11 @@ Deno.serve(async (req) => {
 
       if (newTokens.error) {
         console.error('[GoogleDriveAuth] Token refresh error:', newTokens.error)
-        // If refresh fails, user needs to re-authenticate
+        // If refresh fails, mark org as disconnected
         await supabaseAdmin
-          .from('user_profiles')
+          .from('organizations')
           .update({ google_drive_connected: false })
-          .eq('id', user.id)
+          .eq('id', organization_id)
 
         return errorResponse('Token refresh failed. Please reconnect.', 401)
       }
@@ -180,19 +193,26 @@ Deno.serve(async (req) => {
           token_expiry: tokenExpiry,
           updated_at: new Date().toISOString()
         })
-        .eq('user_id', user.id)
+        .eq('organization_id', organization_id)
 
       return jsonResponse({ success: true })
 
     } else if (action === 'disconnect') {
       // Revoke tokens and disconnect
-      console.log('[GoogleDriveAuth] Disconnecting user:', user.id)
+      const body = await req.json()
+      const { organization_id } = body
+
+      if (!organization_id) {
+        return errorResponse('Missing organization_id', 400)
+      }
+
+      console.log('[GoogleDriveAuth] Disconnecting org:', organization_id)
 
       // Get tokens to revoke
       const { data: tokenData } = await supabaseAdmin
         .from('google_drive_tokens')
         .select('access_token_encrypted')
-        .eq('user_id', user.id)
+        .eq('organization_id', organization_id)
         .single()
 
       if (tokenData) {
@@ -211,18 +231,16 @@ Deno.serve(async (req) => {
       await supabaseAdmin
         .from('google_drive_tokens')
         .delete()
-        .eq('user_id', user.id)
+        .eq('organization_id', organization_id)
 
-      // Update user profile
+      // Update organization
       await supabaseAdmin
-        .from('user_profiles')
+        .from('organizations')
         .update({
           google_drive_connected: false,
-          google_drive_email: null,
-          google_drive_base_folder_id: null,
-          google_drive_base_folder_path: null
+          google_drive_email: null
         })
-        .eq('id', user.id)
+        .eq('id', organization_id)
 
       return jsonResponse({ success: true })
 

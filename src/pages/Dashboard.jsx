@@ -621,12 +621,28 @@ export default function Dashboard() {
       let driveUploadSuccess = false;
       if (backupFolderId && driveConnected) {
         try {
-          const base64Content = btoa(unescape(encodeURIComponent(backupJson)));
-          await uploadFileToFolder(backupFolderId, fileName, base64Content, 'application/json');
+          // Use compact JSON and gzip compress for Drive upload
+          // This reduces ~6MB+ JSON to ~500KB-1MB, well within Edge Function limits
+          const compactJson = JSON.stringify(backup);
+          const encoder = new TextEncoder();
+          const compressedStream = new Blob([encoder.encode(compactJson)])
+            .stream()
+            .pipeThrough(new CompressionStream('gzip'));
+          const compressedBuffer = await new Response(compressedStream).arrayBuffer();
+          const compressedBytes = new Uint8Array(compressedBuffer);
+          let binary = '';
+          for (let i = 0; i < compressedBytes.length; i++) {
+            binary += String.fromCharCode(compressedBytes[i]);
+          }
+          const base64Content = btoa(binary);
+          console.log(`[Backup] Compressed: ${(compactJson.length / 1024 / 1024).toFixed(1)}MB → ${(compressedBytes.length / 1024).toFixed(0)}KB`);
+          await uploadFileToFolder(backupFolderId, fileName, base64Content, 'application/json', { compressed: 'gzip' });
           driveUploadSuccess = true;
         } catch (driveErr) {
           console.error('Google Drive upload failed:', driveErr);
-          // Don't fail the whole backup, just note it wasn't uploaded
+          if (driveErr.message?.toLowerCase().includes('scopes')) {
+            toast.error('Google Drive permissions outdated. Please disconnect and reconnect Google Drive in Settings.');
+          }
         }
       }
 

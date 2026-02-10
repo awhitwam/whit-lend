@@ -29,6 +29,7 @@ export default function GoogleDriveCallback() {
 
       const code = searchParams.get('code');
       const error = searchParams.get('error');
+      const state = searchParams.get('state'); // organization_id passed through OAuth state
 
       if (error) {
         hasProcessed.current = true;
@@ -44,6 +45,13 @@ export default function GoogleDriveCallback() {
         hasProcessed.current = true;
         setStatus('error');
         setErrorMessage('No authorization code received');
+        return;
+      }
+
+      if (!state) {
+        hasProcessed.current = true;
+        setStatus('error');
+        setErrorMessage('Missing organization context. Please try connecting again from Settings.');
         return;
       }
 
@@ -78,7 +86,7 @@ export default function GoogleDriveCallback() {
               'Content-Type': 'application/json',
               'apikey': import.meta.env.VITE_SUPABASE_ANON_KEY
             },
-            body: JSON.stringify({ code, redirect_uri: redirectUri })
+            body: JSON.stringify({ code, redirect_uri: redirectUri, organization_id: state })
           }
         );
 
