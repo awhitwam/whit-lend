@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
@@ -482,10 +482,13 @@ export default function InvestorDetails() {
       }
     });
 
+    // Assign calculation index so descending sort preserves correct order
+    items.forEach((item, idx) => { item.calcIndex = idx; });
+
     // Now sort descending by date (newest first) for display
     items.sort((a, b) => {
       if (b.sortDate !== a.sortDate) return b.sortDate - a.sortDate;
-      return a.sortOrder - b.sortOrder;
+      return b.calcIndex - a.calcIndex;
     });
 
     return items;
@@ -542,7 +545,22 @@ export default function InvestorDetails() {
 
   // Calculate interest accrual (safe with optional chaining)
   const annualRate = investor?.annual_interest_rate || product?.interest_rate_per_annum || 0;
-  const currentBalance = investor?.current_capital_balance || 0;
+  // Calculate current balance from actual transactions (not the stored field which can drift)
+  const currentBalance = capitalIn - capitalOut;
+
+  // Auto-sync stored balance if it has drifted from calculated value
+  useEffect(() => {
+    if (!investor || capitalTransactions.length === 0) return;
+    const storedBalance = investor.current_capital_balance || 0;
+    if (Math.abs(storedBalance - currentBalance) > 0.01) {
+      api.entities.Investor.update(investorId, {
+        current_capital_balance: currentBalance,
+        total_capital_contributed: capitalIn
+      }).then(() => {
+        queryClient.invalidateQueries({ queryKey: ['investors'] });
+      });
+    }
+  }, [investor, currentBalance, capitalIn, capitalTransactions.length, investorId, queryClient]);
 
   // Calculate interest accruing since last posting
   const accruedSinceLastPosting = useMemo(() => {
