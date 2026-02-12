@@ -247,6 +247,7 @@ export default function SettleLoanModal({
                           <th className="px-3 py-2 text-left text-xs font-medium text-slate-600">Period</th>
                           <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Days</th>
                           <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Principal</th>
+                          <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Daily Rate</th>
                           <th className="px-3 py-2 text-right text-xs font-medium text-slate-600">Interest</th>
                         </tr>
                       </thead>
@@ -276,6 +277,9 @@ export default function SettleLoanModal({
                                 </span>
                               )}
                             </td>
+                            <td className="px-3 py-2 text-right text-xs text-slate-600 font-mono">
+                              {formatCurrency(period.openingPrincipal * period.dailyRate)}/d
+                            </td>
                             <td className="px-3 py-2 text-right font-medium text-amber-600">
                               {formatCurrency(period.periodInterest)}
                             </td>
@@ -286,6 +290,7 @@ export default function SettleLoanModal({
                           <td className="px-3 py-2">Total Accrued</td>
                           <td className="px-3 py-2 text-right font-mono">{settlement.daysElapsed}</td>
                           <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2"></td>
                           <td className="px-3 py-2 text-right text-amber-700">
                             {formatCurrency(settlement.interestAccrued)}
                           </td>
@@ -294,12 +299,14 @@ export default function SettleLoanModal({
                           <td className="px-3 py-2 text-green-700">Less: Interest Paid</td>
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2"></td>
+                          <td className="px-3 py-2"></td>
                           <td className="px-3 py-2 text-right text-green-600">
                             ({formatCurrency(settlement.interestPaid)})
                           </td>
                         </tr>
                         <tr className="bg-amber-100 font-bold">
                           <td className="px-3 py-2 text-amber-800">Interest Outstanding</td>
+                          <td className="px-3 py-2"></td>
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2"></td>
                           <td className="px-3 py-2 text-right text-amber-800">

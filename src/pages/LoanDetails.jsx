@@ -106,6 +106,7 @@ export default function LoanDetails() {
   const [regenerateEndDate, setRegenerateEndDate] = useState(format(new Date(), 'yyyy-MM-dd'));
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [isWriteOffDialogOpen, setIsWriteOffDialogOpen] = useState(false);
+  const [isActivateDialogOpen, setIsActivateDialogOpen] = useState(false);
   const [deleteReason, setDeleteReason] = useState('');
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [deleteAuthorized, setDeleteAuthorized] = useState(false);
@@ -469,8 +470,9 @@ export default function LoanDetails() {
             interest_applied: existingDeductedInterest
           };
 
-          // Also update date if start_date changed
-          if (updatedData.start_date) {
+          // Only sync disbursement date to new start_date if they were previously in sync
+          // (preserves user's custom funding date if they've set one)
+          if (updatedData.start_date && disbursementTx.date?.split('T')[0] === loan.start_date?.split('T')[0]) {
             disbursementUpdate.date = updatedData.start_date;
           }
 
@@ -626,9 +628,66 @@ export default function LoanDetails() {
   });
 
   const updateStatusMutation = useMutation({
-    mutationFn: (status) => {
+    mutationFn: async (status) => {
       toast.loading('Updating loan status...', { id: 'update-status' });
-      return api.entities.Loan.update(loanId, { status });
+      const updated = await api.entities.Loan.update(loanId, { status });
+
+      // When activating a Pending loan, create the initial disbursement if missing
+      if (status === 'Live' && loan.status === 'Pending') {
+        const existingDisbursements = transactions.filter(
+          t => t.type === 'Disbursement' && !t.is_deleted
+        );
+        if (existingDisbursements.length === 0) {
+          const grossAmount = loan.principal_amount;
+          const deductedFee = loan.arrangement_fee || 0;
+          const additionalFees = loan.additional_deducted_fees || 0;
+          const deductedInterest = loan.advance_interest || 0;
+          const netAmount = loan.net_disbursed || (grossAmount - deductedFee - additionalFees - deductedInterest);
+
+          if (netAmount >= 0) {
+            const deductionParts = [];
+            if (deductedFee > 0) deductionParts.push(`£${deductedFee.toFixed(2)} arrangement fee`);
+            if (additionalFees > 0) deductionParts.push(`£${additionalFees.toFixed(2)} additional fees`);
+            if (deductedInterest > 0) deductionParts.push(`£${deductedInterest.toFixed(2)} advance interest`);
+            const notes = deductionParts.length > 0
+              ? `Initial loan disbursement (${deductionParts.join(' + ')} deducted)`
+              : 'Initial loan disbursement';
+
+            const disbursement = await api.entities.Transaction.create({
+              loan_id: loanId,
+              borrower_id: loan.borrower_id,
+              date: loan.start_date,
+              type: 'Disbursement',
+              is_initial_disbursement: true,
+              gross_amount: grossAmount,
+              deducted_fee: deductedFee,
+              amount: netAmount,
+              principal_applied: grossAmount,
+              interest_applied: 0,
+              fees_applied: deductedFee,
+              notes
+            });
+
+            // If advance interest was deducted, create linked repayment
+            if (deductedInterest > 0) {
+              await api.entities.Transaction.create({
+                loan_id: loanId,
+                borrower_id: loan.borrower_id,
+                date: loan.start_date,
+                type: 'Repayment',
+                amount: deductedInterest,
+                principal_applied: 0,
+                interest_applied: deductedInterest,
+                fees_applied: 0,
+                linked_disbursement_id: disbursement.id,
+                notes: 'Advance interest deducted from disbursement'
+              });
+            }
+          }
+        }
+      }
+
+      return updated;
     },
     onSuccess: async (_, newStatus) => {
       // Audit log: status change
@@ -640,7 +699,8 @@ export default function LoanDetails() {
       );
       await Promise.all([
         queryClient.refetchQueries({ queryKey: ['loan', loanId] }),
-        queryClient.invalidateQueries({ queryKey: ['loans'] })
+        queryClient.invalidateQueries({ queryKey: ['loans'] }),
+        queryClient.invalidateQueries({ queryKey: ['transactions', loanId] })
       ]);
       toast.success('Loan status updated', { id: 'update-status' });
     },
@@ -1697,10 +1757,10 @@ export default function LoanDetails() {
                   {getStatusLabel(loan.status)}
                 </Badge>
                 {loan.status === 'Pending' && (
-                  <Button 
-                    size="sm" 
+                  <Button
+                    size="sm"
                     className="bg-emerald-600 hover:bg-emerald-700 h-7 text-xs"
-                    onClick={() => updateStatusMutation.mutate('Live')}
+                    onClick={() => setIsActivateDialogOpen(true)}
                     disabled={updateStatusMutation.isPending}
                   >
                     Activate
@@ -2645,6 +2705,66 @@ export default function LoanDetails() {
             interestCalc={liveInterestCalc}
           />
         )}
+
+        {/* Activate Loan Dialog */}
+        <AlertDialog open={isActivateDialogOpen} onOpenChange={setIsActivateDialogOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Activate Loan?</AlertDialogTitle>
+              <AlertDialogDescription asChild>
+                <div className="space-y-3">
+                  <p>This will set the loan to <strong>Live</strong> and create the initial disbursement transaction:</p>
+                  <div className="bg-slate-50 rounded-lg p-3 text-sm space-y-1">
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Principal</span>
+                      <span className="font-medium">{formatCurrency(loan.principal_amount)}</span>
+                    </div>
+                    {(loan.arrangement_fee > 0 || loan.additional_deducted_fees > 0 || loan.advance_interest > 0) && (
+                      <>
+                        {loan.arrangement_fee > 0 && (
+                          <div className="flex justify-between text-slate-500">
+                            <span>Less: Arrangement fee</span>
+                            <span>-{formatCurrency(loan.arrangement_fee)}</span>
+                          </div>
+                        )}
+                        {loan.additional_deducted_fees > 0 && (
+                          <div className="flex justify-between text-slate-500">
+                            <span>Less: Additional fees</span>
+                            <span>-{formatCurrency(loan.additional_deducted_fees)}</span>
+                          </div>
+                        )}
+                        {loan.advance_interest > 0 && (
+                          <div className="flex justify-between text-slate-500">
+                            <span>Less: Advance interest</span>
+                            <span>-{formatCurrency(loan.advance_interest)}</span>
+                          </div>
+                        )}
+                        <div className="flex justify-between border-t pt-1 font-medium">
+                          <span>Net Disbursed</span>
+                          <span>{formatCurrency(loan.net_disbursed || (loan.principal_amount - (loan.arrangement_fee || 0) - (loan.additional_deducted_fees || 0) - (loan.advance_interest || 0)))}</span>
+                        </div>
+                      </>
+                    )}
+                    <div className="flex justify-between">
+                      <span className="text-slate-500">Start Date</span>
+                      <span>{loan.start_date ? format(new Date(loan.start_date), 'dd/MM/yyyy') : 'Not set'}</span>
+                    </div>
+                  </div>
+                </div>
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={updateStatusMutation.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                onClick={() => updateStatusMutation.mutate('Live')}
+                disabled={updateStatusMutation.isPending}
+                className="bg-emerald-600 hover:bg-emerald-700"
+              >
+                {updateStatusMutation.isPending ? 'Activating...' : 'Activate Loan'}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         {/* Regenerate Schedule Dialog */}
         <AlertDialog open={isRegenerateDialogOpen} onOpenChange={setIsRegenerateDialogOpen}>

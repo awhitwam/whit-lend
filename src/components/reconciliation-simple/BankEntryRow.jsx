@@ -26,7 +26,7 @@ import {
 import { formatCurrency } from '@/lib/formatters';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
-import { reconcileSingleMatch, reconcileMatchGroup } from '@/lib/reconciliation/reconcileHandler';
+import { reconcileSingleMatch, reconcileMatchGroup, reconcileGroupedDisbursement } from '@/lib/reconciliation/reconcileHandler';
 import InlineReceiptFormFull from './InlineReceiptFormFull';
 import InlineInvestorDepositForm from './InlineInvestorDepositForm';
 import InlineOtherIncomeForm from './InlineOtherIncomeForm';
@@ -55,7 +55,7 @@ export default function BankEntryRow({
 
   // Accept a suggestion (match to existing transaction)
   const handleAcceptSuggestion = async (suggestion) => {
-    if (suggestion.matchMode !== 'match' && suggestion.matchMode !== 'match_group') {
+    if (suggestion.matchMode !== 'match' && suggestion.matchMode !== 'match_group' && suggestion.matchMode !== 'grouped_disbursement') {
       // For 'create' mode suggestions, expand the form
       setExpandedForm(suggestion.type);
       setExpanded(true);
@@ -64,7 +64,12 @@ export default function BankEntryRow({
 
     setIsAccepting(suggestion);
     try {
-      if (suggestion.matchMode === 'match_group') {
+      if (suggestion.matchMode === 'grouped_disbursement') {
+        // Handle grouped disbursement (multiple bank debits → single disbursement)
+        await reconcileGroupedDisbursement({ suggestion });
+        const entryCount = suggestion.groupedEntries?.length || 0;
+        toast.success(`Reconciled ${entryCount} bank entries to disbursement`);
+      } else if (suggestion.matchMode === 'match_group') {
         // Handle grouped match (one bank entry → multiple transactions)
         await reconcileMatchGroup({
           bankEntry: entry,
@@ -391,7 +396,7 @@ export default function BankEntryRow({
                         >
                           {isAccepting === suggestion ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (suggestion.matchMode === 'match' || suggestion.matchMode === 'match_group') ? (
+                          ) : (suggestion.matchMode === 'match' || suggestion.matchMode === 'match_group' || suggestion.matchMode === 'grouped_disbursement') ? (
                             <>
                               <Check className="w-4 h-4 mr-1" />
                               Accept

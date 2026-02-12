@@ -1189,14 +1189,9 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
 
   // Rent and Irregular Income loans don't accrue interest
   if (loan.product_type === 'Rent' || loan.product_type === 'Irregular Income') {
-    const startDateKey = loan.start_date?.split('T')[0];
-    // Calculate total disbursed from further advances (exclude initial disbursement on start date)
+    // Calculate total disbursed from further advances (exclude initial disbursement)
     const totalDisbursed = transactions
-      .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
-      .filter(tx => {
-        const txDateKey = tx.date?.split('T')[0];
-        return txDateKey !== startDateKey;
-      })
+      .filter(tx => !tx.is_deleted && tx.type === 'Disbursement' && !tx.is_initial_disbursement)
       .reduce((sum, tx) => sum + ((tx.gross_amount ?? tx.amount) || 0), 0);
     // Calculate total principal repaid
     const totalPrincipalPaid = transactions
@@ -1216,8 +1211,6 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
   const today = new Date(asOfDate);
   today.setHours(0, 0, 0, 0);
   startDate.setHours(0, 0, 0, 0);
-  const startDateKey = startDate.toISOString().split('T')[0];
-
   const principal = loan.principal_amount;
 
   // Get repayment transactions sorted by date
@@ -1225,14 +1218,9 @@ export function calculateAccruedInterestWithTransactions(loan, transactions = []
     .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  // Get disbursement transactions (further advances) - exclude initial disbursement on start date
+  // Get disbursement transactions (further advances) - exclude initial disbursement
   const disbursements = transactions
-    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
-    .filter(tx => {
-      const txDate = new Date(tx.date);
-      txDate.setHours(0, 0, 0, 0);
-      return txDate.toISOString().split('T')[0] !== startDateKey;
-    })
+    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement' && !tx.is_initial_disbursement)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
   // Calculate totals from actual transactions
@@ -1673,10 +1661,6 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
  * @returns {Array} Sorted array of { date, principalChange, description, txId }
  */
 export function buildCapitalEvents(loan, transactions) {
-  const loanStartDate = new Date(loan.start_date);
-  loanStartDate.setHours(0, 0, 0, 0);
-  const startDateKey = loanStartDate.toISOString().split('T')[0];
-
   // Principal repayments (reduce principal)
   const repayments = transactions
     .filter(tx => !tx.is_deleted && tx.type === 'Repayment' && tx.principal_applied > 0)
@@ -1687,14 +1671,9 @@ export function buildCapitalEvents(loan, transactions) {
       txId: tx.id
     }));
 
-  // Further advances (increase principal) - exclude initial disbursement on start date
+  // Further advances (increase principal) - exclude initial disbursement
   const advances = transactions
-    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
-    .filter(tx => {
-      const txDate = new Date(tx.date);
-      txDate.setHours(0, 0, 0, 0);
-      return txDate.toISOString().split('T')[0] !== startDateKey;
-    })
+    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement' && !tx.is_initial_disbursement)
     .map(tx => ({
       date: new Date(tx.date),
       principalChange: tx.gross_amount ?? tx.amount,
@@ -2036,8 +2015,8 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
   principalAtDate.set(startDateKey, loan.principal_amount);
 
   // Process disbursements first to track principal
-  disbursementTransactions.forEach((tx, index) => {
-    const isInitial = index === 0;
+  disbursementTransactions.forEach((tx) => {
+    const isInitial = tx.is_initial_disbursement;
     const grossAmount = tx.gross_amount ?? tx.amount;
     const txDateKey = new Date(tx.date).toISOString().split('T')[0];
 
@@ -2627,15 +2606,9 @@ export function calculateSettlementAmount(loan, settlementDate, transactions = [
     .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
-  // Get disbursement transactions (further advances) - exclude initial disbursement on start date
-  const startDateKey = startDate.toISOString().split('T')[0];
+  // Get disbursement transactions (further advances) - exclude initial disbursement
   const disbursements = transactions
-    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement')
-    .filter(tx => {
-      const txDate = new Date(tx.date);
-      txDate.setHours(0, 0, 0, 0);
-      return txDate.toISOString().split('T')[0] !== startDateKey;
-    })
+    .filter(tx => !tx.is_deleted && tx.type === 'Disbursement' && !tx.is_initial_disbursement)
     .sort((a, b) => new Date(a.date) - new Date(b.date));
 
   // Use authoritative values from the shared calculation

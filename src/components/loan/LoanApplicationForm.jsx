@@ -15,6 +15,7 @@ import {
   CommandItem,
   CommandList
 } from "@/components/ui/command";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Loader2, Calculator, ChevronRight, Zap, Coins, Info, ChevronsUpDown, Check, Building2, User } from 'lucide-react';
 import { cn } from "@/lib/utils";
 import { generateRepaymentSchedule, calculateLoanSummary, formatCurrency } from './LoanCalculator';
@@ -48,7 +49,9 @@ export default function LoanApplicationForm({
     roll_up_amount_override: false,
     // Additional deducted fees (applies to all products)
     additional_deducted_fees: '',
-    additional_deducted_fees_note: ''
+    additional_deducted_fees_note: '',
+    // Auto-extend
+    auto_extend: false
   });
 
   const [selectedProduct, setSelectedProduct] = useState(null);
@@ -324,7 +327,8 @@ export default function LoanApplicationForm({
         principal_paid: 0,
         interest_paid: 0,
         charges_paid: 0,
-        status: formData.status
+        status: formData.status,
+        auto_extend: formData.auto_extend
       }, previewSchedule);
       return;
     }
@@ -395,7 +399,8 @@ export default function LoanApplicationForm({
       // Roll-Up & Serviced fields
       roll_up_length: formData.roll_up_length ? parseInt(formData.roll_up_length) : null,
       roll_up_amount: formData.roll_up_amount ? parseFloat(formData.roll_up_amount) : null,
-      roll_up_amount_override: formData.roll_up_amount_override ?? false
+      roll_up_amount_override: formData.roll_up_amount_override ?? false,
+      auto_extend: formData.auto_extend
     }, previewSchedule);
   };
 
@@ -834,6 +839,7 @@ export default function LoanApplicationForm({
                   max={selectedProduct?.max_duration || 60}
                   required
                 />
+                <p className="text-xs text-slate-500">Set to 1 if you want the schedule to dynamically increase with auto extend</p>
               </div>
               <div className="space-y-2">
                 <Label htmlFor="start_date">Start Date *</Label>
@@ -845,6 +851,18 @@ export default function LoanApplicationForm({
                   required
                 />
               </div>
+            </div>
+          )}
+
+          {/* Auto-Extend */}
+          {!isIrregularIncome && (
+            <div className="flex items-center gap-2">
+              <Checkbox
+                id="auto_extend"
+                checked={formData.auto_extend}
+                onCheckedChange={(checked) => handleChange('auto_extend', checked)}
+              />
+              <Label htmlFor="auto_extend" className="cursor-pointer">Auto-Extend Schedule</Label>
             </div>
           )}
 

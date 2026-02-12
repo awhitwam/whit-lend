@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { ArrowUp, ArrowDown } from 'lucide-react';
 import BankEntryRow from './BankEntryRow';
 import { extractVendorKeywords, levenshteinSimilarity } from '@/lib/reconciliation/scoring';
+import { findSubsetSum, groupHasRelatedDescriptions, descriptionContainsName, datesWithinDays, amountsMatch } from '@/lib/reconciliation/utils';
 
 export default function ExpenditurePanel({
   entries,
@@ -118,6 +119,7 @@ export default function ExpenditurePanel({
     const withSuggestions = entries.map(entry => {
       const suggestions = generateExpenditureSuggestions(
         entry,
+        entries,
         loans,
         borrowers,
         investors,
@@ -204,7 +206,7 @@ export default function ExpenditurePanel({
 /**
  * Generate matching suggestions for a debit bank entry
  */
-function generateExpenditureSuggestions(entry, loans, borrowers, investors, transactions, investorTransactions, investorInterestEntries, expenses, reconciledTxIds = new Set()) {
+function generateExpenditureSuggestions(entry, allDebitEntries, loans, borrowers, investors, transactions, investorTransactions, investorInterestEntries, expenses, reconciledTxIds = new Set()) {
   const suggestions = [];
   const entryAmount = Math.abs(entry.amount);
   const entryDate = new Date(entry.statement_date);
@@ -280,6 +282,86 @@ function generateExpenditureSuggestions(entry, loans, borrowers, investors, tran
       borrower,
       label: `Loan Disbursement: ${loanNumber} (${borrowerDisplayName})`
     });
+  }
+
+  // 1b. GROUPED DISBURSEMENT MATCH: Multiple bank debits → single disbursement transaction
+  // Handles cases where a loan disbursement is paid out in multiple tranches
+  {
+    // Find all unreconciled debits within 3 days of this entry
+    const nearbyDebits = allDebitEntries.filter(other => {
+      if (other.amount >= 0) return false; // Must be debit
+      return datesWithinDays(entry.statement_date, other.statement_date, 3);
+    });
+
+    for (const tx of unrecDisbursements) {
+      const disbursementAmount = Math.abs(tx.amount);
+
+      // Skip if this single entry already matches (handled by 1:1 above)
+      if (amountsMatch(entryAmount, disbursementAmount, 1)) continue;
+
+      // Skip if this entry is larger than the disbursement
+      if (entryAmount > disbursementAmount * 1.01) continue;
+
+      // Find subset of debits that sum to disbursement (must include current entry)
+      const matchingSubset = findSubsetSum(nearbyDebits, disbursementAmount, entry.id);
+
+      if (matchingSubset && matchingSubset.length >= 2) {
+        const loan = loans.find(l => l.id === tx.loan_id);
+
+        // Check that bank entries are within 14 days of the disbursement transaction
+        const allEntriesNearTransaction = matchingSubset.every(e =>
+          datesWithinDays(e.statement_date, tx.date, 14)
+        );
+        if (!allEntriesNearTransaction) continue;
+
+        // Validate that grouped entries are related (similar descriptions or borrower name)
+        const entriesAreRelated = groupHasRelatedDescriptions(matchingSubset);
+        const borrowerName = loan?.borrower_name || '';
+        const hasBorrowerName = borrowerName && matchingSubset.some(e =>
+          descriptionContainsName(e.description, borrowerName, null) > 0.5
+        );
+        if (!entriesAreRelated && !hasBorrowerName) continue;
+
+        const allSameDay = matchingSubset.every(e =>
+          datesWithinDays(e.statement_date, entry.statement_date, 0)
+        );
+        const allNearTransaction = matchingSubset.every(e =>
+          datesWithinDays(e.statement_date, tx.date, 3)
+        );
+
+        let confidence;
+        if (allSameDay && allNearTransaction) {
+          confidence = 0.92;
+        } else if (allSameDay) {
+          confidence = 0.75;
+        } else if (allNearTransaction) {
+          confidence = 0.80;
+        } else {
+          confidence = 0.60;
+        }
+
+        const borrower = borrowers.find(b => b.id === loan?.borrower_id);
+        const borrowerDisplayName = borrower?.name || borrower?.business_name || loan?.borrower_name || 'Unknown';
+        const loanNumber = loan?.loan_number || 'Unknown';
+
+        suggestions.push({
+          type: 'loan_disbursement',
+          matchMode: 'grouped_disbursement',
+          confidence,
+          matchReasons: [
+            `${matchingSubset.length} payments sum to amount`,
+            allSameDay ? 'Same day' : 'Within 3 days',
+            entriesAreRelated ? 'Related descriptions' : 'Borrower name match'
+          ],
+          existingTransaction: tx,
+          groupedEntries: matchingSubset,
+          loan,
+          borrower,
+          label: `Split disbursement: ${matchingSubset.length} payments → ${loanNumber} (${borrowerDisplayName})`
+        });
+        break; // Stop at first grouped match
+      }
+    }
   }
 
   // 2. Match against unreconciled investor withdrawals

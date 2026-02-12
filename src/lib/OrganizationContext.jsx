@@ -35,7 +35,7 @@ export const OrganizationProvider = ({ children }) => {
     });
   }, [currentOrganization]);
 
-  const fetchOrganizations = async () => {
+  const fetchOrganizations = async (retryCount = 0) => {
     try {
       setIsLoadingOrgs(true);
 
@@ -120,6 +120,11 @@ export const OrganizationProvider = ({ children }) => {
       }
     } catch (error) {
       console.error('Error fetching organizations:', error);
+      if (retryCount < 1) {
+        console.log('[OrganizationContext] Retrying fetchOrganizations after 1s...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        return fetchOrganizations(retryCount + 1);
+      }
     } finally {
       setIsLoadingOrgs(false);
     }

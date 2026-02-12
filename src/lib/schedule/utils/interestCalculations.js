@@ -85,26 +85,16 @@ export function calculatePrincipalAtDate(initialPrincipal, transactions, date, l
     })
     .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
 
-  // Calculate further advances (disbursements after the loan start date) before this date
+  // Calculate further advances (exclude initial disbursement) before this date
   // Use gross_amount which represents what the borrower owes
-  let furtherAdvances = 0;
-  if (loanStartDate) {
-    const startDate = new Date(loanStartDate);
-    startDate.setHours(0, 0, 0, 0);
-    const startDateKey = startDate.toISOString().split('T')[0];
-
-    furtherAdvances = transactions
-      .filter(t => {
-        if (t.type !== 'Disbursement' || t.is_deleted) return false;
-        const txDate = new Date(t.date);
-        txDate.setHours(0, 0, 0, 0);
-        const txDateKey = txDate.toISOString().split('T')[0];
-        // Exclude initial disbursement (on start date), only count further advances
-        // and only count those before the target date
-        return txDateKey !== startDateKey && txDate < targetDate;
-      })
-      .reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
-  }
+  const furtherAdvances = transactions
+    .filter(t => {
+      if (t.type !== 'Disbursement' || t.is_deleted || t.is_initial_disbursement) return false;
+      const txDate = new Date(t.date);
+      txDate.setHours(0, 0, 0, 0);
+      return txDate < targetDate;
+    })
+    .reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
 
   return Math.max(0, initialPrincipal + furtherAdvances - repayments);
 }

@@ -50,7 +50,9 @@ export default function EditLoanPanel({
     roll_up_amount_override: loan?.roll_up_amount_override ?? false,
     // Additional deducted fees
     additional_deducted_fees: loan?.additional_deducted_fees ?? '',
-    additional_deducted_fees_note: loan?.additional_deducted_fees_note || ''
+    additional_deducted_fees_note: loan?.additional_deducted_fees_note || '',
+    // Auto-extend
+    auto_extend: loan?.auto_extend ?? false
   });
 
   // Confirmation step state
@@ -235,6 +237,15 @@ export default function EditLoanPanel({
       });
     }
 
+    // Auto-extend
+    if (formData.auto_extend !== (loan?.auto_extend ?? false)) {
+      changeList.push({
+        field: 'Auto-Extend',
+        from: loan?.auto_extend ? 'Yes' : 'No',
+        to: formData.auto_extend ? 'Yes' : 'No'
+      });
+    }
+
     return changeList;
   }, [formData, loan, products]);
 
@@ -387,6 +398,11 @@ export default function EditLoanPanel({
     // Roll-up amount override flag
     if (formData.roll_up_amount_override !== (loan.roll_up_amount_override ?? false)) {
       changes.roll_up_amount_override = formData.roll_up_amount_override;
+    }
+
+    // Auto-extend
+    if (formData.auto_extend !== (loan?.auto_extend ?? false)) {
+      changes.auto_extend = formData.auto_extend;
     }
 
     // NEVER recalculate net_disbursed - it should only be changed if user explicitly edits it
@@ -920,6 +936,7 @@ export default function EditLoanPanel({
                   min="1"
                   required
                 />
+                <p className="text-xs text-slate-500">Set to 1 if you want the schedule to dynamically increase with auto extend</p>
               </div>
 
               <div className="space-y-2">
@@ -932,6 +949,18 @@ export default function EditLoanPanel({
                   required
                 />
               </div>
+            </div>
+          )}
+
+          {/* Auto-Extend */}
+          {!isIrregularIncome && (
+            <div className="flex items-center justify-between">
+              <Label htmlFor="auto_extend" className="font-medium cursor-pointer">Auto-Extend Schedule</Label>
+              <Switch
+                id="auto_extend"
+                checked={formData.auto_extend}
+                onCheckedChange={(checked) => handleChange('auto_extend', checked)}
+              />
             </div>
           )}
 

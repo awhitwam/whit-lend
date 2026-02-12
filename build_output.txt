@@ -1,0 +1,140 @@
+[36mvite v6.4.1 [32mbuilding for production...[36m[39m
+transforming...
+[32m✓[39m 2784 modules transformed.
+rendering chunks...
+computing gzip size...
+[2mdist/[22m[32mindex.html                                        [39m[1m[2m  0.52 kB[22m[1m[22m[2m │ gzip:   0.32 kB[22m
+[2mdist/[22m[35massets/letterGenerator-DZrYvFpI.css               [39m[1m[2m 22.05 kB[22m[1m[22m[2m │ gzip:   3.51 kB[22m
+[2mdist/[22m[35massets/index-DUHeb-SZ.css                         [39m[1m[2m106.72 kB[22m[1m[22m[2m │ gzip:  17.07 kB[22m
+[2mdist/[22m[36massets/index-BdQq_4o_.js                          [39m[1m[2m  0.06 kB[22m[1m[22m[2m │ gzip:   0.08 kB[22m
+[2mdist/[22m[36massets/constructNow-DpvpXwKK.js                   [39m[1m[2m  0.09 kB[22m[1m[22m[2m │ gzip:   0.11 kB[22m
+[2mdist/[22m[36massets/subMonths-DjhAyVFf.js                      [39m[1m[2m  0.09 kB[22m[1m[22m[2m │ gzip:   0.11 kB[22m
+[2mdist/[22m[36massets/loanCalculations-QCa36Hef.js               [39m[1m[2m  0.15 kB[22m[1m[22m[2m │ gzip:   0.14 kB[22m
+[2mdist/[22m[36massets/endOfMonth-Ccx7n8Yp.js                     [39m[1m[2m  0.17 kB[22m[1m[22m[2m │ gzip:   0.16 kB[22m
+[2mdist/[22m[36massets/index-Co7RQTbo.js                          [39m[1m[2m  0.23 kB[22m[1m[22m[2m │ gzip:   0.17 kB[22m
+[2mdist/[22m[36massets/play-B56sJ_or.js                           [39m[1m[2m  0.31 kB[22m[1m[22m[2m │ gzip:   0.25 kB[22m
+[2mdist/[22m[36massets/plus-U3H9tLRm.js                           [39m[1m[2m  0.33 kB[22m[1m[22m[2m │ gzip:   0.26 kB[22m
+[2mdist/[22m[36massets/filter-qPjnHsmV.js                         [39m[1m[2m  0.33 kB[22m[1m[22m[2m │ gzip:   0.27 kB[22m
+[2mdist/[22m[36massets/search-BgDuiw9Y.js                         [39m[1m[2m  0.35 kB[22m[1m[22m[2m │ gzip:   0.28 kB[22m
+[2mdist/[22m[36massets/ban-BFC-XWQh.js                            [39m[1m[2m  0.35 kB[22m[1m[22m[2m │ gzip:   0.27 kB[22m
+[2mdist/[22m[36massets/circle-check-big-BS0OgTYz.js               [39m[1m[2m  0.37 kB[22m[1m[22m[2m │ gzip:   0.29 kB[22m
+[2mdist/[22m[36massets/user-CmMed5b9.js                           [39m[1m[2m  0.37 kB[22m[1m[22m[2m │ gzip:   0.29 kB[22m
+[2mdist/[22m[36massets/rotate-ccw-DV4Myr3U.js                     [39m[1m[2m  0.37 kB[22m[1m[22m[2m │ gzip:   0.29 kB[22m
+[2mdist/[22m[36massets/circle-x-3UwggCzn.js                       [39m[1m[2m  0.38 kB[22m[1m[22m[2m │ gzip:   0.29 kB[22m
+[2mdist/[22m[36massets/trending-down-BvNnDgtJ.js                  [39m[1m[2m  0.38 kB[22m[1m[22m[2m │ gzip:   0.28 kB[22m
+[2mdist/[22m[36massets/ellipsis-DHSLssf9.js                       [39m[1m[2m  0.40 kB[22m[1m[22m[2m │ gzip:   0.27 kB[22m
+[2mdist/[22m[36massets/link-2-DNRjLcER.js                         [39m[1m[2m  0.41 kB[22m[1m[22m[2m │ gzip:   0.31 kB[22m
+[2mdist/[22m[36massets/percent-Cf5dUelh.js                        [39m[1m[2m  0.42 kB[22m[1m[22m[2m │ gzip:   0.30 kB[22m
+[2mdist/[22m[36massets/arrow-up-down-BTD5D3CD.js                  [39m[1m[2m  0.42 kB[22m[1m[22m[2m │ gzip:   0.30 kB[22m
+[2mdist/[22m[36massets/settings-2-BEbSW5oq.js                     [39m[1m[2m  0.43 kB[22m[1m[22m[2m │ gzip:   0.30 kB[22m
+[2mdist/[22m[36massets/calendar-CdwIrMMN.js                       [39m[1m[2m  0.43 kB[22m[1m[22m[2m │ gzip:   0.31 kB[22m
+[2mdist/[22m[36massets/upload-5JxXnBUQ.js                         [39m[1m[2m  0.43 kB[22m[1m[22m[2m │ gzip:   0.32 kB[22m
+[2mdist/[22m[36massets/map-pin-Bk7hDQaa.js                        [39m[1m[2m  0.43 kB[22m[1m[22m[2m │ gzip:   0.33 kB[22m
+[2mdist/[22m[36massets/download-BROCHNN7.js                       [39m[1m[2m  0.44 kB[22m[1m[22m[2m │ gzip:   0.32 kB[22m
+[2mdist/[22m[36massets/zap-B5Pi8xUR.js                            [39m[1m[2m  0.44 kB[22m[1m[22m[2m │ gzip:   0.31 kB[22m
+[2mdist/[22m[36massets/image-CcutHYjX.js                          [39m[1m[2m  0.44 kB[22m[1m[22m[2m │ gzip:   0.33 kB[22m
+[2mdist/[22m[36massets/pencil-3xdcGzFR.js                         [39m[1m[2m  0.45 kB[22m[1m[22m[2m │ gzip:   0.33 kB[22m
+[2mdist/[22m[36massets/pen-line-D-_7eM_H.js                       [39m[1m[2m  0.45 kB[22m[1m[22m[2m │ gzip:   0.33 kB[22m
+[2mdist/[22m[36massets/textarea-Bzj_QheO.js                       [39m[1m[2m  0.46 kB[22m[1m[22m[2m │ gzip:   0.32 kB[22m
+[2mdist/[22m[36massets/wallet-NiSLT7LO.js                         [39m[1m[2m  0.46 kB[22m[1m[22m[2m │ gzip:   0.31 kB[22m
+[2mdist/[22m[36massets/house-BPDJTn4Y.js                          [39m[1m[2m  0.46 kB[22m[1m[22m[2m │ gzip:   0.32 kB[22m
+[2mdist/[22m[36massets/paperclip-B8dMC1ZQ.js                      [39m[1m[2m  0.47 kB[22m[1m[22m[2m │ gzip:   0.33 kB[22m
+[2mdist/[22m[36massets/square-pen-ByqZXyGV.js                     [39m[1m[2m  0.49 kB[22m[1m[22m[2m │ gzip:   0.34 kB[22m
+[2mdist/[22m[36massets/save-BIw4Xu5p.js                           [39m[1m[2m  0.50 kB[22m[1m[22m[2m │ gzip:   0.33 kB[22m
+[2mdist/[22m[36massets/shield-alert-DtAWEoIY.js                   [39m[1m[2m  0.53 kB[22m[1m[22m[2m │ gzip:   0.37 kB[22m
+[2mdist/[22m[36massets/trash-2-BakYFMlz.js                        [39m[1m[2m  0.53 kB[22m[1m[22m[2m │ gzip:   0.36 kB[22m
+[2mdist/[22m[36massets/EmptyState-742Qt9cP.js                     [39m[1m[2m  0.56 kB[22m[1m[22m[2m │ gzip:   0.33 kB[22m
+[2mdist/[22m[36massets/hard-drive-DH0zDNmk.js                     [39m[1m[2m  0.56 kB[22m[1m[22m[2m │ gzip:   0.37 kB[22m
+[2mdist/[22m[36massets/phone-DxJh7N8m.js                          [39m[1m[2m  0.57 kB[22m[1m[22m[2m │ gzip:   0.36 kB[22m
+[2mdist/[22m[36massets/landmark-BVcvZsm1.js                       [39m[1m[2m  0.58 kB[22m[1m[22m[2m │ gzip:   0.34 kB[22m
+[2mdist/[22m[36massets/arrow-up-B2Bkdtr6.js                       [39m[1m[2m  0.62 kB[22m[1m[22m[2m │ gzip:   0.32 kB[22m
+[2mdist/[22m[36massets/differenceInMonths-B6Mel0OR.js             [39m[1m[2m  0.66 kB[22m[1m[22m[2m │ gzip:   0.37 kB[22m
+[2mdist/[22m[36massets/unlink-Belyl4tS.js                         [39m[1m[2m  0.70 kB[22m[1m[22m[2m │ gzip:   0.41 kB[22m
+[2mdist/[22m[36massets/calculator-BNdwP1iM.js                     [39m[1m[2m  0.70 kB[22m[1m[22m[2m │ gzip:   0.39 kB[22m
+[2mdist/[22m[36massets/badge-CnOq8x1l.js                          [39m[1m[2m  0.72 kB[22m[1m[22m[2m │ gzip:   0.38 kB[22m
+[2mdist/[22m[36massets/startOfMonth-rBXsL5eN.js                   [39m[1m[2m  0.92 kB[22m[1m[22m[2m │ gzip:   0.43 kB[22m
+[2mdist/[22m[36massets/folder-2n4Uktet.js                         [39m[1m[2m  1.10 kB[22m[1m[22m[2m │ gzip:   0.46 kB[22m
+[2mdist/[22m[36massets/table-BOwlkKFm.js                          [39m[1m[2m  1.58 kB[22m[1m[22m[2m │ gzip:   0.56 kB[22m
+[2mdist/[22m[36massets/About-Cbo3bnCP.js                          [39m[1m[2m  1.83 kB[22m[1m[22m[2m │ gzip:   0.69 kB[22m
+[2mdist/[22m[36massets/progress-Bgg8UxsT.js                       [39m[1m[2m  1.90 kB[22m[1m[22m[2m │ gzip:   0.95 kB[22m
+[2mdist/[22m[36massets/dialog-BFI1TkwP.js                         [39m[1m[2m  2.15 kB[22m[1m[22m[2m │ gzip:   0.84 kB[22m
+[2mdist/[22m[36massets/sheet-DSAs-9ih.js                          [39m[1m[2m  2.20 kB[22m[1m[22m[2m │ gzip:   0.87 kB[22m
+[2mdist/[22m[36massets/formatDistanceToNow-KnY4fnU-.js            [39m[1m[2m  2.22 kB[22m[1m[22m[2m │ gzip:   1.01 kB[22m
+[2mdist/[22m[36massets/ReceiptEntryPanel-BCe8POBw.js              [39m[1m[2m  2.27 kB[22m[1m[22m[2m │ gzip:   0.98 kB[22m
+[2mdist/[22m[36massets/switch-lvHLenGb.js                         [39m[1m[2m  2.49 kB[22m[1m[22m[2m │ gzip:   1.25 kB[22m
+[2mdist/[22m[36massets/UpdatePassword-_kqwAc7B.js                 [39m[1m[2m  2.86 kB[22m[1m[22m[2m │ gzip:   1.18 kB[22m
+[2mdist/[22m[36massets/useMutation-glB0fjfW.js                    [39m[1m[2m  2.97 kB[22m[1m[22m[2m │ gzip:   1.25 kB[22m
+[2mdist/[22m[36massets/GoogleDriveCallback-YxWFj2xw.js            [39m[1m[2m  3.16 kB[22m[1m[22m[2m │ gzip:   1.43 kB[22m
+[2mdist/[22m[36massets/tabs-Dn_DSFLI.js                           [39m[1m[2m  3.22 kB[22m[1m[22m[2m │ gzip:   1.35 kB[22m
+[2mdist/[22m[36massets/index-CPxFHUEX.js                          [39m[1m[2m  3.56 kB[22m[1m[22m[2m │ gzip:   1.62 kB[22m
+[2mdist/[22m[36massets/checkbox-CTqWXHgp.js                       [39m[1m[2m  3.83 kB[22m[1m[22m[2m │ gzip:   1.70 kB[22m
+[2mdist/[22m[36massets/radio-group-B9NBrwUo.js                    [39m[1m[2m  3.93 kB[22m[1m[22m[2m │ gzip:   1.78 kB[22m
+[2mdist/[22m[36massets/Login-Cn66oa5j.js                          [39m[1m[2m  4.38 kB[22m[1m[22m[2m │ gzip:   1.41 kB[22m
+[2mdist/[22m[36massets/LetterTemplates-Pw355dYs.js                [39m[1m[2m  4.62 kB[22m[1m[22m[2m │ gzip:   1.70 kB[22m
+[2mdist/[22m[36massets/alert-dialog-CoNg0aI4.js                   [39m[1m[2m  4.76 kB[22m[1m[22m[2m │ gzip:   1.74 kB[22m
+[2mdist/[22m[36massets/index-CktZyZKj.js                          [39m[1m[2m  5.23 kB[22m[1m[22m[2m │ gzip:   1.99 kB[22m
+[2mdist/[22m[36massets/GoogleDriveFolderPicker-BFj_c3_R.js        [39m[1m[2m  5.24 kB[22m[1m[22m[2m │ gzip:   1.84 kB[22m
+[2mdist/[22m[36massets/popover-VO0oSVNk.js                        [39m[1m[2m  5.29 kB[22m[1m[22m[2m │ gzip:   1.93 kB[22m
+[2mdist/[22m[36massets/ImportBorrowers-EEz4SZ6U.js                [39m[1m[2m  5.68 kB[22m[1m[22m[2m │ gzip:   2.30 kB[22m
+[2mdist/[22m[36massets/BorrowerForm-CZKjzRHB.js                   [39m[1m[2m  6.31 kB[22m[1m[22m[2m │ gzip:   1.69 kB[22m
+[2mdist/[22m[36massets/Investors-B4q4YFhR.js                      [39m[1m[2m  6.48 kB[22m[1m[22m[2m │ gzip:   2.16 kB[22m
+[2mdist/[22m[36massets/interestCalculation-BNK0s9uu.js            [39m[1m[2m  6.84 kB[22m[1m[22m[2m │ gzip:   1.96 kB[22m
+[2mdist/[22m[36massets/AcceptInvitation-CB7t3hZL.js               [39m[1m[2m  7.45 kB[22m[1m[22m[2m │ gzip:   2.46 kB[22m
+[2mdist/[22m[36massets/OtherIncome-DZSxanQO.js                    [39m[1m[2m  7.52 kB[22m[1m[22m[2m │ gzip:   2.60 kB[22m
+[2mdist/[22m[36massets/ImportInvestors-C3OSstZ5.js                [39m[1m[2m  7.72 kB[22m[1m[22m[2m │ gzip:   2.82 kB[22m
+[2mdist/[22m[36massets/Receipts-BSDPwUCo.js                       [39m[1m[2m  7.93 kB[22m[1m[22m[2m │ gzip:   2.59 kB[22m
+[2mdist/[22m[36massets/BorrowersByContact-Cr6NkRY_.js             [39m[1m[2m  8.08 kB[22m[1m[22m[2m │ gzip:   2.92 kB[22m
+[2mdist/[22m[36massets/useGoogleDrive-Bv-zV2nF.js                 [39m[1m[2m  8.89 kB[22m[1m[22m[2m │ gzip:   2.18 kB[22m
+[2mdist/[22m[36massets/Config-C5ID2ILt.js                         [39m[1m[2m  9.66 kB[22m[1m[22m[2m │ gzip:   3.46 kB[22m
+[2mdist/[22m[36massets/ImportInvestorTransactions-D9Dq76Vl.js     [39m[1m[2m  9.94 kB[22m[1m[22m[2m │ gzip:   3.51 kB[22m
+[2mdist/[22m[36massets/useQuery-BO6LdWc1.js                       [39m[1m[2m 10.35 kB[22m[1m[22m[2m │ gzip:   3.67 kB[22m
+[2mdist/[22m[36massets/backupSchema-Cg788IPw.js                   [39m[1m[2m 10.59 kB[22m[1m[22m[2m │ gzip:   2.97 kB[22m
+[2mdist/[22m[36massets/ImportDisbursements-B3eC6T2O.js            [39m[1m[2m 11.52 kB[22m[1m[22m[2m │ gzip:   3.84 kB[22m
+[2mdist/[22m[36massets/ImportSecurities-BzhbWrrT.js               [39m[1m[2m 12.14 kB[22m[1m[22m[2m │ gzip:   3.51 kB[22m
+[2mdist/[22m[36massets/Borrowers-B8BFpW6U.js                      [39m[1m[2m 12.33 kB[22m[1m[22m[2m │ gzip:   4.15 kB[22m
+[2mdist/[22m[36massets/scroll-area-CFOQQ_aM.js                    [39m[1m[2m 12.49 kB[22m[1m[22m[2m │ gzip:   3.93 kB[22m
+[2mdist/[22m[36massets/InvestorProducts-Cwq-WHwS.js               [39m[1m[2m 12.77 kB[22m[1m[22m[2m │ gzip:   3.52 kB[22m
+[2mdist/[22m[36massets/LoanScheduleManager-cF_z773L.js            [39m[1m[2m 12.86 kB[22m[1m[22m[2m │ gzip:   4.21 kB[22m
+[2mdist/[22m[36massets/ImportHistoricalDisbursements-CkSESlDm.js  [39m[1m[2m 13.35 kB[22m[1m[22m[2m │ gzip:   4.27 kB[22m
+[2mdist/[22m[36massets/command-DpEOJPa-.js                        [39m[1m[2m 13.86 kB[22m[1m[22m[2m │ gzip:   5.26 kB[22m
+[2mdist/[22m[36massets/ImportExpenses--3YeSruF.js                 [39m[1m[2m 14.15 kB[22m[1m[22m[2m │ gzip:   4.58 kB[22m
+[2mdist/[22m[36massets/AuditLog-CJ-W6sbu.js                       [39m[1m[2m 14.27 kB[22m[1m[22m[2m │ gzip:   4.53 kB[22m
+[2mdist/[22m[36massets/ReceiptEntryContent-DKKRSd6z.js            [39m[1m[2m 14.49 kB[22m[1m[22m[2m │ gzip:   4.44 kB[22m
+[2mdist/[22m[36massets/Ledger-wpyQ1wAl.js                         [39m[1m[2m 14.56 kB[22m[1m[22m[2m │ gzip:   3.88 kB[22m
+[2mdist/[22m[36massets/ImportComments-C6pmBzme.js                 [39m[1m[2m 15.88 kB[22m[1m[22m[2m │ gzip:   4.99 kB[22m
+[2mdist/[22m[36massets/AccountantReport-DCOQmLIt.js               [39m[1m[2m 16.04 kB[22m[1m[22m[2m │ gzip:   4.85 kB[22m
+[2mdist/[22m[36massets/Expenses-BcMlT0Aw.js                       [39m[1m[2m 16.85 kB[22m[1m[22m[2m │ gzip:   4.94 kB[22m
+[2mdist/[22m[36massets/ImportTransactions-C6G9Q2ET.js             [39m[1m[2m 18.84 kB[22m[1m[22m[2m │ gzip:   5.49 kB[22m
+[2mdist/[22m[36massets/index-L8JWUTfH.js                          [39m[1m[2m 18.98 kB[22m[1m[22m[2m │ gzip:   4.43 kB[22m
+[2mdist/[22m[36massets/format-C9AwKg1k.js                         [39m[1m[2m 20.41 kB[22m[1m[22m[2m │ gzip:   5.83 kB[22m
+[2mdist/[22m[36massets/Users-0-SB68MV.js                          [39m[1m[2m 20.46 kB[22m[1m[22m[2m │ gzip:   5.86 kB[22m
+[2mdist/[22m[36massets/select-uLyVxsbo.js                         [39m[1m[2m 21.31 kB[22m[1m[22m[2m │ gzip:   7.51 kB[22m
+[2mdist/[22m[36massets/purify.es-C_uT9hQ1.js                      [39m[1m[2m 21.98 kB[22m[1m[22m[2m │ gzip:   8.74 kB[22m
+[2mdist/[22m[36massets/LetterTemplateEditor-BFfjvizg.js           [39m[1m[2m 22.74 kB[22m[1m[22m[2m │ gzip:   7.02 kB[22m
+[2mdist/[22m[36massets/Products-CiziRktx.js                       [39m[1m[2m 23.27 kB[22m[1m[22m[2m │ gzip:   5.81 kB[22m
+[2mdist/[22m[36massets/OrphanedEntries-Bx5Bay4s.js                [39m[1m[2m 28.65 kB[22m[1m[22m[2m │ gzip:   6.95 kB[22m
+[2mdist/[22m[36massets/InvestorDetails-D8YuEvsL.js                [39m[1m[2m 29.32 kB[22m[1m[22m[2m │ gzip:   7.00 kB[22m
+[2mdist/[22m[36massets/v4-BccuEL4x.js                             [39m[1m[2m 31.26 kB[22m[1m[22m[2m │ gzip:   9.60 kB[22m
+[2mdist/[22m[36massets/utils-C983PMvZ.js                          [39m[1m[2m 31.41 kB[22m[1m[22m[2m │ gzip:   7.93 kB[22m
+[2mdist/[22m[36massets/Loans-BfvkJUqZ.js                          [39m[1m[2m 31.89 kB[22m[1m[22m[2m │ gzip:   8.72 kB[22m
+[2mdist/[22m[36massets/NewLoan-pNpN8ZOx.js                        [39m[1m[2m 32.85 kB[22m[1m[22m[2m │ gzip:   7.55 kB[22m
+[2mdist/[22m[36massets/BorrowerDetails-NHFOBe0L.js                [39m[1m[2m 33.82 kB[22m[1m[22m[2m │ gzip:   9.52 kB[22m
+[2mdist/[22m[36massets/Dashboard-DCL17FzI.js                      [39m[1m[2m 39.98 kB[22m[1m[22m[2m │ gzip:   9.89 kB[22m
+[2mdist/[22m[36massets/OrgAdmin-9Ur-BWEe.js                       [39m[1m[2m 46.15 kB[22m[1m[22m[2m │ gzip:  12.10 kB[22m
+[2mdist/[22m[36massets/ImportLoandisc-Bb3bhA5k.js                 [39m[1m[2m 49.12 kB[22m[1m[22m[2m │ gzip:  13.14 kB[22m
+[2mdist/[22m[36massets/SuperAdmin-DrEwozdx.js                     [39m[1m[2m 57.05 kB[22m[1m[22m[2m │ gzip:  13.17 kB[22m
+[2mdist/[22m[36massets/BankReconciliationSimple-B3JDYyGp.js       [39m[1m[2m 98.99 kB[22m[1m[22m[2m │ gzip:  23.69 kB[22m
+[2mdist/[22m[36massets/LoanCalculator-Cnc9SRBj.js                 [39m[1m[2m120.79 kB[22m[1m[22m[2m │ gzip:  29.23 kB[22m
+[2mdist/[22m[36massets/index.es-Dbvj66yN.js                       [39m[1m[2m159.40 kB[22m[1m[22m[2m │ gzip:  53.42 kB[22m
+[2mdist/[22m[36massets/BankReconciliation-C0hvhKmQ.js             [39m[1m[2m180.93 kB[22m[1m[22m[2m │ gzip:  36.68 kB[22m
+[2mdist/[22m[36massets/html2canvas.esm-QH1iLAAe.js                [39m[1m[2m202.38 kB[22m[1m[22m[2m │ gzip:  48.04 kB[22m
+[2mdist/[22m[36massets/jspdf.es.min-BGURc10t.js                   [39m[1m[2m357.75 kB[22m[1m[22m[2m │ gzip: 117.87 kB[22m
+[2mdist/[22m[36massets/LoanDetails-CHBJM8l0.js                    [39m[1m[2m405.64 kB[22m[1m[22m[2m │ gzip:  89.23 kB[22m
+[2mdist/[22m[36massets/index-BJfZ7eyX.js                          [39m[1m[33m617.87 kB[39m[22m[2m │ gzip: 181.07 kB[22m
+[2mdist/[22m[36massets/letterGenerator-BpyMqQss.js                [39m[1m[33m708.67 kB[39m[22m[2m │ gzip: 255.33 kB[22m
+[33m
+(!) Some chunks are larger than 500 kB after minification. Consider:
+- Using dynamic import() to code-split the application
+- Use build.rollupOptions.output.manualChunks to improve chunking: https://rollupjs.org/configuration-options/#output-manualchunks
+- Adjust chunk size limit for this warning via build.chunkSizeWarningLimit.[39m
+[32m✓ built in 10.26s[39m

@@ -82,11 +82,21 @@ export const AuthProvider = ({ children }) => {
   // Session error state (RLS/JWT failures detected by dataClient)
   const [sessionError, setSessionError] = useState(null);
   const sessionErrorTriggeredRef = useRef(false); // Guard to prevent multiple error prompts
+  const loginGraceRef = useRef(0); // Timestamp of most recent login — used to suppress transient session errors
 
   // Handle session errors from dataClient (RLS/JWT failures)
   const handleSessionError = useCallback((error) => {
     // Guard: Only show error once to prevent multiple prompts
     if (sessionErrorTriggeredRef.current) return;
+
+    // Grace period: Suppress session errors within 5 seconds of login
+    // During login transition, OrganizationContext is still fetching and queries may
+    // fire before the session is fully settled, causing transient RLS errors
+    if (Date.now() - loginGraceRef.current < 5000) {
+      console.log('[AuthContext] Suppressing session error during login grace period:', error.code);
+      return;
+    }
+
     sessionErrorTriggeredRef.current = true;
 
     console.error('[AuthContext] Session error from dataClient:', error);
@@ -249,7 +259,7 @@ export const AuthProvider = ({ children }) => {
       );
 
       const sessionPromise = supabase.auth.getSession();
-      const { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
+      let { data: { session } } = await Promise.race([sessionPromise, timeoutPromise]);
 
       // Check if this is a password recovery flow - indicated by recovery token in URL hash
       // IMPORTANT: Do NOT apply browser restart check for recovery flows because:
@@ -279,6 +289,40 @@ export const AuthProvider = ({ children }) => {
         setIsAuthenticated(false);
         setIsLoadingAuth(false);
         return;
+      }
+
+      // Validate JWT expiry — session may exist in localStorage but JWT could be stale
+      // (e.g., tab left open overnight, auto-refresh failed silently)
+      // Without this, we'd set isAuthenticated=true, briefly render the dashboard,
+      // then the health check would detect the expired token and show SessionErrorDialog
+      if (session?.expires_at) {
+        const expiresAt = session.expires_at * 1000;
+        if (expiresAt <= Date.now()) {
+          console.log('[AuthContext] JWT expired at', new Date(expiresAt).toISOString(), '- attempting refresh...');
+          try {
+            const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+            if (refreshError || !refreshData?.session) {
+              console.log('[AuthContext] Refresh failed - signing out cleanly');
+              try { await supabase.auth.signOut(); } catch (e) { /* ignore */ }
+              sessionStorage.removeItem(SESSION_ALIVE_KEY);
+              setUser(null);
+              setIsAuthenticated(false);
+              setIsLoadingAuth(false);
+              return;
+            }
+            // Refresh succeeded — use the new session going forward
+            console.log('[AuthContext] Expired session refreshed successfully');
+            session = refreshData.session;
+          } catch (refreshErr) {
+            console.error('[AuthContext] Refresh exception:', refreshErr);
+            try { await supabase.auth.signOut(); } catch (e) { /* ignore */ }
+            sessionStorage.removeItem(SESSION_ALIVE_KEY);
+            setUser(null);
+            setIsAuthenticated(false);
+            setIsLoadingAuth(false);
+            return;
+          }
+        }
       }
 
       // Use functional updates to preserve object references when user hasn't changed
@@ -364,6 +408,9 @@ export const AuthProvider = ({ children }) => {
       sessionStorage.setItem(TAB_SESSION_ID_KEY, tabSessionIdRef.current);
       // Initialize activity timestamp for this tab
       lastActivityRef.current = Date.now();
+      // Set grace period to suppress transient session errors during login transition
+      loginGraceRef.current = Date.now();
+      sessionErrorTriggeredRef.current = false;
       console.log('[AuthContext] Login successful, session_id:', tabSessionIdRef.current);
       // Log successful login with session ID
       logAuthEvent(AuditAction.LOGIN, email, true, { session_id: tabSessionIdRef.current });

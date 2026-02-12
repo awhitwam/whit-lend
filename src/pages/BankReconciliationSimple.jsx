@@ -8,7 +8,7 @@
  * Each bank entry shows inline suggestions and expandable "create new" forms.
  */
 
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
 import { Card, CardContent } from '@/components/ui/card';
@@ -51,6 +51,7 @@ export default function BankReconciliationSimple() {
   const [dragActive, setDragActive] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const hasRunCleanupRef = useRef(false);
 
   const bankSources = getBankSources();
 
@@ -150,11 +151,16 @@ export default function BankReconciliationSimple() {
   const isLoading = loadingBank || loadingLoans || loadingBorrowers || loadingInvestors ||
                     loadingTx || loadingInvTx || loadingExpenses || loadingReconciled;
 
-  // Clean up orphaned ReconciliationEntry records on page load
+  // Clean up orphaned ReconciliationEntry records on initial page load only
   // These can occur if un-reconcile was called before the fix that properly deletes them
+  // IMPORTANT: Only runs once to prevent a race condition where freshly-created
+  // ReconciliationEntry records get deleted before the bank-statements-unreconciled
+  // query has refreshed (the just-reconciled entries still appear "unreconciled" briefly)
   useEffect(() => {
+    if (hasRunCleanupRef.current) return;
     const cleanupOrphanedReconciliationEntries = async () => {
       if (reconciliationEntries.length === 0 || bankStatements.length === 0) return;
+      hasRunCleanupRef.current = true;
 
       // Build set of unreconciled bank statement IDs
       const unreconciledBankStatementIds = new Set(bankStatements.map(s => s.id));
