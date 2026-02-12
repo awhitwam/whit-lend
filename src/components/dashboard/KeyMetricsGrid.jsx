@@ -52,6 +52,7 @@ export default function KeyMetricsGrid({
                       {m.loan.borrower_name}
                     </p>
                     <p className="text-xs text-slate-500">#{m.loan.loan_number}</p>
+                    {m.loan.description && <p className="text-xs text-slate-400 truncate">{m.loan.description}</p>}
                   </div>
                   <p className="text-sm font-semibold text-red-600">
                     {formatCurrency(m.interestRemaining)}
@@ -99,6 +100,7 @@ export default function KeyMetricsGrid({
                       {m.loan.borrower_name}
                     </p>
                     <p className="text-xs text-slate-500">#{m.loan.loan_number}</p>
+                    {m.loan.description && <p className="text-xs text-slate-400 truncate">{m.loan.description}</p>}
                   </div>
                   <p className="text-sm font-semibold text-slate-900">
                     {formatCurrency(m.principalRemaining)}
@@ -142,6 +144,7 @@ export default function KeyMetricsGrid({
                       {item.loan.borrower_name}
                     </p>
                     <p className="text-xs text-slate-500">#{item.loan.loan_number}</p>
+                    {item.loan.description && <p className="text-xs text-slate-400 truncate">{item.loan.description}</p>}
                   </div>
                   <p className="text-sm font-semibold text-emerald-600">
                     +{formatCurrency(item.creditAmount)}

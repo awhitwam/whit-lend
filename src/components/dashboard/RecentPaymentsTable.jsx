@@ -55,8 +55,9 @@ export default function RecentPaymentsTable({ recentRepayments }) {
                         {tx.loan?.borrower_name || 'Unknown'}
                       </Link>
                     </td>
-                    <td className="px-4 py-2.5 text-sm text-slate-500">
-                      #{tx.loan?.loan_number}
+                    <td className="px-4 py-2.5">
+                      <p className="text-sm text-slate-500">#{tx.loan?.loan_number}</p>
+                      {tx.loan?.description && <p className="text-xs text-slate-400 truncate">{tx.loan.description}</p>}
                     </td>
                     <td className="px-4 py-2.5 text-right text-sm font-mono text-slate-600">
                       {tx.principal_applied > 0 ? formatCurrency(tx.principal_applied) : '-'}

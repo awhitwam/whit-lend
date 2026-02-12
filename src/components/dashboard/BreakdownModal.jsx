@@ -75,7 +75,10 @@ export default function BreakdownModal({
                   }}
                 >
                   <td className="py-2.5 px-2 text-sm font-mono text-slate-600">#{item.loan.loan_number}</td>
-                  <td className="py-2.5 px-2 text-sm font-medium text-slate-900">{item.loan.borrower_name}</td>
+                  <td className="py-2.5 px-2">
+                    <p className="text-sm font-medium text-slate-900">{item.loan.borrower_name}</p>
+                    {item.loan.description && <p className="text-xs text-slate-400 truncate">{item.loan.description}</p>}
+                  </td>
                   <td className="py-2.5 px-2 text-right text-sm font-mono font-semibold text-slate-700">
                     {activeBreakdown === 'borrowers' ? (
                       <span className="text-emerald-600">{item.loan.status}</span>
