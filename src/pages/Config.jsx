@@ -137,6 +137,13 @@ export default function Config() {
     }
   };
 
+  const handleConnectGoogleDrive = () => {
+    const result = connectGoogleDrive();
+    if (result && !result.success) {
+      toast.error(result.error);
+    }
+  };
+
   const handleDisconnectGoogleDrive = async () => {
     setIsDisconnecting(true);
     try {
@@ -258,7 +265,7 @@ export default function Config() {
                   Connect your Google account to save correspondence directly to Google Drive.
                   Files will be organized in folders by borrower and loan.
                 </p>
-                <Button onClick={connectGoogleDrive}>
+                <Button onClick={handleConnectGoogleDrive}>
                   <Cloud className="w-4 h-4 mr-2" />
                   Connect Google Drive
                 </Button>

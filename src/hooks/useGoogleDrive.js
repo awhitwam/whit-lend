@@ -95,12 +95,12 @@ export function useGoogleDrive() {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
     if (!clientId) {
       console.error('VITE_GOOGLE_CLIENT_ID not configured');
-      return;
+      return { success: false, error: 'Google Drive is not configured. Please contact support.' };
     }
 
     if (!currentOrganization?.id) {
       console.error('No organization selected');
-      return;
+      return { success: false, error: 'No organization selected. Please select an organization first.' };
     }
 
     const redirectUri = `${window.location.origin}/GoogleDriveCallback`;
@@ -122,6 +122,7 @@ export function useGoogleDrive() {
       `&state=${state}`;
 
     window.location.href = authUrl;
+    return { success: true };
   }, [currentOrganization?.id]);
 
   /**
