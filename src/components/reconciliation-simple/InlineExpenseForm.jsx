@@ -18,6 +18,7 @@ export default function InlineExpenseForm({
   expenseTypes = [],
   expenseTypeSuggestion,
   patterns = [],
+  loans = [],
   onSuccess,
   onCancel
 }) {
@@ -31,6 +32,7 @@ export default function InlineExpenseForm({
     return '__none__';
   });
   const [description, setDescription] = useState(bankEntry.description || '');
+  const [selectedLoanId, setSelectedLoanId] = useState('__none__');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   // Update selected type if suggestion changes
@@ -104,7 +106,8 @@ export default function InlineExpenseForm({
       await createExpense({
         bankEntry,
         expenseType: selectedType,
-        description: description.trim()
+        description: description.trim(),
+        loan_id: selectedLoanId !== '__none__' ? selectedLoanId : null
       });
 
       // Learn this pattern for future suggestions
@@ -164,6 +167,21 @@ export default function InlineExpenseForm({
             ))}
           </SelectContent>
         </Select>
+        {loans.length > 0 && (
+          <Select value={selectedLoanId} onValueChange={setSelectedLoanId}>
+            <SelectTrigger className="h-8 w-[200px]">
+              <SelectValue placeholder="Link to loan (optional)" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="__none__">No loan linked</SelectItem>
+              {loans.filter(l => !l.is_deleted).map(loan => (
+                <SelectItem key={loan.id} value={loan.id}>
+                  {loan.borrower_name} - {loan.loan_number}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
         <Input
           value={description}
           onChange={(e) => setDescription(e.target.value)}

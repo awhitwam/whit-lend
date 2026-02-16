@@ -1,9 +1,9 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { format, differenceInDays, startOfQuarter, endOfQuarter } from 'date-fns';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
-import { Home, TrendingUp, Calendar, AlertCircle, CheckCircle2, Clock, ChevronDown, ChevronRight } from 'lucide-react';
+import { Home, TrendingUp, Calendar, AlertCircle, CheckCircle2, Clock, ChevronDown, ChevronRight, ArrowUpDown } from 'lucide-react';
 import { formatCurrency } from './LoanCalculator';
 
 /**
@@ -16,6 +16,8 @@ import { formatCurrency } from './LoanCalculator';
  * - Visual distinction from regular schedules
  */
 export default function RentScheduleView({ schedule, transactions = [], loan, product }) {
+  const [sortDirection, setSortDirection] = useState('desc');
+
   // Analyze the schedule and transactions to build quarterly view
   const { quarters, prediction, pattern } = useMemo(() => {
     const repaymentTransactions = transactions
@@ -53,15 +55,16 @@ export default function RentScheduleView({ schedule, transactions = [], loan, pr
 
       const q = quarterMap.get(key);
       q.payments.push(tx);
-      q.totalRent += tx.amount || 0;
+      q.totalRent += (tx.amount || 0) - (tx.principal_applied || 0);
       q.principalApplied += tx.principal_applied || 0;
     });
 
     // Convert to sorted array
     const quarters = Array.from(quarterMap.values())
       .sort((a, b) => {
-        if (a.year !== b.year) return a.year - b.year;
-        return a.quarter - b.quarter;
+        const dir = sortDirection === 'asc' ? 1 : -1;
+        if (a.year !== b.year) return (a.year - b.year) * dir;
+        return (a.quarter - b.quarter) * dir;
       });
 
     // Analyze payment pattern for prediction
@@ -165,16 +168,16 @@ export default function RentScheduleView({ schedule, transactions = [], loan, pr
     }
 
     return { quarters, prediction, pattern, disbursementTransactions };
-  }, [schedule, transactions]);
+  }, [schedule, transactions, sortDirection]);
 
   // Calculate totals
-  const totalRentReceived = transactions
-    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
-    .reduce((sum, tx) => sum + (tx.amount || 0), 0);
-
   const totalPrincipalRepaid = transactions
     .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
     .reduce((sum, tx) => sum + (tx.principal_applied || 0), 0);
+
+  const totalRentReceived = transactions
+    .filter(tx => !tx.is_deleted && tx.type === 'Repayment')
+    .reduce((sum, tx) => sum + (tx.amount || 0), 0) - totalPrincipalRepaid;
 
   const principalBalance = (loan?.principal_amount || 0) - totalPrincipalRepaid;
 
@@ -269,7 +272,15 @@ export default function RentScheduleView({ schedule, transactions = [], loan, pr
       <Table>
         <TableHeader>
           <TableRow className="bg-slate-50">
-            <TableHead className="font-semibold">Quarter</TableHead>
+            <TableHead>
+              <button
+                onClick={() => setSortDirection(d => d === 'asc' ? 'desc' : 'asc')}
+                className="flex items-center gap-1 hover:text-slate-900 font-semibold"
+              >
+                Quarter
+                <ArrowUpDown className="w-3 h-3" />
+              </button>
+            </TableHead>
             <TableHead className="font-semibold">Period</TableHead>
             <TableHead className="font-semibold text-center">Payments</TableHead>
             <TableHead className="font-semibold text-right">Total Rent</TableHead>

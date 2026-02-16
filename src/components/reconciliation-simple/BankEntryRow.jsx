@@ -473,6 +473,7 @@ export default function BankEntryRow({
                 expenseTypes={expenseTypes}
                 expenseTypeSuggestion={expenseTypeSuggestion}
                 patterns={patterns}
+                loans={loans}
                 onSuccess={handleFormSuccess}
                 onCancel={handleFormClose}
               />

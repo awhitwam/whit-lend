@@ -601,16 +601,18 @@ export async function createInvestorWithdrawal({ bankEntry, investor, split, inv
  * @param {Object} params.bankEntry - The bank entry
  * @param {Object} params.expenseType - The expense type
  * @param {string} params.description - Optional description override
+ * @param {string} params.loan_id - Optional loan ID to link expense to
  * @returns {Promise<Object>} Created expense
  */
-export async function createExpense({ bankEntry, expenseType, description }) {
+export async function createExpense({ bankEntry, expenseType, description, loan_id }) {
   const amount = Math.abs(bankEntry.amount);
   const expenseData = {
     type_id: expenseType?.id || null,
     type_name: expenseType?.name || null,
     amount,
     date: bankEntry.statement_date,
-    description: description || bankEntry.description
+    description: description || bankEntry.description,
+    loan_id: loan_id || null
   };
 
   const created = await api.entities.Expense.create(expenseData);
