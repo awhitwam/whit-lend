@@ -97,8 +97,9 @@ export default function InvestorDetails() {
 
   const createTransactionMutation = useMutation({
     mutationFn: async (/** @type {{type: string, amount: number, date: string, notes?: string}} */ data) => {
+      const { isTypeConversion, originalType, ...txData } = data;
       await api.entities.InvestorTransaction.create({
-        ...data,
+        ...txData,
         investor_id: investorId,
         investor_name: investor.name
       });
