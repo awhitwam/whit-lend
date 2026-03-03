@@ -13,6 +13,7 @@ import { useState, useMemo } from 'react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { ArrowUp, ArrowDown } from 'lucide-react';
+import { formatCurrency } from '@/lib/formatters';
 import BankEntryRow from './BankEntryRow';
 import { extractVendorKeywords, levenshteinSimilarity } from '@/lib/reconciliation/scoring';
 import { findSubsetSum, groupHasRelatedDescriptions, descriptionContainsName, datesWithinDays, amountsMatch } from '@/lib/reconciliation/utils';
@@ -86,10 +87,10 @@ export default function ExpenditurePanel({
         const inAmountRange = (!pattern.amount_min || entryAmount >= pattern.amount_min * 0.8) &&
                               (!pattern.amount_max || entryAmount <= pattern.amount_max * 1.2);
 
-        // Require at least 50% keyword match and reasonable amount
-        if (keywordScore >= 0.5 && inAmountRange) {
+        // Require at least 30% keyword match and reasonable amount
+        if (keywordScore >= 0.3 && inAmountRange) {
           // Boost score based on pattern usage count
-          const usageBoost = Math.min((pattern.match_count || 1) / 20, 0.15);
+          const usageBoost = Math.min((pattern.match_count || 1) / 10, 0.2);
           const totalScore = keywordScore * 0.7 + (pattern.confidence_score || 0.5) * 0.2 + usageBoost;
 
           if (totalScore > bestScore) {
@@ -106,7 +107,7 @@ export default function ExpenditurePanel({
         }
       }
 
-      if (bestMatch && bestMatch.confidence >= 0.5) {
+      if (bestMatch && bestMatch.confidence >= 0.35) {
         suggestions.set(entry.id, bestMatch);
       }
     });
@@ -302,8 +303,14 @@ function generateExpenditureSuggestions(entry, allDebitEntries, loans, borrowers
       // Skip if this entry is larger than the disbursement
       if (entryAmount > disbursementAmount * 1.01) continue;
 
+      // Filter out entries disproportionately small relative to the disbursement
+      // Each entry must be at least 2% of the target to be a credible part of a split payment
+      const meaningfulDebits = nearbyDebits.filter(e =>
+        Math.abs(e.amount) >= disbursementAmount * 0.02
+      );
+
       // Find subset of debits that sum to disbursement (must include current entry)
-      const matchingSubset = findSubsetSum(nearbyDebits, disbursementAmount, entry.id);
+      const matchingSubset = findSubsetSum(meaningfulDebits, disbursementAmount, entry.id);
 
       if (matchingSubset && matchingSubset.length >= 2) {
         const loan = loans.find(l => l.id === tx.loan_id);
@@ -349,7 +356,7 @@ function generateExpenditureSuggestions(entry, allDebitEntries, loans, borrowers
           matchMode: 'grouped_disbursement',
           confidence,
           matchReasons: [
-            `${matchingSubset.length} payments sum to amount`,
+            `${matchingSubset.length} payments total ${formatCurrency(disbursementAmount)}`,
             allSameDay ? 'Same day' : 'Within 3 days',
             entriesAreRelated ? 'Related descriptions' : 'Borrower name match'
           ],
@@ -357,7 +364,7 @@ function generateExpenditureSuggestions(entry, allDebitEntries, loans, borrowers
           groupedEntries: matchingSubset,
           loan,
           borrower,
-          label: `Split disbursement: ${matchingSubset.length} payments → ${loanNumber} (${borrowerDisplayName})`
+          label: `Loan Disbursement: ${loanNumber} (${borrowerDisplayName}) — split payment`
         });
         break; // Stop at first grouped match
       }

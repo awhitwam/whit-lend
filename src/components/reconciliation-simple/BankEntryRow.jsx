@@ -332,6 +332,22 @@ export default function BankEntryRow({
                               {format(new Date(suggestion.existingTransaction.date), 'dd MMM yyyy')}
                             </div>
                           )}
+                          {suggestion.matchMode === 'grouped_disbursement' && suggestion.groupedEntries && (
+                            <div className="text-xs text-slate-500 mt-1.5">
+                              <div className="font-medium text-slate-600 mb-1">Payments in this split:</div>
+                              <div className="ml-2 space-y-0.5">
+                                {suggestion.groupedEntries.map((e, eIdx) => (
+                                  <div key={eIdx} className={`flex items-center gap-2 ${e.id === entry.id ? 'font-medium text-blue-700' : ''}`}>
+                                    <span className="text-slate-300">•</span>
+                                    <span>{format(new Date(e.statement_date), 'dd MMM yyyy')}</span>
+                                    <span>{formatCurrency(Math.abs(e.amount))}</span>
+                                    <span className={`truncate max-w-[200px] ${e.id === entry.id ? '' : 'text-slate-400'}`}>{e.description}</span>
+                                    {e.id === entry.id && <span className="text-blue-500 shrink-0">(this entry)</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
                           {suggestion.existingTransactions && suggestion.existingTransactions.length > 0 && (
                             <div className="text-xs text-slate-500 space-y-1">
                               <div className="font-medium">
