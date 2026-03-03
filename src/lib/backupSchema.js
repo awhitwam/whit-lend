@@ -1,7 +1,7 @@
 // Schema definitions for backup/restore compatibility
 // Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
 
-export const CURRENT_SCHEMA_VERSION = 84;
+export const CURRENT_SCHEMA_VERSION = 86;
 
 // Define columns and defaults for each table
 // When adding new columns to tables, add them here with appropriate defaults
@@ -103,7 +103,7 @@ export const tableSchemas = {
   },
 
   InvestorTransaction: {
-    columns: ['id', 'organization_id', 'investor_id', 'type', 'amount', 'date',
+    columns: ['id', 'organization_id', 'investor_id', 'investor_name', 'type', 'amount', 'date',
               'reference', 'notes', 'created_at', 'transaction_id', 'description',
               'bank_account', 'is_auto_generated', 'accrual_period_start', 'accrual_period_end'],
     defaults: { is_auto_generated: false }
@@ -119,8 +119,9 @@ export const tableSchemas = {
     columns: ['id', 'organization_id', 'loan_id', 'borrower_id', 'borrower_name',
               'type', 'date', 'amount', 'principal_applied', 'interest_applied',
               'fees_applied', 'reference', 'notes', 'is_deleted', 'created_at',
-              'gross_amount', 'deducted_fee', 'deducted_interest', 'linked_disbursement_id'],
-    defaults: { is_deleted: false, deducted_fee: 0, deducted_interest: 0 }
+              'gross_amount', 'deducted_fee', 'deducted_interest', 'linked_disbursement_id',
+              'is_initial_disbursement'],
+    defaults: { is_deleted: false, deducted_fee: 0, deducted_interest: 0, is_initial_disbursement: false }
   },
 
   repayment_schedules: {
@@ -188,7 +189,7 @@ export const tableSchemas = {
               'loan_id', 'investor_id', 'expense_type_id', 'confidence_score',
               'match_count', 'transaction_type', 'amount_min', 'amount_max',
               'default_capital_ratio', 'default_interest_ratio', 'default_fees_ratio',
-              'created_at', 'updated_at'],
+              'last_used_at', 'created_at', 'updated_at'],
     defaults: { match_count: 1, confidence_score: 0.8 }
   },
 
@@ -238,8 +239,9 @@ export const tableSchemas = {
 
   organizations: {
     columns: ['id', 'name', 'created_at', 'updated_at', 'address_line1', 'address_line2',
-              'city', 'postcode', 'country', 'phone', 'email', 'website', 'settings'],
-    defaults: { settings: {} }
+              'city', 'postcode', 'country', 'phone', 'email', 'website', 'settings',
+              'google_drive_connected', 'google_drive_email'],
+    defaults: { settings: {}, google_drive_connected: false }
   },
 
   user_profiles: {
@@ -291,7 +293,7 @@ export const tableSchemas = {
   },
 
   google_drive_tokens: {
-    columns: ['id', 'user_id', 'access_token_encrypted', 'refresh_token_encrypted',
+    columns: ['id', 'user_id', 'organization_id', 'access_token_encrypted', 'refresh_token_encrypted',
               'token_expiry', 'created_at', 'updated_at'],
     defaults: {}
   }
