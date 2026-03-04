@@ -242,7 +242,7 @@ export default function InlineWithdrawalForm({
               value={capital}
               onChange={(e) => setCapital(e.target.value)}
               onKeyDown={handleKeyDown}
-              className={`h-7 w-[100px] font-mono ${capitalExceedsBalance ? 'border-red-400 bg-red-50' : ''}`}
+              className={`h-7 w-[100px] font-mono [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield] ${capitalExceedsBalance ? 'border-red-400 bg-red-50' : ''}`}
             />
           </div>
 
@@ -256,7 +256,7 @@ export default function InlineWithdrawalForm({
               value={interest}
               onChange={(e) => setInterest(e.target.value)}
               onKeyDown={handleKeyDown}
-              className="h-7 w-[100px] font-mono"
+              className="h-7 w-[100px] font-mono [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]"
             />
           </div>
 

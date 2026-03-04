@@ -1,4 +1,4 @@
-import { forwardRef, useImperativeHandle, useRef, useMemo } from 'react';
+import { forwardRef, useImperativeHandle, useRef, useMemo, useState } from 'react';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input } from '@/components/ui/input';
 import {
@@ -33,6 +33,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
   const isSingleLoanMode = mode === 'loan';
   const containerRef = useRef(null);
   const inputRefs = useRef({});
+  const [focusedLoanId, setFocusedLoanId] = useState(null);
 
   // Expose focus method
   useImperativeHandle(ref, () => ({
@@ -121,6 +122,15 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
       }
     };
     onUpdate({ allocations: newAllocations });
+  };
+
+  // Fill a column's field for the currently focused loan with the remaining balance
+  const handleHeaderFill = (allocField) => {
+    if (!focusedLoanId) return;
+    const alloc = row.allocations?.[focusedLoanId] || { principal: 0, interest: 0, fees: 0 };
+    const currentFieldValue = parseFloat(alloc[allocField]) || 0;
+    const remaining = (parseFloat(row.amount) || 0) - totalAllocated + currentFieldValue;
+    handleAllocationChange(focusedLoanId, allocField, remaining > 0 ? parseFloat(remaining.toFixed(2)) : 0);
   };
 
   // Calculate loan outstanding
@@ -235,10 +245,22 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
         <div className="flex items-center gap-1 px-1 py-1 text-[10px] text-slate-500 uppercase font-medium">
           <div className="w-4 shrink-0"></div>{/* Checkbox spacer */}
           <div className="w-[380px] shrink-0">Loan</div>
-          <div className="w-20 text-right">Interest</div>
-          <div className="w-20 text-right">Capital</div>
-          <div className="w-16 text-right">Fees</div>
-          <div className="flex-1 min-w-[120px]">Note</div>
+          <div
+            className="w-24 text-right cursor-pointer select-none hover:text-blue-600"
+            title="Click to fill remaining balance into Interest"
+            onClick={() => handleHeaderFill('interest')}
+          >Interest</div>
+          <div
+            className="w-24 text-right cursor-pointer select-none hover:text-blue-600"
+            title="Click to fill remaining balance into Capital"
+            onClick={() => handleHeaderFill('principal')}
+          >Capital</div>
+          <div
+            className="w-20 text-right cursor-pointer select-none hover:text-blue-600"
+            title="Click to fill remaining balance into Fees"
+            onClick={() => handleHeaderFill('fees')}
+          >Fees</div>
+          <div className="flex-1 min-w-[80px]">Note</div>
         </div>
       )}
 
@@ -382,12 +404,14 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   type="number"
                   value={alloc.interest || ''}
                   onChange={(e) => handleAllocationChange(loan.id, 'interest', e.target.value)}
+                  onFocus={() => setFocusedLoanId(loan.id)}
                   placeholder="0.00"
                   step="0.01"
                   min="0"
                   disabled={!isSelected}
                   className={cn(
-                    'h-7 w-20 text-sm text-right px-1',
+                    'h-7 w-24 text-sm text-right px-1',
+                    '[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]',
                     !isSelected && 'bg-slate-100 text-slate-400',
                     interestOver && 'border-amber-500 bg-amber-50'
                   )}
@@ -397,12 +421,14 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   type="number"
                   value={alloc.principal || ''}
                   onChange={(e) => handleAllocationChange(loan.id, 'principal', e.target.value)}
+                  onFocus={() => setFocusedLoanId(loan.id)}
                   placeholder="0.00"
                   step="0.01"
                   min="0"
                   disabled={!isSelected}
                   className={cn(
-                    'h-7 w-20 text-sm text-right px-1',
+                    'h-7 w-24 text-sm text-right px-1',
+                    '[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]',
                     !isSelected && 'bg-slate-100 text-slate-400',
                     principalOver && 'border-amber-500 bg-amber-50'
                   )}
@@ -412,13 +438,15 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                   type="number"
                   value={alloc.fees || ''}
                   onChange={(e) => handleAllocationChange(loan.id, 'fees', e.target.value)}
+                  onFocus={() => setFocusedLoanId(loan.id)}
                   placeholder={loan.exit_fee > 0 ? loan.exit_fee.toFixed(2) : '0.00'}
                   title={loan.exit_fee > 0 ? `Exit fee: ${formatCurrency(loan.exit_fee)}` : ''}
                   step="0.01"
                   min="0"
                   disabled={!isSelected}
                   className={cn(
-                    'h-7 w-16 text-sm text-right px-1',
+                    'h-7 w-20 text-sm text-right px-1',
+                    '[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none [-moz-appearance:textfield]',
                     !isSelected && 'bg-slate-100 text-slate-400',
                     loan.exit_fee > 0 && !alloc.fees && isSelected && 'placeholder:text-purple-400'
                   )}
@@ -434,7 +462,7 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
                 placeholder="Note..."
                 disabled={!isSelected}
                 className={cn(
-                  'h-7 flex-1 min-w-[120px] text-xs px-1',
+                  'h-7 flex-1 min-w-[80px] text-xs px-1',
                   !isSelected && 'bg-slate-100 text-slate-400'
                 )}
               />
