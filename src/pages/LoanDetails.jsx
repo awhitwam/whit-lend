@@ -453,7 +453,7 @@ export default function LoanDetails() {
 
         // Find the disbursement transaction
         const allTx = await api.entities.Transaction.filter({ loan_id: loanId });
-        const disbursementTx = allTx.find(t => t.type === 'Disbursement' && !t.is_deleted);
+        const disbursementTx = allTx.find(t => t.type === 'Disbursement' && !t.is_deleted && t.is_initial_disbursement);
 
         if (disbursementTx) {
           const existingDeductedInterest = disbursementTx.deducted_interest || 0;
