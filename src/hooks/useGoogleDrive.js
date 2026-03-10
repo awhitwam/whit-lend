@@ -92,7 +92,7 @@ export function useGoogleDrive() {
    * Initiate OAuth flow to connect Google Drive for current organization
    */
   const initiateOAuth = useCallback(() => {
-    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID;
+    const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '867728021178-umj71l6jen6k1ifvjm69bs1u71n8k6m4.apps.googleusercontent.com';
     if (!clientId) {
       console.error('VITE_GOOGLE_CLIENT_ID not configured');
       return { success: false, error: 'Google Drive is not configured. Please contact support.' };
