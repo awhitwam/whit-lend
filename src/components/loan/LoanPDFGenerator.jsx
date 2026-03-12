@@ -1494,11 +1494,11 @@ function renderSettlementStatementToDoc(loan, settlementData, schedule = [], tra
       // Days
       doc.text(String(period.days), 55, y, { align: 'right' });
 
-      // Calculation basis
-      doc.text(formatCurrency(period.calculationBasis), 110, y, { align: 'right' });
+      // Calculation basis (roll-up uses calculationBasis, standard uses openingPrincipal)
+      doc.text(formatCurrency(period.calculationBasis ?? period.openingPrincipal), 110, y, { align: 'right' });
 
-      // Interest accrued
-      doc.text(formatCurrency(period.interest), 160, y, { align: 'right' });
+      // Interest accrued (roll-up uses interest, standard uses periodInterest)
+      doc.text(formatCurrency(period.interest ?? period.periodInterest), 160, y, { align: 'right' });
 
       // Payment (if any)
       if (period.principalPayment > 0) {
@@ -1509,7 +1509,7 @@ function renderSettlementStatementToDoc(loan, settlementData, schedule = [], tra
         doc.text('-', 190, y, { align: 'right' });
       }
 
-      runningInterestTotal += period.interest;
+      runningInterestTotal += (period.interest ?? period.periodInterest ?? 0);
 
       // Add period type annotation
       if (period.isRollUpPeriod || period.isServicedPeriod || period.isAccrualToSettlement) {
