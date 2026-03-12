@@ -240,29 +240,27 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
       )}
       tabIndex={isFocused ? 0 : -1}
     >
-      {/* Header row with allocation column labels - hide in single-loan mode */}
-      {!isSingleLoanMode && (
-        <div className="flex items-center gap-1 px-1 py-1 text-[10px] text-slate-500 uppercase font-medium">
-          <div className="w-4 shrink-0"></div>{/* Checkbox spacer */}
-          <div className="w-[380px] shrink-0">Loan</div>
-          <div
-            className="w-24 text-right cursor-pointer select-none hover:text-blue-600"
-            title="Click to fill remaining balance into Interest"
-            onClick={() => handleHeaderFill('interest')}
-          >Interest</div>
-          <div
-            className="w-24 text-right cursor-pointer select-none hover:text-blue-600"
-            title="Click to fill remaining balance into Capital"
-            onClick={() => handleHeaderFill('principal')}
-          >Capital</div>
-          <div
-            className="w-20 text-right cursor-pointer select-none hover:text-blue-600"
-            title="Click to fill remaining balance into Fees"
-            onClick={() => handleHeaderFill('fees')}
-          >Fees</div>
-          <div className="flex-1 min-w-[80px]">Note</div>
-        </div>
-      )}
+      {/* Header row with allocation column labels */}
+      <div className="flex items-center gap-1 px-1 py-1 text-[10px] text-slate-500 uppercase font-medium">
+        {!isSingleLoanMode && <div className="w-4 shrink-0"></div>}{/* Checkbox spacer */}
+        <div className="w-[380px] shrink-0">Loan</div>
+        <div
+          className="w-24 text-right cursor-pointer select-none hover:text-blue-600"
+          title="Click to fill remaining balance into Interest"
+          onClick={() => handleHeaderFill('interest')}
+        >Interest</div>
+        <div
+          className="w-24 text-right cursor-pointer select-none hover:text-blue-600"
+          title="Click to fill remaining balance into Capital"
+          onClick={() => handleHeaderFill('principal')}
+        >Capital</div>
+        <div
+          className="w-20 text-right cursor-pointer select-none hover:text-blue-600"
+          title="Click to fill remaining balance into Fees"
+          onClick={() => handleHeaderFill('fees')}
+        >Fees</div>
+        <div className="flex-1 min-w-[80px]">Note</div>
+      </div>
 
       {/* Loan rows */}
       <div className="space-y-1">
