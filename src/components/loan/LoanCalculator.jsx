@@ -2638,13 +2638,13 @@ export function calculateSettlementAmount(loan, settlementDate, transactions = [
         reference: tx.reference || tx.description || '',
         type: 'repayment'
       })),
-    // Further advances increase principal
+    // Further advances increase principal (use gross_amount for deducted disbursements)
     ...disbursements.map(tx => ({
       date: new Date(tx.date),
       principalApplied: 0,
-      disbursementAmount: tx.amount,
+      disbursementAmount: tx.gross_amount ?? tx.amount,
       interestApplied: 0,
-      amount: tx.amount,
+      amount: tx.gross_amount ?? tx.amount,
       reference: tx.reference || tx.description || '',
       type: 'disbursement'
     }))
@@ -2748,14 +2748,15 @@ export function calculateSettlementAmount(loan, settlementDate, transactions = [
         principalBalance: Math.max(0, runningPrincipalBal)
       });
     } else {
-      // Further advance increases principal
-      runningPrincipalBal += tx.amount;
+      // Further advance increases principal (use gross_amount for deducted disbursements)
+      const grossAmount = tx.gross_amount ?? tx.amount;
+      runningPrincipalBal += grossAmount;
 
       transactionHistory.push({
         date: txDate,
         type: 'Disbursement',
         description: tx.reference || tx.description || 'Further advance',
-        amount: tx.amount,
+        amount: grossAmount,
         principalApplied: 0,
         interestApplied: 0,
         principalBalance: runningPrincipalBal

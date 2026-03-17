@@ -104,6 +104,7 @@ const navigation = [
     iconColor: 'text-rose-400',
     children: [
       { name: 'Accountant Report', href: 'AccountantReport', icon: FileSpreadsheet },
+      { name: 'Income & Expenditure', href: 'IncomeExpenditureReport', icon: TrendingUp },
     ]
   },
   {

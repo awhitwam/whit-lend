@@ -1045,12 +1045,29 @@ function renderLoanStatementToDoc(doc, loan, schedule, transactions, product, in
 }
 
 /**
+ * Build a consistent filename prefix: LoanNumber_Borrower_Description_Date
+ */
+function buildPdfFilenameParts(loan, borrowerNameOverride = null) {
+  const loanNum = loan.loan_number || loan.id.slice(0, 8);
+  const borrower = (borrowerNameOverride || loan.borrower_name || 'Unknown')
+    .replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
+  const desc = loan.description
+    ? loan.description.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-')
+    : '';
+  const date = format(new Date(), 'yyyy-MM-dd');
+  const parts = [loanNum, borrower];
+  if (desc) parts.push(desc);
+  parts.push(date);
+  return parts.join('_');
+}
+
+/**
  * Generate loan statement PDF and download it
  */
 export function generateLoanStatementPDF(loan, schedule, transactions, product = null, interestCalc = null, organization = null) {
   const doc = new jsPDF();
   renderLoanStatementToDoc(doc, loan, schedule, transactions, product, interestCalc, organization);
-  doc.save(`loan-statement-${loan.loan_number || loan.id.slice(0,8)}-${format(new Date(), 'yyyy-MM-dd')}.pdf`);
+  doc.save(`${buildPdfFilenameParts(loan)}.pdf`);
 }
 
 /**
@@ -1075,12 +1092,9 @@ export function generateSettlementStatementPDF(loan, settlementData, schedule = 
     || `${filenameBorrower?.first_name || ''} ${filenameBorrower?.last_name || ''}`.trim()
     || loan.borrower_name
     || 'Unknown';
-  // Sanitize name for filename (remove special characters)
-  const safeBorrowerName = borrowerNameForFile.replace(/[^a-zA-Z0-9\s-]/g, '').replace(/\s+/g, '-');
-  const productionDate = format(new Date(), 'yyyy-MM-dd');
   const redemptionDate = format(new Date(settlementData.settlementDate), 'yyyy-MM-dd');
 
-  doc.save(`${safeBorrowerName}_${productionDate}_Redemption-to-${redemptionDate}.pdf`);
+  doc.save(`${buildPdfFilenameParts(loan, borrowerNameForFile)}_Redemption-to-${redemptionDate}.pdf`);
 }
 
 /**

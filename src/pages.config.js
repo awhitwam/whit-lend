@@ -42,6 +42,7 @@ const LetterTemplateEditor = lazy(() => import('./components/letters/LetterTempl
 const LetterTemplates = lazy(() => import('./pages/LetterTemplates'));
 const GoogleDriveCallback = lazy(() => import('./pages/GoogleDriveCallback'));
 const AccountantReport = lazy(() => import('./pages/AccountantReport'));
+const IncomeExpenditureReport = lazy(() => import('./pages/IncomeExpenditureReport'));
 
 export const PAGES = {
     "BorrowerDetails": BorrowerDetails,
@@ -85,6 +86,7 @@ export const PAGES = {
     "LetterTemplates": LetterTemplates,
     "GoogleDriveCallback": GoogleDriveCallback,
     "AccountantReport": AccountantReport,
+    "IncomeExpenditureReport": IncomeExpenditureReport,
 }
 
 export const pagesConfig = {
