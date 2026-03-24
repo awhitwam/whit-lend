@@ -2569,6 +2569,7 @@ export default function LoanDetails() {
               loan={loan}
               reconciledTransactionIds={reconciledTransactionIds}
               reconciliationMap={reconciliationMap}
+              onDeleteRepayment={handleDeleteTransaction}
               onEditRepayment={(tx) => {
                 setEditReceiptTarget(tx);
                 setEditReceiptValues({

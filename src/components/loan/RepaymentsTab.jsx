@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   Edit,
+  Trash2,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
@@ -20,6 +21,7 @@ export default function RepaymentsTab({
   reconciledTransactionIds,
   reconciliationMap,
   onEditRepayment,
+  onDeleteRepayment,
 }) {
   const [sortField, setSortField] = useState('date');
   const [sortDir, setSortDir] = useState('asc');
@@ -229,19 +231,34 @@ export default function RepaymentsTab({
                       ) : null}
                     </TableCell>
                     <TableCell className="py-0.5">
-                      <Tooltip>
-                        <TooltipTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="sm"
-                            className="h-6 w-6 p-0"
-                            onClick={() => onEditRepayment(tx)}
-                          >
-                            <Edit className="w-3.5 h-3.5 text-slate-400 hover:text-slate-700" />
-                          </Button>
-                        </TooltipTrigger>
-                        <TooltipContent><p>Edit allocation</p></TooltipContent>
-                      </Tooltip>
+                      <div className="flex items-center gap-0.5">
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0"
+                              onClick={() => onEditRepayment(tx)}
+                            >
+                              <Edit className="w-3.5 h-3.5 text-slate-400 hover:text-slate-700" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent><p>Edit allocation</p></TooltipContent>
+                        </Tooltip>
+                        <Tooltip>
+                          <TooltipTrigger asChild>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              className="h-6 w-6 p-0"
+                              onClick={() => onDeleteRepayment?.(tx)}
+                            >
+                              <Trash2 className="w-3.5 h-3.5 text-slate-400 hover:text-red-500" />
+                            </Button>
+                          </TooltipTrigger>
+                          <TooltipContent><p>Delete repayment</p></TooltipContent>
+                        </Tooltip>
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
