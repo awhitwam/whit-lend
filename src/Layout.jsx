@@ -91,8 +91,7 @@ const navigation = [
     children: [
       { name: 'Ledger', href: 'Ledger', icon: Building2 },
       { name: 'Receipts', href: 'Receipts', icon: Receipt },
-      { name: 'Bank Reconciliation', href: 'BankReconciliation', icon: FileCheck },
-      { name: 'Simple Reconciliation', href: 'BankReconciliationSimple', icon: List },
+      { name: 'Bank Reconciliation', href: 'BankReconciliationSimple', icon: List },
       { name: 'Orphaned Entries', href: 'OrphanedEntries', icon: AlertCircle },
       { name: 'Expenses', href: 'Expenses', icon: Banknote },
       { name: 'Other Income', href: 'OtherIncome', icon: Coins },

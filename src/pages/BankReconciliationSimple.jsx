@@ -501,6 +501,7 @@ export default function BankReconciliationSimple() {
                 transactions={transactions}
                 investorTransactions={investorTransactions}
                 reconciliationEntries={reconciliationEntries}
+                oppositeEntries={debits}
                 onReconciled={handleRefresh}
               />
             )}
@@ -526,6 +527,7 @@ export default function BankReconciliationSimple() {
                 expenseTypes={expenseTypes}
                 patterns={patterns}
                 reconciliationEntries={reconciliationEntries}
+                oppositeEntries={credits}
                 onReconciled={handleRefresh}
               />
             )}

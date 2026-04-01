@@ -23,6 +23,7 @@ export default function ReceiptsPanel({
   transactions,
   investorTransactions,
   reconciliationEntries = [],
+  oppositeEntries = [],
   onReconciled
 }) {
   const [sortOrder, setSortOrder] = useState('desc'); // 'asc' or 'desc'
@@ -112,6 +113,7 @@ export default function ReceiptsPanel({
             loans={loans}
             borrowers={borrowers}
             investors={investors}
+            oppositeEntries={oppositeEntries}
             onReconciled={onReconciled}
           />
         ))}

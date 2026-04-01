@@ -21,6 +21,7 @@ import {
   Coins,
   Banknote,
   FileText,
+  ArrowLeftRight,
   Loader2
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatters';
@@ -33,6 +34,7 @@ import InlineOtherIncomeForm from './InlineOtherIncomeForm';
 import InlineDisbursementForm from './InlineDisbursementForm';
 import InlineWithdrawalForm from './InlineWithdrawalForm';
 import InlineExpenseForm from './InlineExpenseForm';
+import InlineOffsetForm from './InlineOffsetForm';
 
 export default function BankEntryRow({
   entry,
@@ -44,6 +46,7 @@ export default function BankEntryRow({
   investors,
   expenseTypes,
   patterns = [],
+  oppositeEntries = [],
   onReconciled
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -197,7 +200,7 @@ export default function BankEntryRow({
             )}
           </div>
           {/* Create New Icons */}
-          <div className="flex items-center gap-1 shrink-0 w-24 justify-center" onClick={(e) => e.stopPropagation()}>
+          <div className="flex items-center gap-1 shrink-0 w-32 justify-center" onClick={(e) => e.stopPropagation()}>
             {type === 'receipt' ? (
               <>
                 <Tooltip>
@@ -247,6 +250,22 @@ export default function BankEntryRow({
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Other Income</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={expandedForm === 'offset' ? 'default' : 'ghost'}
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => {
+                        setExpandedForm(expandedForm === 'offset' ? null : 'offset');
+                        if (expandedForm !== 'offset') setExpanded(true);
+                      }}
+                    >
+                      <ArrowLeftRight className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Funds Returned / Offset</TooltipContent>
                 </Tooltip>
               </>
             ) : (
@@ -298,6 +317,22 @@ export default function BankEntryRow({
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Expense</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={expandedForm === 'offset' ? 'default' : 'ghost'}
+                      size="icon"
+                      className="h-7 w-7"
+                      onClick={() => {
+                        setExpandedForm(expandedForm === 'offset' ? null : 'offset');
+                        if (expandedForm !== 'offset') setExpanded(true);
+                      }}
+                    >
+                      <ArrowLeftRight className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Funds Returned / Offset</TooltipContent>
                 </Tooltip>
               </>
             )}
@@ -490,6 +525,15 @@ export default function BankEntryRow({
                 expenseTypeSuggestion={expenseTypeSuggestion}
                 patterns={patterns}
                 loans={loans}
+                onSuccess={handleFormSuccess}
+                onCancel={handleFormClose}
+              />
+            )}
+
+            {expandedForm === 'offset' && (
+              <InlineOffsetForm
+                bankEntry={entry}
+                oppositeEntries={oppositeEntries}
                 onSuccess={handleFormSuccess}
                 onCancel={handleFormClose}
               />
