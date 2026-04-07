@@ -10,7 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Loader2, Calendar, TrendingUp, TrendingDown, ArrowRightLeft, ChevronRight, ChevronDown } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatters';
-import { format, subMonths, startOfMonth } from 'date-fns';
+import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
+import { Button } from '@/components/ui/button';
 
 export default function IncomeExpenditureReport() {
   const { currentOrganization } = useOrganization();
@@ -19,6 +20,28 @@ export default function IncomeExpenditureReport() {
   // Default to last 12 months
   const [fromDate, setFromDate] = useState(() => format(startOfMonth(subMonths(new Date(), 12)), 'yyyy-MM-dd'));
   const [toDate, setToDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+
+  // Quick month selection
+  const selectMonth = (date) => {
+    setFromDate(format(startOfMonth(date), 'yyyy-MM-dd'));
+    setToDate(format(endOfMonth(date), 'yyyy-MM-dd'));
+  };
+
+  const months = useMemo(() => {
+    const result = [];
+    const now = new Date();
+    for (let i = 0; i < 12; i++) {
+      result.push(subMonths(now, i));
+    }
+    return result;
+  }, []);
+
+  const activeMonth = useMemo(() => {
+    const fromStart = startOfMonth(new Date(fromDate));
+    const toEnd = endOfMonth(new Date(fromDate));
+    if (format(toEnd, 'yyyy-MM-dd') === toDate) return format(fromStart, 'yyyy-MM');
+    return null;
+  }, [fromDate, toDate]);
 
   // Track which detail sections are expanded
   const [expandedRows, setExpandedRows] = useState(new Set());
@@ -69,13 +92,19 @@ export default function IncomeExpenditureReport() {
     enabled: !!currentOrganization
   });
 
+  const { data: investorTransactions = [], isLoading: loadingInvestorTx } = useQuery({
+    queryKey: ['ie-investor-transactions', currentOrganization?.id],
+    queryFn: () => api.entities.InvestorTransaction.listAll('-date'),
+    enabled: !!currentOrganization
+  });
+
   const { data: investors = [] } = useQuery({
     queryKey: ['ie-investors', currentOrganization?.id],
     queryFn: () => api.entities.Investor.list(),
     enabled: !!currentOrganization
   });
 
-  const isLoading = loadingTx || loadingLoans || loadingProducts || loadingExpenses || loadingOther || loadingInvestor;
+  const isLoading = loadingTx || loadingLoans || loadingProducts || loadingExpenses || loadingOther || loadingInvestor || loadingInvestorTx;
 
   // Build lookup maps
   const { rentLoanIds, loanMap, investorMap } = useMemo(() => {
@@ -233,6 +262,38 @@ export default function IncomeExpenditureReport() {
     investorDetail.sort((a, b) => new Date(b.date) - new Date(a.date));
     const investorInterestTotal = investorDebits.reduce((sum, i) => sum + (parseFloat(i.amount) || 0), 0);
 
+    // --- INVESTOR CAPITAL MOVEMENTS ---
+    const filteredInvestorTx = investorTransactions.filter(t =>
+      new Date(t.date) >= from && new Date(t.date) <= to
+    );
+
+    const depositDetail = [];
+    let depositsTotal = 0;
+    const withdrawalDetail = [];
+    let withdrawalsTotal = 0;
+
+    for (const t of filteredInvestorTx) {
+      const amt = parseFloat(t.amount) || 0;
+      const row = {
+        date: t.date,
+        amount: amt,
+        investorId: t.investor_id,
+        investorName: investorMap[t.investor_id]?.name || 'Unknown Investor',
+        description: t.description || t.notes || ''
+      };
+      if (t.type === 'capital_in') {
+        depositsTotal += amt;
+        depositDetail.push(row);
+      } else if (t.type === 'capital_out') {
+        withdrawalsTotal += amt;
+        withdrawalDetail.push(row);
+      }
+    }
+    depositDetail.sort((a, b) => new Date(b.date) - new Date(a.date));
+    withdrawalDetail.sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    const netInvestorMovement = depositsTotal - withdrawalsTotal;
+
     const netIncome = totalIncome - totalExpenditure - investorInterestTotal;
 
     return {
@@ -244,10 +305,10 @@ export default function IncomeExpenditureReport() {
         totalIncome
       },
       expenditure: { expensesByCategory, expenseDetail, sortedCategories, totalExpenditure },
-      investorCosts: { investorInterestTotal, investorDetail },
+      investorCosts: { investorInterestTotal, investorDetail, depositsTotal, depositDetail, withdrawalsTotal, withdrawalDetail, netInvestorMovement },
       netIncome
     };
-  }, [transactions, expenses, otherIncome, investorInterest, rentLoanIds, loanMap, investorMap, fromDate, toDate]);
+  }, [transactions, expenses, otherIncome, investorInterest, investorTransactions, rentLoanIds, loanMap, investorMap, fromDate, toDate]);
 
   const formatDate = (d) => {
     try { return format(new Date(d), 'dd/MM/yy'); } catch { return d; }
@@ -366,8 +427,9 @@ export default function IncomeExpenditureReport() {
   };
 
   // Detail table for investor costs
-  const renderInvestorDetail = () => {
-    if (!expandedRows.has('investorCosts') || reportData.investorCosts.investorDetail.length === 0) return null;
+  // Reusable detail table for investor rows (interest, deposits, withdrawals)
+  const renderInvestorTxDetail = (key, detail) => {
+    if (!expandedRows.has(key) || detail.length === 0) return null;
     return (
       <TableRow>
         <TableCell colSpan={2} className="p-0">
@@ -382,7 +444,7 @@ export default function IncomeExpenditureReport() {
                 </tr>
               </thead>
               <tbody>
-                {reportData.investorCosts.investorDetail.map((item, idx) => (
+                {detail.map((item, idx) => (
                   <tr
                     key={idx}
                     className="hover:bg-slate-100 cursor-pointer"
@@ -472,6 +534,23 @@ export default function IncomeExpenditureReport() {
               </div>
             </div>
           </div>
+          <div className="flex items-center gap-1.5 mt-3 flex-wrap">
+            {months.map(m => {
+              const key = format(m, 'yyyy-MM');
+              const isActive = activeMonth === key;
+              return (
+                <Button
+                  key={key}
+                  variant={isActive ? 'default' : 'outline'}
+                  size="sm"
+                  className="h-7 px-2.5 text-xs"
+                  onClick={() => selectMonth(m)}
+                >
+                  {format(m, 'MMM yy')}
+                </Button>
+              );
+            })}
+          </div>
         </CardContent>
       </Card>
 
@@ -483,7 +562,7 @@ export default function IncomeExpenditureReport() {
       ) : (
         <>
           {/* Summary Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
             <Card>
               <CardContent className="py-4">
                 <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
@@ -514,6 +593,20 @@ export default function IncomeExpenditureReport() {
                 </div>
                 <div className={`text-2xl font-bold ${reportData.netIncome >= 0 ? 'text-green-600' : 'text-red-600'}`}>
                   {formatCurrency(reportData.netIncome)}
+                </div>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="py-4">
+                <div className="flex items-center gap-2 text-sm text-slate-500 mb-1">
+                  <ArrowRightLeft className="w-4 h-4 text-blue-500" />
+                  Investor Movement
+                </div>
+                <div className={`text-2xl font-bold ${reportData.investorCosts.netInvestorMovement >= 0 ? 'text-blue-600' : 'text-amber-600'}`}>
+                  {reportData.investorCosts.netInvestorMovement >= 0 ? '+' : ''}{formatCurrency(reportData.investorCosts.netInvestorMovement)}
+                </div>
+                <div className="text-xs text-slate-400 mt-1">
+                  In: {formatCurrency(reportData.investorCosts.depositsTotal)} / Out: {formatCurrency(reportData.investorCosts.withdrawalsTotal)}
                 </div>
               </CardContent>
             </Card>
@@ -634,10 +727,10 @@ export default function IncomeExpenditureReport() {
             </CardContent>
           </Card>
 
-          {/* Investor Costs Section */}
+          {/* Investor Section */}
           <Card>
             <CardHeader className="pb-2">
-              <CardTitle className="text-base font-semibold text-slate-700">Investor Costs</CardTitle>
+              <CardTitle className="text-base font-semibold text-slate-700">Investor Costs & Capital Movements</CardTitle>
             </CardHeader>
             <CardContent className="pt-0">
               <Table>
@@ -649,12 +742,12 @@ export default function IncomeExpenditureReport() {
                 </TableHeader>
                 <TableBody>
                   <ClickableRow
-                    rowKey="investorCosts"
+                    rowKey="investorInterest"
                     label="Investor Interest Paid"
                     amount={reportData.investorCosts.investorInterestTotal}
                     detail={reportData.investorCosts.investorDetail}
                   />
-                  {renderInvestorDetail()}
+                  {renderInvestorTxDetail('investorInterest', reportData.investorCosts.investorDetail)}
                   <TableRow className="bg-slate-50">
                     <TableCell className="font-bold">
                       <div className="flex items-center gap-1.5">
@@ -663,6 +756,41 @@ export default function IncomeExpenditureReport() {
                       </div>
                     </TableCell>
                     <TableCell className="text-right font-bold text-red-600">{formatCurrency(reportData.investorCosts.investorInterestTotal)}</TableCell>
+                  </TableRow>
+
+                  {/* Capital movements separator */}
+                  <TableRow>
+                    <TableCell colSpan={2} className="pt-4 pb-1 px-0">
+                      <div className="text-xs font-semibold text-slate-400 uppercase tracking-wider">Capital Movements</div>
+                    </TableCell>
+                  </TableRow>
+
+                  <ClickableRow
+                    rowKey="investorDeposits"
+                    label="Investor Deposits (Capital In)"
+                    amount={reportData.investorCosts.depositsTotal}
+                    detail={reportData.investorCosts.depositDetail}
+                  />
+                  {renderInvestorTxDetail('investorDeposits', reportData.investorCosts.depositDetail)}
+
+                  <ClickableRow
+                    rowKey="investorWithdrawals"
+                    label="Investor Withdrawals (Capital Out)"
+                    amount={reportData.investorCosts.withdrawalsTotal}
+                    detail={reportData.investorCosts.withdrawalDetail}
+                  />
+                  {renderInvestorTxDetail('investorWithdrawals', reportData.investorCosts.withdrawalDetail)}
+
+                  <TableRow className="bg-slate-50">
+                    <TableCell className="font-bold">
+                      <div className="flex items-center gap-1.5">
+                        <span className="w-3.5" />
+                        Net Capital Movement
+                      </div>
+                    </TableCell>
+                    <TableCell className={`text-right font-bold ${reportData.investorCosts.netInvestorMovement >= 0 ? 'text-blue-600' : 'text-amber-600'}`}>
+                      {reportData.investorCosts.netInvestorMovement >= 0 ? '+' : ''}{formatCurrency(reportData.investorCosts.netInvestorMovement)}
+                    </TableCell>
                   </TableRow>
                 </TableBody>
               </Table>
