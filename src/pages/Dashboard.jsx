@@ -695,7 +695,10 @@ export default function Dashboard() {
                       {isBackingUp ? (
                         <Loader2 className="w-5 h-5 animate-spin" />
                       ) : (
-                        <HardDrive className="w-5 h-5" />
+                        <div className="relative">
+                          <HardDrive className="w-5 h-5" />
+                          <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full border border-white ${driveConnected ? 'bg-green-500' : 'bg-slate-300'}`} />
+                        </div>
                       )}
                     </button>
                   </TooltipTrigger>
@@ -717,6 +720,9 @@ export default function Dashboard() {
                         </p>
                       </>
                     )}
+                    <p className={`text-xs ${driveConnected ? 'text-green-500' : 'text-slate-400'}`}>
+                      {driveConnected ? 'Google Drive connected' : 'Google Drive not connected'}
+                    </p>
                     <p className="text-xs text-slate-400">Click to backup now</p>
                   </TooltipContent>
                 </Tooltip>
