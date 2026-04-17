@@ -169,7 +169,7 @@ export default function AccountantReport() {
         const date = new Date(bs.statement_date);
         return date >= from && date <= to;
       })
-      .sort((a, b) => new Date(a.statement_date) - new Date(b.statement_date))
+      .sort((a, b) => new Date(b.statement_date) - new Date(a.statement_date))
       .map(bs => {
         const recons = reconByBankId[bs.id] || [];
         const isReconciled = bs.is_reconciled;
