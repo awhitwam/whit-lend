@@ -221,12 +221,84 @@ function buildInterestLedger(loan, transactions, product) {
 }
 
 /**
+ * Return a view of the schedule where any period that extends past the settlement date
+ * is truncated to end at the settlement date, and periods starting after the settlement
+ * date are dropped entirely.
+ *
+ * Used for PDF display only — the underlying schedule in the database is unchanged.
+ * Handles the case where the settlement date falls *inside* a scheduled period.
+ */
+function getSettlementTruncatedSchedule(schedule, settlementDate, dailyRate, loanStartDate) {
+  if (!schedule || schedule.length === 0 || !settlementDate) return schedule || [];
+
+  const settle = new Date(settlementDate);
+  settle.setHours(0, 0, 0, 0);
+  const settleStr = format(settle, 'yyyy-MM-dd');
+
+  const sorted = [...schedule].sort((a, b) => {
+    const aDate = new Date(a.due_date || a.period_end || a.date).getTime();
+    const bDate = new Date(b.due_date || b.period_end || b.date).getTime();
+    return aDate - bDate;
+  });
+
+  const result = [];
+  let prevEnd = loanStartDate ? new Date(loanStartDate) : null;
+  if (prevEnd) prevEnd.setHours(0, 0, 0, 0);
+
+  for (const entry of sorted) {
+    const entryEnd = new Date(entry.due_date || entry.period_end || entry.date);
+    entryEnd.setHours(0, 0, 0, 0);
+    const entryStart = prevEnd ? new Date(prevEnd) : entryEnd;
+
+    if (entryEnd <= settle) {
+      // Period ends on or before settlement — include as-is
+      result.push(entry);
+    } else if (entryStart <= settle && settle < entryEnd) {
+      // Period contains settlement — truncate
+      const truncatedDays = differenceInDays(settle, entryStart) + 1;
+      const basis = entry.calculation_principal_start || 0;
+      const truncatedInterest = Math.round(basis * (dailyRate || 0) * truncatedDays * 100) / 100;
+      result.push({
+        ...entry,
+        due_date: settleStr,
+        calculation_days: truncatedDays,
+        days_in_period: truncatedDays,
+        interest_amount: truncatedInterest,
+        rolled_up_interest: entry.is_roll_up_period ? truncatedInterest : entry.rolled_up_interest,
+        principal_amount: 0,
+        principal_payment: 0,
+        is_truncated_to_settlement: true,
+        original_due_date: entry.due_date || entry.period_end || entry.date
+      });
+      break; // nothing later can start before settlement
+    } else {
+      // Entry starts after settlement — skip (and everything later will too)
+      break;
+    }
+
+    prevEnd = entryEnd;
+  }
+
+  return result;
+}
+
+/**
  * Build a timeline for PDF output matching the InterestOnlyScheduleView UI
  * Returns rows with: date, interestPaid, expectedInterest, interestBalance, principalChange, principalBalance
  * Includes calculation notes for all row types
  */
-function buildPDFTimeline(loan, schedule, transactions, product) {
+function buildPDFTimeline(loan, schedule, transactions, product, settlementContext = null) {
   const rows = [];
+
+  // When generating a settlement statement, truncate schedule periods at the settlement date
+  const effectiveSchedule = settlementContext
+    ? getSettlementTruncatedSchedule(
+        schedule || [],
+        settlementContext.settlementDate,
+        settlementContext.dailyRate,
+        loan?.start_date
+      )
+    : (schedule || []);
 
   const getDateKey = (date) => {
     if (typeof date === 'string') {
@@ -303,7 +375,7 @@ function buildPDFTimeline(loan, schedule, transactions, product) {
     });
 
   // 3. Add schedule due date rows
-  (schedule || []).forEach(scheduleEntry => {
+  effectiveSchedule.forEach(scheduleEntry => {
     const dateKey = getDateKey(scheduleEntry.due_date);
     const isAdjustment = scheduleEntry.installment_number === 0;
     const row = {
@@ -1342,8 +1414,18 @@ function renderSettlementStatementToDoc(loan, settlementData, schedule = [], tra
     doc.text(`Loan: #${loan.loan_number || loan.id.slice(0, 8)} - ${loan.borrower_name}`, pageWidth / 2, y, { align: 'center' });
 
     // Check if this is a roll-up loan by examining the schedule
-    const scheduleEntries = settlementData.schedule || [];
-    const isRollUpLoan = scheduleEntries.some(s => s.is_roll_up_period || s.is_serviced_period);
+    const rawScheduleEntries = settlementData.schedule || [];
+    const isRollUpLoan = rawScheduleEntries.some(s => s.is_roll_up_period || s.is_serviced_period);
+    // For roll-up/serviced loans, truncate any period that extends past the settlement date
+    // so the Interest Calculation Details table matches the page-1 settlement total.
+    const scheduleEntries = isRollUpLoan
+      ? getSettlementTruncatedSchedule(
+          rawScheduleEntries,
+          settlementData.settlementDate,
+          settlementData.dailyRate,
+          loan.start_date
+        )
+      : rawScheduleEntries;
     const rollUpEntry = scheduleEntries.find(s => s.is_roll_up_period);
     const rolledUpInterest = rollUpEntry?.interest_amount || rollUpEntry?.rolled_up_interest || 0;
 
@@ -1701,8 +1783,12 @@ function renderSettlementStatementToDoc(loan, settlementData, schedule = [], tra
   // ============================================
   // PAGE 4+: LOAN LEDGER (Timeline View)
   // ============================================
-  // Use the same buildPDFTimeline function as the main loan statement for consistent output
-  const timelineRows = buildPDFTimeline(loan, schedule, transactions, product);
+  // Use the same buildPDFTimeline function as the main loan statement for consistent output.
+  // Pass settlement context so schedule periods extending past the settlement date are truncated.
+  const timelineRows = buildPDFTimeline(loan, schedule, transactions, product, {
+    settlementDate: settlementData.settlementDate,
+    dailyRate: settlementData.dailyRate
+  });
 
   if (timelineRows && timelineRows.length > 0) {
     doc.addPage();
@@ -1910,7 +1996,9 @@ function renderSettlementStatementToDoc(loan, settlementData, schedule = [], tra
     doc.text('', cols.principal, y, { align: 'right' });
     doc.text(formatCurrency(finalPrincipalBalance), cols.prinBal, y, { align: 'right' });
 
-    // Add explanatory note about difference between ledger and settlement interest
+    // Add explanatory note only if there's a residual difference between the ledger sum
+    // and the page-1 settlement interest (e.g. rounding / compounded-basis differences).
+    // After truncating schedule periods to the settlement date, these normally match.
     const settlementInterest = settlementData?.interestAccrued || 0;
     const ledgerToSettlementDiff = settlementInterest - totalExpected;
 
@@ -1919,11 +2007,11 @@ function renderSettlementStatementToDoc(loan, settlementData, schedule = [], tra
       doc.setFontSize(8);
       doc.setFont(undefined, 'italic');
       doc.setTextColor(100, 100, 100);
-      doc.text('Note: The ledger shows interest accrued per scheduled periods. The settlement statement', cols.date, y);
+      doc.text('Note: Ledger periods use the compounded calculation basis per scheduled period.', cols.date, y);
       y += 4;
-      doc.text(`includes an additional ${formatCurrency(ledgerToSettlementDiff)} accrued from the last scheduled date to the settlement date.`, cols.date, y);
+      doc.text(`The settlement interest on page 1 is ${formatCurrency(settlementInterest)}; a ${formatCurrency(Math.abs(ledgerToSettlementDiff))} rounding/basis`, cols.date, y);
       y += 4;
-      doc.text(`Total interest to settlement: ${formatCurrency(settlementInterest)}`, cols.date, y);
+      doc.text('difference is reconciled there.', cols.date, y);
       doc.setTextColor(0, 0, 0);
       doc.setFont(undefined, 'normal');
     }

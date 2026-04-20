@@ -2804,6 +2804,36 @@ export function buildSettlementData(loan, settlementDate, transactions, schedule
   const settlement = calculateSettlementAmount(loan, settlementDate, transactions, schedule, product);
   if (!settlement) return null;
 
+  // For serviced/roll-up loans, the PDF renders periods from schedule entries.
+  // If the settlement date is after the last scheduled due_date, compute the extra
+  // accrual so the PDF can render it as the final "Accrued to settlement" row.
+  let accrualToSettlement = 0;
+  let daysToSettlement = 0;
+  if (Array.isArray(schedule) && schedule.length > 0) {
+    const isServicedOrRollUp = schedule.some(s => s.is_roll_up_period || s.is_serviced_period);
+    if (isServicedOrRollUp) {
+      const sorted = [...schedule].sort((a, b) => {
+        const aDate = new Date(a.due_date || a.period_end || a.date);
+        const bDate = new Date(b.due_date || b.period_end || b.date);
+        return aDate - bDate;
+      });
+      const lastEntry = sorted[sorted.length - 1];
+      const lastDateStr = lastEntry.due_date || lastEntry.period_end || lastEntry.date;
+      if (lastDateStr) {
+        const lastDate = new Date(lastDateStr);
+        lastDate.setHours(0, 0, 0, 0);
+        const settleDate = new Date(settlementDate);
+        settleDate.setHours(0, 0, 0, 0);
+        // Interest accrues up to and including the settlement date (matches calculateSettlementAmount)
+        const days = differenceInDays(settleDate, lastDate) + 1;
+        if (days > 0) {
+          daysToSettlement = days;
+          accrualToSettlement = (settlement.principalRemaining || 0) * (settlement.dailyRate || 0) * days;
+        }
+      }
+    }
+  }
+
   return {
     settlementDate,
     principalRemaining: settlement.principalRemaining,
@@ -2818,6 +2848,8 @@ export function buildSettlementData(loan, settlementDate, transactions, schedule
     daysElapsed: settlement.daysElapsed,
     dailyRate: settlement.dailyRate,
     annualRate: settlement.annualRate,
+    accrualToSettlement,
+    daysToSettlement,
     organization,
     borrower,
     schedule
