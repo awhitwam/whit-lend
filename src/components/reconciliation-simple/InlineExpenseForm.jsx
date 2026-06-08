@@ -24,10 +24,13 @@ export default function InlineExpenseForm({
 }) {
   const queryClient = useQueryClient();
 
-  // Initialize with suggested expense type if available
+  // Initialize with suggested expense type, falling back to the first type in the list
   const [selectedTypeId, setSelectedTypeId] = useState(() => {
     if (expenseTypeSuggestion?.expenseTypeId) {
       return expenseTypeSuggestion.expenseTypeId;
+    }
+    if (expenseTypes.length > 0) {
+      return expenseTypes[0].id;
     }
     return '__none__';
   });

@@ -120,6 +120,42 @@ export default function BankEntryRow({
   const hasMoreSuggestions = suggestions.length > 3;
   const bestSuggestion = topSuggestions[0] || null;
 
+  // Determine which "Create New" icon represents the likely category, for visual highlighting.
+  // 'strong' = high-confidence (pattern match / create suggestion); 'soft' = default fallback.
+  const suggestedCreate = (() => {
+    if (bestSuggestion?.matchMode === 'create') {
+      if (bestSuggestion.type === 'loan_repayment_new') return { kind: 'loan_repayment', strong: true };
+      if (bestSuggestion.type === 'investor_credit_new') return { kind: 'investor_deposit', strong: true };
+      if (bestSuggestion.type === 'loan_disbursement_new') return { kind: 'loan_disbursement', strong: true };
+      if (bestSuggestion.type === 'investor_withdrawal_new') return { kind: 'investor_withdrawal', strong: true };
+    }
+    if (type === 'expenditure' && expenseTypeSuggestion) {
+      return { kind: 'expense', strong: true };
+    }
+    // No specific match — fall back to the most common action for the side
+    if (!bestSuggestion || bestSuggestion.matchMode !== 'match') {
+      if (type === 'expenditure') return { kind: 'expense', strong: false };
+      if (type === 'receipt') return { kind: 'loan_repayment', strong: false };
+    }
+    return null;
+  })();
+
+  const getCreateIconClass = (formKind) => {
+    const base = 'h-7 w-7';
+    if (suggestedCreate?.kind !== formKind || expandedForm === formKind) return base;
+    return suggestedCreate.strong
+      ? `${base} bg-amber-100 text-amber-700 ring-2 ring-amber-400 hover:bg-amber-200`
+      : `${base} text-amber-600 hover:bg-amber-50`;
+  };
+
+  const getCreateTooltipSuffix = (formKind) => {
+    if (suggestedCreate?.kind !== formKind) return '';
+    if (formKind === 'expense' && expenseTypeSuggestion) {
+      return ` (suggested: ${expenseTypeSuggestion.expenseTypeName})`;
+    }
+    return suggestedCreate.strong ? ' (suggested)' : ' (likely)';
+  };
+
   // Only expand on row click if there are suggestions
   const handleRowClick = () => {
     if (topSuggestions.length > 0) {
@@ -208,7 +244,7 @@ export default function BankEntryRow({
                     <Button
                       variant={expandedForm === 'loan_repayment' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className={getCreateIconClass('loan_repayment')}
                       onClick={() => {
                         setExpandedForm(expandedForm === 'loan_repayment' ? null : 'loan_repayment');
                         if (expandedForm !== 'loan_repayment') setExpanded(true);
@@ -217,14 +253,14 @@ export default function BankEntryRow({
                       <Receipt className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Loan Repayment</TooltipContent>
+                  <TooltipContent>Loan Repayment{getCreateTooltipSuffix('loan_repayment')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant={expandedForm === 'investor_deposit' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className={getCreateIconClass('investor_deposit')}
                       onClick={() => {
                         setExpandedForm(expandedForm === 'investor_deposit' ? null : 'investor_deposit');
                         if (expandedForm !== 'investor_deposit') setExpanded(true);
@@ -233,14 +269,14 @@ export default function BankEntryRow({
                       <TrendingUp className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Investor Deposit</TooltipContent>
+                  <TooltipContent>Investor Deposit{getCreateTooltipSuffix('investor_deposit')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant={expandedForm === 'other_income' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className={getCreateIconClass('other_income')}
                       onClick={() => {
                         setExpandedForm(expandedForm === 'other_income' ? null : 'other_income');
                         if (expandedForm !== 'other_income') setExpanded(true);
@@ -249,14 +285,14 @@ export default function BankEntryRow({
                       <Coins className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Other Income</TooltipContent>
+                  <TooltipContent>Other Income{getCreateTooltipSuffix('other_income')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant={expandedForm === 'offset' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className={getCreateIconClass('offset')}
                       onClick={() => {
                         setExpandedForm(expandedForm === 'offset' ? null : 'offset');
                         if (expandedForm !== 'offset') setExpanded(true);
@@ -265,7 +301,7 @@ export default function BankEntryRow({
                       <ArrowLeftRight className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Funds Returned / Offset</TooltipContent>
+                  <TooltipContent>Funds Returned / Offset{getCreateTooltipSuffix('offset')}</TooltipContent>
                 </Tooltip>
               </>
             ) : (
@@ -275,7 +311,7 @@ export default function BankEntryRow({
                     <Button
                       variant={expandedForm === 'loan_disbursement' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className={getCreateIconClass('loan_disbursement')}
                       onClick={() => {
                         setExpandedForm(expandedForm === 'loan_disbursement' ? null : 'loan_disbursement');
                         if (expandedForm !== 'loan_disbursement') setExpanded(true);
@@ -284,14 +320,14 @@ export default function BankEntryRow({
                       <FileText className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Loan Disbursement</TooltipContent>
+                  <TooltipContent>Loan Disbursement{getCreateTooltipSuffix('loan_disbursement')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant={expandedForm === 'investor_withdrawal' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className={getCreateIconClass('investor_withdrawal')}
                       onClick={() => {
                         setExpandedForm(expandedForm === 'investor_withdrawal' ? null : 'investor_withdrawal');
                         if (expandedForm !== 'investor_withdrawal') setExpanded(true);
@@ -300,14 +336,14 @@ export default function BankEntryRow({
                       <TrendingUp className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Investor Withdrawal</TooltipContent>
+                  <TooltipContent>Investor Withdrawal{getCreateTooltipSuffix('investor_withdrawal')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant={expandedForm === 'expense' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className={getCreateIconClass('expense')}
                       onClick={() => {
                         setExpandedForm(expandedForm === 'expense' ? null : 'expense');
                         if (expandedForm !== 'expense') setExpanded(true);
@@ -316,14 +352,14 @@ export default function BankEntryRow({
                       <Banknote className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Expense</TooltipContent>
+                  <TooltipContent>Expense{getCreateTooltipSuffix('expense')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
                       variant={expandedForm === 'offset' ? 'default' : 'ghost'}
                       size="icon"
-                      className="h-7 w-7"
+                      className={getCreateIconClass('offset')}
                       onClick={() => {
                         setExpandedForm(expandedForm === 'offset' ? null : 'offset');
                         if (expandedForm !== 'offset') setExpanded(true);
@@ -332,7 +368,7 @@ export default function BankEntryRow({
                       <ArrowLeftRight className="w-4 h-4" />
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent>Funds Returned / Offset</TooltipContent>
+                  <TooltipContent>Funds Returned / Offset{getCreateTooltipSuffix('offset')}</TooltipContent>
                 </Tooltip>
               </>
             )}
