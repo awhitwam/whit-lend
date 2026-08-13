@@ -167,10 +167,13 @@ export function generateAccountantReportPDF(data, options = {}) {
   const totalCredits = data.filter(r => r.amount > 0).reduce((sum, r) => sum + r.amount, 0);
   const totalDebits = data.filter(r => r.amount < 0).reduce((sum, r) => sum + Math.abs(r.amount), 0);
   const netMovement = totalCredits - totalDebits;
-  const reconciledCount = data.filter(r => r.isReconciled).length;
-  const reconciledPercent = data.length > 0 ? Math.round((reconciledCount / data.length) * 100) : 0;
+  // A bank entry split across several transactions produces one line per allocation, so counts
+  // are per bank entry while the credit/debit totals still sum every line
+  const bankEntryCount = new Set(data.map(r => r.bankEntryId ?? r.id)).size;
+  const reconciledCount = new Set(data.filter(r => r.isReconciled).map(r => r.bankEntryId ?? r.id)).size;
+  const reconciledPercent = bankEntryCount > 0 ? Math.round((reconciledCount / bankEntryCount) * 100) : 0;
 
-  doc.text(`Total Transactions: ${data.length}`, 10, y);
+  doc.text(`Total Transactions: ${bankEntryCount}`, 10, y);
   y += 6;
   doc.text(`Total Credits: ${formatCurrency(totalCredits)}`, 10, y);
   y += 6;
@@ -178,7 +181,7 @@ export function generateAccountantReportPDF(data, options = {}) {
   y += 6;
   doc.text(`Net Movement: ${formatCurrency(netMovement)}`, 10, y);
   y += 6;
-  doc.text(`Reconciled: ${reconciledCount} of ${data.length} (${reconciledPercent}%)`, 10, y);
+  doc.text(`Reconciled: ${reconciledCount} of ${bankEntryCount} (${reconciledPercent}%)`, 10, y);
 
   // Add page numbers
   const totalPages = doc.internal.getNumberOfPages();

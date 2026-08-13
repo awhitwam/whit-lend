@@ -13,6 +13,22 @@ import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format, subMonths, startOfMonth } from 'date-fns';
 import { generateAccountantReportPDF, generateAccountantReportCSV } from '@/lib/accountantReportGenerator';
 
+// A reconciliation entry links a bank statement line to one or more system records. The FK columns
+// are documented as mutually exclusive but aren't in practice - createInvestorWithdrawal writes both
+// investor_transaction_id and interest_id on a single row - so every set FK has to be resolved.
+const TARGET_FIELDS = [
+  ['loan_transaction_id', 'loan'],
+  ['investor_transaction_id', 'inv'],
+  ['expense_id', 'exp'],
+  ['interest_id', 'int'],
+  ['other_income_id', 'oi']
+];
+
+// Same key shape ReconciledPanel uses to spot bank entries sharing a target (net receipt groups)
+function targetKeys(re) {
+  return TARGET_FIELDS.filter(([field]) => re[field]).map(([field, prefix]) => `${prefix}:${re[field]}`);
+}
+
 export default function AccountantReport() {
   const { currentOrganization } = useOrganization();
 
@@ -42,13 +58,13 @@ export default function AccountantReport() {
 
   const { data: loans = [], isLoading: loadingLoans } = useQuery({
     queryKey: ['loans', currentOrganization?.id],
-    queryFn: () => api.entities.Loan.list('-created_date'),
+    queryFn: () => api.entities.Loan.listAll('-created_date'),
     enabled: !!currentOrganization
   });
 
   const { data: borrowers = [], isLoading: loadingBorrowers } = useQuery({
     queryKey: ['borrowers', currentOrganization?.id],
-    queryFn: () => api.entities.Borrower.list('full_name'),
+    queryFn: () => api.entities.Borrower.listAll('full_name'),
     enabled: !!currentOrganization
   });
 
@@ -60,7 +76,7 @@ export default function AccountantReport() {
 
   const { data: investors = [], isLoading: loadingInvestors } = useQuery({
     queryKey: ['investors', currentOrganization?.id],
-    queryFn: () => api.entities.Investor.list(),
+    queryFn: () => api.entities.Investor.listAll(),
     enabled: !!currentOrganization
   });
 
@@ -70,26 +86,27 @@ export default function AccountantReport() {
     enabled: !!currentOrganization
   });
 
-  const { data: expenseTypes = [] } = useQuery({
+  const { data: expenseTypes = [], isLoading: loadingExpenseTypes } = useQuery({
     queryKey: ['expense-types', currentOrganization?.id],
     queryFn: () => api.entities.ExpenseType.list('name'),
     enabled: !!currentOrganization
   });
 
-  const { data: investorInterest = [] } = useQuery({
+  const { data: investorInterest = [], isLoading: loadingInterest } = useQuery({
     queryKey: ['investor-interest-all', currentOrganization?.id],
-    queryFn: () => api.entities.InvestorInterest.list('-date'),
+    queryFn: () => api.entities.InvestorInterest.listAll('-date'),
     enabled: !!currentOrganization
   });
 
-  const { data: otherIncome = [] } = useQuery({
+  const { data: otherIncome = [], isLoading: loadingOtherIncome } = useQuery({
     queryKey: ['other-income-all', currentOrganization?.id],
-    queryFn: () => api.entities.OtherIncome.list('-date'),
+    queryFn: () => api.entities.OtherIncome.listAll('-date'),
     enabled: !!currentOrganization
   });
 
   const isLoading = loadingBank || loadingRecon || loadingLoanTx || loadingLoans ||
-                    loadingBorrowers || loadingInvTx || loadingInvestors || loadingExpenses;
+                    loadingBorrowers || loadingInvTx || loadingInvestors || loadingExpenses ||
+                    loadingExpenseTypes || loadingInterest || loadingOtherIncome;
 
   // Build lookup maps
   const loanMap = useMemo(() => {
@@ -158,11 +175,159 @@ export default function AccountantReport() {
     return map;
   }, [reconciliationEntries]);
 
-  // Process report data
+  // How much has been allocated to each reconciliation target across ALL bank entries.
+  // Grouped disbursements and net receipts link several bank entries to one transaction, so each
+  // of those entries may only claim its share of that transaction's principal/interest/fees.
+  const allocatedByTarget = useMemo(() => {
+    const map = {};
+    reconciliationEntries.forEach(re => {
+      targetKeys(re).forEach(key => {
+        if (!map[key]) map[key] = { total: 0, count: 0 };
+        map[key].total += Math.abs(parseFloat(re.amount) || 0);
+        map[key].count += 1;
+      });
+    });
+    return map;
+  }, [reconciliationEntries]);
+
+  // Process report data - one row per allocation, so a bank entry split across several
+  // transactions shows each transaction's own entity details and breakdown
   const reportData = useMemo(() => {
     const from = new Date(fromDate);
     const to = new Date(toDate);
     to.setHours(23, 59, 59, 999);
+
+    // Portion of a shared transaction's breakdown belonging to this reconciliation row.
+    // Exactly 1 when the transaction is linked to a single bank entry - the normal case.
+    const shareOf = (re, key) => {
+      const target = allocatedByTarget[key];
+      if (!target || target.count <= 1) return 1;
+      const amount = Math.abs(parseFloat(re.amount) || 0);
+      // reconciliation_entries.amount is dropped by backup/restore (backupSchema.js), so it can
+      // be missing - fall back to an equal split rather than zeroing the breakdown out
+      if (!(target.total > 0) || amount === 0) return 1 / target.count;
+      return amount / target.total;
+    };
+
+    // Resolve one reconciliation row into its allocations. Independent ifs (not else-if) because a
+    // single row can carry more than one link - see TARGET_FIELDS.
+    const resolveAllocations = (re) => {
+      const allocations = [];
+      const blank = {
+        reconciledTo: null,
+        entityDetails: null,
+        borrowerId: null,
+        principalAmount: null,
+        interestAmount: null,
+        feesAmount: null,
+        legAmount: 0
+      };
+
+      if (re.loan_transaction_id) {
+        const loanTx = loanTxMap[re.loan_transaction_id];
+        if (loanTx && !loanTx.is_deleted) {
+          const loan = loanMap[loanTx.loan_id];
+          const borrower = loan?.borrower_id ? borrowerMap[loan.borrower_id] : null;
+          const share = shareOf(re, `loan:${re.loan_transaction_id}`);
+          const alloc = {
+            ...blank,
+            reconciledTo: loanTx.type === 'Repayment' ? 'Loan Repayment' : 'Loan Disbursement',
+            entityDetails: `${loan?.loan_number || '-'} - ${loan?.borrower_name || '-'}`,
+            borrowerId: borrower?.unique_number || null,
+            legAmount: Math.abs(parseFloat(loanTx.amount) || 0)
+          };
+          // Add breakdown for repayments
+          if (loanTx.type === 'Repayment') {
+            alloc.principalAmount = (loanTx.principal_applied || 0) * share;
+            alloc.interestAmount = (loanTx.interest_applied || 0) * share;
+            alloc.feesAmount = (loanTx.fees_applied ?? ((loanTx.deducted_fee || 0) + (loanTx.deducted_interest || 0))) * share;
+          }
+          allocations.push(alloc);
+        } else {
+          allocations.push({ ...blank, reconciledTo: 'Loan Transaction (link broken)', entityDetails: 'Linked record not found' });
+        }
+      }
+
+      if (re.investor_transaction_id) {
+        const invTx = investorTxMap[re.investor_transaction_id];
+        if (invTx) {
+          const investor = investorMap[invTx.investor_id];
+          allocations.push({
+            ...blank,
+            reconciledTo: invTx.type === 'capital_in' ? 'Investor Credit' : 'Investor Withdrawal',
+            entityDetails: investor?.business_name || investor?.name || '-',
+            legAmount: Math.abs(parseFloat(invTx.amount) || 0)
+          });
+        } else {
+          allocations.push({ ...blank, reconciledTo: 'Investor Transaction (link broken)', entityDetails: 'Linked record not found' });
+        }
+      }
+
+      if (re.expense_id) {
+        const expense = expenseMap[re.expense_id];
+        if (expense) {
+          allocations.push({
+            ...blank,
+            reconciledTo: 'Expense',
+            entityDetails: expense.type_name || expenseTypeMap[expense.type_id] || 'Expense',
+            legAmount: Math.abs(parseFloat(expense.amount) || 0)
+          });
+        } else {
+          allocations.push({ ...blank, reconciledTo: 'Expense (link broken)', entityDetails: 'Linked record not found' });
+        }
+      }
+
+      if (re.interest_id) {
+        const interest = interestMap[re.interest_id];
+        if (interest) {
+          const investor = investorMap[interest.investor_id];
+          allocations.push({
+            ...blank,
+            reconciledTo: 'Investor Interest',
+            entityDetails: investor?.business_name || investor?.name || '-',
+            legAmount: Math.abs(parseFloat(interest.amount) || 0)
+          });
+        } else {
+          allocations.push({ ...blank, reconciledTo: 'Investor Interest (link broken)', entityDetails: 'Linked record not found' });
+        }
+      }
+
+      if (re.other_income_id) {
+        const income = otherIncomeMap[re.other_income_id];
+        if (income) {
+          allocations.push({
+            ...blank,
+            reconciledTo: 'Other Income',
+            entityDetails: income.description || '-',
+            legAmount: Math.abs(parseFloat(income.amount) || 0)
+          });
+        } else {
+          allocations.push({ ...blank, reconciledTo: 'Other Income (link broken)', entityDetails: 'Linked record not found' });
+        }
+      }
+
+      if (allocations.length === 0 && re.reconciliation_type === 'offset') {
+        allocations.push({ ...blank, reconciledTo: 'Offset (Funds Returned)', entityDetails: '-' });
+      }
+
+      // Divide the reconciled amount across the legs of this row by their own values, so a mixed
+      // capital + interest investor withdrawal doesn't report its bank amount twice
+      const reconAmount = parseFloat(re.amount);
+      const legTotal = allocations.reduce((sum, a) => sum + a.legAmount, 0);
+      allocations.forEach(a => {
+        if (!Number.isFinite(reconAmount)) {
+          a.amount = null;
+        } else if (allocations.length === 1) {
+          a.amount = reconAmount;
+        } else if (legTotal > 0) {
+          a.amount = reconAmount * (a.legAmount / legTotal);
+        } else {
+          a.amount = reconAmount / allocations.length;
+        }
+      });
+
+      return allocations;
+    };
 
     return bankStatements
       .filter(bs => {
@@ -170,100 +335,88 @@ export default function AccountantReport() {
         return date >= from && date <= to;
       })
       .sort((a, b) => new Date(b.statement_date) - new Date(a.statement_date))
-      .map(bs => {
+      .flatMap(bs => {
         const recons = reconByBankId[bs.id] || [];
-        const isReconciled = bs.is_reconciled;
+        const allocations = recons.flatMap(resolveAllocations);
 
-        let reconciledTo = null;
-        let entityDetails = null;
-        let borrowerId = null;
-        // Notes show unreconcilable reason (for entries that couldn't be reconciled)
-        const notes = bs.unreconcilable_reason || null;
-        // Loan repayment breakdown
-        let principalAmount = null;
-        let interestAmount = null;
-        let feesAmount = null;
-
-        if (recons.length > 0) {
-          const re = recons[0]; // Primary reconciliation
-
-          if (re.loan_transaction_id) {
-            const loanTx = loanTxMap[re.loan_transaction_id];
-            if (loanTx) {
-              const loan = loanMap[loanTx.loan_id];
-              const borrower = loan?.borrower_id ? borrowerMap[loan.borrower_id] : null;
-              reconciledTo = loanTx.type === 'Repayment' ? 'Loan Repayment' : 'Loan Disbursement';
-              entityDetails = `${loan?.loan_number || '-'} - ${loan?.borrower_name || '-'}`;
-              borrowerId = borrower?.unique_number || null;
-              // Add breakdown for repayments
-              if (loanTx.type === 'Repayment') {
-                principalAmount = loanTx.principal_applied || 0;
-                interestAmount = loanTx.interest_applied || 0;
-                feesAmount = (loanTx.deducted_fee || 0) + (loanTx.deducted_interest || 0);
-              }
-            }
-          } else if (re.investor_transaction_id) {
-            const invTx = investorTxMap[re.investor_transaction_id];
-            if (invTx) {
-              const investor = investorMap[invTx.investor_id];
-              reconciledTo = invTx.type === 'capital_in' ? 'Investor Credit' : 'Investor Withdrawal';
-              entityDetails = investor?.business_name || investor?.name || '-';
-            }
-          } else if (re.expense_id) {
-            const expense = expenseMap[re.expense_id];
-            if (expense) {
-              reconciledTo = 'Expense';
-              entityDetails = expense.type_name || expenseTypeMap[expense.type_id] || 'Expense';
-            }
-          } else if (re.interest_id) {
-            const interest = interestMap[re.interest_id];
-            if (interest) {
-              const investor = investorMap[interest.investor_id];
-              reconciledTo = 'Investor Interest';
-              entityDetails = investor?.business_name || investor?.name || '-';
-            }
-          } else if (re.other_income_id) {
-            const income = otherIncomeMap[re.other_income_id];
-            if (income) {
-              reconciledTo = 'Other Income';
-              entityDetails = income.description || '-';
-            }
-          } else if (re.reconciliation_type === 'offset') {
-            reconciledTo = 'Offset (Funds Returned)';
-            entityDetails = '-';
-          }
-        }
-
-        return {
-          id: bs.id,
+        const base = {
+          bankEntryId: bs.id,
           date: bs.statement_date,
           description: bs.description,
-          amount: bs.amount,
-          type: bs.amount >= 0 ? 'Credit' : 'Debit',
-          isReconciled,
-          reconciledTo,
-          entityDetails,
-          borrowerId,
-          notes,
-          principalAmount,
-          interestAmount,
-          feesAmount
+          isReconciled: bs.is_reconciled,
+          // Notes show unreconcilable reason (for entries that couldn't be reconciled)
+          notes: bs.unreconcilable_reason || null,
+          splitCount: allocations.length
         };
-      });
-  }, [bankStatements, fromDate, toDate, reconByBankId, loanTxMap, loanMap, borrowerMap, investorTxMap, investorMap, expenseMap, expenseTypeMap, interestMap, otherIncomeMap]);
 
-  // Summary stats
+        // Unreconciled, or a plain 1:1 match - one row carrying the bank entry's own amount
+        if (allocations.length <= 1) {
+          const alloc = allocations[0];
+          return [{
+            ...base,
+            id: bs.id,
+            splitIndex: 1,
+            splitCount: 1,
+            amount: bs.amount,
+            type: bs.amount >= 0 ? 'Credit' : 'Debit',
+            reconciledTo: alloc?.reconciledTo || null,
+            entityDetails: alloc?.entityDetails || null,
+            borrowerId: alloc?.borrowerId || null,
+            principalAmount: alloc?.principalAmount ?? null,
+            interestAmount: alloc?.interestAmount ?? null,
+            feesAmount: alloc?.feesAmount ?? null
+          }];
+        }
+
+        // Split across several transactions. Most writers store reconciliation_entries.amount as a
+        // positive magnitude, but the net receipt path keeps the sign - so only trust the stored
+        // signs when they already add up to the bank movement.
+        const bankSign = bs.amount < 0 ? -1 : 1;
+        const hasAmounts = allocations.every(a => Number.isFinite(a.amount));
+        const signedSum = allocations.reduce((sum, a) => sum + (a.amount || 0), 0);
+        const signsAreMeaningful = hasAmounts && Math.abs(signedSum - bs.amount) < 0.01;
+
+        return allocations.map((alloc, index) => {
+          let amount;
+          if (!hasAmounts) {
+            amount = bs.amount / allocations.length;
+          } else if (signsAreMeaningful) {
+            amount = alloc.amount;
+          } else {
+            amount = bankSign * Math.abs(alloc.amount);
+          }
+
+          return {
+            ...base,
+            id: `${bs.id}:${index}`,
+            splitIndex: index + 1,
+            amount,
+            type: amount >= 0 ? 'Credit' : 'Debit',
+            reconciledTo: alloc.reconciledTo,
+            entityDetails: alloc.entityDetails,
+            borrowerId: alloc.borrowerId,
+            principalAmount: alloc.principalAmount,
+            interestAmount: alloc.interestAmount,
+            feesAmount: alloc.feesAmount
+          };
+        });
+      });
+  }, [bankStatements, fromDate, toDate, reconByBankId, allocatedByTarget, loanTxMap, loanMap, borrowerMap, investorTxMap, investorMap, expenseMap, expenseTypeMap, interestMap, otherIncomeMap]);
+
+  // Summary stats - counts are per bank entry, not per allocation row
   const summary = useMemo(() => {
     const totalCredits = reportData.filter(r => r.amount > 0).reduce((sum, r) => sum + r.amount, 0);
     const totalDebits = reportData.filter(r => r.amount < 0).reduce((sum, r) => sum + Math.abs(r.amount), 0);
-    const reconciledCount = reportData.filter(r => r.isReconciled).length;
+    const bankEntryIds = new Set(reportData.map(r => r.bankEntryId));
+    const reconciledIds = new Set(reportData.filter(r => r.isReconciled).map(r => r.bankEntryId));
+    const total = bankEntryIds.size;
     return {
-      total: reportData.length,
+      total,
       totalCredits,
       totalDebits,
       netMovement: totalCredits - totalDebits,
-      reconciledCount,
-      reconciledPercent: reportData.length > 0 ? Math.round((reconciledCount / reportData.length) * 100) : 0
+      reconciledCount: reconciledIds.size,
+      reconciledPercent: total > 0 ? Math.round((reconciledIds.size / total) * 100) : 0
     };
   }, [reportData]);
 
@@ -347,7 +500,8 @@ export default function AccountantReport() {
               />
             </div>
             <div className="text-sm text-slate-500">
-              {reportData.length} transactions in selected period
+              {summary.total} transactions in selected period
+              {reportData.length !== summary.total && ` (${reportData.length} allocation lines)`}
             </div>
           </div>
         </CardContent>
@@ -427,8 +581,15 @@ export default function AccountantReport() {
                       <TableCell className="font-mono text-sm">
                         {format(new Date(row.date), 'dd/MM/yyyy')}
                       </TableCell>
-                      <TableCell className="max-w-[300px] truncate text-sm" title={row.description}>
-                        {row.description}
+                      <TableCell className="max-w-[300px] text-sm" title={row.description}>
+                        <div className="flex items-center gap-1.5">
+                          <span className="truncate">{row.description}</span>
+                          {row.splitCount > 1 && (
+                            <span className="shrink-0 text-xs text-slate-400" title="This bank entry is split across several transactions">
+                              {row.splitIndex}/{row.splitCount}
+                            </span>
+                          )}
+                        </div>
                       </TableCell>
                       <TableCell className={`text-right font-mono text-sm ${row.amount >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
                         {formatCurrency(row.amount)}
