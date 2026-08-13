@@ -341,6 +341,7 @@ export default function AccountantReport() {
 
         const base = {
           bankEntryId: bs.id,
+          bankReference: bs.external_reference || null,
           date: bs.statement_date,
           description: bs.description,
           isReconciled: bs.is_reconciled,
@@ -349,16 +350,24 @@ export default function AccountantReport() {
           splitCount: allocations.length
         };
 
-        // Unreconciled, or a plain 1:1 match - one row carrying the bank entry's own amount
+        // The bank entry's own movement is stated once, on its first line only, so that summing
+        // the Amount column still gives the bank movement however many allocations there are
+        const firstLine = {
+          isFirstLine: true,
+          isContinuation: false,
+          amount: bs.amount,
+          type: bs.amount >= 0 ? 'Credit' : 'Debit'
+        };
+
+        // Unreconciled, or a plain 1:1 match - a single row
         if (allocations.length <= 1) {
           const alloc = allocations[0];
           return [{
             ...base,
+            ...firstLine,
             id: bs.id,
-            splitIndex: 1,
             splitCount: 1,
-            amount: bs.amount,
-            type: bs.amount >= 0 ? 'Credit' : 'Debit',
+            allocatedAmount: alloc ? bs.amount : null,
             reconciledTo: alloc?.reconciledTo || null,
             entityDetails: alloc?.entityDetails || null,
             borrowerId: alloc?.borrowerId || null,
@@ -377,21 +386,20 @@ export default function AccountantReport() {
         const signsAreMeaningful = hasAmounts && Math.abs(signedSum - bs.amount) < 0.01;
 
         return allocations.map((alloc, index) => {
-          let amount;
+          let allocatedAmount;
           if (!hasAmounts) {
-            amount = bs.amount / allocations.length;
+            allocatedAmount = bs.amount / allocations.length;
           } else if (signsAreMeaningful) {
-            amount = alloc.amount;
+            allocatedAmount = alloc.amount;
           } else {
-            amount = bankSign * Math.abs(alloc.amount);
+            allocatedAmount = bankSign * Math.abs(alloc.amount);
           }
 
           return {
             ...base,
+            ...(index === 0 ? firstLine : { isFirstLine: false, isContinuation: true, amount: null, type: null }),
             id: `${bs.id}:${index}`,
-            splitIndex: index + 1,
-            amount,
-            type: amount >= 0 ? 'Credit' : 'Debit',
+            allocatedAmount,
             reconciledTo: alloc.reconciledTo,
             entityDetails: alloc.entityDetails,
             borrowerId: alloc.borrowerId,
@@ -403,10 +411,14 @@ export default function AccountantReport() {
       });
   }, [bankStatements, fromDate, toDate, reconByBankId, allocatedByTarget, loanTxMap, loanMap, borrowerMap, investorTxMap, investorMap, expenseMap, expenseTypeMap, interestMap, otherIncomeMap]);
 
-  // Summary stats - counts are per bank entry, not per allocation row
+  // Summary stats - counts are per bank entry, and credits/debits sum the first line of each
+  // entry (the only line carrying the bank movement), not every allocation row
   const summary = useMemo(() => {
-    const totalCredits = reportData.filter(r => r.amount > 0).reduce((sum, r) => sum + r.amount, 0);
-    const totalDebits = reportData.filter(r => r.amount < 0).reduce((sum, r) => sum + Math.abs(r.amount), 0);
+    const entryLines = reportData.filter(r => r.isFirstLine);
+    const totalCredits = entryLines.filter(r => r.amount > 0).reduce((sum, r) => sum + r.amount, 0);
+    const totalDebits = entryLines.filter(r => r.amount < 0).reduce((sum, r) => sum + Math.abs(r.amount), 0);
+    const netMovement = totalCredits - totalDebits;
+    const totalAllocated = reportData.reduce((sum, r) => sum + (r.allocatedAmount || 0), 0);
     const bankEntryIds = new Set(reportData.map(r => r.bankEntryId));
     const reconciledIds = new Set(reportData.filter(r => r.isReconciled).map(r => r.bankEntryId));
     const total = bankEntryIds.size;
@@ -414,7 +426,9 @@ export default function AccountantReport() {
       total,
       totalCredits,
       totalDebits,
-      netMovement: totalCredits - totalDebits,
+      netMovement,
+      totalAllocated,
+      unallocated: netMovement - totalAllocated,
       reconciledCount: reconciledIds.size,
       reconciledPercent: total > 0 ? Math.round((reconciledIds.size / total) * 100) : 0
     };
@@ -508,7 +522,7 @@ export default function AccountantReport() {
       </Card>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+      <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-4">
         <Card>
           <CardContent className="pt-4">
             <p className="text-xs text-slate-500 uppercase tracking-wide">Total Transactions</p>
@@ -532,6 +546,15 @@ export default function AccountantReport() {
             <p className="text-xs text-slate-500 uppercase tracking-wide">Net Movement</p>
             <p className={`text-2xl font-bold ${summary.netMovement >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
               {formatCurrency(summary.netMovement)}
+            </p>
+          </CardContent>
+        </Card>
+        <Card>
+          <CardContent className="pt-4">
+            <p className="text-xs text-slate-500 uppercase tracking-wide">Allocated</p>
+            <p className="text-2xl font-bold">{formatCurrency(summary.totalAllocated)}</p>
+            <p className={`text-xs ${Math.abs(summary.unallocated) < 0.01 ? 'text-slate-400' : 'text-amber-600'}`}>
+              {formatCurrency(summary.unallocated)} unallocated
             </p>
           </CardContent>
         </Card>
@@ -563,8 +586,10 @@ export default function AccountantReport() {
                 <TableHeader>
                   <TableRow className="bg-slate-50">
                     <TableHead className="w-24">Date</TableHead>
+                    <TableHead className="w-32">Bank Reference</TableHead>
                     <TableHead className="min-w-[200px]">Description</TableHead>
                     <TableHead className="w-28 text-right">Amount</TableHead>
+                    <TableHead className="w-28 text-right">Allocated</TableHead>
                     <TableHead className="w-20">Type</TableHead>
                     <TableHead className="w-36">Reconciled To</TableHead>
                     <TableHead className="min-w-[180px]">Entity Details</TableHead>
@@ -577,27 +602,46 @@ export default function AccountantReport() {
                 </TableHeader>
                 <TableBody>
                   {reportData.map((row) => (
-                    <TableRow key={row.id} className={!row.isReconciled ? 'bg-amber-50/50' : ''}>
+                    <TableRow
+                      key={row.id}
+                      className={`${!row.isReconciled ? 'bg-amber-50/50' : ''} ${row.isContinuation ? 'border-l-2 border-l-slate-200' : ''}`}
+                    >
                       <TableCell className="font-mono text-sm">
-                        {format(new Date(row.date), 'dd/MM/yyyy')}
+                        {row.isContinuation ? '' : format(new Date(row.date), 'dd/MM/yyyy')}
+                      </TableCell>
+                      <TableCell
+                        className={`font-mono text-xs max-w-[130px] truncate ${row.isContinuation ? 'text-slate-300' : 'text-slate-400'}`}
+                        title={row.bankReference || undefined}
+                      >
+                        {row.bankReference || '-'}
                       </TableCell>
                       <TableCell className="max-w-[300px] text-sm" title={row.description}>
-                        <div className="flex items-center gap-1.5">
+                        <div className={`flex items-center gap-1.5 ${row.isContinuation ? 'pl-6 text-slate-500' : ''}`}>
+                          {row.isContinuation && <span className="shrink-0 text-slate-400">↳</span>}
                           <span className="truncate">{row.description}</span>
-                          {row.splitCount > 1 && (
-                            <span className="shrink-0 text-xs text-slate-400" title="This bank entry is split across several transactions">
-                              {row.splitIndex}/{row.splitCount}
-                            </span>
-                          )}
                         </div>
                       </TableCell>
-                      <TableCell className={`text-right font-mono text-sm ${row.amount >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
-                        {formatCurrency(row.amount)}
+                      <TableCell className={`text-right font-mono text-sm ${row.amount === null ? 'text-slate-300' : row.amount >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                        {row.amount === null ? '—' : (
+                          <span className="inline-flex items-center gap-1.5">
+                            {row.splitCount > 1 && (
+                              <span className="text-[10px] font-sans text-slate-400" title={`Split across ${row.splitCount} transactions`}>
+                                split {row.splitCount}
+                              </span>
+                            )}
+                            {formatCurrency(row.amount)}
+                          </span>
+                        )}
+                      </TableCell>
+                      <TableCell className={`text-right font-mono text-sm ${row.allocatedAmount === null ? 'text-slate-300' : 'text-slate-600'}`}>
+                        {row.allocatedAmount === null ? '—' : formatCurrency(row.allocatedAmount)}
                       </TableCell>
                       <TableCell>
-                        <Badge variant={row.type === 'Credit' ? 'default' : 'secondary'} className="text-xs">
-                          {row.type}
-                        </Badge>
+                        {row.type && (
+                          <Badge variant={row.type === 'Credit' ? 'default' : 'secondary'} className="text-xs">
+                            {row.type}
+                          </Badge>
+                        )}
                       </TableCell>
                       <TableCell>
                         {row.isReconciled ? (

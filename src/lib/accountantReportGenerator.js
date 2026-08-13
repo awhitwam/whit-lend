@@ -73,17 +73,41 @@ export function generateAccountantReportPDF(data, options = {}) {
   doc.text(dateRangeText, pageWidth / 2, y, { align: 'center' });
   y += 12;
 
-  // Table Header - landscape mode gives us more width
-  const colX = [10, 28, 80, 102, 118, 155, 185, 210, 235, 260, 280];
-  const headers = ['Date', 'Description', 'Amount', 'Type', 'Reconciled To', 'Entity Details', 'Borrower ID', 'Principal', 'Interest', 'Fees', 'Reason'];
+  // Table layout - widths in mm across the 277mm usable width of a landscape page.
+  // Positions are derived from the widths so the layout is tuned in one place.
+  const columns = [
+    { key: 'date', header: 'Date', width: 16 },
+    { key: 'bankReference', header: 'Bank Ref', width: 22 },
+    { key: 'description', header: 'Description', width: 38 },
+    { key: 'amount', header: 'Amount', width: 21 },
+    { key: 'allocated', header: 'Allocated', width: 21 },
+    { key: 'type', header: 'Type', width: 12 },
+    { key: 'reconciledTo', header: 'Reconciled To', width: 26 },
+    { key: 'entityDetails', header: 'Entity Details', width: 32 },
+    { key: 'borrowerId', header: 'Borrower ID', width: 16 },
+    { key: 'principal', header: 'Principal', width: 18 },
+    { key: 'interest', header: 'Interest', width: 18 },
+    { key: 'fees', header: 'Fees', width: 16 },
+    { key: 'notes', header: 'Reason', width: 18 }
+  ];
+
+  const colX = [];
+  columns.reduce((x, col) => {
+    colX.push(x);
+    return x + col.width;
+  }, 10);
+
+  // Roughly how many characters fit in a column at the given font size
+  const fitChars = (width, fontSize) => Math.max(1, Math.floor(width / (fontSize * 0.19)));
+  const clip = (value, i, fontSize) => String(value ?? '-').substring(0, fitChars(columns[i].width, fontSize));
 
   doc.setFillColor(240, 240, 240);
   doc.rect(10, y - 4, pageWidth - 20, 8, 'F');
-  doc.setFontSize(9);
+  doc.setFontSize(7);
   doc.setFont(undefined, 'bold');
 
-  headers.forEach((header, i) => {
-    doc.text(header, colX[i], y);
+  columns.forEach((col, i) => {
+    doc.text(clip(col.header, i, 7), colX[i], y);
   });
 
   y += 8;
@@ -92,7 +116,7 @@ export function generateAccountantReportPDF(data, options = {}) {
 
   // Table Rows
   doc.setFont(undefined, 'normal');
-  doc.setFontSize(8);
+  doc.setFontSize(7);
 
   data.forEach((row, index) => {
     checkPageBreak(12);
@@ -103,54 +127,69 @@ export function generateAccountantReportPDF(data, options = {}) {
       doc.rect(10, y - 4, pageWidth - 20, 10, 'F');
     }
 
-    // Date
-    doc.text(row.date ? format(new Date(row.date), 'dd/MM/yyyy') : '-', colX[0], y);
+    // Date - stated once per bank entry
+    doc.text(row.isContinuation ? '' : (row.date ? format(new Date(row.date), 'dd/MM/yyyy') : '-'), colX[0], y);
 
-    // Description (truncate if too long)
-    const desc = (row.description || '-').substring(0, 32);
-    doc.text(desc, colX[1], y);
+    // Bank Reference - repeated on every line so a split block stays traceable
+    doc.text(clip(row.bankReference || '-', 1, 7), colX[1], y);
 
-    // Amount
-    const amountText = formatCurrency(Math.abs(row.amount));
-    doc.setTextColor(row.amount >= 0 ? 0 : 180, row.amount >= 0 ? 128 : 0, 0);
-    doc.text(amountText, colX[2], y);
+    // Description - allocations after the first are indented under their bank entry
+    const desc = row.isContinuation ? `  > ${row.description || ''}` : (row.description || '-');
+    doc.text(clip(desc, 2, 7), colX[2], y);
+
+    // Amount - the bank movement, on the entry's first line only
+    if (row.amount === null || row.amount === undefined) {
+      doc.setTextColor(150, 150, 150);
+      doc.text('-', colX[3], y);
+    } else {
+      doc.setTextColor(row.amount >= 0 ? 0 : 180, row.amount >= 0 ? 128 : 0, 0);
+      doc.text(formatCurrency(Math.abs(row.amount)), colX[3], y);
+    }
     doc.setTextColor(0, 0, 0);
 
+    // Allocated - what this line was assigned to
+    doc.text(
+      row.allocatedAmount === null || row.allocatedAmount === undefined
+        ? '-'
+        : formatCurrency(Math.abs(row.allocatedAmount)),
+      colX[4],
+      y
+    );
+
     // Type (Credit/Debit)
-    doc.text(row.type || '-', colX[3], y);
+    doc.text(row.type || '', colX[5], y);
 
     // Reconciled To
     const reconTo = row.isReconciled ? (row.reconciledTo || 'Yes') : 'Not recon';
     if (!row.isReconciled) {
       doc.setTextColor(200, 100, 100);
     }
-    doc.text(reconTo.substring(0, 18), colX[4], y);
+    doc.text(clip(reconTo, 6, 7), colX[6], y);
     doc.setTextColor(0, 0, 0);
 
     // Entity Details
-    doc.text((row.entityDetails || '-').substring(0, 20), colX[5], y);
+    doc.text(clip(row.entityDetails || '-', 7, 7), colX[7], y);
 
     // Borrower ID
-    doc.text(row.borrowerId || '-', colX[6], y);
+    doc.text(clip(row.borrowerId || '-', 8, 7), colX[8], y);
 
     // Principal
-    doc.text(row.principalAmount !== null ? formatCurrency(row.principalAmount) : '-', colX[7], y);
+    doc.text(row.principalAmount !== null ? formatCurrency(row.principalAmount) : '-', colX[9], y);
 
     // Interest
-    doc.text(row.interestAmount !== null ? formatCurrency(row.interestAmount) : '-', colX[8], y);
+    doc.text(row.interestAmount !== null ? formatCurrency(row.interestAmount) : '-', colX[10], y);
 
     // Fees
-    doc.text(row.feesAmount !== null && row.feesAmount > 0 ? formatCurrency(row.feesAmount) : '-', colX[9], y);
+    doc.text(row.feesAmount !== null && row.feesAmount > 0 ? formatCurrency(row.feesAmount) : '-', colX[11], y);
 
     // Notes/Reason
-    const notes = (row.notes || '-').substring(0, 16);
-    doc.text(notes, colX[10], y);
+    doc.text(clip(row.notes || '-', 12, 7), colX[12], y);
 
     y += 10;
   });
 
   // Summary Section
-  checkPageBreak(50);
+  checkPageBreak(62);
   y += 10;
   doc.setDrawColor(180, 180, 180);
   doc.line(10, y, pageWidth - 10, y);
@@ -164,11 +203,14 @@ export function generateAccountantReportPDF(data, options = {}) {
   doc.setFontSize(10);
   doc.setFont(undefined, 'normal');
 
-  const totalCredits = data.filter(r => r.amount > 0).reduce((sum, r) => sum + r.amount, 0);
-  const totalDebits = data.filter(r => r.amount < 0).reduce((sum, r) => sum + Math.abs(r.amount), 0);
+  // A bank entry split across several transactions produces one line per allocation. Only the
+  // entry's first line carries the bank movement, so credits/debits sum those lines while the
+  // allocated total sums every line.
+  const entryLines = data.filter(r => r.isFirstLine !== false);
+  const totalCredits = entryLines.filter(r => r.amount > 0).reduce((sum, r) => sum + r.amount, 0);
+  const totalDebits = entryLines.filter(r => r.amount < 0).reduce((sum, r) => sum + Math.abs(r.amount), 0);
   const netMovement = totalCredits - totalDebits;
-  // A bank entry split across several transactions produces one line per allocation, so counts
-  // are per bank entry while the credit/debit totals still sum every line
+  const totalAllocated = data.reduce((sum, r) => sum + (r.allocatedAmount || 0), 0);
   const bankEntryCount = new Set(data.map(r => r.bankEntryId ?? r.id)).size;
   const reconciledCount = new Set(data.filter(r => r.isReconciled).map(r => r.bankEntryId ?? r.id)).size;
   const reconciledPercent = bankEntryCount > 0 ? Math.round((reconciledCount / bankEntryCount) * 100) : 0;
@@ -180,6 +222,10 @@ export function generateAccountantReportPDF(data, options = {}) {
   doc.text(`Total Debits: ${formatCurrency(totalDebits)}`, 10, y);
   y += 6;
   doc.text(`Net Movement: ${formatCurrency(netMovement)}`, 10, y);
+  y += 6;
+  doc.text(`Total Allocated: ${formatCurrency(totalAllocated)}`, 10, y);
+  y += 6;
+  doc.text(`Unallocated: ${formatCurrency(netMovement - totalAllocated)}`, 10, y);
   y += 6;
   doc.text(`Reconciled: ${reconciledCount} of ${bankEntryCount} (${reconciledPercent}%)`, 10, y);
 
@@ -203,8 +249,10 @@ export function generateAccountantReportCSV(data, options = {}) {
 
   const headers = [
     'Date',
+    'Bank Reference',
     'Description',
     'Amount',
+    'Allocated',
     'Type',
     'Reconciled',
     'Reconciled To',
@@ -227,9 +275,13 @@ export function generateAccountantReportCSV(data, options = {}) {
   };
 
   const rows = data.map(row => [
-    row.date ? format(new Date(row.date), 'dd/MM/yyyy') : '',
-    escapeCSV(row.description),
-    row.amount?.toFixed(2) || '0.00',
+    // Date and Amount belong to the bank entry and are stated once, on its first line.
+    // Bank Reference is repeated on every line so split blocks group and filter in Excel.
+    row.isContinuation ? '' : (row.date ? format(new Date(row.date), 'dd/MM/yyyy') : ''),
+    escapeCSV(row.bankReference),
+    escapeCSV(row.isContinuation ? `    ↳ ${row.description || ''}` : row.description),
+    row.amount !== null && row.amount !== undefined ? row.amount.toFixed(2) : '',
+    row.allocatedAmount !== null && row.allocatedAmount !== undefined ? row.allocatedAmount.toFixed(2) : '',
     row.type || '',
     row.isReconciled ? 'Yes' : 'No',
     escapeCSV(row.reconciledTo),
