@@ -23,9 +23,12 @@ export function generateAccountantReportPDF(data, options = {}) {
     doc.setTextColor(0, 0, 0);
   };
 
+  // Lowest y a row may occupy before it would collide with the footer
+  const bottomLimit = pageHeight - 16;
+
   // Helper to check page break
   const checkPageBreak = (requiredSpace = 20) => {
-    if (y > pageHeight - 25 - requiredSpace) {
+    if (y + requiredSpace > bottomLimit) {
       doc.addPage();
       y = 15;
       return true;
@@ -73,131 +76,193 @@ export function generateAccountantReportPDF(data, options = {}) {
   doc.text(dateRangeText, pageWidth / 2, y, { align: 'center' });
   y += 12;
 
-  // Table layout - widths in mm across the 277mm usable width of a landscape page.
+  // Table layout - widths in mm, summing to the 281mm usable width of a landscape A4 page.
   // Positions are derived from the widths so the layout is tuned in one place.
+  const MARGIN = 8;
+  const CELL_PAD = 1.5;
+  const LINE_HEIGHT = 3.2;
+  const ROW_PAD = 1.6;
+  const BODY_FONT = 7;
+  // Free-text columns wrap to as many lines as their content needs - an accountant reconciles
+  // against these values, so dropping characters is worse than a taller row. The cap is only a
+  // backstop against pathological data; 10 lines still leaves a row shorter than a page.
+  const MAX_LINES = 10;
+
   const columns = [
     { key: 'date', header: 'Date', width: 16 },
-    { key: 'bankReference', header: 'Bank Ref', width: 22 },
-    { key: 'description', header: 'Description', width: 38 },
-    { key: 'amount', header: 'Amount', width: 21 },
-    { key: 'allocated', header: 'Allocated', width: 21 },
-    { key: 'type', header: 'Type', width: 12 },
+    { key: 'bankReference', header: 'Bank Ref', width: 24 },
+    { key: 'description', header: 'Description', width: 42 },
+    { key: 'amount', header: 'Amount', width: 19, align: 'right' },
+    { key: 'allocated', header: 'Allocated', width: 19, align: 'right' },
+    { key: 'type', header: 'Type', width: 11 },
     { key: 'reconciledTo', header: 'Reconciled To', width: 26 },
-    { key: 'entityDetails', header: 'Entity Details', width: 32 },
-    { key: 'borrowerId', header: 'Borrower ID', width: 16 },
-    { key: 'principal', header: 'Principal', width: 18 },
-    { key: 'interest', header: 'Interest', width: 18 },
-    { key: 'fees', header: 'Fees', width: 16 },
-    { key: 'notes', header: 'Reason', width: 18 }
+    { key: 'entityDetails', header: 'Entity Details', width: 34 },
+    { key: 'borrowerId', header: 'Borrower ID', width: 15 },
+    { key: 'principal', header: 'Principal', width: 18, align: 'right' },
+    { key: 'interest', header: 'Interest', width: 18, align: 'right' },
+    { key: 'fees', header: 'Fees', width: 15, align: 'right' },
+    { key: 'notes', header: 'Reason', width: 24 }
   ];
 
+  const tableWidth = columns.reduce((sum, col) => sum + col.width, 0);
   const colX = [];
   columns.reduce((x, col) => {
     colX.push(x);
     return x + col.width;
-  }, 10);
+  }, MARGIN);
 
-  // Roughly how many characters fit in a column at the given font size
-  const fitChars = (width, fontSize) => Math.max(1, Math.floor(width / (fontSize * 0.19)));
-  const clip = (value, i, fontSize) => String(value ?? '-').substring(0, fitChars(columns[i].width, fontSize));
+  // Break a value into lines that actually fit the column at the current font. Widths are measured
+  // rather than estimated from a character count - the old estimate under-counted capitals, so
+  // upper-case bank descriptions ran into the neighbouring column.
+  const wrapText = (value, maxWidth, maxLines = MAX_LINES) => {
+    const text = String(value ?? '-').replace(/\s+/g, ' ').trim();
+    if (!text) return [''];
 
-  doc.setFillColor(240, 240, 240);
-  doc.rect(10, y - 4, pageWidth - 20, 8, 'F');
-  doc.setFontSize(7);
-  doc.setFont(undefined, 'bold');
+    const lines = [];
+    let current = '';
 
-  columns.forEach((col, i) => {
-    doc.text(clip(col.header, i, 7), colX[i], y);
-  });
+    for (const word of text.split(' ')) {
+      const candidate = current ? `${current} ${word}` : word;
+      if (doc.getTextWidth(candidate) <= maxWidth) {
+        current = candidate;
+        continue;
+      }
+      if (current) lines.push(current);
+      // A single token wider than the column - bank references have no spaces - is hard-broken
+      let rest = word;
+      while (doc.getTextWidth(rest) > maxWidth) {
+        let cut = rest.length;
+        while (cut > 1 && doc.getTextWidth(rest.substring(0, cut)) > maxWidth) cut--;
+        lines.push(rest.substring(0, cut));
+        rest = rest.substring(cut);
+      }
+      current = rest;
+    }
+    if (current) lines.push(current);
 
-  y += 8;
-  doc.setDrawColor(180, 180, 180);
-  doc.line(10, y - 4, pageWidth - 10, y - 4);
+    if (lines.length <= maxLines) return lines;
+
+    const kept = lines.slice(0, maxLines);
+    let last = kept[maxLines - 1];
+    while (last.length > 1 && doc.getTextWidth(`${last}...`) > maxWidth) last = last.slice(0, -1);
+    kept[maxLines - 1] = `${last}...`;
+    return kept;
+  };
+
+  // Lay out one row: wrap every cell, then size the row to its tallest cell
+  const layoutRow = (cells) => {
+    const wrapped = cells.map((cell, i) => {
+      const indent = cell.indent || 0;
+      return wrapText(cell.text, columns[i].width - CELL_PAD * 2 - indent, cell.maxLines || MAX_LINES);
+    });
+    const lineCount = Math.max(...wrapped.map(w => w.length));
+    return { wrapped, height: lineCount * LINE_HEIGHT + ROW_PAD * 2 };
+  };
+
+  const drawCells = (cells, wrapped, rowY) => {
+    cells.forEach((cell, i) => {
+      const col = columns[i];
+      const indent = cell.indent || 0;
+      const alignRight = col.align === 'right';
+      const x = alignRight ? colX[i] + col.width - CELL_PAD : colX[i] + CELL_PAD + indent;
+      const colour = cell.colour || [0, 0, 0];
+      doc.setTextColor(colour[0], colour[1], colour[2]);
+      wrapped[i].forEach((line, li) => {
+        doc.text(line, x, rowY + ROW_PAD + 2.4 + li * LINE_HEIGHT, alignRight ? { align: 'right' } : undefined);
+      });
+    });
+    doc.setTextColor(0, 0, 0);
+  };
+
+  // Header is redrawn at the top of every page so a multi-page report stays readable
+  const drawTableHeader = () => {
+    doc.setFontSize(BODY_FONT);
+    doc.setFont(undefined, 'bold');
+    const cells = columns.map(col => ({ text: col.header, maxLines: 2 }));
+    const { wrapped, height } = layoutRow(cells);
+    doc.setFillColor(240, 240, 240);
+    doc.rect(MARGIN, y, tableWidth, height, 'F');
+    drawCells(cells, wrapped, y);
+    y += height;
+    doc.setDrawColor(180, 180, 180);
+    doc.line(MARGIN, y, MARGIN + tableWidth, y);
+    doc.setFont(undefined, 'normal');
+  };
+
+  drawTableHeader();
 
   // Table Rows
   doc.setFont(undefined, 'normal');
-  doc.setFontSize(7);
+  doc.setFontSize(BODY_FONT);
 
   data.forEach((row, index) => {
-    checkPageBreak(12);
+    const reconTo = row.isReconciled ? (row.reconciledTo || 'Yes') : 'Not reconciled';
+
+    const cells = [
+      // Date - stated once per bank entry
+      { text: row.isContinuation ? '' : (row.date ? format(new Date(row.date), 'dd/MM/yyyy') : '-'), maxLines: 1 },
+      // Bank Reference - repeated on every line so a split block stays traceable
+      { text: row.bankReference || '-' },
+      // Description - allocations after the first are indented under their bank entry
+      {
+        text: row.isContinuation ? `> ${row.description || ''}` : (row.description || '-'),
+        indent: row.isContinuation ? 3 : 0,
+        colour: row.isContinuation ? [90, 90, 90] : [0, 0, 0]
+      },
+      // Amount - the bank movement, on the entry's first line only
+      row.amount === null || row.amount === undefined
+        ? { text: '-', colour: [150, 150, 150], maxLines: 1 }
+        : { text: formatCurrency(Math.abs(row.amount)), colour: row.amount >= 0 ? [0, 128, 0] : [180, 0, 0], maxLines: 1 },
+      // Allocated - what this line was assigned to
+      {
+        text: row.allocatedAmount === null || row.allocatedAmount === undefined
+          ? '-'
+          : formatCurrency(Math.abs(row.allocatedAmount)),
+        maxLines: 1
+      },
+      { text: row.type || '', maxLines: 1 },
+      { text: reconTo, colour: row.isReconciled ? [0, 0, 0] : [200, 100, 100] },
+      { text: row.entityDetails || '-' },
+      { text: row.borrowerId || '-' },
+      { text: row.principalAmount !== null ? formatCurrency(row.principalAmount) : '-', maxLines: 1 },
+      { text: row.interestAmount !== null ? formatCurrency(row.interestAmount) : '-', maxLines: 1 },
+      { text: row.feesAmount !== null && row.feesAmount > 0 ? formatCurrency(row.feesAmount) : '-', maxLines: 1 },
+      { text: row.notes || '-' }
+    ];
+
+    const { wrapped, height } = layoutRow(cells);
+
+    if (y + height > bottomLimit) {
+      doc.addPage();
+      y = 15;
+      drawTableHeader();
+      doc.setFont(undefined, 'normal');
+      doc.setFontSize(BODY_FONT);
+    }
 
     // Alternate row background
     if (index % 2 === 0) {
-      doc.setFillColor(250, 250, 250);
-      doc.rect(10, y - 4, pageWidth - 20, 10, 'F');
+      doc.setFillColor(248, 248, 248);
+      doc.rect(MARGIN, y, tableWidth, height, 'F');
     }
 
-    // Date - stated once per bank entry
-    doc.text(row.isContinuation ? '' : (row.date ? format(new Date(row.date), 'dd/MM/yyyy') : '-'), colX[0], y);
-
-    // Bank Reference - repeated on every line so a split block stays traceable
-    doc.text(clip(row.bankReference || '-', 1, 7), colX[1], y);
-
-    // Description - allocations after the first are indented under their bank entry
-    const desc = row.isContinuation ? `  > ${row.description || ''}` : (row.description || '-');
-    doc.text(clip(desc, 2, 7), colX[2], y);
-
-    // Amount - the bank movement, on the entry's first line only
-    if (row.amount === null || row.amount === undefined) {
-      doc.setTextColor(150, 150, 150);
-      doc.text('-', colX[3], y);
-    } else {
-      doc.setTextColor(row.amount >= 0 ? 0 : 180, row.amount >= 0 ? 128 : 0, 0);
-      doc.text(formatCurrency(Math.abs(row.amount)), colX[3], y);
-    }
-    doc.setTextColor(0, 0, 0);
-
-    // Allocated - what this line was assigned to
-    doc.text(
-      row.allocatedAmount === null || row.allocatedAmount === undefined
-        ? '-'
-        : formatCurrency(Math.abs(row.allocatedAmount)),
-      colX[4],
-      y
-    );
-
-    // Type (Credit/Debit)
-    doc.text(row.type || '', colX[5], y);
-
-    // Reconciled To
-    const reconTo = row.isReconciled ? (row.reconciledTo || 'Yes') : 'Not recon';
-    if (!row.isReconciled) {
-      doc.setTextColor(200, 100, 100);
-    }
-    doc.text(clip(reconTo, 6, 7), colX[6], y);
-    doc.setTextColor(0, 0, 0);
-
-    // Entity Details
-    doc.text(clip(row.entityDetails || '-', 7, 7), colX[7], y);
-
-    // Borrower ID
-    doc.text(clip(row.borrowerId || '-', 8, 7), colX[8], y);
-
-    // Principal
-    doc.text(row.principalAmount !== null ? formatCurrency(row.principalAmount) : '-', colX[9], y);
-
-    // Interest
-    doc.text(row.interestAmount !== null ? formatCurrency(row.interestAmount) : '-', colX[10], y);
-
-    // Fees
-    doc.text(row.feesAmount !== null && row.feesAmount > 0 ? formatCurrency(row.feesAmount) : '-', colX[11], y);
-
-    // Notes/Reason
-    doc.text(clip(row.notes || '-', 12, 7), colX[12], y);
-
-    y += 10;
+    drawCells(cells, wrapped, y);
+    y += height;
   });
 
-  // Summary Section
-  checkPageBreak(62);
-  y += 10;
   doc.setDrawColor(180, 180, 180);
-  doc.line(10, y, pageWidth - 10, y);
+  doc.line(MARGIN, y, MARGIN + tableWidth, y);
+
+  // Summary Section
+  y += 10;
+  checkPageBreak(62);
+  doc.setDrawColor(180, 180, 180);
+  doc.line(MARGIN, y, MARGIN + tableWidth, y);
   y += 8;
 
   doc.setFontSize(12);
   doc.setFont(undefined, 'bold');
-  doc.text('Summary', 10, y);
+  doc.text('Summary', MARGIN, y);
   y += 8;
 
   doc.setFontSize(10);
@@ -215,19 +280,20 @@ export function generateAccountantReportPDF(data, options = {}) {
   const reconciledCount = new Set(data.filter(r => r.isReconciled).map(r => r.bankEntryId ?? r.id)).size;
   const reconciledPercent = bankEntryCount > 0 ? Math.round((reconciledCount / bankEntryCount) * 100) : 0;
 
-  doc.text(`Total Transactions: ${bankEntryCount}`, 10, y);
-  y += 6;
-  doc.text(`Total Credits: ${formatCurrency(totalCredits)}`, 10, y);
-  y += 6;
-  doc.text(`Total Debits: ${formatCurrency(totalDebits)}`, 10, y);
-  y += 6;
-  doc.text(`Net Movement: ${formatCurrency(netMovement)}`, 10, y);
-  y += 6;
-  doc.text(`Total Allocated: ${formatCurrency(totalAllocated)}`, 10, y);
-  y += 6;
-  doc.text(`Unallocated: ${formatCurrency(netMovement - totalAllocated)}`, 10, y);
-  y += 6;
-  doc.text(`Reconciled: ${reconciledCount} of ${bankEntryCount} (${reconciledPercent}%)`, 10, y);
+  const summaryLines = [
+    `Total Transactions: ${bankEntryCount}`,
+    `Total Credits: ${formatCurrency(totalCredits)}`,
+    `Total Debits: ${formatCurrency(totalDebits)}`,
+    `Net Movement: ${formatCurrency(netMovement)}`,
+    `Total Allocated: ${formatCurrency(totalAllocated)}`,
+    `Unallocated: ${formatCurrency(netMovement - totalAllocated)}`,
+    `Reconciled: ${reconciledCount} of ${bankEntryCount} (${reconciledPercent}%)`
+  ];
+
+  summaryLines.forEach(line => {
+    doc.text(line, MARGIN, y);
+    y += 6;
+  });
 
   // Add page numbers
   const totalPages = doc.internal.getNumberOfPages();
