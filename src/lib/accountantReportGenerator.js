@@ -7,7 +7,7 @@ import { formatCurrency } from '@/components/loan/LoanCalculator';
  * Lists all bank transactions with associated reconciliation details
  */
 export function generateAccountantReportPDF(data, options = {}) {
-  const { fromDate, toDate, organization } = options;
+  const { fromDate, toDate, organization, sortOrder = 'desc' } = options;
   const doc = new jsPDF('landscape');
   const pageWidth = doc.internal.pageSize.getWidth();
   const pageHeight = doc.internal.pageSize.getHeight();
@@ -72,7 +72,10 @@ export function generateAccountantReportPDF(data, options = {}) {
   // Date Range
   doc.setFontSize(11);
   doc.setFont(undefined, 'normal');
-  const dateRangeText = `Period: ${format(new Date(fromDate), 'dd MMM yyyy')} to ${format(new Date(toDate), 'dd MMM yyyy')}`;
+  // The rows arrive pre-sorted; state the direction so the reader knows the listing is complete
+  // rather than an arbitrary slice
+  const orderText = sortOrder === 'asc' ? 'oldest first' : 'newest first';
+  const dateRangeText = `Period: ${format(new Date(fromDate), 'dd MMM yyyy')} to ${format(new Date(toDate), 'dd MMM yyyy')} (${orderText})`;
   doc.text(dateRangeText, pageWidth / 2, y, { align: 'center' });
   y += 12;
 

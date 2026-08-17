@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Loader2, FileDown, FileSpreadsheet, Calendar, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format, subMonths, startOfMonth } from 'date-fns';
@@ -35,6 +36,9 @@ export default function AccountantReport() {
   // Default to last 12 months
   const [fromDate, setFromDate] = useState(() => format(startOfMonth(subMonths(new Date(), 12)), 'yyyy-MM-dd'));
   const [toDate, setToDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
+  // Date order for the table and both exports. 'desc' (newest first) matches how the bank
+  // statement screens read; accountants working a period forward usually want 'asc'.
+  const [sortOrder, setSortOrder] = useState('desc');
   const [isExporting, setIsExporting] = useState(false);
 
   // Fetch all required data
@@ -334,7 +338,12 @@ export default function AccountantReport() {
         const date = new Date(bs.statement_date);
         return date >= from && date <= to;
       })
-      .sort((a, b) => new Date(b.statement_date) - new Date(a.statement_date))
+      // Sorted per bank entry, before the flatMap, so an entry's allocation lines stay grouped
+      // beneath it whichever direction the accountant reads the period in
+      .sort((a, b) => {
+        const diff = new Date(a.statement_date) - new Date(b.statement_date);
+        return sortOrder === 'asc' ? diff : -diff;
+      })
       .flatMap(bs => {
         const recons = reconByBankId[bs.id] || [];
         const allocations = recons.flatMap(resolveAllocations);
@@ -409,7 +418,7 @@ export default function AccountantReport() {
           };
         });
       });
-  }, [bankStatements, fromDate, toDate, reconByBankId, allocatedByTarget, loanTxMap, loanMap, borrowerMap, investorTxMap, investorMap, expenseMap, expenseTypeMap, interestMap, otherIncomeMap]);
+  }, [bankStatements, fromDate, toDate, sortOrder, reconByBankId, allocatedByTarget, loanTxMap, loanMap, borrowerMap, investorTxMap, investorMap, expenseMap, expenseTypeMap, interestMap, otherIncomeMap]);
 
   // Summary stats - counts are per bank entry, and credits/debits sum the first line of each
   // entry (the only line carrying the bank movement), not every allocation row
@@ -440,6 +449,7 @@ export default function AccountantReport() {
       generateAccountantReportPDF(reportData, {
         fromDate,
         toDate,
+        sortOrder,
         organization: currentOrganization
       });
     } finally {
@@ -512,6 +522,18 @@ export default function AccountantReport() {
                 onChange={(e) => setToDate(e.target.value)}
                 className="w-44"
               />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="sort-order">Date Order</Label>
+              <Select value={sortOrder} onValueChange={setSortOrder}>
+                <SelectTrigger id="sort-order" className="w-48">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="desc">Newest first (descending)</SelectItem>
+                  <SelectItem value="asc">Oldest first (ascending)</SelectItem>
+                </SelectContent>
+              </Select>
             </div>
             <div className="text-sm text-slate-500">
               {summary.total} transactions in selected period
