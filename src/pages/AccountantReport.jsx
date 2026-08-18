@@ -13,6 +13,13 @@ import { Loader2, FileDown, FileSpreadsheet, Calendar, AlertCircle, CheckCircle2
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format, subMonths, startOfMonth } from 'date-fns';
 import { generateAccountantReportPDF, generateAccountantReportCSV } from '@/lib/accountantReportGenerator';
+import {
+  classifyBankEntry,
+  summariseAccountantReport,
+  MATCH_STATUS,
+  MATCH_STATUS_META,
+  EXCEPTION_ORDER
+} from '@/lib/accountantReportClassification';
 
 // A reconciliation entry links a bank statement line to one or more system records. The FK columns
 // are documented as mutually exclusive but aren't in practice - createInvestorWithdrawal writes both
@@ -224,7 +231,10 @@ export default function AccountantReport() {
         principalAmount: null,
         interestAmount: null,
         feesAmount: null,
-        legAmount: 0
+        legAmount: 0,
+        // Set when the FK is present but its target record is gone - flagged rather than
+        // sniffed out of the reconciledTo label later
+        isBroken: false
       };
 
       if (re.loan_transaction_id) {
@@ -248,7 +258,7 @@ export default function AccountantReport() {
           }
           allocations.push(alloc);
         } else {
-          allocations.push({ ...blank, reconciledTo: 'Loan Transaction (link broken)', entityDetails: 'Linked record not found' });
+          allocations.push({ ...blank, isBroken: true, reconciledTo: 'Loan Transaction (link broken)', entityDetails: 'Linked record not found' });
         }
       }
 
@@ -263,7 +273,7 @@ export default function AccountantReport() {
             legAmount: Math.abs(parseFloat(invTx.amount) || 0)
           });
         } else {
-          allocations.push({ ...blank, reconciledTo: 'Investor Transaction (link broken)', entityDetails: 'Linked record not found' });
+          allocations.push({ ...blank, isBroken: true, reconciledTo: 'Investor Transaction (link broken)', entityDetails: 'Linked record not found' });
         }
       }
 
@@ -277,7 +287,7 @@ export default function AccountantReport() {
             legAmount: Math.abs(parseFloat(expense.amount) || 0)
           });
         } else {
-          allocations.push({ ...blank, reconciledTo: 'Expense (link broken)', entityDetails: 'Linked record not found' });
+          allocations.push({ ...blank, isBroken: true, reconciledTo: 'Expense (link broken)', entityDetails: 'Linked record not found' });
         }
       }
 
@@ -292,7 +302,7 @@ export default function AccountantReport() {
             legAmount: Math.abs(parseFloat(interest.amount) || 0)
           });
         } else {
-          allocations.push({ ...blank, reconciledTo: 'Investor Interest (link broken)', entityDetails: 'Linked record not found' });
+          allocations.push({ ...blank, isBroken: true, reconciledTo: 'Investor Interest (link broken)', entityDetails: 'Linked record not found' });
         }
       }
 
@@ -306,7 +316,7 @@ export default function AccountantReport() {
             legAmount: Math.abs(parseFloat(income.amount) || 0)
           });
         } else {
-          allocations.push({ ...blank, reconciledTo: 'Other Income (link broken)', entityDetails: 'Linked record not found' });
+          allocations.push({ ...blank, isBroken: true, reconciledTo: 'Other Income (link broken)', entityDetails: 'Linked record not found' });
         }
       }
 
@@ -348,12 +358,25 @@ export default function AccountantReport() {
         const recons = reconByBankId[bs.id] || [];
         const allocations = recons.flatMap(resolveAllocations);
 
+        // Does this entry hold up against "every transaction is matched to something"?
+        const verdict = classifyBankEntry({
+          amount: bs.amount,
+          isReconciled: bs.is_reconciled,
+          isUnreconcilable: bs.is_unreconcilable,
+          unreconcilableReason: bs.unreconcilable_reason,
+          allocationCount: allocations.length,
+          brokenCount: allocations.filter(a => a.isBroken).length
+        });
+
         const base = {
           bankEntryId: bs.id,
           bankReference: bs.external_reference || null,
           date: bs.statement_date,
           description: bs.description,
           isReconciled: bs.is_reconciled,
+          // Carried on every line of a split block so the whole block renders consistently
+          matchStatus: verdict.status,
+          matchReason: verdict.reason,
           // Notes show unreconcilable reason (for entries that couldn't be reconciled)
           notes: bs.unreconcilable_reason || null,
           splitCount: allocations.length
@@ -365,6 +388,9 @@ export default function AccountantReport() {
           isFirstLine: true,
           isContinuation: false,
           amount: bs.amount,
+          // The part of the bank movement this entry failed to account for - like amount, it
+          // belongs to the bank entry, so it is stated once on the first line
+          unallocatedAmount: verdict.residual,
           type: bs.amount >= 0 ? 'Credit' : 'Debit'
         };
 
@@ -376,7 +402,12 @@ export default function AccountantReport() {
             ...firstLine,
             id: bs.id,
             splitCount: 1,
-            allocatedAmount: alloc ? bs.amount : null,
+            // A link to a deleted record accounts for nothing. Everything else reports the bank
+            // movement: reconciliation_entries.amount cannot be used here, because a net receipt
+            // group stores the full transaction amount on every member line and would double count
+            allocatedAmount: !alloc ? null
+              : alloc.isBroken ? null
+              : bs.amount,
             reconciledTo: alloc?.reconciledTo || null,
             entityDetails: alloc?.entityDetails || null,
             borrowerId: alloc?.borrowerId || null,
@@ -396,7 +427,10 @@ export default function AccountantReport() {
 
         return allocations.map((alloc, index) => {
           let allocatedAmount;
-          if (!hasAmounts) {
+          if (alloc.isBroken) {
+            // Its target is gone, so this leg accounts for nothing
+            allocatedAmount = null;
+          } else if (!hasAmounts) {
             allocatedAmount = bs.amount / allocations.length;
           } else if (signsAreMeaningful) {
             allocatedAmount = alloc.amount;
@@ -406,7 +440,7 @@ export default function AccountantReport() {
 
           return {
             ...base,
-            ...(index === 0 ? firstLine : { isFirstLine: false, isContinuation: true, amount: null, type: null }),
+            ...(index === 0 ? firstLine : { isFirstLine: false, isContinuation: true, amount: null, unallocatedAmount: null, type: null }),
             id: `${bs.id}:${index}`,
             allocatedAmount,
             reconciledTo: alloc.reconciledTo,
@@ -422,26 +456,17 @@ export default function AccountantReport() {
 
   // Summary stats - counts are per bank entry, and credits/debits sum the first line of each
   // entry (the only line carrying the bank movement), not every allocation row
-  const summary = useMemo(() => {
-    const entryLines = reportData.filter(r => r.isFirstLine);
-    const totalCredits = entryLines.filter(r => r.amount > 0).reduce((sum, r) => sum + r.amount, 0);
-    const totalDebits = entryLines.filter(r => r.amount < 0).reduce((sum, r) => sum + Math.abs(r.amount), 0);
-    const netMovement = totalCredits - totalDebits;
-    const totalAllocated = reportData.reduce((sum, r) => sum + (r.allocatedAmount || 0), 0);
-    const bankEntryIds = new Set(reportData.map(r => r.bankEntryId));
-    const reconciledIds = new Set(reportData.filter(r => r.isReconciled).map(r => r.bankEntryId));
-    const total = bankEntryIds.size;
-    return {
-      total,
-      totalCredits,
-      totalDebits,
-      netMovement,
-      totalAllocated,
-      unallocated: netMovement - totalAllocated,
-      reconciledCount: reconciledIds.size,
-      reconciledPercent: total > 0 ? Math.round((reconciledIds.size / total) * 100) : 0
-    };
-  }, [reportData]);
+  const summary = useMemo(() => summariseAccountantReport(reportData), [reportData]);
+
+  // Which exception category the panel is showing; 'all' covers every actionable one
+  const [exceptionFilter, setExceptionFilter] = useState('all');
+
+  const visibleExceptions = useMemo(() => {
+    if (exceptionFilter === MATCH_STATUS.UNRECONCILABLE) return summary.accepted;
+    if (exceptionFilter !== 'all') return summary.exceptions.filter(r => r.matchStatus === exceptionFilter);
+    // Nothing actionable but some accepted entries to review - show those rather than a blank table
+    return summary.exceptionCount === 0 ? summary.accepted : summary.exceptions;
+  }, [summary, exceptionFilter]);
 
   const handleExportPDF = async () => {
     setIsExporting(true);
@@ -575,19 +600,148 @@ export default function AccountantReport() {
           <CardContent className="pt-4">
             <p className="text-xs text-slate-500 uppercase tracking-wide">Allocated</p>
             <p className="text-2xl font-bold">{formatCurrency(summary.totalAllocated)}</p>
-            <p className={`text-xs ${Math.abs(summary.unallocated) < 0.01 ? 'text-slate-400' : 'text-amber-600'}`}>
-              {formatCurrency(summary.unallocated)} unallocated
-            </p>
+            {/* Credits and debits stated apart - netting them let an unmatched credit and an
+                equal unmatched debit cancel out to nothing */}
+            {summary.exceptionCount === 0 ? (
+              <p className="text-xs text-slate-400">Nothing unallocated</p>
+            ) : (
+              <>
+                <p className="text-xs text-amber-600">
+                  +{formatCurrency(summary.unallocatedCredits)} / -{formatCurrency(summary.unallocatedDebits)} unallocated
+                </p>
+                <p className="text-xs text-slate-400">
+                  across {summary.exceptionCount} {summary.exceptionCount === 1 ? 'entry' : 'entries'}
+                </p>
+              </>
+            )}
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4">
-            <p className="text-xs text-slate-500 uppercase tracking-wide">Reconciled</p>
-            <p className="text-2xl font-bold">{summary.reconciledPercent}%</p>
-            <p className="text-xs text-slate-400">{summary.reconciledCount} of {summary.total}</p>
+            <p className="text-xs text-slate-500 uppercase tracking-wide">Accounted For</p>
+            <p className="text-2xl font-bold">{summary.accountedPercent}%</p>
+            <p className="text-xs text-slate-400">{summary.accountedCount} of {summary.total}</p>
+            {summary.acceptedCount > 0 && (
+              <p className="text-xs text-slate-400">incl. {summary.acceptedCount} unreconcilable</p>
+            )}
           </CardContent>
         </Card>
       </div>
+
+      {/* Exceptions - the entries that break "every transaction is matched to something" */}
+      {!isLoading && reportData.length > 0 && (
+        summary.exceptionCount === 0 && summary.acceptedCount === 0 ? (
+          <Card className="border-emerald-200 bg-emerald-50/50">
+            <CardContent className="py-3 flex items-center gap-2 text-sm text-emerald-800">
+              <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+              All {summary.total} bank transactions in the period are matched.
+            </CardContent>
+          </Card>
+        ) : (
+          <Card className={summary.exceptionCount > 0 ? 'border-amber-300' : undefined}>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                {summary.exceptionCount > 0
+                  ? <AlertCircle className="w-4 h-4 text-amber-500" />
+                  : <CheckCircle2 className="w-4 h-4 text-emerald-600" />}
+                Unmatched &amp; Exceptions
+              </CardTitle>
+              <p className="text-sm text-slate-500">
+                {summary.exceptionCount > 0 ? (
+                  <>
+                    {summary.exceptionCount} of {summary.total} bank {summary.exceptionCount === 1 ? 'entry is' : 'entries are'} not
+                    matched — +{formatCurrency(summary.unallocatedCredits)} credits / -{formatCurrency(summary.unallocatedDebits)} debits
+                    ({formatCurrency(summary.unallocatedGross)} gross)
+                  </>
+                ) : (
+                  <>All {summary.total} bank transactions are accounted for.</>
+                )}
+                {summary.acceptedCount > 0 && (
+                  <>{summary.exceptionCount > 0 ? ', plus ' : ' '}{summary.acceptedCount} marked unreconcilable</>
+                )}
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-2 mb-4">
+                {summary.exceptionCount > 0 && (
+                  <Badge
+                    variant={exceptionFilter === 'all' ? 'default' : 'outline'}
+                    className="cursor-pointer"
+                    onClick={() => setExceptionFilter('all')}
+                  >
+                    All ({summary.exceptionCount})
+                  </Badge>
+                )}
+                {EXCEPTION_ORDER.filter(status => summary.byStatus[status].count > 0).map(status => (
+                  <Badge
+                    key={status}
+                    variant={exceptionFilter === status ? 'default' : 'outline'}
+                    className="cursor-pointer"
+                    onClick={() => setExceptionFilter(status)}
+                  >
+                    {MATCH_STATUS_META[status].label} ({summary.byStatus[status].count})
+                  </Badge>
+                ))}
+                {summary.acceptedCount > 0 && (
+                  <Badge
+                    variant={exceptionFilter === MATCH_STATUS.UNRECONCILABLE ? 'default' : 'outline'}
+                    className="cursor-pointer"
+                    onClick={() => setExceptionFilter(MATCH_STATUS.UNRECONCILABLE)}
+                  >
+                    Unreconcilable — accepted ({summary.acceptedCount})
+                  </Badge>
+                )}
+              </div>
+
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow className="bg-slate-50">
+                      <TableHead className="w-24">Date</TableHead>
+                      <TableHead className="w-32">Bank Reference</TableHead>
+                      <TableHead className="min-w-[200px]">Description</TableHead>
+                      {/* No Allocated / Unallocated columns: an exception accounts for none of
+                          its movement, so both would just restate Amount */}
+                      <TableHead className="w-28 text-right">Amount</TableHead>
+                      <TableHead className="w-36">Category</TableHead>
+                      <TableHead className="min-w-[200px]">Reason</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {visibleExceptions.map(row => (
+                      <TableRow key={row.bankEntryId} className={MATCH_STATUS_META[row.matchStatus].rowClass}>
+                        <TableCell className="font-mono text-sm">
+                          {format(new Date(row.date), 'dd/MM/yyyy')}
+                        </TableCell>
+                        <TableCell
+                          className="font-mono text-xs text-slate-400 max-w-[130px] truncate"
+                          title={row.bankReference || undefined}
+                        >
+                          {row.bankReference || '-'}
+                        </TableCell>
+                        <TableCell className="max-w-[300px] text-sm truncate" title={row.description}>
+                          {row.description}
+                        </TableCell>
+                        <TableCell className={`text-right font-mono text-sm ${row.amount >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+                          {formatCurrency(row.amount)}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant={MATCH_STATUS_META[row.matchStatus].badge} className="text-xs">
+                            {MATCH_STATUS_META[row.matchStatus].label}
+                          </Badge>
+                        </TableCell>
+                        <TableCell className="text-xs text-slate-500 max-w-[260px] truncate" title={row.matchReason || undefined}>
+                          {row.matchReason || '-'}
+                        </TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+            </CardContent>
+          </Card>
+        )
+      )}
 
       {/* Transactions Table */}
       <Card>
@@ -626,7 +780,7 @@ export default function AccountantReport() {
                   {reportData.map((row) => (
                     <TableRow
                       key={row.id}
-                      className={`${!row.isReconciled ? 'bg-amber-50/50' : ''} ${row.isContinuation ? 'border-l-2 border-l-slate-200' : ''}`}
+                      className={`${MATCH_STATUS_META[row.matchStatus].rowClass} ${row.isContinuation ? 'border-l-2 border-l-slate-200' : ''}`}
                     >
                       <TableCell className="font-mono text-sm">
                         {row.isContinuation ? '' : format(new Date(row.date), 'dd/MM/yyyy')}
@@ -666,16 +820,21 @@ export default function AccountantReport() {
                         )}
                       </TableCell>
                       <TableCell>
-                        {row.isReconciled ? (
+                        {/* Driven by the match verdict, not the is_reconciled flag - the flag is
+                            set on orphaned entries too, which is what used to give them a tick */}
+                        {row.matchStatus === MATCH_STATUS.MATCHED ? (
                           <div className="flex items-center gap-1">
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" />
-                            <span className="text-xs text-slate-600">{row.reconciledTo || 'Reconciled'}</span>
+                            <span className="text-xs text-slate-600">{row.reconciledTo || 'Matched'}</span>
                           </div>
                         ) : (
-                          <div className="flex items-center gap-1">
-                            <AlertCircle className="w-3.5 h-3.5 text-amber-500" />
-                            <span className="text-xs text-amber-600">Not reconciled</span>
-                          </div>
+                          <Badge
+                            variant={MATCH_STATUS_META[row.matchStatus].badge}
+                            className="text-xs"
+                            title={row.matchReason || undefined}
+                          >
+                            {MATCH_STATUS_META[row.matchStatus].label}
+                          </Badge>
                         )}
                       </TableCell>
                       <TableCell className="text-sm text-slate-600 max-w-[200px] truncate" title={row.entityDetails}>

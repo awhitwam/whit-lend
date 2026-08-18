@@ -26,16 +26,6 @@ export function generateAccountantReportPDF(data, options = {}) {
   // Lowest y a row may occupy before it would collide with the footer
   const bottomLimit = pageHeight - 16;
 
-  // Helper to check page break
-  const checkPageBreak = (requiredSpace = 20) => {
-    if (y + requiredSpace > bottomLimit) {
-      doc.addPage();
-      y = 15;
-      return true;
-    }
-    return false;
-  };
-
   // Organization Header
   if (organization) {
     doc.setFontSize(14);
@@ -253,50 +243,9 @@ export function generateAccountantReportPDF(data, options = {}) {
     y += height;
   });
 
+  // Closing rule under the last row. The report is the transaction list only - no totals block.
   doc.setDrawColor(180, 180, 180);
   doc.line(MARGIN, y, MARGIN + tableWidth, y);
-
-  // Summary Section
-  y += 10;
-  checkPageBreak(62);
-  doc.setDrawColor(180, 180, 180);
-  doc.line(MARGIN, y, MARGIN + tableWidth, y);
-  y += 8;
-
-  doc.setFontSize(12);
-  doc.setFont(undefined, 'bold');
-  doc.text('Summary', MARGIN, y);
-  y += 8;
-
-  doc.setFontSize(10);
-  doc.setFont(undefined, 'normal');
-
-  // A bank entry split across several transactions produces one line per allocation. Only the
-  // entry's first line carries the bank movement, so credits/debits sum those lines while the
-  // allocated total sums every line.
-  const entryLines = data.filter(r => r.isFirstLine !== false);
-  const totalCredits = entryLines.filter(r => r.amount > 0).reduce((sum, r) => sum + r.amount, 0);
-  const totalDebits = entryLines.filter(r => r.amount < 0).reduce((sum, r) => sum + Math.abs(r.amount), 0);
-  const netMovement = totalCredits - totalDebits;
-  const totalAllocated = data.reduce((sum, r) => sum + (r.allocatedAmount || 0), 0);
-  const bankEntryCount = new Set(data.map(r => r.bankEntryId ?? r.id)).size;
-  const reconciledCount = new Set(data.filter(r => r.isReconciled).map(r => r.bankEntryId ?? r.id)).size;
-  const reconciledPercent = bankEntryCount > 0 ? Math.round((reconciledCount / bankEntryCount) * 100) : 0;
-
-  const summaryLines = [
-    `Total Transactions: ${bankEntryCount}`,
-    `Total Credits: ${formatCurrency(totalCredits)}`,
-    `Total Debits: ${formatCurrency(totalDebits)}`,
-    `Net Movement: ${formatCurrency(netMovement)}`,
-    `Total Allocated: ${formatCurrency(totalAllocated)}`,
-    `Unallocated: ${formatCurrency(netMovement - totalAllocated)}`,
-    `Reconciled: ${reconciledCount} of ${bankEntryCount} (${reconciledPercent}%)`
-  ];
-
-  summaryLines.forEach(line => {
-    doc.text(line, MARGIN, y);
-    y += 6;
-  });
 
   // Add page numbers
   const totalPages = doc.internal.getNumberOfPages();
