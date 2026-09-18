@@ -2228,8 +2228,13 @@ export default function LoanDetails() {
                       );
                     })()}
                     {isLoanActive && (() => {
-                      // Only include exit fee in settlement - arrangement fee was already deducted from disbursement
-                      const outstandingFees = loan.exit_fee || 0;
+                      // Only the exit fee counts toward settlement - the arrangement fee was already
+                      // deducted from the disbursement - and only the part not yet collected.
+                      // actualFeesPaid sums fees_applied over repayments, matching Dashboard's
+                      // "Exit Fees Due" tile.
+                      const exitFee = loan.exit_fee || 0;
+                      const outstandingFees = Math.max(0, exitFee - actualFeesPaid);
+                      const exitFeeSettled = exitFee > 0 && outstandingFees < exitFee;
                       const settlementTotal = principalRemaining + Math.max(0, settlementInterestOwed) + outstandingFees;
                       return (
                         <div className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 min-w-[140px]">
@@ -2240,6 +2245,13 @@ export default function LoanDetails() {
                               ? `Int overpaid ${formatCurrency(Math.abs(settlementInterestOwed))}`
                               : `Inc. ${formatCurrency(settlementInterestOwed)} int`}
                           </p>
+                          {exitFeeSettled && (
+                            <p className="text-xs text-slate-500">
+                              {outstandingFees > 0
+                                ? `Exit fee ${formatCurrency(outstandingFees)} of ${formatCurrency(exitFee)} left`
+                                : `Exit fee ${formatCurrency(exitFee)} paid`}
+                            </p>
+                          )}
                         </div>
                       );
                     })()}

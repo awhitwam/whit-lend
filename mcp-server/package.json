@@ -1,0 +1,19 @@
+{
+  "name": "whitlend-mcp",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Read-only MCP server for interrogating WhitLend borrower and loan data",
+  "engines": { "node": ">=20.11" },
+  "scripts": {
+    "start": "node src/index.js",
+    "smoke": "node scripts/smoke.js",
+    "test": "node --test \"test/**/*.test.js\"",
+    "inspect": "npx @modelcontextprotocol/inspector node src/index.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@supabase/supabase-js": "^2.89.0",
+    "zod": "^3.24.2"
+  }
+}

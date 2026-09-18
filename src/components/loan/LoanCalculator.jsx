@@ -2,6 +2,7 @@ import { addMonths, addWeeks, format, startOfMonth, addDays, differenceInDays, e
 import { getScheduler, createScheduler } from '@/lib/schedule';
 import { api } from '@/api/dataClient';
 import { formatCurrency } from '@/lib/formatters';
+import { getFeesReceived } from '@/lib/loanCalculations';
 
 /**
  * Generates a repayment schedule based on loan parameters
@@ -2745,6 +2746,9 @@ export function calculateSettlementAmount(loan, settlementDate, transactions = [
         amount: tx.amount,
         principalApplied: tx.principal_applied || 0,
         interestApplied: tx.interest_applied || 0,
+        // Carried so a settlement statement's ledger can show the fee receipt that
+        // explains why the exit fee is no longer in the total
+        feesApplied: tx.fees_applied || 0,
         principalBalance: Math.max(0, runningPrincipalBal)
       });
     } else {
@@ -2759,14 +2763,20 @@ export function calculateSettlementAmount(loan, settlementDate, transactions = [
         amount: grossAmount,
         principalApplied: 0,
         interestApplied: 0,
+        feesApplied: 0,
         principalBalance: runningPrincipalBal
       });
     }
   }
 
   const interestRemaining = Math.max(0, totalInterestAccrued - totalInterestPaid);
+
+  // The exit fee is only owed to the extent it has not already been collected. Bounded by
+  // settleDate so a back-dated quote does not credit a receipt that had not yet happened.
   const exitFee = loan.exit_fee || 0;
-  const settlementAmount = principalRemaining + interestRemaining + exitFee;
+  const exitFeePaid = Math.min(exitFee, getFeesReceived(repayments, settleDate));
+  const exitFeeRemaining = Math.max(0, exitFee - exitFeePaid);
+  const settlementAmount = principalRemaining + interestRemaining + exitFeeRemaining;
 
   return {
     originalPrincipal: principal,
@@ -2775,7 +2785,11 @@ export function calculateSettlementAmount(loan, settlementDate, transactions = [
     interestAccrued: totalInterestAccrued,
     interestPaid: totalInterestPaid,
     interestRemaining,
+    // exitFee is the contracted fee, kept for existing consumers; exitFeeRemaining is what
+    // settlementAmount actually includes
     exitFee,
+    exitFeePaid,
+    exitFeeRemaining,
     settlementAmount,
     daysElapsed,
     dailyRate,
@@ -2842,6 +2856,8 @@ export function buildSettlementData(loan, settlementDate, transactions, schedule
     interestDue: settlement.interestRemaining,
     interestRemaining: settlement.interestRemaining,
     exitFee: settlement.exitFee,
+    exitFeePaid: settlement.exitFeePaid,
+    exitFeeRemaining: settlement.exitFeeRemaining,
     totalSettlement: settlement.settlementAmount,
     interestPeriods: settlement.interestPeriods,
     transactionHistory: settlement.transactionHistory,

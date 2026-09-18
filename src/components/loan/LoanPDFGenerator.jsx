@@ -2,6 +2,7 @@
 import jsPDF from 'jspdf';
 import { format, differenceInDays, isValid } from 'date-fns';
 import { formatCurrency } from './LoanCalculator';
+import { getExitFeeRemaining } from '@/lib/loanCalculations';
 
 /**
  * Build a comprehensive interest ledger showing all capital events, rate changes,
@@ -760,12 +761,20 @@ function renderLoanStatementToDoc(doc, loan, schedule, transactions, product, in
   doc.text(`Interest Outstanding: ${formatCurrency(summaryValues.interestOutstanding)}`, 15, y);
   doc.setFont(undefined, 'normal');
   y += 5;
-  const totalOutstanding = summaryValues.principalOutstanding + summaryValues.interestOutstanding + (loan.exit_fee || 0);
+  // Only the uncollected part of the exit fee is still outstanding
+  const exitFeeOutstanding = getExitFeeRemaining(loan, transactions);
+  const totalOutstanding = summaryValues.principalOutstanding + summaryValues.interestOutstanding + exitFeeOutstanding;
   doc.setFont(undefined, 'bold');
   doc.text(`Total Outstanding: ${formatCurrency(totalOutstanding)}`, 15, y);
   if (loan.exit_fee > 0) {
     doc.setFont(undefined, 'normal');
-    doc.text(` (inc. ${formatCurrency(loan.exit_fee)} exit fee)`, 95, y);
+    doc.text(
+      exitFeeOutstanding > 0
+        ? ` (inc. ${formatCurrency(exitFeeOutstanding)} exit fee)`
+        : ` (exit fee ${formatCurrency(loan.exit_fee)} already paid)`,
+      95,
+      y
+    );
   }
 
   // ============================================
@@ -1361,10 +1370,17 @@ function renderSettlementStatementToDoc(loan, settlementData, schedule = [], tra
   doc.text(formatCurrency(settlementData.interestDue), 160, y, { align: 'right' });
   y += 8;
 
-  // Exit Fee
+  // Exit Fee. Show the amount still owed, and say so when it has already been collected -
+  // otherwise the line would not reconcile with the total below it.
   if (settlementData.exitFee > 0) {
-    doc.text('Exit Fee', 20, y);
-    doc.text(formatCurrency(settlementData.exitFee), 160, y, { align: 'right' });
+    const exitFeeRemaining = settlementData.exitFeeRemaining ?? settlementData.exitFee;
+    const exitFeePaid = settlementData.exitFeePaid || 0;
+    doc.text(
+      exitFeePaid > 0 ? `Exit Fee (${formatCurrency(exitFeePaid)} already paid)` : 'Exit Fee',
+      20,
+      y
+    );
+    doc.text(formatCurrency(exitFeeRemaining), 160, y, { align: 'right' });
     y += 8;
   }
 
@@ -2204,7 +2220,7 @@ export function generateContactStatementsPDF({
   doc.setFont(undefined, 'normal');
 
   // List each loan
-  loansData.forEach(({ loan, interestCalc }, idx) => {
+  loansData.forEach(({ loan, interestCalc, transactions }, idx) => {
     y += 5;
 
     // Check for page break
@@ -2232,7 +2248,8 @@ export function generateContactStatementsPDF({
     const borrowerName = (loan.borrower_name || '').slice(0, 30);
     const principalBal = interestCalc?.principalRemaining ?? loan.principal_remaining ?? loan.principal_amount;
     const interestBal = interestCalc?.interestRemaining ?? loan.interest_remaining ?? 0;
-    const exitFee = loan.exit_fee || 0;
+    // Uncollected part only - a paid exit fee is not outstanding
+    const exitFee = getExitFeeRemaining(loan, transactions);
     const totalBal = principalBal + interestBal + exitFee;
 
     // Check if this loan has a roll-up footnote
@@ -2265,8 +2282,11 @@ export function generateContactStatementsPDF({
   doc.line(15, y, 200, y);
   y += 5;
 
-  // Calculate total exit fees
-  const totalExitFeesSum = loansData.reduce((sum, { loan }) => sum + (loan.exit_fee || 0), 0);
+  // Total exit fees still outstanding - excludes any already collected
+  const totalExitFeesSum = loansData.reduce(
+    (sum, { loan, transactions }) => sum + getExitFeeRemaining(loan, transactions),
+    0
+  );
 
   doc.setFillColor(240, 240, 240);
   doc.rect(15, y - 3, 185, 6, 'F');
@@ -2426,9 +2446,15 @@ export function generateContactStatementsPDF({
     y += 5;
     doc.text(`Interest Due: ${formatCurrency(summaryValues.interestAccrued)} | Paid: ${formatCurrency(summaryValues.interestPaid)} | Outstanding: ${formatCurrency(summaryValues.interestOutstanding)}`, 15, y);
     y += 5;
-    const totalOutstanding = summaryValues.principalOutstanding + summaryValues.interestOutstanding + (loan.exit_fee || 0);
+    const exitFeeOutstanding = getExitFeeRemaining(loan, transactions);
+    const totalOutstanding = summaryValues.principalOutstanding + summaryValues.interestOutstanding + exitFeeOutstanding;
+    const exitFeeNote = loan.exit_fee > 0
+      ? (exitFeeOutstanding > 0
+          ? ` (inc. ${formatCurrency(exitFeeOutstanding)} exit fee)`
+          : ` (exit fee ${formatCurrency(loan.exit_fee)} already paid)`)
+      : '';
     doc.setFont(undefined, 'bold');
-    doc.text(`Total Outstanding: ${formatCurrency(totalOutstanding)}${loan.exit_fee > 0 ? ` (inc. ${formatCurrency(loan.exit_fee)} exit fee)` : ''}`, 15, y);
+    doc.text(`Total Outstanding: ${formatCurrency(totalOutstanding)}${exitFeeNote}`, 15, y);
     doc.setFont(undefined, 'normal');
 
     // ============================================

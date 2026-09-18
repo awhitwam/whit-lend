@@ -37,6 +37,7 @@ import { supabase } from '@/lib/supabaseClient';
 import { ATTACHABLE_REPORTS, renderTemplate, buildPlaceholderData, getOrganizationAddressLines } from '@/lib/letterGenerator';
 import { format } from 'date-fns';
 import { formatCurrency, calculateAccruedInterestWithTransactions } from '@/components/loan/LoanCalculator';
+import { getExitFeeRemaining } from '@/lib/loanCalculations';
 
 const CATEGORIES = ['General', 'Settlement', 'Statements', 'Legal', 'Reminders'];
 
@@ -405,7 +406,8 @@ export default function LetterTemplateEditor() {
         const liveCalc = calculateAccruedInterestWithTransactions(loan, transactions, new Date(), schedule || [], product);
         const principalRemaining = liveCalc.principalRemaining || 0;
         const interestRemaining = liveCalc.interestRemaining ?? 0;
-        const feesRemaining = loan.exit_fee || 0;
+        // Only the uncollected part of the exit fee is owed
+        const feesRemaining = getExitFeeRemaining(loan, transactions);
         liveSettlement = {
           principalRemaining,
           interestRemaining,

@@ -29,3 +29,7 @@ dist-ssr
 
 .env
 nul
+
+# The MCP server's env template is a placeholder file, not a secret.
+# Its real .env stays ignored by the .env.* rule above.
+!mcp-server/.env.example

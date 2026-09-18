@@ -42,3 +42,51 @@ export const calculateNetDisbursed = (principal, arrangementFee = 0, additionalF
     - parseFloat(additionalFees || 0)
     - parseFloat(deductedInterest || 0);
 };
+
+/**
+ * Fees collected from the borrower on a loan.
+ *
+ * Repayments only. The arrangement fee is written into fees_applied on the initial
+ * Disbursement row (LoanDetails.jsx:667), so counting every transaction would add a fee
+ * the borrower never paid in cash - on a loan whose arrangement and exit fees are equal
+ * it would double the figure exactly.
+ *
+ * Note that fees_applied carries no fee type, so this cannot distinguish an exit fee from
+ * a Fixed Charge instalment or an imported late penalty. Callers must treat the result as
+ * "fees received", not "exit fee received".
+ *
+ * @param {Array} transactions - loan transactions
+ * @param {Date|string} [asOfDate] - ignore receipts after this date, for back-dated quotes
+ * @returns {number} total fees received
+ */
+export const getFeesReceived = (transactions = [], asOfDate = null) => {
+  const cutoff = asOfDate ? new Date(asOfDate) : null;
+  const cutoffValid = cutoff && !Number.isNaN(cutoff.getTime());
+
+  return (transactions || []).reduce((sum, tx) => {
+    if (!tx || tx.type !== 'Repayment') return sum;
+    if (tx.is_deleted) return sum;
+    if (cutoffValid && tx.date && new Date(tx.date) > cutoff) return sum;
+    const fees = parseFloat(tx.fees_applied) || 0;
+    return fees > 0 ? sum + fees : sum;
+  }, 0);
+};
+
+/**
+ * Exit fee still owed, for settlement figures.
+ *
+ * Mirrors the treatment the Dashboard already uses for its "Exit Fees Due" tile
+ * (Dashboard.jsx:251-256): the contracted exit fee less fees already received, floored at
+ * zero. Without this, settling a loan whose exit fee has been paid overstates what is owed
+ * by the whole fee.
+ *
+ * @param {Object} loan - the loan record
+ * @param {Array} transactions - the loan's transactions
+ * @param {Date|string} [asOfDate] - ignore receipts after this date
+ * @returns {number} exit fee remaining
+ */
+export const getExitFeeRemaining = (loan, transactions = [], asOfDate = null) => {
+  const exitFee = parseFloat(loan?.exit_fee) || 0;
+  if (exitFee <= 0) return 0;
+  return Math.max(0, exitFee - getFeesReceived(transactions, asOfDate));
+};

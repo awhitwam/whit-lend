@@ -13,6 +13,7 @@ import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { format, isValid } from 'date-fns';
 import { formatCurrency, calculateSettlementAmount, buildSettlementData } from '../loan/LoanCalculator';
+import { getExitFeeRemaining } from '@/lib/loanCalculations';
 import {
   generateLoanStatementPDFBytes,
   generateSettlementStatementPDFBytes
@@ -159,7 +160,9 @@ export default function LetterGeneratorModal({
     // This is the same calculation shown in the LoanDetails Settlement card
     const principalRemaining = interestCalc.principalRemaining ?? 0;
     const interestRemaining = interestCalc.interestRemaining ?? 0;
-    const feesRemaining = loan.exit_fee || 0;
+    // Only the uncollected part of the exit fee is owed - a borrower who has already paid it
+    // must not be quoted it again in a redemption letter
+    const feesRemaining = getExitFeeRemaining(loan, transactions);
     const settlementTotal = principalRemaining + Math.max(0, interestRemaining) + feesRemaining;
 
     console.log('[LetterGenerator] liveSettlement calculation:', {
@@ -178,7 +181,7 @@ export default function LetterGeneratorModal({
       feesRemaining,
       settlementTotal
     };
-  }, [loan, interestCalc]);
+  }, [loan, interestCalc, transactions]);
 
   // Build placeholder data
   const placeholderData = useMemo(() => {

@@ -175,14 +175,20 @@ export default function SettleLoanModal({
               </Card>
             </div>
 
-            {/* Exit Fee */}
+            {/* Exit Fee - shows what is still owed, and says so when already collected,
+                so the figure reconciles with the settlement total below */}
             {settlement.exitFee > 0 && (
               <Card>
                 <CardContent className="p-3">
                   <p className="text-xs text-slate-500 mb-1">Exit Fee</p>
                   <p className="text-lg font-bold text-blue-600">
-                    {formatCurrency(settlement.exitFee)}
+                    {formatCurrency(settlement.exitFeeRemaining ?? settlement.exitFee)}
                   </p>
+                  {settlement.exitFeePaid > 0 && (
+                    <p className="text-xs text-emerald-600">
+                      {formatCurrency(settlement.exitFeePaid)} already paid
+                    </p>
+                  )}
                 </CardContent>
               </Card>
             )}
@@ -436,10 +442,12 @@ export default function SettleLoanModal({
                               <span className="font-bold text-red-800">{formatCurrency(settlement.interestRemaining)}</span>
                             </div>
                           )}
-                          {settlement.exitFee > 0 && (
+                          {(settlement.exitFeeRemaining ?? settlement.exitFee) > 0.01 && (
                             <div>
                               <span className="text-red-600">Exit Fee:</span>{' '}
-                              <span className="font-bold text-red-800">{formatCurrency(settlement.exitFee)}</span>
+                              <span className="font-bold text-red-800">
+                                {formatCurrency(settlement.exitFeeRemaining ?? settlement.exitFee)}
+                              </span>
                             </div>
                           )}
                         </div>
