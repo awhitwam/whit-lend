@@ -177,17 +177,24 @@ export class RollUpServicedScheduler extends BaseScheduler {
       const periodEnd = addMonths(rollUpDueDate, i);
       const daysInPeriod = differenceInDays(periodEnd, periodStart);
 
-      // Calculate principal at this date accounting for any capital events
+      // Calculate principal at this date accounting for any capital events.
+      // inclusive: interest here is charged in arrears, so a repayment dated on the first day
+      // of a period has already reduced the balance for the whole of that period. Without this
+      // a redemption landing on a due date is ignored for the following period and a full
+      // month's interest is charged on capital the borrower had already returned.
       const principalAtStart = this.utils.calculatePrincipalAtDate(
         originalPrincipal,
         transactions,
         periodStart,
-        startDate
+        startDate,
+        true
       );
 
-      // Determine interest calculation base
-      let interestBase = principalAtStart + rollUpInterest;
-      if (compoundAfterRollup && unpaidAccrued > 0) {
+      // Determine interest calculation base. With no capital outstanding nothing accrues -
+      // the roll-up must not re-inflate a zero balance, or a redeemed loan carries on charging
+      // interest on the capitalised amount indefinitely.
+      let interestBase = principalAtStart > 0 ? principalAtStart + rollUpInterest : 0;
+      if (compoundAfterRollup && unpaidAccrued > 0 && interestBase > 0) {
         // Add unpaid accrued interest to base if compounding
         interestBase += unpaidAccrued;
       }

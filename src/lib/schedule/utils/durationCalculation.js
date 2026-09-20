@@ -26,8 +26,12 @@ export function calculateScheduleDuration({ loan, product, options, currentPrinc
   let scheduleEndDate = options.endDate ? new Date(options.endDate) : today;
   scheduleEndDate.setHours(0, 0, 0, 0);
 
-  // Don't treat auto_extend loans as settled - they should always have future periods
-  const isSettledLoan = options.endDate && currentPrincipalOutstanding <= 0.01 && !loan.auto_extend;
+  // A loan with no capital outstanding stops here, auto_extend or not. auto_extend is for
+  // carrying a LIVE loan past its maturity date; it should not keep manufacturing interest
+  // periods on capital that has been repaid. Previously this also required !loan.auto_extend,
+  // which made it unreachable from the automatic regeneration path - that path only supplies
+  // options.endDate when auto_extend is on, so the two conditions were mutually exclusive.
+  const isSettledLoan = options.endDate && currentPrincipalOutstanding <= 0.01;
   const baseDuration = options.duration !== undefined ? options.duration : loan.duration;
 
   let scheduleDuration;

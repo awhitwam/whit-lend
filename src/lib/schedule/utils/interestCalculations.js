@@ -69,19 +69,28 @@ export function calculateInterestForDays(principal, dailyRate, days, interestTyp
  * @param {Array} transactions - Array of transaction objects
  * @param {Date} date - Date to calculate principal at
  * @param {Date} loanStartDate - Optional loan start date to identify initial disbursement
+ * @param {boolean} inclusive - Include transactions dated ON the target date. Default false
+ *   (strictly before) to preserve existing callers. Pass true when `date` is a period START and
+ *   interest is charged in arrears: a repayment on the first day of a period reduces the balance
+ *   for the whole of that period, and excluding it charges a month's interest on money that had
+ *   already been returned.
  * @returns {number} Principal outstanding at the given date
  */
-export function calculatePrincipalAtDate(initialPrincipal, transactions, date, loanStartDate = null) {
+export function calculatePrincipalAtDate(initialPrincipal, transactions, date, loanStartDate = null, inclusive = false) {
   const targetDate = new Date(date);
   targetDate.setHours(0, 0, 0, 0);
+
+  const onOrBefore = (value) => {
+    const txDate = new Date(value);
+    txDate.setHours(0, 0, 0, 0);
+    return inclusive ? txDate <= targetDate : txDate < targetDate;
+  };
 
   // Calculate principal repayments before this date
   const repayments = transactions
     .filter(t => {
       if (t.type !== 'Repayment' || t.is_deleted) return false;
-      const txDate = new Date(t.date);
-      txDate.setHours(0, 0, 0, 0);
-      return txDate < targetDate;
+      return onOrBefore(t.date);
     })
     .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
 
@@ -90,9 +99,7 @@ export function calculatePrincipalAtDate(initialPrincipal, transactions, date, l
   const furtherAdvances = transactions
     .filter(t => {
       if (t.type !== 'Disbursement' || t.is_deleted || t.is_initial_disbursement) return false;
-      const txDate = new Date(t.date);
-      txDate.setHours(0, 0, 0, 0);
-      return txDate < targetDate;
+      return onOrBefore(t.date);
     })
     .reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
 

@@ -12,7 +12,7 @@ import React, { useMemo, useState } from 'react';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Button } from '@/components/ui/button';
-import { format, differenceInDays } from 'date-fns';
+import { format, differenceInDays, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from './LoanCalculator';
 import { CalendarClock, ArrowRightCircle, ArrowLeftCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUp, ArrowDown, TrendingUp, RefreshCcw } from 'lucide-react';
@@ -351,20 +351,30 @@ function buildTimeline({ loan, product, schedule, transactions }) {
     // because the full period's interest was already charged at the due date
     const isInterestInAdvance = product?.interest_paid_in_advance;
 
+    // parseISO, not new Date(): row.date is a 'yyyy-MM-dd' string, which new Date() parses as
+    // UTC midnight. Under BST that is 01:00 local, so differenceInDays truncated a day short and
+    // this row disagreed with the Interest O/S card by exactly one day's interest.
     const daysSinceLastDue = lastDueDateRow
-      ? differenceInDays(today, new Date(lastDueDateRow.date))
+      ? differenceInDays(today, parseISO(lastDueDateRow.date))
       : 0;
 
     // Use the effective rate for today's date
     const todayEffectiveRate = getEffectiveRateForDate(todayKey);
 
     // For roll-up loans, use the compounded calculation basis from the last schedule entry
-    // This ensures interest accrues on principal + rolled-up interest
+    // so interest accrues on principal + rolled-up interest.
+    //
+    // But calculation_principal_start is frozen when the schedule is generated and cannot know
+    // about repayments made since. Once capital is fully repaid nothing accrues, whatever that
+    // column says. previousRow.principalBalance is the ledger truth - it is what renders the
+    // Prin Bal column.
     const lastScheduleEntry = lastDueDateRow?.scheduleEntry;
     const isRollUpLoan = (schedule || []).some(s => s.is_roll_up_period || s.is_serviced_period);
-    const calculationBasis = isRollUpLoan && lastScheduleEntry?.calculation_principal_start
-      ? lastScheduleEntry.calculation_principal_start
-      : previousRow.principalBalance;
+    const calculationBasis = previousRow.principalBalance <= 0
+      ? 0
+      : (isRollUpLoan && lastScheduleEntry?.calculation_principal_start
+          ? lastScheduleEntry.calculation_principal_start
+          : previousRow.principalBalance);
 
     const dailyRate = calculationBasis * (todayEffectiveRate / 100 / 365);
     const accruedSinceLastDue = isInterestInAdvance ? 0 : dailyRate * daysSinceLastDue;

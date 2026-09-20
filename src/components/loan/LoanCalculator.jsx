@@ -1436,9 +1436,6 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
     }
   }
 
-  // Build capital events ledger for consistent interest calculation (same as UI schedule table)
-  const capitalEvents = buildCapitalEvents(loan, transactions);
-
   // Build rows array for tracking principal and calculating interest
   const rows = [];
 
@@ -1629,12 +1626,19 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
         const effectiveRate = getEffectiveRate(loan, today);
 
         // For roll-up loans, use the compounded calculation basis from the last schedule entry
-        // This ensures interest accrues on principal + rolled-up interest
+        // so interest accrues on principal + rolled-up interest.
+        //
+        // But calculation_principal_start is frozen when the schedule is generated and cannot
+        // know about repayments made since. Once capital is fully repaid nothing accrues,
+        // whatever that column says - otherwise a redeemed loan keeps charging interest on its
+        // original balance. runningPrincipalBalance is the ledger truth here.
         const lastScheduleRow = lastProcessedRow?.scheduleRow;
         const isRollUpLoan = sortedSchedule.some(s => s.is_roll_up_period || s.is_serviced_period);
-        const calculationBasis = isRollUpLoan && lastScheduleRow?.calculation_principal_start
-          ? lastScheduleRow.calculation_principal_start
-          : runningPrincipalBalance;
+        const calculationBasis = runningPrincipalBalance <= 0
+          ? 0
+          : (isRollUpLoan && lastScheduleRow?.calculation_principal_start
+              ? lastScheduleRow.calculation_principal_start
+              : runningPrincipalBalance);
 
         const dailyRate = calculationBasis * (effectiveRate / 100 / 365);
         accruedSinceLastDue = dailyRate * daysSinceLastDue;

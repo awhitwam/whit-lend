@@ -161,6 +161,36 @@ export async function runAutoExtend(options = {}) {
         });
       }
 
+      // Skip loans whose capital has been fully repaid. Extending one keeps generating
+      // interest periods on a redeemed loan. The server-side auto-extend edge function
+      // (supabase/functions/auto-extend-loans) already does this; the client did not.
+      const loanTransactions = await api.entities.Transaction.filter(
+        { loan_id: loan.id, is_deleted: false },
+        'date'
+      );
+      const principalRepaid = loanTransactions
+        .filter(t => t.type === 'Repayment')
+        .reduce((sum, t) => sum + (t.principal_applied || 0), 0);
+      const furtherAdvances = loanTransactions
+        .filter(t => t.type === 'Disbursement' && !t.is_initial_disbursement)
+        .reduce((sum, t) => sum + ((t.gross_amount ?? t.amount) || 0), 0);
+      const currentPrincipal = Math.max(
+        0,
+        (loan.principal_amount || 0) + furtherAdvances - principalRepaid
+      );
+
+      if (currentPrincipal <= 0) {
+        console.log(`[AutoExtend] Loan ${loan.loan_number || loan.id} is fully repaid, skipping`);
+        results.skipped++;
+        results.loans.push({
+          loanId: loan.id,
+          loanNumber: loan.loan_number,
+          status: 'skipped',
+          reason: 'Loan fully repaid'
+        });
+        continue;
+      }
+
       // Check if schedule already extends to/beyond the end date
       const schedule = await api.entities.RepaymentSchedule.filter(
         { loan_id: loan.id },
