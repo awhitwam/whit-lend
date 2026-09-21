@@ -1701,8 +1701,14 @@ export default function LoanDetails() {
   // This ensures the settlement card matches the TODAY row in the schedule view
   const settlementInterestOwed = liveInterestCalc.interestRemaining;
 
+    // Desktop: a fixed-viewport app shell with internal scrollers (absolute inset-0 anchors to
+    // Layout's relative scroll container). On mobile that pins the page to one viewport with no
+    // scroll, so the schedule below the header is clipped and unreachable - hence the flip to
+    // normal document flow below md. `relative` rather than `static` so descendants still find a
+    // positioned ancestor. md:flex-row is what `flex` already defaults to, so desktop is
+    // unchanged; on mobile it stacks the side panels instead of squeezing the main column.
     return (
-      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 to-slate-100 flex overflow-hidden">
+      <div className="relative md:absolute md:inset-0 bg-gradient-to-br from-slate-50 to-slate-100 flex flex-col md:flex-row md:overflow-hidden max-md:min-h-full">
         {/* Processing Overlay */}
         {isProcessing && (
           <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-50 flex items-center justify-center">
@@ -1715,10 +1721,11 @@ export default function LoanDetails() {
 
         {/* Main content area - shrinks when side panel is open */}
         <div className={cn(
-          "flex-1 flex flex-col overflow-hidden transition-all duration-300",
+          "flex-1 flex flex-col md:overflow-hidden transition-all duration-300",
           (isSettleOpen || isEditOpen) && "mr-0"
         )}>
-        <div className="p-4 md:p-6 space-y-4 flex flex-col flex-1 overflow-hidden">
+        {/* max-md:flex-none returns flex-basis to auto so height is content-driven on mobile */}
+        <div className="p-4 md:p-6 space-y-4 flex flex-col flex-1 md:overflow-hidden max-md:flex-none">
         {/* Header */}
         <Card className="overflow-hidden">
           <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-4 py-2 text-white">
@@ -1929,18 +1936,18 @@ export default function LoanDetails() {
                 {/* Rent - Income Analysis Stats (matching right-side card style) */}
                 {isRent && rentPattern && (
                   <>
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 min-w-[100px]">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.75rem)] min-w-[100px]">
                       <p className="text-xs text-emerald-600 font-medium flex items-center gap-1">
                         <Home className="w-3 h-3" />
                         Pattern
                       </p>
                       <p className="text-xl font-bold text-emerald-900">{rentPattern.frequency}</p>
                     </div>
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 min-w-[110px]">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.75rem)] min-w-[110px]">
                       <p className="text-xs text-emerald-600 font-medium">Avg Rent</p>
                       <p className="text-xl font-bold text-emerald-900">{formatCurrency(rentPattern.averageAmount)}</p>
                     </div>
-                    <div className={`border rounded-lg px-3 py-2 min-w-[90px] ${
+                    <div className={`border rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.75rem)] min-w-[90px] ${
                       rentPattern.confidence === 'high'
                         ? 'bg-emerald-50 border-emerald-200'
                         : rentPattern.confidence === 'medium'
@@ -2080,16 +2087,16 @@ export default function LoanDetails() {
               </div>
 
               {/* Right: Financial Summary Boxes */}
-              <div className="flex gap-2 mt-4 lg:mt-0 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-200 lg:pl-4">
+              <div className="flex flex-wrap md:flex-nowrap gap-2 mt-4 lg:mt-0 pt-4 lg:pt-0 border-t lg:border-t-0 lg:border-l border-slate-200 lg:pl-4">
                 {/* Fixed Charge Summary */}
                 {isFixedCharge && (
                   <>
-                    <div className="flex-1 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 min-w-[120px]">
+                    <div className="flex-1 bg-purple-50 border border-purple-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[120px]">
                       <p className="text-xs text-purple-600 font-medium">Charges Paid</p>
                       <p className="text-xl font-bold text-purple-900">{formatCurrency(transactions.filter(t => !t.is_deleted && t.type === 'Repayment').reduce((sum, t) => sum + t.amount, 0))}</p>
                       <p className="text-xs text-slate-500">of {formatCurrency((loan.monthly_charge || 0) * (loan.duration || 0))}</p>
                     </div>
-                    <div className="flex-1 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 min-w-[120px]">
+                    <div className="flex-1 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[120px]">
                       <p className="text-xs text-amber-600 font-medium">Outstanding</p>
                       <p className="text-xl font-bold text-amber-900">{formatCurrency(Math.max(0, ((loan.monthly_charge || 0) * (loan.duration || 0)) - transactions.filter(t => !t.is_deleted && t.type === 'Repayment').reduce((sum, t) => sum + t.amount, 0)))}</p>
                       <p className="text-xs text-slate-500">{schedule.filter(s => s.status === 'Pending').length} remaining</p>
@@ -2098,7 +2105,7 @@ export default function LoanDetails() {
                       const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
                       return (
                         <div
-                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
+                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
                           onClick={() => setActiveTab('expenses')}
                         >
                           <p className="text-xs text-red-600 font-medium">Expenses</p>
@@ -2113,12 +2120,12 @@ export default function LoanDetails() {
                 {/* Irregular Income Summary */}
                 {isIrregularIncome && (
                   <>
-                    <div className="flex-1 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 min-w-[120px]">
+                    <div className="flex-1 bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[120px]">
                       <p className="text-xs text-blue-600 font-medium">Outstanding</p>
                       <p className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</p>
                       <p className="text-xs text-slate-500">principal due</p>
                     </div>
-                    <div className="flex-1 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 min-w-[120px]">
+                    <div className="flex-1 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[120px]">
                       <p className="text-xs text-emerald-600 font-medium">Repaid</p>
                       <p className="text-xl font-bold text-emerald-900">{formatCurrency(actualPrincipalPaid)}</p>
                       <p className="text-xs text-slate-500">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length} payments</p>
@@ -2127,7 +2134,7 @@ export default function LoanDetails() {
                       const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
                       return (
                         <div
-                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
+                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
                           onClick={() => setActiveTab('expenses')}
                         >
                           <p className="text-xs text-red-600 font-medium">Expenses</p>
@@ -2142,7 +2149,7 @@ export default function LoanDetails() {
                 {/* Rent Summary */}
                 {isRent && (
                   <>
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 min-w-[110px]">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[110px]">
                       <p className="text-xs text-blue-600 font-medium">Principal O/S</p>
                       <p className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</p>
                     </div>
@@ -2154,14 +2161,14 @@ export default function LoanDetails() {
                           ? { bg: 'bg-amber-50', border: 'border-amber-200', text: 'text-amber-600', value: 'text-amber-900' }
                           : { bg: 'bg-red-50', border: 'border-red-200', text: 'text-red-600', value: 'text-red-900' };
                       return (
-                        <div className={`${yieldColor.bg} border ${yieldColor.border} rounded-lg px-3 py-2 min-w-[110px]`}>
+                        <div className={`${yieldColor.bg} border ${yieldColor.border} rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[110px]`}>
                           <p className={`text-xs font-medium ${yieldColor.text}`}>Yield</p>
                           <p className={`text-xl font-bold ${yieldColor.value}`}>{yieldCalc.yield.toFixed(1)}%</p>
                           <p className="text-xs text-slate-500">{formatCurrency(yieldCalc.annualRent)} / yr</p>
                         </div>
                       );
                     })()}
-                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 min-w-[110px]">
+                    <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[110px]">
                       <p className="text-xs text-emerald-600 font-medium">Receipts</p>
                       <p className="text-xl font-bold text-emerald-900">{formatCurrency(transactions.filter(t => !t.is_deleted && t.type === 'Repayment').reduce((sum, t) => sum + t.amount, 0))}</p>
                       <p className="text-xs text-slate-500">{transactions.filter(t => !t.is_deleted && t.type === 'Repayment').length} payments</p>
@@ -2178,7 +2185,7 @@ export default function LoanDetails() {
                         : ageMonths < 24 ? 'text-amber-600'
                         : 'text-red-600';
                       return (
-                        <div className={`${ltvColor.bg} border ${ltvColor.border} rounded-lg px-3 py-2 min-w-[80px]`}>
+                        <div className={`${ltvColor.bg} border ${ltvColor.border} rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[80px]`}>
                           <p className={`text-xs font-medium ${ltvColor.text}`}>LTV</p>
                           <div className="flex items-baseline gap-1">
                             <p className={`text-xl font-bold ${ltvColor.value}`}>{ltvMetrics.ltv.toFixed(1)}%</p>
@@ -2193,7 +2200,7 @@ export default function LoanDetails() {
                       const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
                       return (
                         <div
-                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
+                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
                           onClick={() => setActiveTab('expenses')}
                         >
                           <p className="text-xs text-red-600 font-medium">Expenses</p>
@@ -2208,7 +2215,7 @@ export default function LoanDetails() {
                 {/* Standard Loan Summary */}
                 {!isSpecialType && (
                   <>
-                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 min-w-[110px]">
+                    <div className="bg-blue-50 border border-blue-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[110px]">
                       <p className="text-xs text-blue-600 font-medium">Principal O/S</p>
                       <p className="text-xl font-bold text-blue-900">{formatCurrency(principalRemaining)}</p>
                     </div>
@@ -2216,7 +2223,7 @@ export default function LoanDetails() {
                       const behindCalc = calculatePaymentsBehind(schedule, interestRemaining);
                       const paymentsBehind = Math.ceil(behindCalc.paymentsBehind);
                       return (
-                        <div className={`border rounded-lg px-3 py-2 min-w-[110px] ${interestRemaining < 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
+                        <div className={`border rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[110px] ${interestRemaining < 0 ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'}`}>
                           <p className={`text-xs font-medium ${interestRemaining < 0 ? 'text-emerald-600' : 'text-amber-600'}`}>
                             {interestRemaining < 0 ? 'Int Overpaid' : `Interest O/S${product?.interest_paid_in_advance ? ' (in Advance)' : ''}`}
                           </p>
@@ -2237,7 +2244,7 @@ export default function LoanDetails() {
                       const exitFeeSettled = exitFee > 0 && outstandingFees < exitFee;
                       const settlementTotal = principalRemaining + Math.max(0, settlementInterestOwed) + outstandingFees;
                       return (
-                        <div className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 min-w-[140px]">
+                        <div className="bg-slate-100 border border-slate-300 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[140px]">
                           <p className="text-xs text-slate-600 font-medium">Settlement</p>
                           <p className="text-xl font-bold text-slate-900">{formatCurrency(settlementTotal)}</p>
                           <p className={`text-xs ${settlementInterestOwed <= 0 ? 'text-emerald-600' : 'text-orange-600'}`}>
@@ -2270,7 +2277,7 @@ export default function LoanDetails() {
                         : 'text-red-600';
 
                       return (
-                        <div className={`${ltvColor.bg} border ${ltvColor.border} rounded-lg px-3 py-2 min-w-[80px]`}>
+                        <div className={`${ltvColor.bg} border ${ltvColor.border} rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[80px]`}>
                           <p className={`text-xs font-medium ${ltvColor.text}`}>LTV</p>
                           <div className="flex items-baseline gap-1">
                             <p className={`text-xl font-bold ${ltvColor.value}`}>{ltvMetrics.ltv.toFixed(1)}%</p>
@@ -2285,7 +2292,7 @@ export default function LoanDetails() {
                       const totalExpenses = expenses.reduce((sum, e) => sum + (e.amount || 0), 0);
                       return (
                         <div
-                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
+                          className="bg-red-50 border border-red-200 rounded-lg px-3 py-2 max-md:min-w-0 max-md:basis-[calc(50%-0.25rem)] min-w-[100px] cursor-pointer hover:bg-red-100 transition-colors"
                           onClick={() => setActiveTab('expenses')}
                         >
                           <p className="text-xs text-red-600 font-medium">Expenses</p>
@@ -2428,7 +2435,7 @@ export default function LoanDetails() {
         </Card>
 
         {/* Content area with unified header */}
-        <div className="flex-1 flex flex-col min-h-0 overflow-hidden">
+        <div className="flex-1 flex flex-col min-h-0 md:overflow-hidden max-md:flex-none">
           {/* Schedule view - always rendered but may be hidden when other tabs active */}
           {activeTab === 'schedule' && (
             <RepaymentScheduleTable
@@ -2452,7 +2459,7 @@ export default function LoanDetails() {
           {activeTab !== 'schedule' && (
             <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0">
               {/* Header bar with tabs */}
-              <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex-shrink-0">
+              <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex-shrink-0 max-md:overflow-x-auto max-md:[&>*]:shrink-0">
                 <div className="flex items-center gap-2">
                   <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
                     <Button
@@ -3906,7 +3913,7 @@ export default function LoanDetails() {
 
         {/* Settlement Panel - slides in from right */}
         {isSettleOpen && (
-          <div className="w-[600px] flex-shrink-0 h-full overflow-hidden">
+          <div className="w-[600px] flex-shrink-0 h-full overflow-hidden max-md:fixed max-md:inset-x-0 max-md:top-14 max-md:bottom-0 max-md:z-40 max-md:w-auto max-md:bg-white">
             <SettleLoanModal
               isOpen={isSettleOpen}
               onClose={() => setIsSettleOpen(false)}
@@ -3922,7 +3929,7 @@ export default function LoanDetails() {
 
         {/* Edit Loan Panel - slides in from right */}
         {isEditOpen && (
-          <div className="w-[500px] flex-shrink-0 h-full overflow-hidden">
+          <div className="w-[500px] flex-shrink-0 h-full overflow-hidden max-md:fixed max-md:inset-x-0 max-md:top-14 max-md:bottom-0 max-md:z-40 max-md:w-auto max-md:bg-white">
             <EditLoanPanel
               isOpen={isEditOpen}
               onClose={() => setIsEditOpen(false)}

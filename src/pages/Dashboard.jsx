@@ -737,7 +737,7 @@ export default function Dashboard() {
               )}
             </p>
           </div>
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 max-md:flex-wrap max-md:gap-2">
             {/* Loan Status Badges */}
             <div className="flex items-center gap-2">
               <Link to={createPageUrl('Loans?status=Live')} className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-emerald-100 text-emerald-700 hover:bg-emerald-200 transition-colors">
@@ -799,7 +799,7 @@ export default function Dashboard() {
               <p className="text-slate-300 text-sm font-medium mb-3">Organization Health</p>
 
               {/* Net vs Investor comparison */}
-              <div className="grid grid-cols-3 gap-4 mb-4">
+              <div className="grid grid-cols-3 gap-4 mb-4 max-md:grid-cols-1 max-md:gap-2">
                 <div
                   className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
                   onClick={() => setActiveBreakdown('netDisbursed')}
@@ -823,7 +823,7 @@ export default function Dashboard() {
               </div>
 
               {/* Fees and Interest row */}
-              <div className="grid grid-cols-5 gap-3 pt-3 border-t border-white/10">
+              <div className="grid grid-cols-5 gap-3 pt-3 border-t border-white/10 max-md:grid-cols-2 max-md:gap-2">
                 <div
                   className="cursor-pointer hover:bg-white/10 rounded-lg p-2 -m-2 transition-colors"
                   onClick={() => setActiveBreakdown('feesDue')}

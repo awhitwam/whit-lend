@@ -525,7 +525,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     // This ensures CustomViewComponent is checked only after product is available
     if (isProductLoading) {
       return (
-        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0">
+        <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0 max-md:flex-none">
           <div className="flex items-center justify-center p-8 text-slate-400">
             Loading schedule...
           </div>
@@ -534,8 +534,8 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
     }
 
     return (
-      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0">
-        <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex-shrink-0">
+      <div className="bg-white rounded-xl border border-slate-200 overflow-hidden flex flex-col flex-1 min-h-0 max-md:flex-none">
+        <div className="flex items-center justify-between px-3 py-1.5 border-b border-slate-200 bg-slate-50 flex-shrink-0 max-md:overflow-x-auto max-md:[&>*]:shrink-0">
           <div className="flex items-center gap-2">
             <div className="flex items-center gap-0.5 bg-slate-200 rounded p-0.5">
               <Button
@@ -677,7 +677,7 @@ export default function RepaymentScheduleTable({ schedule, isLoading, transactio
             </span>
           </div>
         </div>
-        <div className="flex-1 min-h-0 relative">
+        <div className="flex-1 min-h-0 relative max-md:flex-none max-md:h-[70dvh]">
         {/* Ledger view - shows only actual transactions (reality) */}
         {viewMode === 'ledger' ? (
           (() => {

@@ -1260,7 +1260,7 @@ export default function Loans() {
                 )}
               </div>
               <Tabs value={statusFilter} onValueChange={setStatusFilter} className="w-full md:w-auto">
-                <TabsList className="grid grid-cols-5 w-full md:w-auto h-8 bg-slate-100">
+                <TabsList className="grid grid-cols-5 w-full md:w-auto h-8 bg-slate-100 max-md:flex max-md:w-full">
                   <TabsTrigger value="Live" className="text-xs h-7 px-2 data-[state=active]:bg-emerald-600 data-[state=active]:text-white data-[state=active]:font-semibold">
                     Live ({statusCounts.Live})
                   </TabsTrigger>
@@ -1468,7 +1468,7 @@ export default function Loans() {
                 description="Deleted loans will appear here"
               />
             ) : (
-              <div className="bg-white rounded-lg border border-slate-200 overflow-hidden">
+              <div className="bg-white rounded-lg border border-slate-200 overflow-hidden max-md:overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="bg-red-50 border-b border-red-200">

@@ -93,7 +93,7 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center gap-3">
+      <div className="flex items-center gap-3 max-md:flex-col max-md:items-stretch">
         <div className="relative max-w-sm flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <Input
@@ -104,7 +104,7 @@ export default function BorrowerTable({ borrowers, onEdit, isLoading, loanCounts
           />
         </div>
         <Select value={loanFilter} onValueChange={handleLoanFilterChange}>
-          <SelectTrigger className="w-[180px]">
+          <SelectTrigger className="w-[180px] max-md:w-full">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>

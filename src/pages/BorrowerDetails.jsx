@@ -742,7 +742,7 @@ export default function BorrowerDetails() {
                   <p className="text-slate-300">#{borrower.unique_number || 'N/A'}</p>
                 </div>
               </div>
-              <div className="flex items-center gap-3">
+              <div className="flex items-center gap-3 max-md:flex-wrap max-md:gap-2">
                 <Badge 
                   className={borrower.status === 'Active' 
                     ? 'bg-emerald-500/20 text-emerald-200 border-emerald-400' 

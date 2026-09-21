@@ -9,7 +9,9 @@ const TabsList = React.forwardRef(({ className, ...props }, ref) => (
   <TabsPrimitive.List
     ref={ref}
     className={cn(
-      "inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground",
+      // max-w-full is required: inline-flex will happily exceed its container, so without it
+      // overflow-x-auto has nothing to clip against. max-md: keeps desktop CSS untouched.
+      "inline-flex h-9 items-center justify-center rounded-lg bg-muted p-1 text-muted-foreground max-md:max-w-full max-md:overflow-x-auto",
       className
     )}
     {...props} />
