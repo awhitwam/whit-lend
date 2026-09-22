@@ -36,6 +36,7 @@ import {
 import { Loader2, Upload, ArrowDownCircle, ArrowUpCircle, RefreshCw, FileText, CheckCircle2, AlertCircle, History, Trash2 } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatters';
 import { parseBankStatement, getBankSources, parseCSV, detectBankFormat } from '@/lib/bankStatementParsers';
+import { findNewEntries } from '@/lib/bankStatementDedupe';
 import { toast } from 'sonner';
 import ReceiptsPanel from '@/components/reconciliation-simple/ReceiptsPanel';
 import ExpenditurePanel from '@/components/reconciliation-simple/ExpenditurePanel';
@@ -238,61 +239,9 @@ export default function BankReconciliationSimple() {
       // Combine all existing bank statements (both reconciled and unreconciled)
       const allExistingStatements = [...bankStatements, ...reconciledStatements];
 
-      // Check for duplicates using hybrid lookup:
-      // 1. Match by external_reference (primary)
-      // 2. Match by date + amount + description (fallback for old format references)
-      const existingRefs = new Set(allExistingStatements.map(s => s.external_reference).filter(Boolean));
-
-      // Build composite keys for fallback matching (date|amount)
-      const existingCompositeKeys = new Set(
-        allExistingStatements.map(s => {
-          const date = s.statement_date || '';
-          const amount = Math.round((parseFloat(s.amount) || 0) * 100);
-          return `${date}|${amount}`;
-        })
-      );
-
-      // Build map for detailed matching (date+amount -> array of descriptions)
-      const existingByDateAmount = new Map();
-      allExistingStatements.forEach(s => {
-        const date = s.statement_date || '';
-        const amount = Math.round((parseFloat(s.amount) || 0) * 100);
-        const key = `${date}|${amount}`;
-        if (!existingByDateAmount.has(key)) {
-          existingByDateAmount.set(key, []);
-        }
-        existingByDateAmount.get(key).push((s.description || '').toLowerCase().trim());
-      });
-
-      const newEntries = entries.filter(e => {
-        // Check by external_reference first
-        if (existingRefs.has(e.external_reference)) {
-          return false;
-        }
-
-        // Fallback: check by date + amount + description
-        // This catches duplicates when reference format changed
-        const date = e.statement_date;
-        const amount = Math.round((parseFloat(e.amount) || 0) * 100);
-        const compositeKey = `${date}|${amount}`;
-        const newDesc = (e.description || '').toLowerCase().trim();
-
-        if (existingCompositeKeys.has(compositeKey)) {
-          const existingDescs = existingByDateAmount.get(compositeKey) || [];
-          const descMatch = existingDescs.some(existingDesc => {
-            if (existingDesc === newDesc) return true;
-            if (existingDesc.includes(newDesc) || newDesc.includes(existingDesc)) return true;
-            if (existingDesc.slice(0, 20) === newDesc.slice(0, 20) && existingDesc.length > 10) return true;
-            return false;
-          });
-          if (descMatch) {
-            return false;
-          }
-        }
-
-        return true;
-      });
-
+      // Duplicate detection - see src/lib/bankStatementDedupe.js. Shared with the import paths
+      // in BankReconciliation.jsx and useReconciliation.js.
+      const newEntries = findNewEntries(entries, allExistingStatements);
       const duplicates = entries.length - newEntries.length;
 
       if (newEntries.length === 0) {
