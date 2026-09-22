@@ -35,6 +35,7 @@ import {
 import { format, parseISO, isValid, differenceInDays } from 'date-fns';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { parseBankStatement, getBankSources, parseCSV, detectBankFormat } from '@/lib/bankStatementParsers';
+import { findNewEntries } from '@/lib/bankStatementDedupe';
 import { logReconciliationEvent, logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 import {
   extractKeywords,
@@ -2412,60 +2413,9 @@ export default function BankReconciliation() {
         return;
       }
 
-      // Check for duplicates using hybrid lookup:
-      // 1. Match by external_reference (primary)
-      // 2. Match by date + amount + description (fallback for old format references)
-      const existingRefs = new Set(bankStatements.map(s => s.external_reference).filter(Boolean));
-
-      // Build composite keys for fallback matching (date|amount)
-      const existingCompositeKeys = new Set(
-        bankStatements.map(s => {
-          const date = s.statement_date || '';
-          const amount = Math.round((parseFloat(s.amount) || 0) * 100);
-          return `${date}|${amount}`;
-        })
-      );
-
-      // Build map for detailed matching (date+amount -> array of descriptions)
-      const existingByDateAmount = new Map();
-      bankStatements.forEach(s => {
-        const date = s.statement_date || '';
-        const amount = Math.round((parseFloat(s.amount) || 0) * 100);
-        const key = `${date}|${amount}`;
-        if (!existingByDateAmount.has(key)) {
-          existingByDateAmount.set(key, []);
-        }
-        existingByDateAmount.get(key).push((s.description || '').toLowerCase().trim());
-      });
-
-      const newEntries = entries.filter(e => {
-        // Check by external_reference first
-        if (existingRefs.has(e.external_reference)) {
-          return false;
-        }
-
-        // Fallback: check by date + amount + description
-        // This catches duplicates when reference format changed
-        const date = e.statement_date;
-        const amount = Math.round((parseFloat(e.amount) || 0) * 100);
-        const compositeKey = `${date}|${amount}`;
-        const newDesc = (e.description || '').toLowerCase().trim();
-
-        if (existingCompositeKeys.has(compositeKey)) {
-          const existingDescs = existingByDateAmount.get(compositeKey) || [];
-          const descMatch = existingDescs.some(existingDesc => {
-            if (existingDesc === newDesc) return true;
-            if (existingDesc.includes(newDesc) || newDesc.includes(existingDesc)) return true;
-            if (existingDesc.slice(0, 20) === newDesc.slice(0, 20) && existingDesc.length > 10) return true;
-            return false;
-          });
-          if (descMatch) {
-            return false;
-          }
-        }
-
-        return true;
-      });
+      // Duplicate detection - see src/lib/bankStatementDedupe.js. Shared with the import path
+      // in useReconciliation.js, which previously carried an identical copy of this logic.
+      const newEntries = findNewEntries(entries, bankStatements);
       const duplicates = entries.length - newEntries.length;
 
       if (newEntries.length === 0) {

@@ -10,6 +10,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '@/api/dataClient';
 import { generateAllSuggestions } from '@/lib/reconciliation/matchers';
 import { parseBankStatement, detectBankFormat, parseCSV } from '@/lib/bankStatementParsers';
+import { findNewEntries } from '@/lib/bankStatementDedupe';
 import {
   executeReconciliation,
   createLoanRepayment,
@@ -470,60 +471,9 @@ export function useReconciliation() {
     // Fetch fresh bank statements directly from API to ensure we have latest data
     const freshBankStatements = await api.entities.BankStatement.list('-statement_date');
 
-    // Check for duplicates using hybrid lookup:
-    // 1. Match by external_reference (primary)
-    // 2. Match by date + amount + description (fallback for old format references)
-    const existingRefs = new Set(freshBankStatements.map(s => s.external_reference).filter(Boolean));
-
-    // Build a set of composite keys for fallback matching (date|amount)
-    const existingCompositeKeys = new Set(
-      freshBankStatements.map(s => {
-        const date = s.statement_date || '';
-        const amount = Math.round((parseFloat(s.amount) || 0) * 100);
-        return `${date}|${amount}`;
-      })
-    );
-
-    // Also build a map for more detailed matching (date+amount -> array of descriptions)
-    const existingByDateAmount = new Map();
-    freshBankStatements.forEach(s => {
-      const date = s.statement_date || '';
-      const amount = Math.round((parseFloat(s.amount) || 0) * 100);
-      const key = `${date}|${amount}`;
-      if (!existingByDateAmount.has(key)) {
-        existingByDateAmount.set(key, []);
-      }
-      existingByDateAmount.get(key).push((s.description || '').toLowerCase().trim());
-    });
-
-    const newEntries = entries.filter(e => {
-      // Check by external_reference first
-      if (existingRefs.has(e.external_reference)) {
-        return false;
-      }
-
-      // Fallback: check by date + amount + description
-      // This catches duplicates when reference format changed
-      const date = e.statement_date;
-      const amount = Math.round((parseFloat(e.amount) || 0) * 100);
-      const compositeKey = `${date}|${amount}`;
-      const newDesc = (e.description || '').toLowerCase().trim();
-
-      if (existingCompositeKeys.has(compositeKey)) {
-        const existingDescs = existingByDateAmount.get(compositeKey) || [];
-        const descMatch = existingDescs.some(existingDesc => {
-          if (existingDesc === newDesc) return true;
-          if (existingDesc.includes(newDesc) || newDesc.includes(existingDesc)) return true;
-          if (existingDesc.slice(0, 20) === newDesc.slice(0, 20) && existingDesc.length > 10) return true;
-          return false;
-        });
-        if (descMatch) {
-          return false;
-        }
-      }
-
-      return true;
-    });
+    // Duplicate detection - see src/lib/bankStatementDedupe.js. Shared with the import path in
+    // BankReconciliation.jsx, which previously carried an identical copy of this logic.
+    const newEntries = findNewEntries(entries, freshBankStatements);
 
     if (newEntries.length === 0) {
       throw new Error('All entries already exist (duplicates detected)');
