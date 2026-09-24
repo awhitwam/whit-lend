@@ -87,6 +87,16 @@ export default function SuperAdmin() {
   const [runningJob, setRunningJob] = useState(null);
   const [jobResult, setJobResult] = useState(null);
 
+  // Interest audit state - default to the last full month so the range is always valid
+  const lastClosedMonth = (() => {
+    const d = new Date();
+    d.setDate(1);
+    d.setMonth(d.getMonth() - 1);
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+  })();
+  const [auditFrom, setAuditFrom] = useState(lastClosedMonth);
+  const [auditTo, setAuditTo] = useState(lastClosedMonth);
+
   // Create organization dialog state
   const [isCreateOrgOpen, setIsCreateOrgOpen] = useState(false);
 
@@ -297,17 +307,20 @@ export default function SuperAdmin() {
   });
 
   // Run nightly job mutation
+  // Accepts either a plain task array or { tasks, ...options } for tasks that take
+  // parameters, such as audit_investor_interest's period range.
   const runNightlyJobMutation = useMutation({
-    mutationFn: async (tasks) => {
-      setRunningJob(tasks.join(', '));
+    mutationFn: async (input) => {
+      const body = Array.isArray(input) ? { tasks: input } : input;
+      setRunningJob(body.tasks.join(', '));
       setJobResult(null);
 
       console.log('[NightlyJob] Calling function via supabase.functions.invoke');
-      console.log('[NightlyJob] Tasks:', tasks);
+      console.log('[NightlyJob] Body:', body);
 
       // Use supabase.functions.invoke() which handles auth automatically
       const { data, error } = await supabase.functions.invoke('nightly-jobs', {
-        body: { tasks }
+        body
       });
 
       if (error) {
@@ -1950,6 +1963,87 @@ export default function SuperAdmin() {
                     </>
                   )}
                 </Button>
+
+                {/* Interest Audit Section */}
+                <div className="border rounded-lg p-4 bg-slate-50 space-y-3 mt-4">
+                  <div className="flex items-center gap-2">
+                    <RefreshCw className="w-4 h-4 text-slate-600" />
+                    <h3 className="font-medium text-slate-900">Audit Past Interest Periods</h3>
+                  </div>
+                  <p className="text-sm text-slate-600">
+                    Recalculates interest for closed accrual periods and posts the net difference
+                    as a single adjustment credit. Original credits are left untouched. Use this
+                    after correcting a mis-typed transaction that changed a historic balance.
+                  </p>
+
+                  <div className="flex flex-wrap items-end gap-3">
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-slate-700 block">From period</label>
+                      <Input
+                        type="month"
+                        value={auditFrom}
+                        max={lastClosedMonth}
+                        onChange={(e) => setAuditFrom(e.target.value)}
+                        className="w-40"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-xs font-medium text-slate-700 block">To period</label>
+                      <Input
+                        type="month"
+                        value={auditTo}
+                        max={lastClosedMonth}
+                        onChange={(e) => setAuditTo(e.target.value)}
+                        className="w-40"
+                      />
+                    </div>
+
+                    <Button
+                      variant="outline"
+                      disabled={!!runningJob || !auditFrom || !auditTo}
+                      onClick={() => runNightlyJobMutation.mutate({
+                        tasks: ['audit_investor_interest'],
+                        from: auditFrom,
+                        to: auditTo,
+                        dryRun: true
+                      })}
+                    >
+                      {runningJob?.includes('audit_investor_interest') ? (
+                        <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      ) : (
+                        <Search className="w-4 h-4 mr-2" />
+                      )}
+                      Preview
+                    </Button>
+
+                    <Button
+                      variant="destructive"
+                      disabled={!!runningJob || !auditFrom || !auditTo}
+                      onClick={() => {
+                        const confirmed = window.confirm(
+                          `Post interest adjustments for ${auditFrom} to ${auditTo}?\n\n` +
+                          `This writes an adjustment credit to every affected investor. ` +
+                          `Run Preview first if you have not already.`
+                        );
+                        if (!confirmed) return;
+                        runNightlyJobMutation.mutate({
+                          tasks: ['audit_investor_interest'],
+                          from: auditFrom,
+                          to: auditTo,
+                          dryRun: false
+                        });
+                      }}
+                    >
+                      <Play className="w-4 h-4 mr-2" />
+                      Post Adjustments
+                    </Button>
+                  </div>
+
+                  <p className="text-xs text-slate-500">
+                    Periods must have closed - the latest selectable period is {lastClosedMonth}.
+                    Running the audit twice over the same range nets to zero, so it is safe to repeat.
+                  </p>
+                </div>
 
                 {/* Regenerate Schedules Section */}
                 <div className="border rounded-lg p-4 bg-slate-50 space-y-3 mt-4">

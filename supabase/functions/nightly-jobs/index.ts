@@ -5,6 +5,13 @@
 // - Recalculate investor balances if needed
 // - Recalculate loan balance caches (principal_remaining, interest_remaining) and org summaries
 //
+// One task is deliberately NOT part of the nightly set - audit_investor_interest recomputes a
+// range of closed accrual periods and posts the net difference as a single adjustment credit.
+// Run it by hand after correcting a mis-typed transaction. It defaults to a dry run:
+//
+//   --data '{"tasks":["audit_investor_interest"],"from":"2026-04","to":"2026-08"}'
+//   --data '{"tasks":["audit_investor_interest"],"from":"2026-04","to":"2026-08","dryRun":false}'
+//
 // Deployment:
 //   supabase functions deploy nightly-jobs
 //
@@ -415,6 +422,366 @@ async function processInvestorInterest(supabase: any): Promise<TaskResult> {
   console.log(`[InvestorInterest] ========================================`)
   console.log(`[InvestorInterest] Complete: ${result.succeeded} succeeded, ${result.failed} failed, ${result.skipped} skipped`)
   console.log(`[InvestorInterest] ========================================`)
+  return result
+}
+
+// ============================================================================
+// Task: Audit Investor Interest for Past Periods
+// ============================================================================
+//
+// Recomputes interest for a range of past accrual periods and posts the net
+// difference as a single dated adjustment credit, leaving the original credits
+// untouched.
+//
+// Written for the case where a capital transaction was recorded with the wrong
+// type - a capital_out that should have been an interest withdrawal, say. Because
+// calculateInvestorInterestForMonth() rebuilds the balance from InvestorTransaction
+// rows on every call, correcting the offending row is enough to make every past
+// period recompute correctly. What remains is the gap between what was posted at
+// the time and what should have been.
+//
+// Rewriting the original credits was the alternative. One dated adjustment keeps
+// the history the accountant already holds and makes the correction its own
+// visible line rather than a silent restatement.
+
+const ADJUSTMENT_PREFIX = 'Interest adjustment'
+
+/** Range tag embedded in an adjustment's description so later audits can net it off. */
+const rangeTag = (from: string, to: string) => `[periods:${from}..${to}]`
+
+const parseRangeTag = (description: string | null): { from: string; to: string } | null => {
+  const match = /\[periods:(\d{4}-\d{2})\.\.(\d{4}-\d{2})\]/.exec(description || '')
+  return match ? { from: match[1], to: match[2] } : null
+}
+
+const isAdjustment = (description: string | null) =>
+  (description || '').startsWith(ADJUSTMENT_PREFIX)
+
+/**
+ * Format a Date as YYYY-MM-DD from its local components.
+ *
+ * Not toISOString() - these dates are built as local midnight, and under a non-UTC
+ * timezone toISOString() shifts them to the previous day, moving every posting window
+ * off by one. Edge functions normally run in UTC, where the two agree, but the audit
+ * must not depend on that.
+ */
+const ymd = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`
+
+/**
+ * Period boundaries for an accrual month.
+ *
+ * `start`/`end` are the month the interest is FOR. `postStart`/`postEnd` bracket the
+ * following month, which is where processInvestorInterest() dates that period's credit.
+ */
+function monthPeriod(month: string) {
+  const [year, mon] = month.split('-').map(Number)
+  const at = (y: number, m: number, d: number) => {
+    const date = new Date(y, m, d)
+    date.setHours(0, 0, 0, 0)
+    return date
+  }
+  return {
+    start: at(year, mon - 1, 1),
+    end: at(year, mon, 0),
+    postStart: at(year, mon, 1),
+    postEnd: at(year, mon + 1, 0)
+  }
+}
+
+function monthsInRange(from: string, to: string): string[] {
+  const months: string[] = []
+  const [toYear, toMon] = to.split('-').map(Number)
+  let [year, mon] = from.split('-').map(Number)
+
+  while (year < toYear || (year === toYear && mon <= toMon)) {
+    months.push(`${year}-${String(mon).padStart(2, '0')}`)
+    mon++
+    if (mon > 12) { mon = 1; year++ }
+  }
+  return months
+}
+
+const monthLabel = (month: string) =>
+  monthPeriod(month).start.toLocaleString('en-GB', { month: 'short', year: 'numeric' })
+
+interface AuditOptions {
+  from: string
+  to: string
+  investorId?: string
+  dryRun: boolean
+}
+
+async function auditInvestorInterest(supabase: any, options: AuditOptions): Promise<TaskResult> {
+  const result: TaskResult = {
+    task: 'audit_investor_interest',
+    processed: 0,
+    succeeded: 0,
+    failed: 0,
+    skipped: 0,
+    details: []
+  }
+
+  const { from, to, investorId, dryRun } = options
+
+  // ---- Validate the requested range -------------------------------------
+  const monthFormat = /^\d{4}-(0[1-9]|1[0-2])$/
+  if (!monthFormat.test(from) || !monthFormat.test(to)) {
+    result.details.push({ error: `from/to must be YYYY-MM months (got "${from}" / "${to}")` })
+    result.failed++
+    return result
+  }
+  if (from > to) {
+    result.details.push({ error: `from (${from}) is after to (${to})` })
+    result.failed++
+    return result
+  }
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+  const todayStr = ymd(today)
+
+  // A period still running has not been accrued yet, so there is nothing to compare against.
+  if (monthPeriod(to).end >= today) {
+    result.details.push({
+      error: `Period ${to} has not ended yet - audit only closed periods (latest selectable: ` +
+             `${ymd(new Date(today.getFullYear(), today.getMonth() - 1, 1)).slice(0, 7)})`
+    })
+    result.failed++
+    return result
+  }
+
+  const months = monthsInRange(from, to)
+  if (months.length > 120) {
+    result.details.push({ error: `Range spans ${months.length} months; 120 is the maximum` })
+    result.failed++
+    return result
+  }
+
+  console.log(`[InterestAudit] ========================================`)
+  console.log(`[InterestAudit] Auditing periods ${from} to ${to} (${months.length} months)`)
+  console.log(`[InterestAudit] Mode: ${dryRun ? 'DRY RUN (nothing written)' : 'POSTING adjustments'}`)
+  if (investorId) console.log(`[InterestAudit] Restricted to investor ${investorId}`)
+  console.log(`[InterestAudit] ========================================`)
+
+  // ---- Same product/investor scope as the nightly accrual ----------------
+  const { data: products, error: productsError } = await supabase
+    .from('investor_products')
+    .select('*')
+    .eq('interest_calculation_type', 'automatic')
+    .eq('status', 'Active')
+
+  if (productsError) {
+    result.details.push({ error: `Failed to fetch products: ${productsError.message}` })
+    result.failed++
+    return result
+  }
+
+  for (const product of (products || []) as InvestorProduct[]) {
+    let investorQuery = supabase
+      .from('Investor')
+      .select('*')
+      .eq('investor_product_id', product.id)
+      .eq('status', 'Active')
+
+    if (investorId) investorQuery = investorQuery.eq('id', investorId)
+
+    const { data: investors, error: investorsError } = await investorQuery
+
+    if (investorsError) {
+      result.details.push({ product: product.name, error: investorsError.message })
+      result.failed++
+      continue
+    }
+
+    for (const investor of (investors || []) as Investor[]) {
+      result.processed++
+
+      try {
+        // Every credit for this investor, partitioned below into accruals and adjustments.
+        const { data: credits, error: creditsError } = await supabase
+          .from('investor_interest')
+          .select('id, date, amount, description')
+          .eq('investor_id', investor.id)
+          .eq('type', 'credit')
+          .order('date', { ascending: true })
+
+        if (creditsError) {
+          throw new Error(`Failed to fetch interest credits: ${creditsError.message}`)
+        }
+
+        const allCredits = (credits || []) as Array<{
+          id: string; date: string; amount: string | number; description: string | null
+        }>
+        const accruals = allCredits.filter(c => !isAdjustment(c.description))
+        const adjustments = allCredits.filter(c => isAdjustment(c.description))
+
+        // ---- Recompute each period and compare to what was posted --------
+        const periods: any[] = []
+        let grossDelta = 0
+
+        for (const month of months) {
+          const { start, end, postStart, postEnd } = monthPeriod(month)
+
+          const { totalInterest, description } = await calculateInvestorInterestForMonth(
+            supabase,
+            investor,
+            product.interest_rate_per_annum,
+            start,
+            end
+          )
+
+          const postStartStr = ymd(postStart)
+          const postEndStr = ymd(postEnd)
+          // investor_interest.date is a `date` column, so this comes back as YYYY-MM-DD and
+          // compares correctly as a string. The slice keeps that true if it ever widens to a
+          // timestamp, where a credit on the window's last day would otherwise sort past it.
+          const postedRows = accruals.filter(c => {
+            const day = (c.date || '').slice(0, 10)
+            return day >= postStartStr && day <= postEndStr
+          })
+          const posted = postedRows.reduce(
+            (sum, c) => sum + (typeof c.amount === 'string' ? parseFloat(c.amount) : c.amount), 0
+          )
+
+          const delta = Math.round((totalInterest - posted) * 100) / 100
+          grossDelta += delta
+
+          periods.push({
+            period: month,
+            recalculated: totalInterest,
+            posted: Math.round(posted * 100) / 100,
+            delta,
+            // A period with no credit at all was never accrued - worth seeing, since the
+            // whole month then lands in the adjustment rather than a small correction.
+            neverPosted: postedRows.length === 0,
+            working: description
+          })
+        }
+
+        grossDelta = Math.round(grossDelta * 100) / 100
+
+        // ---- Net off adjustments already posted for these periods --------
+        //
+        // Without this, running the audit twice would post the same correction twice.
+        // A prior adjustment wholly inside the requested range can be subtracted in full;
+        // one that only partly overlaps cannot be apportioned, so we stop rather than guess.
+        let priorAdjustment = 0
+        const priorRows: any[] = []
+        const conflicts: any[] = []
+
+        for (const adj of adjustments) {
+          const tag = parseRangeTag(adj.description)
+          if (!tag) continue
+
+          const contained = tag.from >= from && tag.to <= to
+          const disjoint = tag.to < from || tag.from > to
+
+          if (contained) {
+            const amount = typeof adj.amount === 'string' ? parseFloat(adj.amount) : adj.amount
+            priorAdjustment += amount
+            priorRows.push({ id: adj.id, date: adj.date, amount, periods: `${tag.from}..${tag.to}` })
+          } else if (!disjoint) {
+            conflicts.push({ id: adj.id, date: adj.date, periods: `${tag.from}..${tag.to}` })
+          }
+        }
+
+        if (conflicts.length > 0) {
+          throw new Error(
+            `Existing adjustment(s) overlap the requested range without being contained by it ` +
+            `(${conflicts.map(c => c.periods).join(', ')}). Re-run with a range that fully ` +
+            `contains them, or remove them first.`
+          )
+        }
+
+        priorAdjustment = Math.round(priorAdjustment * 100) / 100
+        const netAdjustment = Math.round((grossDelta - priorAdjustment) * 100) / 100
+
+        const base = {
+          investor: investor.name,
+          product: product.name,
+          periods,
+          gross_delta: grossDelta,
+          prior_adjustments: priorAdjustment,
+          prior_adjustment_rows: priorRows,
+          net_adjustment: netAdjustment
+        }
+
+        if (Math.abs(netAdjustment) < 0.01) {
+          console.log(`[InterestAudit] ${investor.name}: already correct (net £0.00)`)
+          result.skipped++
+          result.details.push({ ...base, action: 'no_change' })
+          continue
+        }
+
+        console.log(
+          `[InterestAudit] ${investor.name}: net adjustment £${netAdjustment.toFixed(2)} ` +
+          `(gross £${grossDelta.toFixed(2)} less £${priorAdjustment.toFixed(2)} already adjusted)`
+        )
+
+        // Working is carried in the description so the correction is auditable from the ledger.
+        const workingParts = periods
+          .filter(p => Math.abs(p.delta) >= 0.01)
+          .map(p => `${monthLabel(p.period)} ${p.delta >= 0 ? '+' : '-'}£${Math.abs(p.delta).toFixed(2)}`)
+        const priorNote = priorAdjustment !== 0
+          ? ` less £${priorAdjustment.toFixed(2)} already adjusted`
+          : ''
+        const description =
+          `${ADJUSTMENT_PREFIX} for ${monthLabel(from)} to ${monthLabel(to)}: ` +
+          `${workingParts.join(' + ')}${priorNote} = £${netAdjustment.toFixed(2)} ` +
+          rangeTag(from, to)
+
+        if (dryRun) {
+          result.succeeded++
+          result.details.push({ ...base, action: 'preview', would_post: description })
+          continue
+        }
+
+        const { error: insertError } = await supabase
+          .from('investor_interest')
+          .insert({
+            organization_id: investor.organization_id,
+            investor_id: investor.id,
+            date: todayStr,
+            type: 'credit',
+            amount: netAdjustment,
+            description
+          })
+
+        if (insertError) {
+          throw new Error(`Failed to create adjustment credit: ${insertError.message}`)
+        }
+
+        // Keep the investor's running total in step with the credits it is meant to mirror.
+        const { error: updateError } = await supabase
+          .from('Investor')
+          .update({ total_interest_paid: (investor.total_interest_paid || 0) + netAdjustment })
+          .eq('id', investor.id)
+
+        if (updateError) {
+          throw new Error(`Adjustment posted but failed to update investor total: ${updateError.message}`)
+        }
+
+        result.succeeded++
+        result.details.push({ ...base, action: 'posted', date: todayStr, description })
+        console.log(`[InterestAudit] Posted adjustment for ${investor.name}`)
+
+      } catch (error) {
+        console.error(`[InterestAudit] Error auditing ${investor.name}:`, error)
+        result.failed++
+        result.details.push({
+          investor: investor.name,
+          product: product.name,
+          action: 'failed',
+          error: (error as Error).message
+        })
+      }
+    }
+  }
+
+  console.log(`[InterestAudit] ========================================`)
+  console.log(`[InterestAudit] Complete: ${result.succeeded} adjusted, ${result.skipped} already correct, ${result.failed} failed`)
+  console.log(`[InterestAudit] ========================================`)
   return result
 }
 
@@ -1023,10 +1390,20 @@ Deno.serve(async (req) => {
     // Default nightly tasks: investor interest, loan schedules, loan balance cache reconciliation
     let tasksToRun = ['investor_interest', 'loan_schedules', 'recalculate_loan_balances']
 
+    // audit_investor_interest is never part of the nightly set - it is a repair tool run
+    // by hand, and defaults to a dry run so a mistyped range costs nothing.
+    let auditOptions: AuditOptions = { from: '', to: '', investorId: undefined, dryRun: true }
+
     try {
       const body = await req.json()
       if (body.tasks && Array.isArray(body.tasks)) {
         tasksToRun = body.tasks
+      }
+      auditOptions = {
+        from: body.from || '',
+        to: body.to || body.from || '',
+        investorId: body.investor_id || undefined,
+        dryRun: body.dryRun !== false
       }
     } catch {
       // No body or invalid JSON, use defaults
@@ -1049,6 +1426,15 @@ Deno.serve(async (req) => {
       const interestResult = await processInvestorInterest(supabase)
       results.push(interestResult)
       console.log(`[NightlyJobs] <<< Completed task: investor_interest`)
+      console.log(``)
+    }
+
+    // Recompute past accrual periods and post the net correction (manual, never nightly)
+    if (tasksToRun.includes('audit_investor_interest')) {
+      console.log(`[NightlyJobs] >>> Starting task: audit_investor_interest`)
+      const auditResult = await auditInvestorInterest(supabase, auditOptions)
+      results.push(auditResult)
+      console.log(`[NightlyJobs] <<< Completed task: audit_investor_interest`)
       console.log(``)
     }
 
