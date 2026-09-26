@@ -86,6 +86,7 @@ export default function SuperAdmin() {
   // Nightly jobs state
   const [runningJob, setRunningJob] = useState(null);
   const [jobResult, setJobResult] = useState(null);
+  const [jobRequest, setJobRequest] = useState(null);
 
   // Interest audit state - default to the last full month so the range is always valid
   const lastClosedMonth = (() => {
@@ -96,6 +97,12 @@ export default function SuperAdmin() {
   })();
   const [auditFrom, setAuditFrom] = useState(lastClosedMonth);
   const [auditTo, setAuditTo] = useState(lastClosedMonth);
+
+  // The audit's findings live in its task result, not the summary counts
+  const auditResult = jobResult?.tasks?.find(t => t.task === 'audit_investor_interest') || null;
+  // Asked for the audit but got no task back: the deployed function predates the task.
+  const auditTaskMissing = !!jobRequest?.tasks?.includes('audit_investor_interest')
+    && !!jobResult && !jobResult.error && !auditResult;
 
   // Create organization dialog state
   const [isCreateOrgOpen, setIsCreateOrgOpen] = useState(false);
@@ -314,6 +321,7 @@ export default function SuperAdmin() {
       const body = Array.isArray(input) ? { tasks: input } : input;
       setRunningJob(body.tasks.join(', '));
       setJobResult(null);
+      setJobRequest(body);
 
       console.log('[NightlyJob] Calling function via supabase.functions.invoke');
       console.log('[NightlyJob] Body:', body);
@@ -2043,6 +2051,122 @@ export default function SuperAdmin() {
                     Periods must have closed - the latest selectable period is {lastClosedMonth}.
                     Running the audit twice over the same range nets to zero, so it is safe to repeat.
                   </p>
+
+                  {/* Audit findings - the counts in the generic result panel say nothing
+                      useful for a preview, so the per-period working is rendered here. */}
+                  {auditTaskMissing && (
+                    <Alert className="border-amber-200 bg-amber-50">
+                      <AlertCircle className="w-4 h-4 text-amber-600" />
+                      <AlertDescription className="text-amber-800 text-sm">
+                        The job ran but returned no audit result, which means the deployed
+                        function does not have this task yet. Deploy it with{' '}
+                        <code className="font-mono text-xs">supabase functions deploy nightly-jobs</code>{' '}
+                        and try again.
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {auditResult && (
+                    <div className="space-y-3 pt-1">
+                      {auditResult.details.length === 0 && (
+                        <p className="text-sm text-slate-600">
+                          No investors matched. The audit only covers active investors on an
+                          active product with automatic interest calculation.
+                        </p>
+                      )}
+
+                      {auditResult.details.map((detail, i) => (
+                        <div key={i} className="bg-white border rounded-lg p-3 text-sm">
+                          {detail.error ? (
+                            <div className="flex items-start gap-2 text-red-700">
+                              <XCircle className="w-4 h-4 mt-0.5 shrink-0" />
+                              <span>{detail.error}</span>
+                            </div>
+                          ) : (
+                            <>
+                              <div className="flex items-center justify-between gap-3 mb-2">
+                                <span className="font-medium text-slate-900">{detail.investor}</span>
+                                <Badge variant={
+                                  detail.action === 'posted' ? 'default'
+                                    : detail.action === 'failed' ? 'destructive'
+                                    : 'secondary'
+                                }>
+                                  {detail.action === 'preview' ? 'Preview - not posted'
+                                    : detail.action === 'posted' ? 'Adjustment posted'
+                                    : detail.action === 'no_change' ? 'Already correct'
+                                    : 'Failed'}
+                                </Badge>
+                              </div>
+
+                              {detail.action === 'failed' ? (
+                                <p className="text-red-700">{detail.error}</p>
+                              ) : (
+                                <>
+                                  <div className="overflow-x-auto">
+                                    <table className="w-full text-xs">
+                                      <thead>
+                                        <tr className="text-slate-500 border-b">
+                                          <th className="text-left py-1 pr-3 font-medium">Period</th>
+                                          <th className="text-right py-1 px-3 font-medium">Posted</th>
+                                          <th className="text-right py-1 px-3 font-medium">Recalculated</th>
+                                          <th className="text-right py-1 pl-3 font-medium">Difference</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {detail.periods?.map((p) => (
+                                          <tr key={p.period} className="border-b last:border-0">
+                                            <td className="py-1 pr-3 font-mono">
+                                              {p.period}
+                                              {p.neverPosted && (
+                                                <span className="ml-2 text-amber-600">never accrued</span>
+                                              )}
+                                            </td>
+                                            <td className="text-right py-1 px-3 font-mono">
+                                              {p.posted.toFixed(2)}
+                                            </td>
+                                            <td className="text-right py-1 px-3 font-mono">
+                                              {p.recalculated.toFixed(2)}
+                                            </td>
+                                            <td className={`text-right py-1 pl-3 font-mono ${
+                                              Math.abs(p.delta) < 0.01 ? 'text-slate-400'
+                                                : p.delta > 0 ? 'text-emerald-700' : 'text-red-700'
+                                            }`}>
+                                              {p.delta > 0 ? '+' : ''}{p.delta.toFixed(2)}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+
+                                  {detail.prior_adjustments !== 0 && (
+                                    <p className="text-xs text-slate-500 mt-2">
+                                      Gross £{detail.gross_delta.toFixed(2)} less
+                                      £{detail.prior_adjustments.toFixed(2)} already adjusted
+                                      in {detail.prior_adjustment_rows.length} earlier
+                                      adjustment{detail.prior_adjustment_rows.length === 1 ? '' : 's'}.
+                                    </p>
+                                  )}
+
+                                  <div className="flex items-baseline justify-between mt-2 pt-2 border-t">
+                                    <span className="font-medium text-slate-700">
+                                      {detail.action === 'posted' ? 'Adjustment posted' : 'Net adjustment'}
+                                    </span>
+                                    <span className={`font-mono font-medium ${
+                                      detail.net_adjustment > 0 ? 'text-emerald-700'
+                                        : detail.net_adjustment < 0 ? 'text-red-700' : 'text-slate-500'
+                                    }`}>
+                                      {detail.net_adjustment > 0 ? '+' : ''}£{detail.net_adjustment.toFixed(2)}
+                                    </span>
+                                  </div>
+                                </>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
                 </div>
 
                 {/* Regenerate Schedules Section */}
@@ -2097,7 +2221,9 @@ export default function SuperAdmin() {
                           <p className="font-medium">
                             {jobResult.task === 'regenerate_schedules'
                               ? `Schedules regenerated for ${jobResult.summary?.organization || 'organization'}`
-                              : 'Job completed successfully'}
+                              : jobResult.summary?.total_failed > 0
+                                ? 'Job finished with failures - see details below'
+                                : 'Job completed successfully'}
                           </p>
                           <p className="text-sm">
                             Processed: {jobResult.summary?.total_processed || 0} |
