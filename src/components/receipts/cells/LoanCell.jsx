@@ -9,6 +9,7 @@ import { Info } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatters';
+import { getLoanOutstanding } from '@/lib/loanCalculations';
 
 /**
  * Cell for selecting one or more loans for the receipt
@@ -68,17 +69,6 @@ const LoanCell = forwardRef(function LoanCell({
       selectedLoanIds: newIds,
       allocations: newAllocations
     });
-  };
-
-  // Calculate loan outstanding
-  const getLoanOutstanding = (loan) => {
-    const principalOutstanding = (parseFloat(loan.principal_amount) || 0) - (parseFloat(loan.principal_paid) || 0);
-    const interestOutstanding = (parseFloat(loan.total_interest) || 0) - (parseFloat(loan.interest_paid) || 0);
-    return {
-      principal: principalOutstanding,
-      interest: interestOutstanding,
-      total: principalOutstanding + interestOutstanding
-    };
   };
 
   // Get next pending schedule for a loan

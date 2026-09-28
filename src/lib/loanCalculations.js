@@ -90,3 +90,37 @@ export const getExitFeeRemaining = (loan, transactions = [], asOfDate = null) =>
   if (exitFee <= 0) return 0;
   return Math.max(0, exitFee - getFeesReceived(transactions, asOfDate));
 };
+
+/**
+ * Outstanding principal / interest for a loan record.
+ *
+ * Reads the cached `principal_remaining` / `interest_remaining` columns, which the
+ * DB trigger from migration 054 keeps up to date (original principal + further
+ * advances - principal_applied on repayments). The old `principal_paid` /
+ * `interest_paid` columns are stale - nothing maintains them - so subtracting them
+ * from `principal_amount` shows the full original advance on loans that have been
+ * repaid, and ignores further advances entirely.
+ *
+ * Falls back to the legacy calculation only when the cache has never been written.
+ *
+ * @param {Object} loan - the loan record
+ * @returns {{ principal: number, interest: number, total: number }}
+ */
+export const getLoanOutstanding = (loan) => {
+  const cachedPrincipal = parseFloat(loan?.principal_remaining);
+  const cachedInterest = parseFloat(loan?.interest_remaining);
+
+  const principal = Number.isFinite(cachedPrincipal)
+    ? cachedPrincipal
+    : (parseFloat(loan?.principal_amount) || 0) - (parseFloat(loan?.principal_paid) || 0);
+
+  const interest = Number.isFinite(cachedInterest)
+    ? cachedInterest
+    : (parseFloat(loan?.total_interest) || 0) - (parseFloat(loan?.interest_paid) || 0);
+
+  return {
+    principal,
+    interest,
+    total: principal + interest
+  };
+};
