@@ -14,7 +14,7 @@ import { Plus, Users, TrendingUp, ChevronRight } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import InvestorForm from '@/components/investor/InvestorForm';
 import EmptyState from '@/components/ui/EmptyState';
-import { calculateAccruedInterest } from '@/lib/interestCalculation';
+import { calculateAccruingInterest, resolveInvestorAnnualRate } from '@/lib/interestCalculation';
 
 export default function Investors() {
   const [isFormOpen, setIsFormOpen] = useState(false);
@@ -32,17 +32,57 @@ export default function Investors() {
   const { data: allInterestEntries = [] } = useQuery({
     queryKey: ['allInvestorInterest', currentOrganization?.id],
     queryFn: () => api.entities.InvestorInterest.listAll(),
-    enabled: !!currentOrganization
+    enabled: !!currentOrganization,
+    staleTime: 5 * 60 * 1000
   });
 
-  // Calculate interest due and accruing for each investor
+  // Capital movements drive the accrual, so the raw rows are needed here too.
+  // Ordered by id, not date: listAll pages with .range(), and OFFSET paging over a
+  // column with many ties has no guaranteed row order - rows can duplicate or vanish
+  // between pages. Date ordering is applied per-investor inside the calculation.
+  const { data: allTransactions = [] } = useQuery({
+    queryKey: ['allInvestorTransactions', currentOrganization?.id],
+    queryFn: () => api.entities.InvestorTransaction.listAll('id'),
+    enabled: !!currentOrganization,
+    staleTime: 5 * 60 * 1000
+  });
+
+  const { data: investorProducts = [] } = useQuery({
+    queryKey: ['investorProducts', currentOrganization?.id],
+    queryFn: () => api.entities.InvestorProduct.list(),
+    enabled: !!currentOrganization,
+    staleTime: 5 * 60 * 1000
+  });
+
+  const groupByInvestor = (rows) => {
+    const map = new Map();
+    for (const row of rows) {
+      const list = map.get(row.investor_id);
+      if (list) list.push(row);
+      else map.set(row.investor_id, [row]);
+    }
+    return map;
+  };
+
+  const txByInvestor = useMemo(() => groupByInvestor(allTransactions), [allTransactions]);
+  const interestByInvestor = useMemo(() => groupByInvestor(allInterestEntries), [allInterestEntries]);
+  const productById = useMemo(
+    () => new Map(investorProducts.map(p => [p.id, p])),
+    [investorProducts]
+  );
+
+  // One boundary shared by every row, so a list rendered across midnight stays coherent
+  const today = useMemo(() => new Date(), []);
+
+  // Calculate interest due, accruing and capital for each investor
   const investorInterestData = useMemo(() => {
     const data = {};
 
     investors.forEach(investor => {
-      const entries = allInterestEntries.filter(e => e.investor_id === investor.id);
-      const annualRate = investor.annual_interest_rate || 0;
-      const currentBalance = investor.current_capital_balance || 0;
+      const entries = interestByInvestor.get(investor.id) || [];
+      const txs = txByInvestor.get(investor.id) || [];
+      const product = productById.get(investor.investor_product_id);
+      const annualRate = resolveInvestorAnnualRate(investor, product);
 
       // Calculate interest due (credits not yet withdrawn since last_accrual_date)
       const cutoffDate = investor.last_accrual_date;
@@ -57,18 +97,29 @@ export default function Investors() {
         interestDue = Math.max(0, recentCredits - recentDebits);
       }
 
-      // Calculate interest accruing (only for investors with annual rate)
-      let accruing = 0;
-      if (annualRate > 0 && currentBalance > 0) {
-        const accrued = calculateAccruedInterest(currentBalance, annualRate, investor.last_accrual_date);
-        accruing = accrued.accruedInterest;
-      }
+      // Same segmented calculation as the detail page and the nightly job
+      const accruing = calculateAccruingInterest(txs, annualRate, investor.last_accrual_date, {
+        asOf: today,
+        interestEntries: entries
+      }).accruedInterest;
 
-      data[investor.id] = { interestDue, accruing };
+      // The nightly job only posts for an active investor on an active automatic
+      // product, so anything outside that will never actually be credited.
+      const willPost = investor.status === 'Active'
+        && product?.interest_calculation_type === 'automatic'
+        && product?.status === 'Active';
+
+      // Derived rather than the cached column, to agree with the accrual above
+      const capitalBalance = txs.reduce(
+        (sum, t) => sum + (t.type === 'capital_in' ? 1 : -1) * (parseFloat(t.amount) || 0),
+        0
+      );
+
+      data[investor.id] = { interestDue, accruing, willPost, capitalBalance, annualRate };
     });
 
     return data;
-  }, [investors, allInterestEntries]);
+  }, [investors, interestByInvestor, txByInvestor, productById, today]);
 
   const createMutation = useMutation({
     mutationFn: (data) => api.entities.Investor.create(data),
@@ -104,7 +155,9 @@ export default function Investors() {
     }
   };
 
-  const totalCapital = investors.reduce((sum, inv) => sum + (inv.current_capital_balance || 0), 0);
+  const totalCapital = investors.reduce(
+    (sum, inv) => sum + (investorInterestData[inv.id]?.capitalBalance || 0), 0
+  );
   const activeInvestors = investors.filter(inv => inv.status === 'Active');
 
   return (
@@ -200,19 +253,21 @@ export default function Investors() {
                 </TableHeader>
                 <TableBody>
                   {investors.map((investor) => {
-                    const interestData = investorInterestData[investor.id] || { interestDue: 0, accruing: 0 };
+                    const interestData = investorInterestData[investor.id]
+                      || { interestDue: 0, accruing: 0, willPost: false, capitalBalance: 0 };
                     return (
                       <TableRow key={investor.id} className="hover:bg-slate-50">
                         <TableCell className="font-medium">{investor.name}</TableCell>
                         <TableCell>
-                          {investor.interest_calculation_type === 'annual_rate' && investor.annual_interest_rate > 0 ? (
-                            <span className="text-sm">{investor.annual_interest_rate}% p.a.</span>
+                          {/* The resolved rate, i.e. the one the accruing figure uses */}
+                          {interestData.annualRate > 0 ? (
+                            <span className="text-sm">{interestData.annualRate}% p.a.</span>
                           ) : (
                             <span className="text-sm text-slate-500 italic">Manual</span>
                           )}
                         </TableCell>
                         <TableCell className="text-right font-mono font-semibold">
-                          {formatCurrency(investor.current_capital_balance || 0)}
+                          {formatCurrency(interestData.capitalBalance)}
                         </TableCell>
                         <TableCell className="text-right font-mono">
                           <span className={interestData.interestDue > 0 ? 'text-amber-600 font-semibold' : 'text-slate-400'}>
@@ -220,9 +275,20 @@ export default function Investors() {
                           </span>
                         </TableCell>
                         <TableCell className="text-right font-mono">
-                          <span className={interestData.accruing > 0 ? 'text-blue-600' : 'text-slate-400'}>
+                          {/* Muted where the nightly job will never post, so the column
+                              doesn't imply money that is actually never coming. */}
+                          <span
+                            className={
+                              !interestData.willPost ? 'text-slate-400'
+                                : interestData.accruing > 0 ? 'text-blue-600' : 'text-slate-400'
+                            }
+                            title={interestData.willPost ? undefined : 'Not posted automatically'}
+                          >
                             {formatCurrency(interestData.accruing)}
                           </span>
+                          {!interestData.willPost && interestData.accruing > 0 && (
+                            <span className="ml-1 text-xs text-slate-400 italic">manual</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           <Badge className={investor.status === 'Active'

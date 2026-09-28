@@ -18,7 +18,7 @@ import InvestorForm from '@/components/investor/InvestorForm';
 import InvestorTransactionForm from '@/components/investor/InvestorTransactionForm';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format } from 'date-fns';
-import { calculateAccruedInterest } from '@/lib/interestCalculation';
+import { calculateAccruingInterest, resolveInvestorAnnualRate, formatUtcDay } from '@/lib/interestCalculation';
 
 export default function InvestorDetails() {
   const urlParams = new URLSearchParams(window.location.search);
@@ -544,8 +544,8 @@ export default function InvestorDetails() {
     [capitalTransactions]
   );
 
-  // Calculate interest accrual (safe with optional chaining)
-  const annualRate = investor?.annual_interest_rate || product?.interest_rate_per_annum || 0;
+  // Product rate first, matching the nightly job - see resolveInvestorAnnualRate
+  const annualRate = resolveInvestorAnnualRate(investor, product);
   // Calculate current balance from actual transactions (not the stored field which can drift)
   const currentBalance = capitalIn - capitalOut;
 
@@ -563,13 +563,26 @@ export default function InvestorDetails() {
     }
   }, [investor, currentBalance, capitalIn, capitalTransactions.length, investorId, queryClient]);
 
-  // Calculate interest accruing since last posting
+  // Interest accruing since the last posting, segmented at every capital movement.
+  //
+  // Fed the RAW transaction list rather than capitalTransactions: the nightly job treats
+  // every row that is not capital_in as a deduction, legacy interest_* rows included, so
+  // filtering here would show a figure the job will never post. Where that makes the
+  // accrual balance differ from Current Capital, the card says so rather than hiding it.
   const accruedSinceLastPosting = useMemo(() => {
-    if (!investor || !annualRate || currentBalance <= 0) {
-      return { accruedInterest: 0, days: 0, dailyRate: 0 };
+    if (!investor || !annualRate) {
+      return { accruedInterest: 0, days: 0, dailyRate: 0, segments: [], periodStartSource: 'none' };
     }
-    return calculateAccruedInterest(currentBalance, annualRate, investor.last_accrual_date);
-  }, [investor, annualRate, currentBalance]);
+    return calculateAccruingInterest(transactions, annualRate, investor.last_accrual_date, {
+      interestEntries
+    });
+  }, [investor, annualRate, transactions, interestEntries]);
+
+  // The job derives its balance from transactions; Current Capital is capital rows only.
+  // A gap means non-capital rows are sitting in InvestorTransaction.
+  const accrualBalanceDrift =
+    accruedSinceLastPosting.segments?.length > 0 &&
+    Math.abs((accruedSinceLastPosting.balanceAtPeriodEnd ?? currentBalance) - currentBalance) > 0.01;
 
   // Calculate interest due (credits not yet withdrawn)
   // Only count entries dated on or after last_accrual_date (current period)
@@ -808,9 +821,66 @@ export default function InvestorDetails() {
                   {formatCurrency(accruedSinceLastPosting.accruedInterest)}
                 </p>
                 {accruedSinceLastPosting.days > 0 && (
-                  <p className="text-xs text-slate-400">
-                    {accruedSinceLastPosting.days} days @ {formatCurrency(accruedSinceLastPosting.dailyRate)}/day
-                  </p>
+                  accruedSinceLastPosting.segments.length <= 1 ? (
+                    <p className="text-xs text-slate-400">
+                      {accruedSinceLastPosting.days} days @ {formatCurrency(accruedSinceLastPosting.dailyRate)}/day
+                    </p>
+                  ) : (
+                    // One flat rate can't describe a period where capital moved, so the
+                    // subtitle points at the working instead of averaging it away.
+                    <TooltipProvider delayDuration={200}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <button
+                            type="button"
+                            className="text-xs text-slate-400 underline decoration-dotted underline-offset-2 cursor-help"
+                          >
+                            {accruedSinceLastPosting.days} days · {accruedSinceLastPosting.segments.length - 1} balance change
+                            {accruedSinceLastPosting.segments.length === 2 ? '' : 's'}
+                          </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="bottom" className="max-w-md">
+                          <table className="text-xs font-mono">
+                            <tbody>
+                              {accruedSinceLastPosting.segments.map((s, i) => (
+                                <tr key={i}>
+                                  <td className="pr-3 whitespace-nowrap">
+                                    {formatUtcDay(s.startDate)}
+                                    {s.days > 1 && `–${formatUtcDay(s.endDate)}`}
+                                  </td>
+                                  <td className="pr-3 text-right">{formatCurrency(s.balance)}</td>
+                                  <td className="pr-3 text-right whitespace-nowrap">
+                                    {s.days}d @ {formatCurrency(s.dailyRate)}
+                                  </td>
+                                  <td className="text-right">{formatCurrency(s.interest)}</td>
+                                </tr>
+                              ))}
+                              <tr className="border-t">
+                                <td colSpan={3} className="pr-3 pt-1 text-right">Total</td>
+                                <td className="pt-1 text-right">
+                                  {formatCurrency(accruedSinceLastPosting.accruedInterest)}
+                                </td>
+                              </tr>
+                            </tbody>
+                          </table>
+                          {accruedSinceLastPosting.periodStartSource !== 'last_accrual_date' && (
+                            <p className="text-xs mt-2 opacity-80">
+                              {accruedSinceLastPosting.periodStartSource === 'first_transaction'
+                                ? 'Never accrued - measured from the first contribution'
+                                : 'Measured from the last posted interest credit'}
+                            </p>
+                          )}
+                          {accrualBalanceDrift && (
+                            <p className="text-xs mt-2 text-amber-300">
+                              Accrual balance {formatCurrency(accruedSinceLastPosting.balanceAtPeriodEnd)}
+                              {' '}differs from capital balance {formatCurrency(currentBalance)} - non-capital
+                              rows are present in this investor's transactions.
+                            </p>
+                          )}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  )
                 )}
               </div>
               <div>
