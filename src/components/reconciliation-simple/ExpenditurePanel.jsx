@@ -17,6 +17,7 @@ import { formatCurrency } from '@/lib/formatters';
 import BankEntryRow from './BankEntryRow';
 import { extractVendorKeywords, levenshteinSimilarity } from '@/lib/reconciliation/scoring';
 import { findSubsetSum, groupHasRelatedDescriptions, descriptionContainsName, datesWithinDays, amountsMatch } from '@/lib/reconciliation/utils';
+import { buildInvestorSplitContext, suggestWithdrawalSplit } from '@/lib/reconciliation/withdrawalSplit';
 
 export default function ExpenditurePanel({
   entries,
@@ -26,6 +27,7 @@ export default function ExpenditurePanel({
   transactions,
   investorTransactions,
   investorInterestEntries = [],
+  investorProducts = [],
   expenses,
   expenseTypes,
   patterns = [],
@@ -46,6 +48,31 @@ export default function ExpenditurePanel({
     });
     return ids;
   }, [reconciliationEntries]);
+
+  // Interest ledger rows already tied to a bank line. Only the withdrawal form needs
+  // this, to tell an unreconciled draft of the payment being filed from a real prior
+  // withdrawal. Memoised because an inline Set would be a new identity every render and
+  // would invalidate that form's memos.
+  const reconciledInterestIds = useMemo(() => {
+    const ids = new Set();
+    reconciliationEntries.forEach(re => {
+      if (re.interest_id) ids.add(re.interest_id);
+    });
+    return ids;
+  }, [reconciliationEntries]);
+
+  // Per-investor interest position, built once rather than per bank entry.
+  // generateExpenditureSuggestions runs for every entry, so without this the FIFO walk
+  // over the interest ledger would repeat for each (entry x investor) pair.
+  const investorSplitContext = useMemo(
+    () => buildInvestorSplitContext({
+      investors,
+      investorProducts,
+      investorInterestEntries,
+      investorTransactions
+    }),
+    [investors, investorProducts, investorInterestEntries, investorTransactions]
+  );
 
   // Generate expense type suggestions from learned patterns
   const expenseTypeSuggestions = useMemo(() => {
@@ -129,7 +156,8 @@ export default function ExpenditurePanel({
         investorTransactions,
         investorInterestEntries,
         expenses,
-        reconciledTxIds
+        reconciledTxIds,
+        investorSplitContext
       );
       // Include expense type suggestion from patterns
       const expenseTypeSuggestion = expenseTypeSuggestions.get(entry.id);
@@ -144,7 +172,7 @@ export default function ExpenditurePanel({
     });
 
     return withSuggestions;
-  }, [entries, loans, borrowers, investors, transactions, investorTransactions, investorInterestEntries, expenses, reconciledTxIds, sortOrder, expenseTypeSuggestions]);
+  }, [entries, loans, borrowers, investors, transactions, investorTransactions, investorInterestEntries, expenses, reconciledTxIds, investorSplitContext, sortOrder, expenseTypeSuggestions]);
 
   const toggleSort = () => {
     setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc');
@@ -198,6 +226,10 @@ export default function ExpenditurePanel({
             expenseTypes={expenseTypes}
             patterns={patterns}
             oppositeEntries={oppositeEntries}
+            investorInterestEntries={investorInterestEntries}
+            investorTransactions={investorTransactions}
+            investorProducts={investorProducts}
+            reconciledInterestIds={reconciledInterestIds}
             onReconciled={onReconciled}
           />
         ))}
@@ -209,7 +241,7 @@ export default function ExpenditurePanel({
 /**
  * Generate matching suggestions for a debit bank entry
  */
-function generateExpenditureSuggestions(entry, allDebitEntries, loans, borrowers, investors, transactions, investorTransactions, investorInterestEntries, expenses, reconciledTxIds = new Set()) {
+function generateExpenditureSuggestions(entry, allDebitEntries, loans, borrowers, investors, transactions, investorTransactions, investorInterestEntries, expenses, reconciledTxIds = new Set(), investorSplitContext = new Map()) {
   const suggestions = [];
   const entryAmount = Math.abs(entry.amount);
   const entryDate = new Date(entry.statement_date);
@@ -609,28 +641,61 @@ function generateExpenditureSuggestions(entry, allDebitEntries, loans, borrowers
     }
   }
 
-  // 5. Suggest matching to investors by name for withdrawals
+  // 5. Suggest a new investor withdrawal by name, pre-split between capital and interest
   for (const investor of investors) {
     const investorName = (investor.business_name || investor.name || '').toLowerCase();
     if (!investorName) continue;
 
     // Check if investor name appears in description
-    if (entryDesc.includes(investorName.split(' ')[0])) {
-      // Only suggest if not already suggested via transaction or interest match
-      const alreadySuggested = suggestions.some(s =>
-        (s.type === 'investor_withdrawal' || s.type === 'investor_interest') && s.investor?.id === investor.id
-      );
-      if (!alreadySuggested) {
-        suggestions.push({
-          type: 'investor_withdrawal_new',
-          matchMode: 'create',
-          confidence: 0.55,
-          matchReasons: ['Name in description'],
-          investor,
-          label: `New Investor Withdrawal: ${investor.business_name || investor.name}`
-        });
-      }
+    if (!entryDesc.includes(investorName.split(' ')[0])) continue;
+
+    // Only suggest if not already suggested via transaction or interest match
+    const alreadySuggested = suggestions.some(s =>
+      (s.type === 'investor_withdrawal' || s.type === 'investor_interest') && s.investor?.id === investor.id
+    );
+    if (alreadySuggested) continue;
+
+    // Deliberately inside the name gate: a typical bank line names zero or one investor,
+    // so this never becomes entries x investors. The per-investor interest position is
+    // precomputed in investorSplitContext, so this is a penny comparison and a small
+    // subset search, not a walk over the ledger.
+    const ctx = investorSplitContext.get(investor.id);
+    const split = suggestWithdrawalSplit({
+      amount: entryAmount,
+      description: entry.description,
+      statementDate: entry.statement_date,
+      investor,
+      investorProduct: ctx?.product,
+      precomputed: ctx
+    });
+
+    const matchReasons = ['Name in description'];
+    // A full-name hit is better evidence than the first-word test that got us here.
+    const nameScore = descriptionContainsName(entry.description, investor.name, investor.business_name);
+    let confidence = 0.55 + (nameScore >= 0.9 ? 0.03 : 0);
+    let label = `New Investor Withdrawal: ${investor.business_name || investor.name}`;
+
+    if (split.isInterestOnly && split.confidence > 0) {
+      confidence = 0.60 + 0.09 * split.confidence;
+      label = `New Investor Interest Payment: ${investor.business_name || investor.name}`;
+      matchReasons.push(split.reason);
+    } else if (split.interest > 0) {
+      confidence = 0.62;
+      label = `New Investor Withdrawal (split): ${investor.business_name || investor.name}`;
+      matchReasons.push(split.reason);
     }
+
+    suggestions.push({
+      type: 'investor_withdrawal_new',
+      matchMode: 'create',
+      // Capped below 0.70, where a match to an existing transaction starts (sections 1,
+      // 2 and 2b): proposing a new record must never outrank finding a real one.
+      confidence: Math.min(confidence, 0.69),
+      matchReasons,
+      investor,
+      split,
+      label
+    });
   }
 
   // Sort by confidence

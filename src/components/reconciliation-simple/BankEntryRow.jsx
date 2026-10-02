@@ -28,6 +28,8 @@ import { formatCurrency } from '@/lib/formatters';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
 import { reconcileSingleMatch, reconcileMatchGroup, reconcileGroupedDisbursement } from '@/lib/reconciliation/reconcileHandler';
+import { isMatchType } from '@/lib/reconciliation/utils';
+import { formKeyForSuggestion } from '@/lib/reconciliation/formKeys';
 import InlineReceiptFormFull from './InlineReceiptFormFull';
 import InlineInvestorDepositForm from './InlineInvestorDepositForm';
 import InlineOtherIncomeForm from './InlineOtherIncomeForm';
@@ -35,6 +37,12 @@ import InlineDisbursementForm from './InlineDisbursementForm';
 import InlineWithdrawalForm from './InlineWithdrawalForm';
 import InlineExpenseForm from './InlineExpenseForm';
 import InlineOffsetForm from './InlineOffsetForm';
+
+// Stable identities for prop defaults. A `= []` in the destructuring pattern below
+// allocates a fresh array on every render, which would invalidate the child forms'
+// useMemo dependencies every time this row re-renders.
+const EMPTY_ARRAY = [];
+const EMPTY_SET = new Set();
 
 export default function BankEntryRow({
   entry,
@@ -47,20 +55,31 @@ export default function BankEntryRow({
   expenseTypes,
   patterns = [],
   oppositeEntries = [],
+  investorInterestEntries = EMPTY_ARRAY,
+  investorTransactions = EMPTY_ARRAY,
+  investorProducts = EMPTY_ARRAY,
+  reconciledInterestIds = EMPTY_SET,
   onReconciled
 }) {
   const [expanded, setExpanded] = useState(false);
   const [expandedForm, setExpandedForm] = useState(null);
   const [isAccepting, setIsAccepting] = useState(null);
+  // The suggestion whose Create button opened the current form, so the form can start
+  // from the entity the suggestion already picked instead of re-guessing it.
+  const [activeSuggestion, setActiveSuggestion] = useState(null);
 
   const isCredit = entry.amount > 0;
   const absAmount = Math.abs(entry.amount);
 
   // Accept a suggestion (match to existing transaction)
   const handleAcceptSuggestion = async (suggestion) => {
-    if (suggestion.matchMode !== 'match' && suggestion.matchMode !== 'match_group' && suggestion.matchMode !== 'grouped_disbursement') {
-      // For 'create' mode suggestions, expand the form
-      setExpandedForm(suggestion.type);
+    if (!isMatchType(suggestion.matchMode)) {
+      // 'create' suggestions carry a `_new` suffix the form keys do not - map before
+      // setting, or the form never opens.
+      const formKey = formKeyForSuggestion(suggestion);
+      if (!formKey) return;
+      setActiveSuggestion(suggestion);
+      setExpandedForm(formKey);
       setExpanded(true);
       return;
     }
@@ -97,14 +116,24 @@ export default function BankEntryRow({
     }
   };
 
+  // Open or close a form from the "Create New" icons. Clears activeSuggestion so a form
+  // opened this way cannot inherit a preset from a suggestion the user chose to ignore.
+  const toggleForm = (key) => {
+    setActiveSuggestion(null);
+    setExpandedForm(prev => (prev === key ? null : key));
+    if (expandedForm !== key) setExpanded(true);
+  };
+
   // Handle form close
   const handleFormClose = () => {
     setExpandedForm(null);
+    setActiveSuggestion(null);
   };
 
   // Handle successful reconciliation from inline form
   const handleFormSuccess = () => {
     setExpandedForm(null);
+    setActiveSuggestion(null);
     onReconciled?.();
   };
 
@@ -124,10 +153,8 @@ export default function BankEntryRow({
   // 'strong' = high-confidence (pattern match / create suggestion); 'soft' = default fallback.
   const suggestedCreate = (() => {
     if (bestSuggestion?.matchMode === 'create') {
-      if (bestSuggestion.type === 'loan_repayment_new') return { kind: 'loan_repayment', strong: true };
-      if (bestSuggestion.type === 'investor_credit_new') return { kind: 'investor_deposit', strong: true };
-      if (bestSuggestion.type === 'loan_disbursement_new') return { kind: 'loan_disbursement', strong: true };
-      if (bestSuggestion.type === 'investor_withdrawal_new') return { kind: 'investor_withdrawal', strong: true };
+      const kind = formKeyForSuggestion(bestSuggestion);
+      if (kind) return { kind, strong: true };
     }
     if (type === 'expenditure' && expenseTypeSuggestion) {
       return { kind: 'expense', strong: true };
@@ -245,10 +272,7 @@ export default function BankEntryRow({
                       variant={expandedForm === 'loan_repayment' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('loan_repayment')}
-                      onClick={() => {
-                        setExpandedForm(expandedForm === 'loan_repayment' ? null : 'loan_repayment');
-                        if (expandedForm !== 'loan_repayment') setExpanded(true);
-                      }}
+                      onClick={() => toggleForm('loan_repayment')}
                     >
                       <Receipt className="w-4 h-4" />
                     </Button>
@@ -261,10 +285,7 @@ export default function BankEntryRow({
                       variant={expandedForm === 'investor_deposit' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('investor_deposit')}
-                      onClick={() => {
-                        setExpandedForm(expandedForm === 'investor_deposit' ? null : 'investor_deposit');
-                        if (expandedForm !== 'investor_deposit') setExpanded(true);
-                      }}
+                      onClick={() => toggleForm('investor_deposit')}
                     >
                       <TrendingUp className="w-4 h-4" />
                     </Button>
@@ -277,10 +298,7 @@ export default function BankEntryRow({
                       variant={expandedForm === 'other_income' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('other_income')}
-                      onClick={() => {
-                        setExpandedForm(expandedForm === 'other_income' ? null : 'other_income');
-                        if (expandedForm !== 'other_income') setExpanded(true);
-                      }}
+                      onClick={() => toggleForm('other_income')}
                     >
                       <Coins className="w-4 h-4" />
                     </Button>
@@ -293,10 +311,7 @@ export default function BankEntryRow({
                       variant={expandedForm === 'offset' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('offset')}
-                      onClick={() => {
-                        setExpandedForm(expandedForm === 'offset' ? null : 'offset');
-                        if (expandedForm !== 'offset') setExpanded(true);
-                      }}
+                      onClick={() => toggleForm('offset')}
                     >
                       <ArrowLeftRight className="w-4 h-4" />
                     </Button>
@@ -312,10 +327,7 @@ export default function BankEntryRow({
                       variant={expandedForm === 'loan_disbursement' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('loan_disbursement')}
-                      onClick={() => {
-                        setExpandedForm(expandedForm === 'loan_disbursement' ? null : 'loan_disbursement');
-                        if (expandedForm !== 'loan_disbursement') setExpanded(true);
-                      }}
+                      onClick={() => toggleForm('loan_disbursement')}
                     >
                       <FileText className="w-4 h-4" />
                     </Button>
@@ -328,10 +340,7 @@ export default function BankEntryRow({
                       variant={expandedForm === 'investor_withdrawal' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('investor_withdrawal')}
-                      onClick={() => {
-                        setExpandedForm(expandedForm === 'investor_withdrawal' ? null : 'investor_withdrawal');
-                        if (expandedForm !== 'investor_withdrawal') setExpanded(true);
-                      }}
+                      onClick={() => toggleForm('investor_withdrawal')}
                     >
                       <TrendingUp className="w-4 h-4" />
                     </Button>
@@ -344,10 +353,7 @@ export default function BankEntryRow({
                       variant={expandedForm === 'expense' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('expense')}
-                      onClick={() => {
-                        setExpandedForm(expandedForm === 'expense' ? null : 'expense');
-                        if (expandedForm !== 'expense') setExpanded(true);
-                      }}
+                      onClick={() => toggleForm('expense')}
                     >
                       <Banknote className="w-4 h-4" />
                     </Button>
@@ -360,10 +366,7 @@ export default function BankEntryRow({
                       variant={expandedForm === 'offset' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('offset')}
-                      onClick={() => {
-                        setExpandedForm(expandedForm === 'offset' ? null : 'offset');
-                        if (expandedForm !== 'offset') setExpanded(true);
-                      }}
+                      onClick={() => toggleForm('offset')}
                     >
                       <ArrowLeftRight className="w-4 h-4" />
                     </Button>
@@ -483,7 +486,7 @@ export default function BankEntryRow({
                         >
                           {isAccepting === suggestion ? (
                             <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (suggestion.matchMode === 'match' || suggestion.matchMode === 'match_group' || suggestion.matchMode === 'grouped_disbursement') ? (
+                          ) : isMatchType(suggestion.matchMode) ? (
                             <>
                               <Check className="w-4 h-4 mr-1" />
                               Accept
@@ -522,6 +525,7 @@ export default function BankEntryRow({
               <InlineInvestorDepositForm
                 bankEntry={entry}
                 investors={investors}
+                presetInvestorId={activeSuggestion?.investor?.id}
                 onSuccess={handleFormSuccess}
                 onCancel={handleFormClose}
               />
@@ -540,6 +544,8 @@ export default function BankEntryRow({
                 bankEntry={entry}
                 loans={loans}
                 borrowers={borrowers}
+                presetLoanId={activeSuggestion?.loan?.id}
+                presetBorrowerId={activeSuggestion?.borrower?.id}
                 onSuccess={handleFormSuccess}
                 onCancel={handleFormClose}
               />
@@ -549,6 +555,12 @@ export default function BankEntryRow({
               <InlineWithdrawalForm
                 bankEntry={entry}
                 investors={investors}
+                presetInvestorId={activeSuggestion?.investor?.id}
+                presetSplit={activeSuggestion?.split}
+                interestEntries={investorInterestEntries}
+                investorTransactions={investorTransactions}
+                investorProducts={investorProducts}
+                reconciledInterestIds={reconciledInterestIds}
                 onSuccess={handleFormSuccess}
                 onCancel={handleFormClose}
               />

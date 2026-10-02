@@ -3,7 +3,7 @@
  * Uses same UX patterns as receipts: searchable borrower, detailed loan list
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import {
@@ -30,6 +30,8 @@ export default function InlineDisbursementForm({
   bankEntry,
   loans,
   borrowers,
+  presetBorrowerId,
+  presetLoanId,
   onSuccess,
   onCancel
 }) {
@@ -112,18 +114,15 @@ export default function InlineDisbursementForm({
     return bestMatch;
   }, [bankEntry.description, borrowers]);
 
-  const [selectedBorrowerId, setSelectedBorrowerId] = useState(suggestedBorrowerId);
-  const [selectedLoanId, setSelectedLoanId] = useState('');
+  // Derived rather than stored: a suggestion's loan or borrower wins over this form's
+  // own name matching, and the user's choice wins over both. No effect to go stale.
+  const [borrowerOverride, setBorrowerOverride] = useState(null);
+  const [loanOverride, setLoanOverride] = useState(null);
+  const selectedBorrowerId = borrowerOverride ?? presetBorrowerId ?? suggestedBorrowerId ?? '';
+  const selectedLoanId = loanOverride ?? presetLoanId ?? '';
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [borrowerOpen, setBorrowerOpen] = useState(false);
   const [borrowerSearch, setBorrowerSearch] = useState('');
-
-  // Update selection when suggestion changes
-  useEffect(() => {
-    if (suggestedBorrowerId && !selectedBorrowerId) {
-      setSelectedBorrowerId(suggestedBorrowerId);
-    }
-  }, [suggestedBorrowerId, selectedBorrowerId]);
 
   // Get loans that might need disbursements (Pending, Live, or recently created)
   const eligibleLoans = useMemo(() => {
@@ -191,15 +190,16 @@ export default function InlineDisbursementForm({
 
   // Handle borrower select
   const handleBorrowerSelect = (borrower) => {
-    setSelectedBorrowerId(borrower.id);
-    setSelectedLoanId('');
+    setBorrowerOverride(borrower.id);
+    // A different borrower invalidates any preset loan, so clear to an explicit empty.
+    setLoanOverride('');
     setBorrowerOpen(false);
     setBorrowerSearch('');
   };
 
   // Handle loan select
   const handleLoanSelect = (loanId) => {
-    setSelectedLoanId(loanId === selectedLoanId ? '' : loanId);
+    setLoanOverride(loanId === selectedLoanId ? '' : loanId);
   };
 
   // Handle submit

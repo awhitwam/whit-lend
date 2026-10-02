@@ -2,7 +2,7 @@
  * InlineInvestorDepositForm - Compact single-row investor deposit form
  */
 
-import { useState, useMemo, useEffect } from 'react';
+import { useState, useMemo } from 'react';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Loader2, X, Check } from 'lucide-react';
@@ -13,6 +13,7 @@ import { createInvestorCredit } from '@/lib/reconciliation/reconcileHandler';
 export default function InlineInvestorDepositForm({
   bankEntry,
   investors,
+  presetInvestorId,
   onSuccess,
   onCancel
 }) {
@@ -100,15 +101,11 @@ export default function InlineInvestorDepositForm({
     return bestMatch;
   }, [bankEntry.description, activeInvestors]);
 
-  const [selectedInvestorId, setSelectedInvestorId] = useState(suggestedInvestorId);
+  // Derived rather than stored: a suggestion's investor wins over this form's own name
+  // matching, and the user's choice wins over both. No effect to go stale.
+  const [investorIdOverride, setInvestorIdOverride] = useState(null);
+  const selectedInvestorId = investorIdOverride ?? presetInvestorId ?? suggestedInvestorId ?? '';
   const [isSubmitting, setIsSubmitting] = useState(false);
-
-  // Update selection when suggestion changes (e.g., when data loads)
-  useEffect(() => {
-    if (suggestedInvestorId && !selectedInvestorId) {
-      setSelectedInvestorId(suggestedInvestorId);
-    }
-  }, [suggestedInvestorId, selectedInvestorId]);
 
   // Handle submit
   const handleSubmit = async () => {
@@ -140,7 +137,7 @@ export default function InlineInvestorDepositForm({
   return (
     <div className="flex items-center gap-2 p-2 bg-white rounded-lg shadow-sm">
       <span className="text-sm font-medium text-slate-600 shrink-0">Investor Deposit:</span>
-      <Select value={selectedInvestorId} onValueChange={setSelectedInvestorId}>
+      <Select value={selectedInvestorId} onValueChange={setInvestorIdOverride}>
         <SelectTrigger className="h-8 flex-1 min-w-[200px]">
           <SelectValue placeholder="Select investor" />
         </SelectTrigger>

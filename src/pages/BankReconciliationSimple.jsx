@@ -134,6 +134,14 @@ export default function BankReconciliationSimple() {
     queryFn: () => api.entities.InvestorInterest.list('-date')
   });
 
+  // Investor products carry the interest rate the withdrawal split suggester needs.
+  // Same query key InlineWithdrawalForm already uses, so react-query serves both from
+  // one cache entry rather than fetching twice.
+  const { data: investorProducts = [] } = useQuery({
+    queryKey: ['investor-products'],
+    queryFn: () => api.entities.InvestorProduct.list()
+  });
+
   // Split bank statements into credits (receipts) and debits (expenditure)
   const { credits, debits } = useMemo(() => {
     const credits = bankStatements.filter(e => e.amount > 0);
@@ -472,6 +480,7 @@ export default function BankReconciliationSimple() {
                 transactions={transactions}
                 investorTransactions={investorTransactions}
                 investorInterestEntries={investorInterestEntries}
+                investorProducts={investorProducts}
                 expenses={expenses}
                 expenseTypes={expenseTypes}
                 patterns={patterns}
