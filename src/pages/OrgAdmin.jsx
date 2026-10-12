@@ -1297,6 +1297,8 @@ export default function OrgAdmin() {
       'receipt_drafts': 'ReceiptDraft',
       'reconciliation_patterns': 'ReconciliationPattern',
       'reconciliation_entries': 'ReconciliationEntry',
+      'internal_accounts': 'InternalAccount',
+      'internal_transfers': 'InternalTransfer',
       'accepted_orphans': 'AcceptedOrphan',
       'audit_logs': 'AuditLog',
       'invitations': 'Invitation',
@@ -1335,6 +1337,7 @@ export default function OrgAdmin() {
       'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
       'value_history', 'bank_statements', 'other_income', 'property_documents',
       'borrower_loan_preferences', 'receipt_drafts',
+      'internal_accounts', 'internal_transfers',
       'reconciliation_patterns', 'reconciliation_entries',
       'accepted_orphans',
       'audit_logs',
@@ -1491,6 +1494,7 @@ export default function OrgAdmin() {
         'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
         'value_history', 'bank_statements', 'other_income', 'property_documents',
         'borrower_loan_preferences', 'receipt_drafts',
+        'internal_accounts', 'internal_transfers',
         'reconciliation_patterns', 'reconciliation_entries',
         'accepted_orphans',
         'invitations',  // Pending org invitations
@@ -1538,7 +1542,8 @@ export default function OrgAdmin() {
         'property_documents': ['property_id'],
         'borrower_loan_preferences': ['borrower_id', 'loan_id'],
         'receipt_drafts': ['loan_id', 'borrower_id'],
-        'reconciliation_entries': ['bank_statement_id', 'loan_transaction_id', 'investor_transaction_id', 'expense_id', 'other_income_id', 'interest_id'],
+        'internal_transfers': ['internal_account_id'],
+        'reconciliation_entries': ['bank_statement_id', 'loan_transaction_id', 'investor_transaction_id', 'expense_id', 'other_income_id', 'interest_id', 'internal_transfer_id'],
         'accepted_orphans': ['entity_id'],  // entity_id is polymorphic, handled specially
         'organization_summary': [],  // Uses organization_id as PK, handled specially
         'letter_templates': ['created_by'],  // created_by is user_id, may be null

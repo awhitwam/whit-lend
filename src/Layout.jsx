@@ -36,6 +36,7 @@ import {
   FileCheck,
   DollarSign,
   Coins,
+  PiggyBank,
   Info,
   Crown,
   MessageSquare,
@@ -95,6 +96,7 @@ const navigation = [
       { name: 'Orphaned Entries', href: 'OrphanedEntries', icon: AlertCircle },
       { name: 'Expenses', href: 'Expenses', icon: Banknote },
       { name: 'Other Income', href: 'OtherIncome', icon: Coins },
+      { name: 'Internal Accounts', href: 'InternalAccounts', icon: PiggyBank },
     ]
   },
   {

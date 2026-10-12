@@ -134,6 +134,18 @@ export default function BankReconciliationSimple() {
     queryFn: () => api.entities.InvestorInterest.list('-date')
   });
 
+  // Internal accounts (savings pots etc) and their movements, for filing transfers
+  // between the organisation's own accounts.
+  const { data: internalAccounts = [] } = useQuery({
+    queryKey: ['internal-accounts'],
+    queryFn: () => api.entities.InternalAccount.list('name')
+  });
+
+  const { data: internalTransfers = [] } = useQuery({
+    queryKey: ['internal-transfers'],
+    queryFn: () => api.entities.InternalTransfer.list('-date')
+  });
+
   // Investor products carry the interest rate the withdrawal split suggester needs.
   // Same query key InlineWithdrawalForm already uses, so react-query serves both from
   // one cache entry rather than fetching twice.
@@ -204,6 +216,7 @@ export default function BankReconciliationSimple() {
     queryClient.invalidateQueries({ queryKey: ['transactions'] });
     queryClient.invalidateQueries({ queryKey: ['investor-transactions'] });
     queryClient.invalidateQueries({ queryKey: ['investor-interest'] });
+    queryClient.invalidateQueries({ queryKey: ['internal-transfers'] });
     queryClient.invalidateQueries({ queryKey: ['expenses'] });
     queryClient.invalidateQueries({ queryKey: ['loans'] });
     queryClient.invalidateQueries({ queryKey: ['reconciliation-entries'] });
@@ -459,6 +472,8 @@ export default function BankReconciliationSimple() {
                 investorTransactions={investorTransactions}
                 reconciliationEntries={reconciliationEntries}
                 oppositeEntries={debits}
+                internalAccounts={internalAccounts}
+                internalTransfers={internalTransfers}
                 onReconciled={handleRefresh}
               />
             )}
@@ -481,6 +496,8 @@ export default function BankReconciliationSimple() {
                 investorTransactions={investorTransactions}
                 investorInterestEntries={investorInterestEntries}
                 investorProducts={investorProducts}
+                internalAccounts={internalAccounts}
+                internalTransfers={internalTransfers}
                 expenses={expenses}
                 expenseTypes={expenseTypes}
                 patterns={patterns}
@@ -504,6 +521,8 @@ export default function BankReconciliationSimple() {
               expenses={expenses}
               expenseTypes={expenseTypes}
               otherIncome={otherIncome}
+              internalAccounts={internalAccounts}
+              internalTransfers={internalTransfers}
               onUnreconcile={handleRefresh}
             />
           </TabsContent>

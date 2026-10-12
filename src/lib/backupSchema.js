@@ -1,7 +1,7 @@
 // Schema definitions for backup/restore compatibility
 // Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
 
-export const CURRENT_SCHEMA_VERSION = 86;
+export const CURRENT_SCHEMA_VERSION = 87;
 
 // Define columns and defaults for each table
 // When adding new columns to tables, add them here with appropriate defaults
@@ -194,10 +194,25 @@ export const tableSchemas = {
   },
 
   reconciliation_entries: {
+    // 'amount' is NOT NULL in the DB (migration 033) and was missing from this list,
+    // so a restored backup would have failed on it.
     columns: ['id', 'organization_id', 'bank_statement_id', 'loan_transaction_id',
               'investor_transaction_id', 'interest_id', 'expense_id', 'other_income_id',
+              'internal_transfer_id', 'amount',
               'reconciliation_type', 'notes', 'created_at', 'was_created'],
     defaults: { was_created: false }
+  },
+
+  internal_accounts: {
+    columns: ['id', 'organization_id', 'name', 'description', 'match_keyword',
+              'is_active', 'created_at', 'updated_at', 'created_by'],
+    defaults: { is_active: true }
+  },
+
+  internal_transfers: {
+    columns: ['id', 'organization_id', 'internal_account_id', 'date', 'amount',
+              'direction', 'description', 'reference', 'created_at', 'created_by'],
+    defaults: {}
   },
 
   accepted_orphans: {

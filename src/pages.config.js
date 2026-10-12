@@ -34,6 +34,7 @@ const OrgAdmin = lazy(() => import('./pages/OrgAdmin'));
 const BankReconciliation = lazy(() => import('./pages/BankReconciliation'));
 const BankReconciliationSimple = lazy(() => import('./pages/BankReconciliationSimple'));
 const OtherIncome = lazy(() => import('./pages/OtherIncome'));
+const InternalAccounts = lazy(() => import('./pages/InternalAccounts'));
 const OrphanedEntries = lazy(() => import('./pages/OrphanedEntries'));
 const Receipts = lazy(() => import('./pages/Receipts'));
 const About = lazy(() => import('./pages/About'));
@@ -78,6 +79,7 @@ export const PAGES = {
     "BankReconciliation": BankReconciliation,
     "BankReconciliationSimple": BankReconciliationSimple,
     "OtherIncome": OtherIncome,
+    "InternalAccounts": InternalAccounts,
     "OrphanedEntries": OrphanedEntries,
     "Receipts": Receipts,
     "About": About,

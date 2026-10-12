@@ -73,6 +73,8 @@ export default function ReconciledPanel({
   expenses = [],
   expenseTypes = [],
   otherIncome = [],
+  internalAccounts = [],
+  internalTransfers = [],
   onUnreconcile
 }) {
   const [expandedGroups, setExpandedGroups] = useState(new Set());
@@ -432,6 +434,22 @@ export default function ReconciledPanel({
           amount: recon.amount
         });
       }
+      if (recon.internal_transfer_id) {
+        const transfer = internalTransfers.find(t => t.id === recon.internal_transfer_id);
+        const account = transfer
+          ? internalAccounts.find(a => a.id === transfer.internal_account_id)
+          : null;
+        const towards = transfer?.direction === 'out' ? 'from' : 'to';
+        links.push({
+          type: 'internal_transfer',
+          label: account
+            ? `Transfer ${towards} ${account.name}`
+            : 'Internal Transfer',
+          href: '/InternalAccounts',
+          amount: recon.amount,
+          txDate: transfer?.date
+        });
+      }
       if (recon.interest_id) {
         const interest = investorInterestEntries.find(i => i.id === recon.interest_id);
         const investor = interest ? investors.find(inv => inv.id === interest.investor_id) : null;
@@ -478,6 +496,7 @@ export default function ReconciledPanel({
             link.type === 'investor_interest' ? 'text-purple-600 hover:text-purple-800' :
             link.type === 'expense' ? 'text-orange-600 hover:text-orange-800' :
             link.type === 'other_income' ? 'text-emerald-600 hover:text-emerald-800' :
+            link.type === 'internal_transfer' ? 'text-indigo-600 hover:text-indigo-800' :
             'text-slate-600';
 
           return (

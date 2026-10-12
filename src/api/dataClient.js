@@ -67,6 +67,9 @@ const tableMap = {
   ReconciliationPattern: 'reconciliation_patterns',
   // Other income
   OtherIncome: 'other_income',
+  // Internal accounts (savings pots etc) and movements between them
+  InternalAccount: 'internal_accounts',
+  InternalTransfer: 'internal_transfers',
   // Investor interest ledger
   InvestorInterest: 'investor_interest',
   // Receipts module
@@ -112,6 +115,9 @@ const orgScopedTables = [
   'reconciliation_patterns',
   // Other income
   'other_income',
+  // Internal accounts and transfers
+  'internal_accounts',
+  'internal_transfers',
   // Investor interest ledger
   'investor_interest',
   // Receipts module

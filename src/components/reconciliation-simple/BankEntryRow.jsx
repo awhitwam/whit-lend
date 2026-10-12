@@ -22,6 +22,7 @@ import {
   Banknote,
   FileText,
   ArrowLeftRight,
+  PiggyBank,
   Loader2
 } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatters';
@@ -37,6 +38,7 @@ import InlineDisbursementForm from './InlineDisbursementForm';
 import InlineWithdrawalForm from './InlineWithdrawalForm';
 import InlineExpenseForm from './InlineExpenseForm';
 import InlineOffsetForm from './InlineOffsetForm';
+import InlineTransferForm from './InlineTransferForm';
 
 // Stable identities for prop defaults. A `= []` in the destructuring pattern below
 // allocates a fresh array on every render, which would invalidate the child forms'
@@ -59,6 +61,8 @@ export default function BankEntryRow({
   investorTransactions = EMPTY_ARRAY,
   investorProducts = EMPTY_ARRAY,
   reconciledInterestIds = EMPTY_SET,
+  internalAccounts = EMPTY_ARRAY,
+  internalTransfers = EMPTY_ARRAY,
   onReconciled
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -308,6 +312,19 @@ export default function BankEntryRow({
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <Button
+                      variant={expandedForm === 'internal_transfer' ? 'default' : 'ghost'}
+                      size="icon"
+                      className={getCreateIconClass('internal_transfer')}
+                      onClick={() => toggleForm('internal_transfer')}
+                    >
+                      <PiggyBank className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Transfer Between Accounts{getCreateTooltipSuffix('internal_transfer')}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
                       variant={expandedForm === 'offset' ? 'default' : 'ghost'}
                       size="icon"
                       className={getCreateIconClass('offset')}
@@ -359,6 +376,19 @@ export default function BankEntryRow({
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent>Expense{getCreateTooltipSuffix('expense')}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={expandedForm === 'internal_transfer' ? 'default' : 'ghost'}
+                      size="icon"
+                      className={getCreateIconClass('internal_transfer')}
+                      onClick={() => toggleForm('internal_transfer')}
+                    >
+                      <PiggyBank className="w-4 h-4" />
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent>Transfer Between Accounts{getCreateTooltipSuffix('internal_transfer')}</TooltipContent>
                 </Tooltip>
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -573,6 +603,16 @@ export default function BankEntryRow({
                 expenseTypeSuggestion={expenseTypeSuggestion}
                 patterns={patterns}
                 loans={loans}
+                onSuccess={handleFormSuccess}
+                onCancel={handleFormClose}
+              />
+            )}
+
+            {expandedForm === 'internal_transfer' && (
+              <InlineTransferForm
+                bankEntry={entry}
+                internalAccounts={internalAccounts}
+                internalTransfers={internalTransfers}
                 onSuccess={handleFormSuccess}
                 onCancel={handleFormClose}
               />

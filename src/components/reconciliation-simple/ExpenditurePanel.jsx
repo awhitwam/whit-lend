@@ -33,6 +33,8 @@ export default function ExpenditurePanel({
   patterns = [],
   reconciliationEntries = [],
   oppositeEntries = [],
+  internalAccounts = [],
+  internalTransfers = [],
   onReconciled
 }) {
   const [sortOrder, setSortOrder] = useState('desc'); // 'asc' or 'desc'
@@ -230,6 +232,8 @@ export default function ExpenditurePanel({
             investorTransactions={investorTransactions}
             investorProducts={investorProducts}
             reconciledInterestIds={reconciledInterestIds}
+            internalAccounts={internalAccounts}
+            internalTransfers={internalTransfers}
             onReconciled={onReconciled}
           />
         ))}

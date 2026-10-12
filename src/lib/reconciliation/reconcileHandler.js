@@ -51,6 +51,7 @@ async function createReconciliationEntry({
   expenseId = null,
   otherIncomeId = null,
   interestId = null,
+  internalTransferId = null,
   amount,
   reconciliationType,
   notes = null,
@@ -63,6 +64,7 @@ async function createReconciliationEntry({
     expense_id: expenseId,
     other_income_id: otherIncomeId,
     interest_id: interestId,
+    internal_transfer_id: internalTransferId,
     amount,
     reconciliation_type: reconciliationType,
     notes,
@@ -640,6 +642,64 @@ export async function createExpense({ bankEntry, expenseType, description, loan_
 }
 
 /**
+ * Record a movement between the organisation's own accounts and reconcile the bank line.
+ *
+ * A savings-pot transfer looks like an ordinary debit or credit in the bank feed, but no
+ * money has entered or left the business - so this creates no expense, income, loan or
+ * investor record. The internal_transfers row exists only to give the pot a running
+ * balance; nothing in the accountant or income & expenditure reports reads it, which is
+ * what keeps these movements out of the P&L without every report needing an exclusion.
+ *
+ * Direction is derived from the bank entry, not passed in: a debit (money leaving the
+ * current account) is money going INTO the pot, and a credit is money coming back OUT.
+ *
+ * @param {Object} params
+ * @param {Object} params.bankEntry - The bank entry
+ * @param {Object} params.internalAccount - The internal account being moved to/from
+ * @param {string} [params.description] - Optional description override
+ * @returns {Promise<Object>} The created transfer
+ */
+export async function createInternalTransfer({ bankEntry, internalAccount, description }) {
+  if (!internalAccount?.id) throw new Error('No internal account selected');
+
+  const amount = Math.abs(bankEntry.amount);
+  // bankEntry.amount < 0 means money left the current account, so it landed in the pot.
+  const direction = bankEntry.amount < 0 ? 'in' : 'out';
+
+  const created = await api.entities.InternalTransfer.create({
+    internal_account_id: internalAccount.id,
+    date: bankEntry.statement_date,
+    amount,
+    direction,
+    description: description || bankEntry.description,
+    reference: bankEntry.external_reference || null
+  });
+
+  await createReconciliationEntry({
+    bankStatementId: bankEntry.id,
+    internalTransferId: created.id,
+    amount: bankEntry.amount,
+    reconciliationType: 'internal_transfer',
+    notes: `Transfer ${direction === 'in' ? 'to' : 'from'} ${internalAccount.name}`,
+    wasCreated: true
+  });
+
+  await markBankEntryReconciled(bankEntry.id);
+
+  logReconciliationEvent(AuditAction.RECONCILIATION_CREATE, {
+    bank_statement_id: bankEntry.id,
+    description: bankEntry.description,
+    amount,
+    type: 'internal_transfer',
+    direction,
+    internal_account_id: internalAccount.id,
+    internal_account_name: internalAccount.name
+  });
+
+  return created;
+}
+
+/**
  * Un-reconcile a bank entry
  *
  * @param {Object} params
@@ -666,6 +726,9 @@ export async function unreconcile({ bankEntryId, reconciliationEntries, deleteCr
       }
       if (entry.other_income_id) {
         await api.entities.OtherIncome.delete(entry.other_income_id);
+      }
+      if (entry.internal_transfer_id) {
+        await api.entities.InternalTransfer.delete(entry.internal_transfer_id);
       }
     }
 
