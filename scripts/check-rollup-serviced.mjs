@@ -23,6 +23,7 @@ import {
   getRollUpInterestFromSchedule,
   interestAccruedOnRow,
   calculateInterestOutstandingAtDate,
+  getPeriodWindow,
   allocateSettlement,
   getDailyRate,
   roundCurrency
@@ -232,6 +233,22 @@ const afterPaying = calculateInterestOutstandingAtDate({
   schedule: fullSchedule, transactions, asOfDate: PAID_ON
 });
 check('settled interest is deducted', roundCurrency(afterPaying.outstanding), 0);
+
+// --- 8c. Accrual windows: a row charges for the period ENDING on its due date ---
+// This is what the row labels say, so it has to survive BST: subtracting days from a UTC-parsed
+// midnight under British Summer Time is what made the schedule-calc CSV a day short.
+const windowOf = (due, days) => getPeriodWindow({ due_date: due, calculation_days: days });
+const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+check('roll-up window starts at the loan start', iso(windowOf('2025-12-03', 183).start), '2025-06-03');
+check('roll-up window ends on its due date', iso(windowOf('2025-12-03', 183).end), '2025-12-03');
+// The row labelled "October 2026" is really 3 Sep - 3 Oct. That is the whole point of the label.
+check('Oct row covers 03/09 -> 03/10', iso(windowOf('2026-10-03', 30).start), '2026-09-03');
+check('Nov row covers 03/10 -> 03/11', iso(windowOf('2026-11-03', 31).start), '2026-10-03');
+// Periods wholly inside GMT must not drift either.
+check('Feb row covers 03/01 -> 03/02', iso(windowOf('2026-02-03', 31).start), '2026-01-03');
+check('no calculation_days means no window', windowOf('2026-10-03', 0), null);
+check('no due date means no window', getPeriodWindow({ calculation_days: 30 }), null);
 
 // --- 9. Redemption allocation: interest, then fees, then capital ---
 const split = allocateSettlement({

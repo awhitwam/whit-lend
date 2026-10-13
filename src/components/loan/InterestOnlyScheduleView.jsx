@@ -15,13 +15,27 @@ import { Button } from '@/components/ui/button';
 import { format, differenceInDays, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from './LoanCalculator';
-import { getCurrentInterestBase, getRollUpInterestFromSchedule, calculateSegmentedInterest, getDailyRate } from '@/lib/schedule/utils/interestCalculations';
+import { getCurrentInterestBase, getRollUpInterestFromSchedule, calculateSegmentedInterest, getDailyRate, getPeriodWindow } from '@/lib/schedule/utils/interestCalculations';
 import { CalendarClock, ArrowRightCircle, ArrowLeftCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUp, ArrowDown, TrendingUp, RefreshCcw } from 'lucide-react';
 
 /**
  * Build a unified timeline from transactions and schedule entries
  * Each transaction and schedule entry gets its own row (no merging by date)
  */
+/**
+ * "3 Sep - 3 Oct" for a schedule row's accrual window.
+ *
+ * Arrears rows charge for the period ENDING on their due date, so the month a row is filed under
+ * is not the month it covers. Spelling the window out is what stops a row due 03/10 reading as a
+ * charge raised in October.
+ */
+function formatPeriodWindow(window) {
+  if (!window) return null;
+
+  const sameYear = window.start.getFullYear() === window.end.getFullYear();
+  return `${format(window.start, sameYear ? 'd MMM' : 'd MMM yyyy')} – ${format(window.end, 'd MMM yyyy')}`;
+}
+
 function buildTimeline({ loan, product, schedule, transactions }) {
   const rows = [];
 
@@ -139,6 +153,8 @@ function buildTimeline({ loan, product, schedule, transactions }) {
       expectedInterest: scheduleEntry.interest_amount || 0,
       isDueDate: true,
       scheduleEntry: scheduleEntry,
+      // The window this row charges for - a row due 03/10 covers 03/09 to 03/10, not October.
+      periodWindow: getPeriodWindow(scheduleEntry),
       calculationBreakdown: null // Will be calculated below
     });
   });
@@ -253,10 +269,10 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         // them. Recompute the real day-by-day split instead: a repayment made mid-period has to
         // show as "15d x £534.25/day + 15d x £7.15/day" rather than a flat month.
         let rollUpSegments = null;
-        if (days > 0 && (isRollUpPeriod || isServicedPeriod)) {
-          const segPeriodEnd = new Date(scheduleEntry.due_date);
-          const segPeriodStart = new Date(segPeriodEnd);
-          segPeriodStart.setDate(segPeriodStart.getDate() - days);
+        const periodWindow = getPeriodWindow(scheduleEntry);
+        if (periodWindow && (isRollUpPeriod || isServicedPeriod)) {
+          const segPeriodStart = periodWindow.start;
+          const segPeriodEnd = periodWindow.end;
 
           const { segments } = calculateSegmentedInterest({
             initialPrincipal: loan.principal_amount,
@@ -313,6 +329,9 @@ function buildTimeline({ loan, product, schedule, transactions }) {
           const calcStr = rollUpSegments
             ? `${rollUpSegments.map(seg => `${seg.days}d × ${formatCurrency(seg.dailyInterest)}/day`).join(' + ')} (${effectiveRate}% pa)`
             : `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`;
+          const windowLabel = formatPeriodWindow(periodWindow);
+          const windowPrefix = windowLabel ? `${windowLabel}: ` : '';
+
           if (isRollUpPeriod) {
             // Show roll-up period length in months (approximate from days)
             const rollUpMonths = Math.round(days / 30.44);
@@ -321,12 +340,12 @@ function buildTimeline({ loan, product, schedule, transactions }) {
             const impliedFromDays = displayDailyRate * days;
             const isAgreedAmount = storedInterest > 0 && Math.abs(impliedFromDays - storedInterest) > 1;
             breakdownStr = isAgreedAmount
-              ? `Roll-up (${rollUpMonths}m) now capitalised: agreed ${formatCurrency(storedInterest)} over ${days}d (${effectiveRate}% pa)`
-              : `Roll-up (${rollUpMonths}m) now capitalised: ${calcStr}`;
+              ? `Roll-up (${rollUpMonths}m) ${windowPrefix}now capitalised: agreed ${formatCurrency(storedInterest)} over ${days}d (${effectiveRate}% pa)`
+              : `Roll-up (${rollUpMonths}m) ${windowPrefix}now capitalised: ${calcStr}`;
           } else if (isServicedPeriod) {
-            breakdownStr = `Serviced: ${calcStr}`;
+            breakdownStr = `Serviced ${windowPrefix}${calcStr}`;
           } else {
-            breakdownStr = calcStr;
+            breakdownStr = `${windowPrefix}${calcStr}`;
           }
         } else {
           breakdownStr = storedInterest === 0 ? 'Prepaid' : `${days}d`;
@@ -481,6 +500,9 @@ function groupRowsByMonth(rows) {
         monthLabel,
         rows: [],
         isMonthGroup: true,
+        // Widest accrual window of the due-date rows in this group, so the header can say what
+        // the month actually charges for.
+        periodWindow: null,
         // Totals (calculated after all rows added)
         totalInterestPaid: 0,
         totalPrincipalChange: 0,
@@ -501,6 +523,20 @@ function groupRowsByMonth(rows) {
     }
     const group = groups.get(monthKey);
     group.rows.push(row);
+
+    // Widen the group's accrual window to cover every due-date row it holds (normally one).
+    if (row.periodWindow) {
+      group.periodWindow = group.periodWindow
+        ? {
+            start: row.periodWindow.start < group.periodWindow.start
+              ? row.periodWindow.start
+              : group.periodWindow.start,
+            end: row.periodWindow.end > group.periodWindow.end
+              ? row.periodWindow.end
+              : group.periodWindow.end
+          }
+        : row.periodWindow;
+    }
 
     // Count entry types (for collapsed view icons) - based on primaryType
     if (row.primaryType === 'disbursement') {
@@ -781,6 +817,10 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
   // Red for positive (owing), black for negative/zero (ahead or settled)
   const balanceColorClass = group.endingInterestBalance > 0.01 ? 'text-red-600' : '';
 
+  // Arrears periods run due-date to due-date, so the month heading alone misstates what the row
+  // charges for: a row due 03/10 covers 03/09 to 03/10.
+  const periodLabel = formatPeriodWindow(group.periodWindow);
+
   return (
     <TableRow
       className="transition-colors cursor-pointer bg-slate-100 hover:bg-slate-200"
@@ -795,6 +835,11 @@ function MonthGroupRow({ group, isExpanded, onToggle, monthlyInterest }) {
             <ChevronRight className="w-4 h-4 text-slate-500" />
           )}
           <span>{group.monthLabel}</span>
+          {periodLabel && (
+            <span className="text-xs font-normal text-slate-500 whitespace-nowrap">
+              {periodLabel}
+            </span>
+          )}
           {group.typeCounts && <GroupTypeIcons typeCounts={group.typeCounts} />}
         </div>
       </TableCell>

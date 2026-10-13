@@ -3,6 +3,12 @@ import jsPDF from 'jspdf';
 import { format, differenceInDays, isValid } from 'date-fns';
 import { formatCurrency } from './LoanCalculator';
 import { getExitFeeRemaining } from '@/lib/loanCalculations';
+import {
+  getPeriodWindow,
+  calculateSegmentedInterest,
+  getRollUpInterestFromSchedule,
+  getDailyRate
+} from '@/lib/schedule/utils/interestCalculations';
 
 /**
  * Build a comprehensive interest ledger showing all capital events, rate changes,
@@ -288,6 +294,17 @@ function getSettlementTruncatedSchedule(schedule, settlementDate, dailyRate, loa
  * Returns rows with: date, interestPaid, expectedInterest, interestBalance, principalChange, principalBalance
  * Includes calculation notes for all row types
  */
+/**
+ * "3 Sep - 3 Oct" for a schedule row's accrual window. Mirrors the schedule view, so the
+ * statement and the screen describe a period the same way.
+ */
+function formatPeriodWindow(window) {
+  if (!window) return null;
+
+  const sameYear = window.start.getFullYear() === window.end.getFullYear();
+  return `${format(window.start, sameYear ? 'd MMM' : 'd MMM yyyy')} – ${format(window.end, 'd MMM yyyy')}`;
+}
+
 function buildPDFTimeline(loan, schedule, transactions, product, settlementContext = null) {
   const rows = [];
 
@@ -475,17 +492,48 @@ function buildPDFTimeline(loan, schedule, transactions, product, settlementConte
         const displayPrincipal = scheduleEntry.calculation_principal_start || principalForCalc;
         const displayDailyRate = displayPrincipal * (effectiveRate / 100 / 365);
 
-        // Build breakdown string with roll-up/serviced prefix if applicable
+        // Build breakdown string with roll-up/serviced prefix if applicable.
+        // Must match InterestOnlyScheduleView: the borrower's statement and the screen have to
+        // describe the same period the same way, including a mid-period capital repayment.
+        const periodWindow = getPeriodWindow(scheduleEntry);
+        const windowLabel = formatPeriodWindow(periodWindow);
+        const windowPrefix = windowLabel ? `${windowLabel}: ` : '';
+
+        // Split the period where capital moved, so a redemption mid-period is not reported as a
+        // flat month at the old rate.
+        let segments = null;
+        if (periodWindow && (row.isRollUpPeriod || row.isServicedPeriod)) {
+          const result = calculateSegmentedInterest({
+            initialPrincipal: loan.principal_amount,
+            rollUpInterest: getRollUpInterestFromSchedule(schedule, loan),
+            transactions,
+            periodStart: periodWindow.start,
+            periodEnd: periodWindow.end,
+            loanStartDate: loan.start_date,
+            dailyRate: getDailyRate(effectiveRate)
+          });
+          if (result.segments.length > 1) segments = result.segments;
+        }
+
         let breakdownStr = '';
-        if (days > 0 && displayDailyRate > 0) {
-          const calcStr = `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}%)`;
+        if (days > 0 && (displayDailyRate > 0 || segments)) {
+          const calcStr = segments
+            ? `${segments.map(seg => `${seg.days}d × ${formatCurrency(seg.dailyInterest)}/day`).join(' + ')} (${effectiveRate}%)`
+            : `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}%)`;
+
           if (row.isRollUpPeriod) {
             const rollUpMonths = Math.round(days / 30.44);
-            breakdownStr = `Roll-up (${rollUpMonths}m) now capitalised: ${calcStr}`;
+            // An agreed roll-up will not reconcile to a day count, so quoting a per-day rate that
+            // does not produce it misstates what the borrower is charged.
+            const impliedFromDays = displayDailyRate * days;
+            const isAgreedAmount = storedInterest > 0 && Math.abs(impliedFromDays - storedInterest) > 1;
+            breakdownStr = isAgreedAmount
+              ? `Roll-up (${rollUpMonths}m) ${windowPrefix}now capitalised: agreed ${formatCurrency(storedInterest)} over ${days}d (${effectiveRate}%)`
+              : `Roll-up (${rollUpMonths}m) ${windowPrefix}now capitalised: ${calcStr}`;
           } else if (row.isServicedPeriod) {
-            breakdownStr = `Serviced: ${calcStr}`;
+            breakdownStr = `Serviced ${windowPrefix}${calcStr}`;
           } else {
-            breakdownStr = calcStr;
+            breakdownStr = `${windowPrefix}${calcStr}`;
           }
         } else {
           breakdownStr = storedInterest === 0 ? 'Prepaid' : `${days}d`;

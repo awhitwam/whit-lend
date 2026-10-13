@@ -451,3 +451,33 @@ export function calculateInterestOutstandingAtDate({
 
   return { due, paid, outstanding: Math.max(0, due - paid) };
 }
+
+/**
+ * The accrual window a schedule row covers: `end` is its due date, `start` is
+ * `end - calculation_days`.
+ *
+ * Arrears periods run due-date to due-date, so a row's calendar month is not the month it charges
+ * for - a row due 03/10 covers 03/09 to 03/10. Labelling rows with this window is what stops that
+ * reading as a charge raised in October.
+ *
+ * Normalises to local midnight before subtracting: a date-only string parses as UTC midnight,
+ * which under BST is 01:00 local, and mixing the two is what made the schedule-calc CSV a day
+ * short in every British Summer Time period.
+ *
+ * @param {Object} row - Schedule row (needs due_date and calculation_days)
+ * @returns {{start: Date, end: Date, days: number}|null} null when the window is unknown
+ */
+export function getPeriodWindow(row) {
+  if (!row?.due_date) return null;
+
+  const days = row.calculation_days || 0;
+  if (days <= 0) return null;
+
+  const end = atMidnight(row.due_date);
+  if (Number.isNaN(end.getTime())) return null;
+
+  const start = new Date(end);
+  start.setDate(start.getDate() - days);
+
+  return { start, end, days };
+}
