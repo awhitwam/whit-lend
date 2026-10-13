@@ -28,6 +28,8 @@ import RecentPaymentsTable from '@/components/dashboard/RecentPaymentsTable';
 import InvestorSummaryTable from '@/components/dashboard/InvestorSummaryTable';
 import AlertsSection from '@/components/dashboard/AlertsSection';
 import BreakdownModal from '@/components/dashboard/BreakdownModal';
+import LatePaymentsCard from '@/components/dashboard/LatePaymentsCard';
+import { buildLatePaymentRows } from '@/lib/latePayments';
 
 export default function Dashboard() {
   const queryClient = useQueryClient();
@@ -57,8 +59,10 @@ export default function Dashboard() {
     staleTime: DASHBOARD_STALE_TIME
   });
 
-  // Transactions still needed for Fixed Charge and Irregular Income product types
-  const { data: transactions = [] } = useQuery({
+  // Transactions still needed for Fixed Charge and Irregular Income product types.
+  // isLoading is captured because LatePaymentsCard must not render an all-clear before
+  // payment history has arrived.
+  const { data: transactions = [], isLoading: transactionsLoading } = useQuery({
     queryKey: ['all-transactions', currentOrganization?.id],
     queryFn: () => api.entities.Transaction.listAll('-date'),
     enabled: !!currentOrganization,
@@ -66,9 +70,18 @@ export default function Dashboard() {
   });
 
   // Schedules needed for arrears calculation
-  const { data: schedules = [] } = useQuery({
+  const { data: schedules = [], isLoading: schedulesLoading } = useQuery({
     queryKey: ['all-schedules', currentOrganization?.id],
     queryFn: () => api.entities.RepaymentSchedule.listAll('due_date'),
+    enabled: !!currentOrganization,
+    staleTime: DASHBOARD_STALE_TIME
+  });
+
+  // scheduler_type exists on loan_products only - migration 056 never added it to loans -
+  // so the late-payment classifier needs the products to resolve a loan's scheduler.
+  const { data: loanProducts = [] } = useQuery({
+    queryKey: ['loan-products-dashboard', currentOrganization?.id],
+    queryFn: () => api.entities.LoanProduct.list(),
     enabled: !!currentOrganization,
     staleTime: DASHBOARD_STALE_TIME
   });
@@ -420,6 +433,9 @@ export default function Dashboard() {
     .reduce((sum, t) => sum + (t.amount || 0), 0), [transactions]);
 
   // Calculate arrears
+  // DEAD - computed but never rendered, and wrong on this book: the schedule
+  // principal_paid/interest_paid columns were never backfilled. See
+  // mcp-server/src/caveats.js and prefer `latePayments` below.
   const arrears = useMemo(() => schedules
     .filter(s => {
       const loan = loans.find(l => l.id === s.loan_id);
@@ -440,6 +456,20 @@ export default function Dashboard() {
     const daysUntil = differenceInDays(maturityDate, today);
     return daysUntil >= 0 && daysUntil <= 30;
   }), [liveLoans, today]);
+
+  // Borrowers who were servicing interest and have stopped.
+  //
+  // Every payment fact comes from `transactions`, never from the schedule payment
+  // columns - those were never backfilled on the imported book and the dead `arrears`
+  // memo above shows what reading them produces (GBP 26.6m on a GBP 9.4m book). See
+  // mcp-server/src/caveats.js before changing this.
+  const latePayments = useMemo(() => buildLatePaymentRows({
+    loans: liveLoans,
+    transactions,
+    schedules,
+    products: loanProducts,
+    asOf: today
+  }).rows, [liveLoans, transactions, schedules, loanProducts, today]);
 
   // This month's collections
   const thisMonth = useMemo(() => ({ start: startOfMonth(today), end: endOfMonth(today) }), [today]);
@@ -878,6 +908,12 @@ export default function Dashboard() {
           highestInterestBalances={highestInterestBalances}
           highestPrincipalBalances={highestPrincipalBalances}
           borrowersInCredit={borrowersInCredit}
+        />
+
+        {/* Who has stopped paying - above Recent Payments, which shows who has */}
+        <LatePaymentsCard
+          rows={latePayments}
+          isLoading={loansLoading || transactionsLoading || schedulesLoading}
         />
 
         {/* Recent Payments */}
