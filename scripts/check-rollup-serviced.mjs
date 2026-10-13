@@ -22,6 +22,7 @@ import {
   getCurrentInterestBase,
   getRollUpInterestFromSchedule,
   interestAccruedOnRow,
+  calculateInterestOutstandingAtDate,
   allocateSettlement,
   getDailyRate,
   roundCurrency
@@ -72,6 +73,15 @@ const schedule = [
 ];
 
 let failures = 0;
+// Within a penny. The row in progress is pro-rated from interest_amount, which the DB already
+// rounded to 2dp, so it can differ from the raw daily rate by a fraction of a penny.
+const checkClose = (label, actual, expected, tolerance = 0.01) => {
+  const ok = Math.abs(actual - expected) <= tolerance;
+  if (!ok) failures++;
+  console.log(`${ok ? 'PASS' : 'FAIL'}  ${label}`);
+  if (!ok) console.log(`        expected ${expected} +/- ${tolerance}, got ${actual}`);
+};
+
 const check = (label, actual, expected) => {
   const ok = actual === expected;
   if (!ok) failures++;
@@ -187,6 +197,41 @@ const plain = calculateSegmentedInterest({
 });
 check('no roll-up means interest on capital alone',
   roundCurrency(plain.interest), roundCurrency(PRINCIPAL * dailyRate * 31));
+
+// --- 8b. Interest outstanding at a date, straight from the issued schedule ---
+// This is what the receipt screen's Auto-fill prices the allocation from, so it must agree with
+// the schedule on screen to the penny.
+const fullSchedule = [
+  { due_date: '2025-12-03', interest_amount: 97500,    calculation_days: 183, is_roll_up_period: true },
+  { due_date: '2026-01-03', interest_amount: 16561.64, calculation_days: 31, is_serviced_period: true },
+  { due_date: '2026-02-03', interest_amount: 16561.64, calculation_days: 31, is_serviced_period: true },
+  { due_date: '2026-03-03', interest_amount: 14958.90, calculation_days: 28, is_serviced_period: true },
+  { due_date: '2026-04-03', interest_amount: 16561.64, calculation_days: 31, is_serviced_period: true },
+  { due_date: '2026-05-03', interest_amount: 16027.40, calculation_days: 30, is_serviced_period: true },
+  { due_date: '2026-06-03', interest_amount: 16561.64, calculation_days: 31, is_serviced_period: true },
+  { due_date: '2026-07-03', interest_amount: 16027.40, calculation_days: 30, is_serviced_period: true },
+  { due_date: '2026-08-03', interest_amount: 16561.64, calculation_days: 31, is_serviced_period: true },
+  { due_date: '2026-09-03', interest_amount: 16561.64, calculation_days: 31, is_serviced_period: true },
+  { due_date: '2026-10-03', interest_amount: 16027.40, calculation_days: 30, is_serviced_period: true },
+  { due_date: '2026-11-03', interest_amount: 16561.64, calculation_days: 31, is_serviced_period: true }
+];
+
+const atPayment = calculateInterestOutstandingAtDate({
+  schedule: fullSchedule, transactions: [transactions[0]], asOfDate: PAID_ON
+});
+check('interest outstanding at 18/09/26', roundCurrency(atPayment.outstanding), 251897.24);
+
+// 13 Oct is the figure on the loan header before any repayment: 10 days into the Nov row.
+const atToday = calculateInterestOutstandingAtDate({
+  schedule: fullSchedule, transactions: [transactions[0]], asOfDate: AS_OF
+});
+checkClose('interest outstanding at 13/10/26 (pre-repayment)', atToday.outstanding, 265253.41);
+
+// Settled interest comes off.
+const afterPaying = calculateInterestOutstandingAtDate({
+  schedule: fullSchedule, transactions, asOfDate: PAID_ON
+});
+check('settled interest is deducted', roundCurrency(afterPaying.outstanding), 0);
 
 // --- 9. Redemption allocation: interest, then fees, then capital ---
 const split = allocateSettlement({

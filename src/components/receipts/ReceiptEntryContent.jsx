@@ -95,7 +95,9 @@ export default function ReceiptEntryContent({
   // disbursements too, or a further advance is invisible to the allocation.
   const { data: transactions = [] } = useQuery({
     queryKey: ['transactions-all'],
-    queryFn: () => api.entities.Transaction.list('-date')
+    // listAll, not list: list() stops at Supabase's 1000-row default and would silently drop
+    // older repayments, understating what has been paid off.
+    queryFn: () => api.entities.Transaction.listAll('-date')
   });
 
   // Products carry interest_paid_in_advance, which decides whether a due date is the start or

@@ -419,3 +419,35 @@ export function allocateSettlement({
     capitalAfter: Math.max(0, capitalOutstanding) - capital
   };
 }
+
+/**
+ * Interest outstanding on a loan as at a date, from its schedule and transactions.
+ *
+ * Sums what each schedule row had earned by that date - rows already due in full, the row in
+ * progress pro-rated - and subtracts interest already settled. A row that starts after the date
+ * contributes nothing.
+ *
+ * This is deliberately built from leaf helpers rather than calling into LoanCalculator, which
+ * sits in an import cycle with the scheduler registry and is not safely importable from
+ * unrelated modules.
+ *
+ * @param {Array} schedule - The loan's repayment schedule rows
+ * @param {Array} transactions - The loan's transactions
+ * @param {Date|string} asOfDate - The date to value at
+ * @param {boolean} interestPaidInAdvance - True when a due date is the period start
+ * @returns {{due: number, paid: number, outstanding: number}}
+ */
+export function calculateInterestOutstandingAtDate({
+  schedule = [],
+  transactions = [],
+  asOfDate = new Date(),
+  interestPaidInAdvance = false
+}) {
+  const due = (schedule || []).reduce(
+    (sum, row) => sum + interestAccruedOnRow(row, asOfDate, interestPaidInAdvance),
+    0
+  );
+  const paid = calculateInterestPaidToDate(transactions, asOfDate);
+
+  return { due, paid, outstanding: Math.max(0, due - paid) };
+}

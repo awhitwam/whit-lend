@@ -11,9 +11,9 @@ import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatters';
 import { getLoanOutstanding, getExitFeeRemaining } from '@/lib/loanCalculations';
-import { calculateLoanInterestBalance } from '@/components/loan/LoanCalculator';
 import {
   calculatePrincipalAtDate,
+  calculateInterestOutstandingAtDate,
   allocateSettlement
 } from '@/lib/schedule/utils/interestCalculations';
 
@@ -162,6 +162,15 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
   // What a loan owes as at the receipt date - not today. Back-dating a receipt must not settle
   // interest that had not accrued on the day the money actually arrived.
   const owedAtReceiptDate = (loan) => {
+    try {
+      return computeOwedAtReceiptDate(loan);
+    } catch (err) {
+      console.error('[LoanAllocationCell] could not price the receipt date', err);
+      return null;
+    }
+  };
+
+  const computeOwedAtReceiptDate = (loan) => {
     const asOf = row.date ? new Date(row.date) : new Date();
     if (Number.isNaN(asOf.getTime())) return null;
 
@@ -169,10 +178,12 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
     const loanSchedule = (schedules || []).filter(sch => sch.loan_id === loan.id);
     const product = (products || []).find(pr => pr.id === loan.product_id) || null;
 
-    const interest = Math.max(
-      0,
-      calculateLoanInterestBalance(loan, loanSchedule, loanTransactions, asOf, product).interestBalance
-    );
+    const { outstanding: interest } = calculateInterestOutstandingAtDate({
+      schedule: loanSchedule,
+      transactions: loanTransactions,
+      asOfDate: asOf,
+      interestPaidInAdvance: product?.interest_paid_in_advance ?? false
+    });
     const fees = getExitFeeRemaining(loan, loanTransactions, asOf);
     const capital = calculatePrincipalAtDate(
       loan.principal_amount,
