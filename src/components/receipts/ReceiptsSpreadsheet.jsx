@@ -20,6 +20,8 @@ export default function ReceiptsSpreadsheet({
   loans,
   lastPayments,
   schedules,
+  transactions = [],
+  products = [],
   bankEntries,
   onUpdateRow,
   onDeleteRow,
@@ -145,6 +147,8 @@ export default function ReceiptsSpreadsheet({
                   loans={loans}
                   lastPayments={lastPayments}
                   schedules={schedules}
+                  transactions={transactions}
+                  products={products}
                   bankEntry={getBankEntry(row)}
                   onUpdate={onUpdateRow}
                   onDelete={onDeleteRow}

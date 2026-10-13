@@ -10,7 +10,12 @@ import { Info, AlertCircle, Check } from 'lucide-react';
 import { format, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from '@/lib/formatters';
-import { getLoanOutstanding } from '@/lib/loanCalculations';
+import { getLoanOutstanding, getExitFeeRemaining } from '@/lib/loanCalculations';
+import { calculateLoanInterestBalance } from '@/components/loan/LoanCalculator';
+import {
+  calculatePrincipalAtDate,
+  allocateSettlement
+} from '@/lib/schedule/utils/interestCalculations';
 
 /**
  * Combined cell for selecting loans and allocating amounts
@@ -25,6 +30,8 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
   loans = [],
   lastPayments = {},
   schedules = [],
+  transactions = [],
+  products = [],
   isFocused,
   isEditing: _isEditing,
   onUpdate,
@@ -152,37 +159,81 @@ const LoanAllocationCell = forwardRef(function LoanAllocationCell({
     );
   };
 
+  // What a loan owes as at the receipt date - not today. Back-dating a receipt must not settle
+  // interest that had not accrued on the day the money actually arrived.
+  const owedAtReceiptDate = (loan) => {
+    const asOf = row.date ? new Date(row.date) : new Date();
+    if (Number.isNaN(asOf.getTime())) return null;
+
+    const loanTransactions = (transactions || []).filter(t => t.loan_id === loan.id && !t.is_deleted);
+    const loanSchedule = (schedules || []).filter(sch => sch.loan_id === loan.id);
+    const product = (products || []).find(pr => pr.id === loan.product_id) || null;
+
+    const interest = Math.max(
+      0,
+      calculateLoanInterestBalance(loan, loanSchedule, loanTransactions, asOf, product).interestBalance
+    );
+    const fees = getExitFeeRemaining(loan, loanTransactions, asOf);
+    const capital = calculatePrincipalAtDate(
+      loan.principal_amount,
+      loanTransactions,
+      asOf,
+      loan.start_date,
+      true
+    );
+
+    return { interest, fees, capital };
+  };
+
   // Auto-fill allocation amounts
-  // - Single loan: Fill remaining amount into interest (most common case)
-  // - Multiple loans: Copy from each loan's last payment pattern
+  // - Single loan: settle in order - interest accrued to the receipt date, then fees, then
+  //   capital. A redemption therefore leaves the right residual capital instead of dumping the
+  //   whole receipt into interest.
+  // - Multiple loans: copy from each loan's last payment pattern
   const handleAutoDistribute = () => {
-    const selectedLoans = borrowerLoans.filter(l => (row.selectedLoanIds || []).includes(l.id));
+    // Resolve the same way the totals do: in single-loan mode the loan is locked, not selected.
+    const activeLoanIds = isSingleLoanMode && lockedLoanId
+      ? [lockedLoanId]
+      : (row.selectedLoanIds || []);
+    const selectedLoans = borrowerLoans.filter(l => activeLoanIds.includes(l.id));
     if (selectedLoans.length === 0) return;
 
     const newAllocations = { ...row.allocations };
     const receiptAmount = parseFloat(row.amount) || 0;
 
-    // SINGLE LOAN: Put remaining amount into interest (and fees if exit fee applies)
+    // SINGLE LOAN: settle interest, then fees, then capital
     if (selectedLoans.length === 1) {
       const loan = selectedLoans[0];
       const currentAlloc = newAllocations[loan.id] || { principal: 0, interest: 0, fees: 0, description: '' };
-      const principalAllocated = parseFloat(currentAlloc.principal) || 0;
-      let feesAllocated = parseFloat(currentAlloc.fees) || 0;
+      const owed = owedAtReceiptDate(loan);
 
-      // Auto-include exit fee when: loan has exit fee, fees not yet allocated,
-      // and receipt is large enough to cover principal + exit fee
-      if (loan.exit_fee > 0 && feesAllocated === 0 && principalAllocated > 0
-          && receiptAmount >= principalAllocated + loan.exit_fee) {
-        feesAllocated = loan.exit_fee;
+      if (owed) {
+        const split = allocateSettlement({
+          amount: receiptAmount,
+          interestOutstanding: owed.interest,
+          feesOutstanding: owed.fees,
+          capitalOutstanding: owed.capital
+        });
+
+        newAllocations[loan.id] = {
+          ...currentAlloc,
+          interest: parseFloat(split.interest.toFixed(2)),
+          fees: parseFloat(split.fees.toFixed(2)),
+          // Anything past the whole debt stays on capital so the row still balances; the
+          // operator can see it and move it.
+          principal: parseFloat((split.capital + split.excess).toFixed(2))
+        };
+      } else {
+        // No usable date - fall back to filling interest with whatever is unallocated.
+        const principalAllocated = parseFloat(currentAlloc.principal) || 0;
+        const feesAllocated = parseFloat(currentAlloc.fees) || 0;
+        const remaining = receiptAmount - principalAllocated - feesAllocated;
+        newAllocations[loan.id] = {
+          ...currentAlloc,
+          fees: feesAllocated,
+          interest: remaining > 0 ? remaining : 0
+        };
       }
-
-      const remaining = receiptAmount - principalAllocated - feesAllocated;
-
-      newAllocations[loan.id] = {
-        ...currentAlloc,
-        fees: feesAllocated,
-        interest: remaining > 0 ? remaining : 0
-      };
     } else {
       // MULTIPLE LOANS: Use last payment pattern
       for (const loan of selectedLoans) {

@@ -91,10 +91,18 @@ export default function ReceiptEntryContent({
     return activeLoans;
   }, [allLoans, lockedBorrowerId, lockedLoanId]);
 
-  // Load transactions for last payment info
+  // Load transactions. Not filtered to repayments: working out capital outstanding needs the
+  // disbursements too, or a further advance is invisible to the allocation.
   const { data: transactions = [] } = useQuery({
-    queryKey: ['transactions-repayments'],
-    queryFn: () => api.entities.Transaction.filter({ type: 'Repayment' }, '-date')
+    queryKey: ['transactions-all'],
+    queryFn: () => api.entities.Transaction.list('-date')
+  });
+
+  // Products carry interest_paid_in_advance, which decides whether a due date is the start or
+  // the end of its period - and so how much interest has accrued by the receipt date.
+  const { data: products = [] } = useQuery({
+    queryKey: ['loan-products'],
+    queryFn: () => api.entities.LoanProduct.list()
   });
 
   // Load repayment schedules
@@ -114,6 +122,7 @@ export default function ReceiptEntryContent({
     const result = {};
     for (const tx of transactions) {
       if (!tx.loan_id) continue;
+      if (tx.type !== 'Repayment' || tx.is_deleted) continue;
       if (!result[tx.loan_id] || new Date(tx.date) > new Date(result[tx.loan_id].date)) {
         result[tx.loan_id] = {
           date: tx.date,
@@ -590,6 +599,8 @@ export default function ReceiptEntryContent({
           loans={loans}
           lastPayments={lastPayments}
           schedules={schedules}
+          transactions={transactions}
+          products={products}
           bankEntries={bankEntries}
           onUpdateRow={handleUpdateRow}
           onDeleteRow={handleDeleteRow}

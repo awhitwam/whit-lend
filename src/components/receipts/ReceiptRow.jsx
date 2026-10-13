@@ -22,6 +22,8 @@ const ReceiptRow = forwardRef(function ReceiptRow({
   borrowers,
   loans,
   lastPayments,
+  transactions = [],
+  products = [],
   schedules,
   bankEntry,
   onUpdate,
@@ -137,6 +139,8 @@ const ReceiptRow = forwardRef(function ReceiptRow({
           loans={loans}
           lastPayments={lastPayments}
           schedules={schedules}
+          transactions={transactions}
+          products={products}
           isFocused={isCellFocused(COLS.LOANS_ALLOCATION)}
           isEditing={isEditing && isCellFocused(COLS.LOANS_ALLOCATION)}
           onUpdate={handleUpdate}
