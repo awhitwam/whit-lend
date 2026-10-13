@@ -15,6 +15,7 @@ import { Button } from '@/components/ui/button';
 import { format, differenceInDays, parseISO } from 'date-fns';
 import { cn } from '@/lib/utils';
 import { formatCurrency } from './LoanCalculator';
+import { getCurrentInterestBase, getRollUpInterestFromSchedule, calculateSegmentedInterest, getDailyRate } from '@/lib/schedule/utils/interestCalculations';
 import { CalendarClock, ArrowRightCircle, ArrowLeftCircle, CircleDot, ChevronRight, ChevronDown, Clock, List, Layers, ChevronsUpDown, ArrowUp, ArrowDown, TrendingUp, RefreshCcw } from 'lucide-react';
 
 /**
@@ -247,6 +248,35 @@ function buildTimeline({ loan, product, schedule, transactions }) {
         let displayPrincipal = storedPrincipal || currentPrincipal;
         let displayDailyRate = displayPrincipal * (effectiveRate / 100 / 365);
 
+        // Roll-up and serviced periods are priced on (capital + unpaid roll-up), so neither the
+        // stored-vs-current principal comparison below nor a single capital transaction describes
+        // them. Recompute the real day-by-day split instead: a repayment made mid-period has to
+        // show as "15d x £534.25/day + 15d x £7.15/day" rather than a flat month.
+        let rollUpSegments = null;
+        if (days > 0 && (isRollUpPeriod || isServicedPeriod)) {
+          const segPeriodEnd = new Date(scheduleEntry.due_date);
+          const segPeriodStart = new Date(segPeriodEnd);
+          segPeriodStart.setDate(segPeriodStart.getDate() - days);
+
+          const { segments } = calculateSegmentedInterest({
+            initialPrincipal: loan.principal_amount,
+            rollUpInterest: getRollUpInterestFromSchedule(schedule, loan),
+            transactions,
+            periodStart: segPeriodStart,
+            periodEnd: segPeriodEnd,
+            loanStartDate: loan.start_date,
+            dailyRate: getDailyRate(effectiveRate)
+          });
+
+          if (segments.length > 1) {
+            rollUpSegments = segments;
+            // Show the rate the period ended on, not the one it opened with.
+            const last = segments[segments.length - 1];
+            displayPrincipal = last.base;
+            displayDailyRate = last.dailyInterest;
+          }
+        }
+
         if (days > 0 && hasMidPeriodChange && !isRollUpPeriod && !isServicedPeriod) {
           // Capital has changed - check if the change happened IN this period or BEFORE
           const periodEnd = new Date(scheduleEntry.due_date);
@@ -279,12 +309,20 @@ function buildTimeline({ loan, product, schedule, transactions }) {
             displayDailyRate = currentPrincipal * (effectiveRate / 100 / 365);
             breakdownStr = `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`;
           }
-        } else if (days > 0 && displayDailyRate > 0) {
-          const calcStr = `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`;
+        } else if (days > 0 && (displayDailyRate > 0 || rollUpSegments)) {
+          const calcStr = rollUpSegments
+            ? `${rollUpSegments.map(seg => `${seg.days}d × ${formatCurrency(seg.dailyInterest)}/day`).join(' + ')} (${effectiveRate}% pa)`
+            : `${days}d × ${formatCurrency(displayDailyRate)}/day (${effectiveRate}% pa)`;
           if (isRollUpPeriod) {
             // Show roll-up period length in months (approximate from days)
             const rollUpMonths = Math.round(days / 30.44);
-            breakdownStr = `Roll-up (${rollUpMonths}m) now capitalised: ${calcStr}`;
+            // An agreed roll-up amount will not reconcile to a day count, so quoting a per-day
+            // rate that does not produce it misstates what the borrower is being charged.
+            const impliedFromDays = displayDailyRate * days;
+            const isAgreedAmount = storedInterest > 0 && Math.abs(impliedFromDays - storedInterest) > 1;
+            breakdownStr = isAgreedAmount
+              ? `Roll-up (${rollUpMonths}m) now capitalised: agreed ${formatCurrency(storedInterest)} over ${days}d (${effectiveRate}% pa)`
+              : `Roll-up (${rollUpMonths}m) now capitalised: ${calcStr}`;
           } else if (isServicedPeriod) {
             breakdownStr = `Serviced: ${calcStr}`;
           } else {
@@ -361,20 +399,23 @@ function buildTimeline({ loan, product, schedule, transactions }) {
     // Use the effective rate for today's date
     const todayEffectiveRate = getEffectiveRateForDate(todayKey);
 
-    // For roll-up loans, use the compounded calculation basis from the last schedule entry
-    // so interest accrues on principal + rolled-up interest.
+    // For roll-up loans interest accrues on principal + any rolled-up interest still unpaid.
     //
-    // But calculation_principal_start is frozen when the schedule is generated and cannot know
-    // about repayments made since. Once capital is fully repaid nothing accrues, whatever that
-    // column says. previousRow.principalBalance is the ledger truth - it is what renders the
-    // Prin Bal column.
-    const lastScheduleEntry = lastDueDateRow?.scheduleEntry;
+    // Derive that from the transactions rather than the last schedule entry's
+    // calculation_principal_start: that column is frozen when the schedule is generated, so it
+    // cannot know about repayments made since and keeps charging interest on capital the borrower
+    // has already returned. Must stay in step with calculateLoanInterestBalance, which renders
+    // the Interest O/S card from the same basis.
     const isRollUpLoan = (schedule || []).some(s => s.is_roll_up_period || s.is_serviced_period);
-    const calculationBasis = previousRow.principalBalance <= 0
-      ? 0
-      : (isRollUpLoan && lastScheduleEntry?.calculation_principal_start
-          ? lastScheduleEntry.calculation_principal_start
-          : previousRow.principalBalance);
+    const calculationBasis = isRollUpLoan
+      ? getCurrentInterestBase({
+          initialPrincipal: loan.principal_amount,
+          rollUpInterest: getRollUpInterestFromSchedule(schedule, loan),
+          transactions,
+          asOfDate: parseISO(todayKey),
+          loanStartDate: loan.start_date
+        }).base
+      : Math.max(0, previousRow.principalBalance);
 
     const dailyRate = calculationBasis * (todayEffectiveRate / 100 / 365);
     const accruedSinceLastDue = isInterestInAdvance ? 0 : dailyRate * daysSinceLastDue;

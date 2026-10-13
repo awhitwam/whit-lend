@@ -86,35 +86,30 @@ For each row, tracks:
 - `principalAtDate` Map - Records principal balance at each date for lookups
 
 #### Step 6: Interest Calculation Per Period
-For each schedule_header row:
 
-1. **Find Principal at Period Start:**
-   ```javascript
-   const periodStartKey = row.periodStartDate.toISOString().split('T')[0];
-   // Find the most recent principalAtDate entry <= periodStartKey
-   for (const [dateKey, balance] of principalAtDate.entries()) {
-     if (dateKey <= periodStartKey && dateKey > bestDate) {
-       principalAtPeriodStart = balance;
-     }
-   }
-   ```
+`calculateLoanInterestBalance` does **not** recalculate interest. For each schedule_header row it
+reads the stored value:
 
-2. **Determine Rate:**
-   ```javascript
-   const rateToUse = (loan.penalty_rate && loan.penalty_rate_from &&
-                      new Date(loan.penalty_rate_from) <= periodEnd)
-     ? loan.penalty_rate
-     : loan.interest_rate;
-   ```
+```javascript
+row.expectedInterest = row.scheduleRow.interest_amount || 0;
+```
 
-3. **Calculate Interest:**
-   - **Simple calculation** (no capital changes during period):
-     ```javascript
-     expectedInterest = principalAtPeriodStart * dailyRate * days;
-     ```
+The figure was computed when the schedule was generated, so the Interest O/S card always agrees
+with the schedule view. The per-period arithmetic (rate selection, day count, and splitting a
+period at a capital event) lives in the scheduler, and in the shared helpers it calls:
 
-   - **Segmented calculation** (capital changes during period):
-     Splits the period into segments at each capital change, calculates interest for each segment at the relevant principal, then sums.
+| Helper | File | Does |
+|---|---|---|
+| `calculateSegmentedInterest` | `src/lib/schedule/utils/interestCalculations.js` | Splits a period at every date the base moves and prices each segment |
+| `calculateRollUpOutstandingAtDate` | same | How much capitalised roll-up interest is still unpaid |
+| `getCurrentInterestBase` | same | Capital outstanding + unpaid roll-up, as at a date |
+| `interestAccruedOnRow` | same | Interest earned on a row by a given date, pro-rating the period in progress |
+
+For roll-up products the base is **capital outstanding + roll-up still unpaid**, not capital
+alone. Both parts move: capital on a repayment or further advance, the roll-up once it is
+settled. Never price a period, or the accrual since the last due date, from a schedule row's
+`calculation_principal_start` - that column is frozen at generation and cannot know about
+anything that happened since.
 
 4. **Update Balances (CRITICAL ORDER):**
    ```javascript

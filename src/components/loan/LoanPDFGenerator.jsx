@@ -1630,7 +1630,16 @@ function renderSettlementStatementToDoc(loan, settlementData, schedule = [], tra
         doc.setTextColor(100, 100, 100);
         if (period.isRollUpPeriod) {
           doc.setTextColor(102, 51, 153); // Purple
-          doc.text(`Roll-up period: ${period.days}d × ${formatCurrency(period.calculationBasis * dailyRateVal)}/day`, 19, y);
+          // An agreed roll-up will not reconcile to a day count; print the amount charged rather
+          // than a per-day rate that does not produce it.
+          const rollUpCharged = period.interest ?? period.periodInterest ?? 0;
+          const rollUpImplied = period.calculationBasis * dailyRateVal * period.days;
+          doc.text(
+            Math.abs(rollUpImplied - rollUpCharged) > 1
+              ? `Roll-up period: agreed ${formatCurrency(rollUpCharged)} over ${period.days}d`
+              : `Roll-up period: ${period.days}d × ${formatCurrency(period.calculationBasis * dailyRateVal)}/day`,
+            19, y
+          );
         } else if (period.isServicedPeriod) {
           doc.setTextColor(37, 99, 235); // Blue
           doc.text(`Serviced: ${period.days}d × ${formatCurrency(period.calculationBasis * dailyRateVal)}/day (compounded basis)`, 19, y);

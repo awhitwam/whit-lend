@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,7 +8,9 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { Switch } from "@/components/ui/switch";
 import { Card, CardContent } from "@/components/ui/card";
 import { Loader2, DollarSign, Calendar, FileText, TrendingDown, Wallet, Settings2, Percent, Banknote } from 'lucide-react';
-import { formatCurrency } from './LoanCalculator';
+import { formatCurrency, calculateLoanInterestBalance } from './LoanCalculator';
+import { calculatePrincipalAtDate, allocateSettlement } from '@/lib/schedule/utils/interestCalculations';
+import { getExitFeeRemaining } from '@/lib/loanCalculations';
 import { format } from 'date-fns';
 
 export default function PaymentModal({
@@ -18,6 +20,10 @@ export default function PaymentModal({
   outstandingAmount,
   outstandingInterest = 0,
   outstandingPrincipal = 0,
+  exitFeeOutstanding = 0,
+  schedule = [],
+  transactions = [],
+  product = null,
   onSubmit,
   isLoading
 }) {
@@ -34,14 +40,19 @@ export default function PaymentModal({
   });
 
   const [manualMode, setManualMode] = useState(false);
+  // Off by default: an exit fee falls due on redemption, so a routine overpayment must not have
+  // it skimmed off the top without the user saying so.
+  const [allocateExitFee, setAllocateExitFee] = useState(false);
   const [interestAmount, setInterestAmount] = useState('');
   const [principalAmount, setPrincipalAmount] = useState('');
+  const [feesAmount, setFeesAmount] = useState('');
 
   // Reset manual amounts when total amount changes and not in manual mode
   useEffect(() => {
     if (!manualMode && formData.amount) {
       setInterestAmount('');
       setPrincipalAmount('');
+      setFeesAmount('');
     }
   }, [formData.amount, manualMode]);
 
@@ -56,7 +67,8 @@ export default function PaymentModal({
       type: 'Repayment',
       reference: formData.reference,
       notes: formData.notes,
-      overpayment_option: formData.overpayment_option
+      overpayment_option: formData.overpayment_option,
+      allocate_exit_fee: !manualMode && allocateExitFee && exitFeeOutstanding > 0
     };
 
     // Add manual split amounts if in manual mode
@@ -64,6 +76,7 @@ export default function PaymentModal({
       paymentData.manual_split = true;
       paymentData.interest_amount = parseFloat(interestAmount) || 0;
       paymentData.principal_amount = parseFloat(principalAmount) || 0;
+      paymentData.fees_amount = parseFloat(feesAmount) || 0;
     }
 
     onSubmit(paymentData);
@@ -77,13 +90,73 @@ export default function PaymentModal({
   const totalAmount = parseFloat(formData.amount) || 0;
   const allocatedInterest = parseFloat(interestAmount) || 0;
   const allocatedPrincipal = parseFloat(principalAmount) || 0;
-  const totalAllocated = allocatedInterest + allocatedPrincipal;
+  const allocatedFees = parseFloat(feesAmount) || 0;
+  const totalAllocated = allocatedInterest + allocatedFees + allocatedPrincipal;
   const remaining = totalAmount - totalAllocated;
 
-  // Validation
-  const interestExceedsOutstanding = allocatedInterest > outstandingInterest;
-  const principalExceedsOutstanding = allocatedPrincipal > outstandingPrincipal;
+  // What is actually owed as at the DATE OF THE REPAYMENT, not today. Back-dating a redemption
+  // must not settle interest that had not yet accrued on the day the money arrived.
+  const owedAtPaymentDate = useMemo(() => {
+    if (!loan || !formData.date) return null;
+
+    const asOf = new Date(formData.date);
+    if (Number.isNaN(asOf.getTime())) return null;
+
+    const interest = Math.max(
+      0,
+      calculateLoanInterestBalance(loan, schedule, transactions, asOf, product).interestBalance
+    );
+    const fees = getExitFeeRemaining(loan, transactions, asOf);
+    const capital = calculatePrincipalAtDate(
+      loan.principal_amount,
+      transactions,
+      asOf,
+      loan.start_date,
+      true
+    );
+
+    return { interest, fees, capital };
+  }, [loan, schedule, transactions, product, formData.date]);
+
+  // Interest, then fees, then capital - the order a redemption settles in.
+  const proposedAllocation = useMemo(() => {
+    if (!owedAtPaymentDate || totalAmount <= 0) return null;
+
+    return allocateSettlement({
+      amount: totalAmount,
+      interestOutstanding: owedAtPaymentDate.interest,
+      feesOutstanding: owedAtPaymentDate.fees,
+      capitalOutstanding: owedAtPaymentDate.capital
+    });
+  }, [owedAtPaymentDate, totalAmount]);
+
+  // A payment bigger than the capital outstanding is a redemption: it has to be spread across
+  // interest and fees as well, so offer the split rather than letting the waterfall guess.
+  const isRedemption = Boolean(
+    owedAtPaymentDate && totalAmount > 0 && totalAmount > owedAtPaymentDate.capital
+  );
+
+  const applyProposedAllocation = () => {
+    if (!proposedAllocation) return;
+    setManualMode(true);
+    setInterestAmount(proposedAllocation.interest.toFixed(2));
+    setFeesAmount(proposedAllocation.fees.toFixed(2));
+    setPrincipalAmount(proposedAllocation.capital.toFixed(2));
+  };
+
+  // Validation - measured against the payment date, falling back to the live figures.
+  const maxInterest = owedAtPaymentDate ? owedAtPaymentDate.interest : outstandingInterest;
+  const maxFees = owedAtPaymentDate ? owedAtPaymentDate.fees : exitFeeOutstanding;
+  const maxPrincipal = owedAtPaymentDate ? owedAtPaymentDate.capital : outstandingPrincipal;
+
+  const interestExceedsOutstanding = allocatedInterest > maxInterest;
+  const principalExceedsOutstanding = allocatedPrincipal > maxPrincipal;
+  const feesExceedOutstanding = allocatedFees > maxFees;
   const allocationExceedsTotal = totalAllocated > totalAmount;
+
+  // Stays available during a redemption too: the split card below switches to manual entry, so
+  // without this a user who ignored it would allocate nothing to the fee.
+  const showExitFeeOption = !manualMode && exitFeeOutstanding > 0;
 
   const isValid = !manualMode || (!allocationExceedsTotal && totalAllocated > 0);
   const showOverpayment = (manualMode && remaining > 0) || (!manualMode && formData.amount && parseFloat(formData.amount) > outstandingAmount);
@@ -229,6 +302,67 @@ export default function PaymentModal({
                 </Card>
               )}
 
+              {/* Redemption: payment exceeds the capital outstanding, so it has to cover
+                  interest and fees too. Figures are as at the payment date. */}
+              {!isSpecialType && isRedemption && proposedAllocation && (
+                <Card className="border-emerald-300 bg-emerald-50/60">
+                  <CardContent className="p-4 space-y-3">
+                    <div className="flex items-start gap-3">
+                      <div className="p-2 bg-emerald-100 rounded-lg">
+                        <Banknote className="w-4 h-4 text-emerald-700" />
+                      </div>
+                      <div>
+                        <p className="font-medium text-emerald-900">Redemption payment</p>
+                        <p className="text-sm text-emerald-700">
+                          Exceeds the {formatCurrency(owedAtPaymentDate.capital)} capital outstanding.
+                          Suggested split as at {format(new Date(formData.date), 'dd MMM yyyy')}:
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="space-y-1.5 text-sm bg-white rounded-lg border border-emerald-200 p-3">
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">1. Interest outstanding</span>
+                        <span className="font-medium">{formatCurrency(proposedAllocation.interest)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">2. Fees outstanding</span>
+                        <span className="font-medium">{formatCurrency(proposedAllocation.fees)}</span>
+                      </div>
+                      <div className="flex justify-between">
+                        <span className="text-slate-600">3. Capital</span>
+                        <span className="font-medium">{formatCurrency(proposedAllocation.capital)}</span>
+                      </div>
+                      <div className="flex justify-between pt-1.5 border-t border-emerald-200 font-medium">
+                        <span className="text-slate-700">Capital remaining</span>
+                        <span className={proposedAllocation.capitalAfter > 0 ? 'text-amber-600' : 'text-emerald-600'}>
+                          {formatCurrency(proposedAllocation.capitalAfter)}
+                        </span>
+                      </div>
+                      {proposedAllocation.excess > 0 && (
+                        <div className="flex justify-between text-amber-600">
+                          <span>Unallocated excess</span>
+                          <span className="font-medium">{formatCurrency(proposedAllocation.excess)}</span>
+                        </div>
+                      )}
+                    </div>
+
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      className="w-full border-emerald-300 text-emerald-800 hover:bg-emerald-100"
+                      onClick={applyProposedAllocation}
+                    >
+                      Apply this split
+                    </Button>
+                    <p className="text-xs text-emerald-700">
+                      Fills the manual split below so you can adjust it before saving.
+                    </p>
+                  </CardContent>
+                </Card>
+              )}
+
               {/* Manual Attribution Toggle - only for standard loans */}
               {!isSpecialType && (
               <Card className={`${manualMode ? 'border-blue-300 bg-blue-50/50' : 'border-slate-200'}`}>
@@ -240,7 +374,7 @@ export default function PaymentModal({
                         <Label htmlFor="manual-mode" className="font-medium cursor-pointer text-sm">
                           Manual Attribution
                         </Label>
-                        <p className="text-xs text-slate-500">Specify interest/principal split</p>
+                        <p className="text-xs text-slate-500">Specify interest / fees / principal split</p>
                       </div>
                     </div>
                     <Switch
@@ -265,7 +399,7 @@ export default function PaymentModal({
                             Interest
                           </Label>
                           <span className="text-xs text-slate-500">
-                            max {formatCurrency(outstandingInterest)}
+                            max {formatCurrency(maxInterest)}
                           </span>
                         </div>
                         <Input
@@ -282,12 +416,34 @@ export default function PaymentModal({
 
                       <div className="space-y-1.5">
                         <div className="flex items-center justify-between">
+                          <Label htmlFor="fees_amount" className="text-sm flex items-center gap-1.5">
+                            <Wallet className="w-3.5 h-3.5 text-violet-600" />
+                            Fees
+                          </Label>
+                          <span className="text-xs text-slate-500">
+                            max {formatCurrency(maxFees)}
+                          </span>
+                        </div>
+                        <Input
+                          id="fees_amount"
+                          type="number"
+                          value={feesAmount}
+                          onChange={(e) => setFeesAmount(e.target.value)}
+                          placeholder="0.00"
+                          min={0}
+                          step="0.01"
+                          className={`${feesExceedOutstanding ? 'border-amber-500 bg-amber-50' : ''}`}
+                        />
+                      </div>
+
+                      <div className="space-y-1.5">
+                        <div className="flex items-center justify-between">
                           <Label htmlFor="principal_amount" className="text-sm flex items-center gap-1.5">
                             <Banknote className="w-3.5 h-3.5 text-blue-600" />
                             Principal
                           </Label>
                           <span className="text-xs text-slate-500">
-                            max {formatCurrency(outstandingPrincipal)}
+                            max {formatCurrency(maxPrincipal)}
                           </span>
                         </div>
                         <Input
@@ -347,6 +503,34 @@ export default function PaymentModal({
               )}
             </div>
           </div>
+
+          {/* Exit fee allocation - the fee sits between interest and capital */}
+          {showExitFeeOption && (
+            <Card className={allocateExitFee ? 'border-violet-300 bg-violet-50' : 'border-slate-200'}>
+              <CardContent className="p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2 bg-violet-100 rounded-lg">
+                      <Banknote className="w-4 h-4 text-violet-600" />
+                    </div>
+                    <div>
+                      <p className="font-medium text-slate-900">
+                        Settle exit fee ({formatCurrency(exitFeeOutstanding)})
+                      </p>
+                      <p className="text-sm text-slate-500">
+                        Allocated after outstanding interest and before capital.
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={allocateExitFee}
+                    onCheckedChange={setAllocateExitFee}
+                    aria-label="Settle exit fee from this payment"
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           {/* Overpayment Options - Full Width (only for standard loans) */}
           {!isSpecialType && showOverpayment && (

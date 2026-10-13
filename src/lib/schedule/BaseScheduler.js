@@ -9,6 +9,11 @@ import { api } from '@/api/dataClient';
 import {
   calculatePrincipalAtDate,
   calculateInterestForDays,
+  calculateInterestPaidToDate,
+  calculateRollUpOutstandingAtDate,
+  calculateSegmentedInterest,
+  getCurrentInterestBase,
+  getRollUpInterestFromSchedule,
   getDailyRate,
   getPeriodicRate,
   roundCurrency
@@ -429,6 +434,11 @@ export class BaseScheduler {
     return {
       calculatePrincipalAtDate,
       calculateInterestForDays,
+      calculateInterestPaidToDate,
+      calculateRollUpOutstandingAtDate,
+      calculateSegmentedInterest,
+      getCurrentInterestBase,
+      getRollUpInterestFromSchedule,
       getDailyRate,
       getPeriodicRate,
       roundCurrency,

@@ -192,22 +192,51 @@ export class RollUpServicedScheduler extends BaseScheduler {
 
       // Determine interest calculation base. With no capital outstanding nothing accrues -
       // the roll-up must not re-inflate a zero balance, or a redeemed loan carries on charging
-      // interest on the capitalised amount indefinitely.
-      let interestBase = principalAtStart > 0 ? principalAtStart + rollUpInterest : 0;
+      // interest on the capitalised amount indefinitely. The roll-up is itself interest, so it
+      // also leaves the base once settled: adding it unconditionally charges interest on
+      // interest the borrower has already paid.
+      const rollUpAtStart = this.utils.calculateRollUpOutstandingAtDate(
+        rollUpInterest,
+        transactions,
+        periodStart
+      );
+
+      let interestBase = principalAtStart > 0 ? principalAtStart + rollUpAtStart : 0;
       if (compoundAfterRollup && unpaidAccrued > 0 && interestBase > 0) {
         // Add unpaid accrued interest to base if compounding
         interestBase += unpaidAccrued;
       }
 
-      // Calculate interest for this period
-      const periodInterest = interestBase * dailyRate * daysInPeriod;
+      // Split the period at every date the base moves - a capital event, or settlement of the
+      // roll-up - so a repayment made mid-period stops accruing interest on the day it lands
+      // instead of at the end of the month.
+      const { interest: periodInterest, segments: periodSegments } = this.utils.calculateSegmentedInterest({
+        initialPrincipal: originalPrincipal,
+        rollUpInterest,
+        transactions,
+        periodStart,
+        periodEnd,
+        loanStartDate: startDate,
+        dailyRate,
+        extraBase: compoundAfterRollup && unpaidAccrued > 0 ? unpaidAccrued : 0
+      });
+
+      // Capital still outstanding at the END of the period: the balloon and the closing balance
+      // must both reflect a repayment made inside this period.
+      const principalAtEnd = this.utils.calculatePrincipalAtDate(
+        originalPrincipal,
+        transactions,
+        periodEnd,
+        startDate,
+        true
+      );
 
       // Is this the final period? Include balloon payment
       const isFinalPeriod = i === servicedPeriods;
-      const principalDue = isFinalPeriod ? principalAtStart : 0;
+      const principalDue = isFinalPeriod ? principalAtEnd : 0;
 
       // Balance after this period
-      const balanceAfter = isFinalPeriod ? 0 : principalAtStart;
+      const balanceAfter = isFinalPeriod ? 0 : principalAtEnd;
 
       schedule.push({
         ...this.createScheduleEntry({
@@ -221,7 +250,10 @@ export class RollUpServicedScheduler extends BaseScheduler {
           isExtensionPeriod: false
         }),
         is_roll_up_period: false,
-        is_serviced_period: true
+        is_serviced_period: true,
+        // In-memory only (saveSchedule whitelists DB columns); consumed by callers that want
+        // the per-segment breakdown without recomputing it.
+        segments: periodSegments
       });
 
       // For compounding: if this interest isn't paid, add to unpaidAccrued
@@ -352,7 +384,17 @@ export class RollUpServicedScheduler extends BaseScheduler {
     const rate = loan?.interest_rate || product?.interest_rate || 0;
     const dailyRate = principalStart * (rate / 100 / 365);
 
-    let description = `${days}d × £${dailyRate.toFixed(2)}/day`;
+    // An agreed roll-up (roll_up_amount_override) will not reconcile to a day count, so quoting
+    // a per-day rate that does not produce the amount charged misstates the loan.
+    const chargedInterest = row.interest_amount || 0;
+    const impliedFromDays = dailyRate * days;
+    const isAgreedAmount = row.is_roll_up_period
+      && chargedInterest > 0
+      && Math.abs(impliedFromDays - chargedInterest) > 1;
+
+    let description = isAgreedAmount
+      ? `agreed £${chargedInterest.toFixed(2)} over ${days}d`
+      : `${days}d × £${dailyRate.toFixed(2)}/day`;
     let annotation = null;
     let annotationType = null;
 

@@ -73,6 +73,7 @@ import {
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from "@/components/ui/collapsible";
 import RepaymentScheduleTable from '@/components/loan/RepaymentScheduleTable';
 import PaymentModal from '@/components/loan/PaymentModal';
+import { getExitFeeRemaining } from '@/lib/loanCalculations';
 import DisbursementModal from '@/components/loan/DisbursementModal';
 import EditLoanPanel from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
@@ -999,14 +1000,20 @@ export default function LoanDetails() {
 
       // Build detailed calculation description
       let howCalculated = '';
+      // Prefer the per-segment daily figure the engine computed. Deriving it from seg.principal
+      // understates roll-up loans, whose base is capital plus any roll-up still unpaid.
+      const segmentDaily = (seg) => seg.dailyInterest ?? (seg.principal * (p.rateUsed / 100) / 365);
+
       if (p.calculationMethod === 'simple') {
-        howCalculated = `Interest due at ${p.rateUsed}% pa, ${p.days}d × £${dailyInterestAmount.toFixed(2)}/day`;
+        const simpleDaily = p.calculationDetails?.segments?.[0]
+          ? segmentDaily(p.calculationDetails.segments[0])
+          : dailyInterestAmount;
+        howCalculated = `Interest due at ${p.rateUsed}% pa, ${p.days}d × £${simpleDaily.toFixed(2)}/day`;
       } else if (p.calculationMethod === 'segmented' && p.calculationDetails?.segments) {
         // Build segmented description like "27d × £13.70/day + 4d × £8.22/day"
-        const segmentDescs = p.calculationDetails.segments.map(seg => {
-          const segDailyRate = seg.principal * (p.rateUsed / 100) / 365;
-          return `${seg.days}d × £${segDailyRate.toFixed(2)}/day`;
-        });
+        const segmentDescs = p.calculationDetails.segments.map(
+          seg => `${seg.days}d × £${segmentDaily(seg).toFixed(2)}/day`
+        );
         howCalculated = `Interest due at ${p.rateUsed}% pa, ${segmentDescs.join(' + ')}`;
       } else if (p.ledgerSegments && p.ledgerSegments.length > 0) {
         // Use ledger segments if available
@@ -1344,6 +1351,7 @@ export default function LoanDetails() {
       const isSettlement = paymentData.notes?.toLowerCase().includes('settlement');
 
       let updates, principalReduction, creditAmount;
+      let feesApplied = 0;
 
       // Check if manual split mode is enabled
       if (paymentData.manual_split) {
@@ -1353,22 +1361,34 @@ export default function LoanDetails() {
           paymentData.principal_amount,
           schedule,
           loan.overpayment_credit || 0,
-          paymentData.overpayment_option
+          paymentData.overpayment_option,
+          paymentData.fees_amount || 0
         );
         updates = result.updates;
         principalReduction = result.principalReduction;
         creditAmount = result.creditAmount;
+        feesApplied = result.feesApplied || 0;
       } else {
-        // Apply waterfall logic with overpayment handling
+        // Apply waterfall logic with overpayment handling.
+        // paymentDate caps each row's interest leg at what had actually accrued by then, so a
+        // redemption cannot settle interest for periods that have not run yet.
         const result = applyPaymentWaterfall(
           paymentData.amount,
           schedule,
           loan.overpayment_credit || 0,
-          paymentData.overpayment_option
+          paymentData.overpayment_option,
+          {
+            paymentDate: paymentData.date || new Date(),
+            interestPaidInAdvance: product?.interest_paid_in_advance ?? false,
+            feesDue: paymentData.allocate_exit_fee
+              ? getExitFeeRemaining(loan, transactions, paymentData.date || new Date())
+              : 0
+          }
         );
         updates = result.updates;
         principalReduction = result.principalReduction;
         creditAmount = result.creditAmount;
+        feesApplied = result.feesApplied || 0;
       }
 
       let totalPrincipalApplied = 0;
@@ -1397,7 +1417,8 @@ export default function LoanDetails() {
       const createdTransaction = await api.entities.Transaction.create({
         ...paymentData,
         principal_applied: totalPrincipalApplied,
-        interest_applied: totalInterestApplied
+        interest_applied: totalInterestApplied,
+        fees_applied: feesApplied
       });
 
       // Log payment to audit trail
@@ -1408,6 +1429,7 @@ export default function LoanDetails() {
       }, loan, {
         principal_applied: totalPrincipalApplied,
         interest_applied: totalInterestApplied,
+        fees_applied: feesApplied,
         is_settlement: isSettlement,
         reference: paymentData.reference || null
       });
@@ -2685,6 +2707,10 @@ export default function LoanDetails() {
           outstandingAmount={totalOutstanding}
           outstandingInterest={Math.max(0, interestRemaining)}
           outstandingPrincipal={Math.max(0, principalRemaining)}
+          exitFeeOutstanding={getExitFeeRemaining(loan, transactions)}
+          schedule={schedule}
+          transactions={transactions}
+          product={product}
           onSubmit={(data) => paymentMutation.mutate(data)}
           isLoading={paymentMutation.isPending}
         />

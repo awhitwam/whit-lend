@@ -3,6 +3,7 @@ import { getScheduler, createScheduler } from '@/lib/schedule';
 import { api } from '@/api/dataClient';
 import { formatCurrency } from '@/lib/formatters';
 import { getFeesReceived } from '@/lib/loanCalculations';
+import { getCurrentInterestBase, getRollUpInterestFromSchedule, interestAccruedOnRow, calculateSegmentedInterest } from '@/lib/schedule/utils/interestCalculations';
 
 /**
  * Generates a repayment schedule based on loan parameters
@@ -726,54 +727,113 @@ export function calculateRentalYield(transactions, principalOutstanding) {
  * @param {string} overpaymentOption - 'reduce_principal' or 'credit'
  * @returns {Object} { updates, remainingPayment, principalReduction, creditAmount }
  */
-export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0, overpaymentOption = 'credit') {
+export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0, overpaymentOption = 'credit', options = {}) {
+  const { paymentDate = null, feesDue = 0, interestPaidInAdvance = false } = options;
   let remainingPayment = payment + existingCredit;
   const updates = [];
-  
+
   // Sort by due date to pay oldest first
-  const sortedRows = [...scheduleRows].sort((a, b) => 
+  const sortedRows = [...scheduleRows].sort((a, b) =>
     new Date(a.due_date) - new Date(b.due_date)
   );
-  
-  // First pass: pay scheduled installments
-  for (const row of sortedRows) {
-    if (remainingPayment <= 0) break;
-    if (row.status === 'Paid') continue;
-    
-    const interestDue = row.interest_amount - (row.interest_paid || 0);
-    const principalDue = row.principal_amount - (row.principal_paid || 0);
-    
-    // First pay interest
-    const interestPayment = Math.min(remainingPayment, interestDue);
-    remainingPayment -= interestPayment;
-    
-    // Then pay principal
-    const principalPayment = Math.min(remainingPayment, principalDue);
-    remainingPayment -= principalPayment;
-    
-    const newInterestPaid = (row.interest_paid || 0) + interestPayment;
-    const newPrincipalPaid = (row.principal_paid || 0) + principalPayment;
+
+  // Accumulate per row, so a row can be touched by both the interest and the principal pass.
+  const applied = new Map();
+  const bucketFor = (row) => {
+    if (!applied.has(row.id)) applied.set(row.id, { row, interest: 0, principal: 0 });
+    return applied.get(row.id);
+  };
+
+  const payInterest = () => {
+    for (const row of sortedRows) {
+      if (remainingPayment <= 0) break;
+      if (row.status === 'Paid') continue;
+
+      // Cap at interest actually earned by the payment date, not the whole period.
+      const interestDue = Math.max(
+        0,
+        interestAccruedOnRow(row, paymentDate, interestPaidInAdvance) - (row.interest_paid || 0)
+      );
+      const interestPayment = Math.min(remainingPayment, interestDue);
+      if (interestPayment <= 0) continue;
+
+      remainingPayment -= interestPayment;
+      bucketFor(row).interest += interestPayment;
+    }
+  };
+
+  const payPrincipal = () => {
+    for (const row of sortedRows) {
+      if (remainingPayment <= 0) break;
+      if (row.status === 'Paid') continue;
+
+      const principalDue = row.principal_amount - (row.principal_paid || 0);
+      const principalPayment = Math.min(remainingPayment, principalDue);
+      if (principalPayment <= 0) continue;
+
+      remainingPayment -= principalPayment;
+      bucketFor(row).principal += principalPayment;
+    }
+  };
+
+  // Fees sit between interest and capital, and are held on the loan rather than on a schedule
+  // row, so placing one means draining all interest first. With no fee to place, keep the
+  // long-standing per-installment ordering (oldest row's interest, then its principal), which is
+  // what amortising loans expect.
+  let feesApplied = 0;
+  if (feesDue > 0) {
+    payInterest();
+    feesApplied = Math.min(Math.max(0, remainingPayment), feesDue);
+    remainingPayment -= feesApplied;
+    payPrincipal();
+  } else {
+    for (const row of sortedRows) {
+      if (remainingPayment <= 0) break;
+      if (row.status === 'Paid') continue;
+
+      const interestDue = Math.max(
+        0,
+        interestAccruedOnRow(row, paymentDate, interestPaidInAdvance) - (row.interest_paid || 0)
+      );
+      const interestPayment = Math.min(remainingPayment, interestDue);
+      remainingPayment -= interestPayment;
+
+      const principalDue = row.principal_amount - (row.principal_paid || 0);
+      const principalPayment = Math.min(remainingPayment, principalDue);
+      remainingPayment -= principalPayment;
+
+      if (interestPayment > 0 || principalPayment > 0) {
+        const bucket = bucketFor(row);
+        bucket.interest += interestPayment;
+        bucket.principal += principalPayment;
+      }
+    }
+  }
+
+  for (const { row, interest, principal } of applied.values()) {
+    if (interest <= 0 && principal <= 0) continue;
+
+    const newInterestPaid = (row.interest_paid || 0) + interest;
+    const newPrincipalPaid = (row.principal_paid || 0) + principal;
     const totalPaid = newInterestPaid + newPrincipalPaid;
-    
+
     let newStatus = row.status;
     if (totalPaid >= row.total_due - 0.01) {
       newStatus = 'Paid';
     } else if (totalPaid > 0) {
       newStatus = 'Partial';
     }
-    
-    if (interestPayment > 0 || principalPayment > 0) {
-      updates.push({
-        id: row.id,
-        interest_paid: Math.round(newInterestPaid * 100) / 100,
-        principal_paid: Math.round(newPrincipalPaid * 100) / 100,
-        status: newStatus,
-        interestApplied: interestPayment,
-        principalApplied: principalPayment
-      });
-    }
+
+    updates.push({
+      id: row.id,
+      interest_paid: Math.round(newInterestPaid * 100) / 100,
+      principal_paid: Math.round(newPrincipalPaid * 100) / 100,
+      status: newStatus,
+      interestApplied: interest,
+      principalApplied: principal
+    });
   }
-  
+
   // Handle overpayment
   let principalReduction = 0;
   let creditAmount = 0;
@@ -820,7 +880,8 @@ export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0,
     updates,
     remainingPayment: Math.round(remainingPayment * 100) / 100,
     principalReduction: Math.round(principalReduction * 100) / 100,
-    creditAmount: Math.round(creditAmount * 100) / 100
+    creditAmount: Math.round(creditAmount * 100) / 100,
+    feesApplied: Math.round(feesApplied * 100) / 100
   };
 }
 
@@ -834,7 +895,10 @@ export function applyPaymentWaterfall(payment, scheduleRows, existingCredit = 0,
  * @param {string} overpaymentOption - 'reduce_principal' or 'credit'
  * @returns {Object} { updates, principalReduction, creditAmount }
  */
-export function applyManualPayment(interestAmount, principalAmount, scheduleRows, existingCredit = 0, overpaymentOption = 'credit') {
+export function applyManualPayment(interestAmount, principalAmount, scheduleRows, existingCredit = 0, overpaymentOption = 'credit', feesAmount = 0) {
+  // Fees are held on the loan, not on a schedule row, so they are carried through to the
+  // transaction rather than allocated across installments.
+  const feesApplied = Math.max(0, feesAmount) || 0;
   let remainingInterest = interestAmount;
   let remainingPrincipal = principalAmount + existingCredit;
   const updates = [];
@@ -966,7 +1030,8 @@ export function applyManualPayment(interestAmount, principalAmount, scheduleRows
   return {
     updates,
     principalReduction: Math.round(principalReduction * 100) / 100,
-    creditAmount: Math.round(creditAmount * 100) / 100
+    creditAmount: Math.round(creditAmount * 100) / 100,
+    feesApplied: Math.round(feesApplied * 100) / 100
   };
 }
 
@@ -1539,21 +1604,6 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
       runningPrincipalBalance += row.principal;
       principalAtDate.set(row.date.toISOString().split('T')[0], runningPrincipalBalance);
     } else if (row.type === 'schedule_header') {
-      // Calculate principalAtPeriodStart
-      let principalAtPeriodStart = loan.principal_amount;
-      if (row.periodStartDate) {
-        const periodStartKey = row.periodStartDate.toISOString().split('T')[0];
-        let bestDate = null;
-        let bestBalance = loan.principal_amount;
-        for (const [dateKey, balance] of principalAtDate.entries()) {
-          if (dateKey <= periodStartKey && (!bestDate || dateKey > bestDate)) {
-            bestDate = dateKey;
-            bestBalance = balance;
-          }
-        }
-        principalAtPeriodStart = bestBalance;
-      }
-
       // Use the stored interest_amount from the schedule entry directly
       // This ensures Interest O/S matches the schedule view exactly
       // (Previously recalculated using ledger, which could produce slight differences)
@@ -1607,7 +1657,7 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
       principalAtPeriodStart: Math.round(principalAtPeriodStart * 100) / 100,
       expectedInterest: Math.round((row.expectedInterest || 0) * 100) / 100,
       periodInterestPaid: (row.periodTransactions || []).reduce((sum, tx) => sum + (tx.interest_applied || 0), 0),
-      hadCapitalChanges: row._hadCapitalChanges || false
+      hadCapitalChanges: (row.periodTransactions || []).some(tx => (tx.principal_applied || 0) > 0)
     };
   });
 
@@ -1625,20 +1675,23 @@ export function calculateLoanInterestBalance(loan, schedule = [], transactions =
         // Use getEffectiveRate to respect penalty rates
         const effectiveRate = getEffectiveRate(loan, today);
 
-        // For roll-up loans, use the compounded calculation basis from the last schedule entry
-        // so interest accrues on principal + rolled-up interest.
+        // For roll-up loans interest accrues on principal + any rolled-up interest still unpaid.
         //
-        // But calculation_principal_start is frozen when the schedule is generated and cannot
-        // know about repayments made since. Once capital is fully repaid nothing accrues,
-        // whatever that column says - otherwise a redeemed loan keeps charging interest on its
-        // original balance. runningPrincipalBalance is the ledger truth here.
-        const lastScheduleRow = lastProcessedRow?.scheduleRow;
+        // Derive that from the transactions rather than the last schedule row's
+        // calculation_principal_start: that column is frozen when the schedule is generated, so
+        // it cannot know about repayments made since and keeps charging interest on capital the
+        // borrower has already returned. It also keeps the roll-up in the base after it has been
+        // settled, charging interest on interest that is already paid.
         const isRollUpLoan = sortedSchedule.some(s => s.is_roll_up_period || s.is_serviced_period);
-        const calculationBasis = runningPrincipalBalance <= 0
-          ? 0
-          : (isRollUpLoan && lastScheduleRow?.calculation_principal_start
-              ? lastScheduleRow.calculation_principal_start
-              : runningPrincipalBalance);
+        const calculationBasis = isRollUpLoan
+          ? getCurrentInterestBase({
+              initialPrincipal: loan.principal_amount,
+              rollUpInterest: getRollUpInterestFromSchedule(sortedSchedule, loan),
+              transactions,
+              asOfDate: today,
+              loanStartDate: loan.start_date
+            }).base
+          : Math.max(0, runningPrincipalBalance);
 
         const dailyRate = calculationBasis * (effectiveRate / 100 / 365);
         accruedSinceLastDue = dailyRate * daysSinceLastDue;
@@ -2068,6 +2121,10 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
       periodStartDate = idx > 0
         ? new Date(sortedSchedule[idx - 1].due_date)
         : new Date(loan.start_date);
+      // Normalise to local midnight to match periodEndDate. A date-only string parses as UTC
+      // midnight, which under BST is 01:00 local - leaving the two ends an hour apart and making
+      // differenceInDays truncate every British Summer Time period a day short.
+      periodStartDate.setHours(0, 0, 0, 0);
       periodEndDate = dueDate;
     }
 
@@ -2134,60 +2191,48 @@ export function exportScheduleCalculationData(loan, schedule = [], transactions 
 
       capitalChanges.sort((a, b) => a.date - b.date);
 
-      if (capitalChanges.length > 0) {
-        // Segmented calculation
-        let segmentPrincipal = principalAtPeriodStart;
-        let segmentStart = periodStartDate;
-        let totalInterest = 0;
-        const segments = [];
+      // Recalculate through the shared engine so this export agrees with the scheduler and the
+      // schedule view. It splits the period at every capital event and, for roll-up loans, prices
+      // each segment on (capital + roll-up still unpaid) rather than capital alone.
+      const rollUpInterestForPeriod = getRollUpInterestFromSchedule(sortedSchedule, loan);
+      const { interest: recalculated, segments: recalculatedSegments } = calculateSegmentedInterest({
+        initialPrincipal: loan.principal_amount,
+        rollUpInterest: rollUpInterestForPeriod,
+        transactions,
+        periodStart: periodStartDate,
+        periodEnd: periodEndDate,
+        loanStartDate: loan.start_date,
+        dailyRate
+      });
 
-        capitalChanges.forEach(change => {
-          const daysInSegment = differenceInDays(change.date, segmentStart);
-          if (daysInSegment > 0) {
-            const segmentInterest = segmentPrincipal * dailyRate * daysInSegment;
-            totalInterest += segmentInterest;
-            segments.push({
-              from: format(segmentStart, 'yyyy-MM-dd'),
-              to: format(change.date, 'yyyy-MM-dd'),
-              days: daysInSegment,
-              principal: Math.round(segmentPrincipal * 100) / 100,
-              interest: Math.round(segmentInterest * 100) / 100
-            });
-          }
-          if (change.type === 'advance') {
-            segmentPrincipal += change.amount;
-          } else {
-            segmentPrincipal = Math.max(0, segmentPrincipal - change.amount);
-          }
-          segmentStart = change.date;
-        });
+      expectedInterest = recalculated;
 
-        // Final segment
-        const finalDays = differenceInDays(periodEndDate, segmentStart);
-        if (finalDays > 0 && segmentPrincipal > 0) {
-          const segmentInterest = segmentPrincipal * dailyRate * finalDays;
-          totalInterest += segmentInterest;
-          segments.push({
-            from: format(segmentStart, 'yyyy-MM-dd'),
-            to: format(periodEndDate, 'yyyy-MM-dd'),
-            days: finalDays,
-            principal: Math.round(segmentPrincipal * 100) / 100,
-            interest: Math.round(segmentInterest * 100) / 100
-          });
-        }
+      const formattedSegments = recalculatedSegments.map(seg => ({
+        from: format(seg.from, 'yyyy-MM-dd'),
+        to: format(seg.to, 'yyyy-MM-dd'),
+        days: seg.days,
+        principal: Math.round(seg.base * 100) / 100,
+        capital: Math.round(seg.principal * 100) / 100,
+        rollUpOutstanding: Math.round(seg.rollUpOutstanding * 100) / 100,
+        dailyInterest: Math.round(seg.dailyInterest * 100) / 100,
+        interest: Math.round(seg.interest * 100) / 100
+      }));
 
-        expectedInterest = totalInterest;
+      if (recalculatedSegments.length > 1) {
         calculationMethod = 'segmented';
-        calculationDetails = { segments, capitalChanges: capitalChanges.map(c => ({ ...c, date: format(c.date, 'yyyy-MM-dd') })) };
+        calculationDetails = {
+          segments: formattedSegments,
+          capitalChanges: capitalChanges.map(c => ({ ...c, date: format(c.date, 'yyyy-MM-dd') }))
+        };
       } else {
-        // Simple calculation
-        expectedInterest = principalAtPeriodStart * dailyRate * days;
+        const openingBase = recalculatedSegments[0]?.base ?? principalAtPeriodStart;
         calculationMethod = 'simple';
         calculationDetails = {
-          principal: principalAtPeriodStart,
+          principal: openingBase,
           dailyRate: dailyRate,
           days: days,
-          formula: `${principalAtPeriodStart} × ${dailyRate.toFixed(8)} × ${days} = ${expectedInterest.toFixed(2)}`
+          segments: formattedSegments,
+          formula: `${openingBase} \u00d7 ${dailyRate.toFixed(8)} \u00d7 ${days} = ${expectedInterest.toFixed(2)}`
         };
       }
     }
