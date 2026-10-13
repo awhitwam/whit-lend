@@ -21,6 +21,8 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
     interest_calculation_type: investor?.interest_calculation_type || 'annual_rate',
     annual_interest_rate: investor?.annual_interest_rate || '',
     manual_interest_amount: investor?.manual_interest_amount || '',
+    // ?? not ||: an explicit 0 is a real setting (interest-only), not "unset".
+    default_capital_repayment: investor?.default_capital_repayment ?? '',
     status: investor?.status || 'Active'
   });
 
@@ -58,6 +60,11 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
         data.manual_interest_amount = 0;
       }
     }
+
+    // Blank means "no default"; anything else is a number. Parsed explicitly so a 0 is
+    // preserved and no string reaches the numeric column.
+    const parsedRepayment = parseFloat(data.default_capital_repayment);
+    data.default_capital_repayment = Number.isFinite(parsedRepayment) ? parsedRepayment : null;
 
     // Clean up empty strings
     Object.keys(data).forEach(key => {
@@ -234,6 +241,25 @@ export default function InvestorForm({ investor, onSubmit, onCancel, isLoading }
           )}
         </>
       )}
+
+      {/* Applies regardless of product: the capital repayment schedule is an
+          arrangement with this investor, not a property of the product. */}
+      <div className="space-y-2">
+        <Label htmlFor="default_capital_repayment">Default Capital Repayment</Label>
+        <Input
+          id="default_capital_repayment"
+          type="number"
+          step="0.01"
+          min="0"
+          value={formData.default_capital_repayment}
+          onChange={(e) => setFormData({...formData, default_capital_repayment: e.target.value})}
+          placeholder="Leave blank for no default"
+        />
+        <p className="text-xs text-slate-500">
+          Pre-fills the capital portion when reconciling a payment to this investor; the rest
+          of the bank amount goes to interest. Always overridable at reconciliation.
+        </p>
+      </div>
 
       <div className="space-y-2">
         <Label htmlFor="status">Status</Label>

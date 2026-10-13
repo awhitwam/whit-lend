@@ -10,6 +10,8 @@
  *
  * This module decides the split from evidence: unwithdrawn interest credits sitting on
  * the investor's ledger, interest accrued but not yet posted, and the bank narrative.
+ * Investor.default_capital_repayment short-circuits that search - an investor on a regular
+ * arrangement has a known capital portion every period, and configuration beats inference.
  *
  * DEPENDENCY RULE: import only from '../interestCalculation.js'. That module has no
  * imports of its own and uses no path aliases, so this one loads under plain `node` and
@@ -41,8 +43,21 @@ const EPSILON = 0.005;
 const MAX_SUBSET_SIZE = 4;
 const MAX_SUBSET_SOURCE = 12;
 
+/**
+ * A payment more than 10x the capital repayment configured on the investor is not that
+ * arrangement's regular payment - it is a redemption or a lump sum - so the configured
+ * default steps aside and the evidence ladder decides. 10x is deliberately generous:
+ * interest can legitimately dwarf a small capital repayment, and wrongly skipping the
+ * configured default is the worse failure of the two.
+ */
+const CONFIGURED_REPAYMENT_MAX_MULTIPLE = 10;
+
 /** Strength of each interest finding. Consumed by ExpenditurePanel to score the suggestion. */
 export const SPLIT_SIGNAL_CONFIDENCE = {
+  // Explicit configuration on the investor rather than inference. It wins by sitting
+  // first in the ladder, not by this number - these values only feed ExpenditurePanel's
+  // suggestion scoring, where a 'create' suggestion is capped at 0.69 regardless.
+  configured_repayment: 0.92,
   single_credit: 0.95,
   credit_subset: 0.88,
   accrued: 0.80,
@@ -295,7 +310,8 @@ function result(amount, interestRaw, signal, confidence, reason, extra = {}) {
  * @param {number} [params.amount] - positive, Math.abs(bankEntry.amount)
  * @param {string} [params.description] - bankEntry.description
  * @param {string} [params.statementDate] - bankEntry.statement_date, 'YYYY-MM-DD'
- * @param {Object|null} [params.investor]
+ * @param {Object|null} [params.investor] - reads default_capital_repayment (the configured
+ *        capital portion, null when unset) and current_capital_balance (the clamp)
  * @param {Object|null} [params.investorProduct]
  * @param {Array} [params.interestEntries] - investor_interest rows for THIS investor
  * @param {Array} [params.investorTransactions] - RAW InvestorTransaction rows for THIS
@@ -351,6 +367,45 @@ export function suggestWithdrawalSplit({
     availableInterest: available,
     overdrawnInterest: residual.overdrawn
   };
+
+  // S1b - a capital repayment amount configured on the investor. Explicit configuration
+  // beats every amount-based signal below, so this sits ahead of the credit matching and
+  // ahead of the accrual - which also keeps the common case off the expensive path.
+  //
+  // Null means "no default set" and falls through; an explicit 0 means "interest-only by
+  // arrangement" and is honoured. The capital side is clamped to what is actually
+  // repayable, because the form disables Create when capital exceeds the investor's
+  // balance and a suggestion must never be the reason it is blocked.
+  if (investor?.default_capital_repayment != null) {
+    const configuredCapital = round2(toNumber(investor.default_capital_repayment));
+
+    if (configuredCapital <= EPSILON) {
+      return result(amt, amt, 'configured_repayment',
+        SPLIT_SIGNAL_CONFIDENCE.configured_repayment,
+        'Investor is configured as interest-only (capital repayment set to £0.00)', base);
+    }
+
+    const withinScale = amt <= round2(configuredCapital * CONFIGURED_REPAYMENT_MAX_MULTIPLE);
+    // Widens the scale test, never narrows it: if the leftover is no more than the interest
+    // already sitting unwithdrawn then this IS the regular payment, however large it looks
+    // next to the capital portion, so the multiple must not veto it.
+    const remainderIsInterest = round2(amt - configuredCapital) <= round2(available) + PENNY;
+
+    if (withinScale || remainderIsInterest) {
+      const hasBalance = investor.current_capital_balance != null;
+      const balance = Math.max(round2(toNumber(investor.current_capital_balance)), 0);
+      const cap = hasBalance
+        ? Math.min(configuredCapital, amt, balance)
+        : Math.min(configuredCapital, amt);
+      const reason = cap < configuredCapital
+        ? `Configured repayment of ${formatMoney(configuredCapital)} for this investor, `
+          + `reduced to ${formatMoney(cap)} by the capital available - remainder to interest`
+        : `Configured repayment of ${formatMoney(configuredCapital)} for this investor `
+          + `allocated to capital, remainder to interest`;
+      return result(amt, round2(amt - cap), 'configured_repayment',
+        SPLIT_SIGNAL_CONFIDENCE.configured_repayment, reason, base);
+    }
+  }
 
   // S2 - the amount is exactly one unwithdrawn credit.
   const exact = residual.credits.filter(c => Math.abs(c.remaining - amt) <= PENNY);

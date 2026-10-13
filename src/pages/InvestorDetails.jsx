@@ -801,6 +801,13 @@ export default function InvestorDetails() {
                     : <span className="text-slate-500 italic">Manual</span>
                   }
                 </p>
+                {/* The configured capital portion of a regular repayment. Pre-fills the
+                    split during bank reconciliation. */}
+                {investor.default_capital_repayment != null && (
+                  <p className="text-xs text-slate-400">
+                    Repayment: {formatCurrency(investor.default_capital_repayment)}
+                  </p>
+                )}
               </div>
               <div>
                 <p className="text-xs text-slate-500 mb-1">Current Capital</p>

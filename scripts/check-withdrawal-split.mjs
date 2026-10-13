@@ -244,5 +244,117 @@ check('an unmapped type passes through',
   formKeyForSuggestion({ type: 'expense' }), 'expense');
 check('no suggestion yields no form key', formKeyForSuggestion(null), null);
 
+// --- 16. Investor.default_capital_repayment ---------------------------------
+// A configured capital portion is explicit configuration, so it outranks every
+// amount-based signal. S1's capital narrative still wins ahead of it.
+const CONFIGURED = { ...ADW, default_capital_repayment: 250, current_capital_balance: 100000 };
+const configured = (over) => suggestWithdrawalSplit({
+  investor: CONFIGURED,
+  statementDate: '2026-10-01',
+  description: '',
+  ...over
+});
+
+const regular = configured({ amount: 1000 });
+check('a configured repayment is used', regular.signal, 'configured_repayment');
+check('configured capital is the configured amount', regular.capital, 250);
+check('the remainder goes to interest', regular.interest, 750);
+check('the reason names the configured amount', regular.reason.includes('250.00'), true);
+console.log(`        reason: ${regular.reason}`);
+
+check('configuration beats an exact credit match',
+  configured({ amount: 1000, interestEntries: [credit('c1', 1000, '2026-10-01')] }).signal,
+  'configured_repayment');
+check('configuration beats a credit subset',
+  configured({
+    amount: 1000,
+    interestEntries: [credit('c1', 400, '2026-09-01'), credit('c2', 600, '2026-10-01')]
+  }).capital, 250);
+
+// S1 runs first, so an explicit capital narrative still takes the whole amount.
+const narrated = configured({ amount: 1000, description: 'ADW capital redemption' });
+check('a capital narrative still overrides configuration', narrated.signal, 'capital_keyword');
+check('a capital narrative takes the whole amount', narrated.capital, 1000);
+
+// An "interest" narrative deliberately does NOT suppress the configured default: a
+// combined capital+interest payment is often narrated just "...Interest".
+check('an interest narrative does not suppress configuration',
+  configured({ amount: 1000, description: 'ADW Oct26 Interest' }).signal,
+  'configured_repayment');
+
+// Scale test: 200x the configured repayment is a redemption, not the regular payment.
+const lump = configured({ amount: 50000 });
+check('a far larger payment falls back to the ladder', lump.signal, 'default');
+check('the fallback allocates all to capital', lump.capital, 50000);
+check('a payment at exactly 10x still uses configuration',
+  configured({ amount: 2500 }).signal, 'configured_repayment');
+
+// ...unless the leftover is interest that really is sitting unwithdrawn.
+check('a large payment matching unwithdrawn interest still uses configuration',
+  configured({
+    amount: 50000,
+    interestEntries: [credit('c1', 49750, '2026-09-01')]
+  }).signal, 'configured_repayment');
+
+// Clamps.
+const small = configured({ amount: 100 });
+check('a payment under the configured amount is all capital', small.capital, 100);
+check('a payment under the configured amount has no interest', small.interest, 0);
+check('the reduction is explained', small.reason.includes('reduced to'), true);
+
+const repaid = suggestWithdrawalSplit({
+  investor: { ...ADW, default_capital_repayment: 250, current_capital_balance: 0 },
+  statementDate: '2026-10-01',
+  description: '',
+  amount: 1000
+});
+check('a fully repaid investor takes no capital', repaid.capital, 0);
+check('a fully repaid investor takes it all as interest', repaid.interest, 1000);
+
+const partlyRepaid = suggestWithdrawalSplit({
+  investor: { ...ADW, default_capital_repayment: 250, current_capital_balance: 90 },
+  statementDate: '2026-10-01',
+  description: '',
+  amount: 1000
+});
+check('capital is clamped to the remaining balance', partlyRepaid.capital, 90);
+check('the clamped remainder goes to interest', partlyRepaid.interest, 910);
+
+// An explicit 0 is a setting, not "unset" - and no scale test applies to it.
+const interestOnly = suggestWithdrawalSplit({
+  investor: { ...ADW, default_capital_repayment: 0, current_capital_balance: 100000 },
+  statementDate: '2026-10-01',
+  description: '',
+  amount: 50000
+});
+check('a configured zero is interest-only', interestOnly.capital, 0);
+check('a configured zero allocates all to interest', interestOnly.interest, 50000);
+check('a configured zero reports the signal', interestOnly.signal, 'configured_repayment');
+
+// Null/absent must leave today's behaviour untouched.
+check('a null configuration falls through',
+  suggestWithdrawalSplit({
+    investor: { ...ADW, default_capital_repayment: null },
+    statementDate: '2026-10-01',
+    amount: 44749.32,
+    description: 'To ADW Enterprises Ltd, Oct26 Interest',
+    interestEntries: [credit('c1', 44749.32, '2026-10-01')]
+  }).signal, 'single_credit');
+check('an absent configuration falls through', split({ amount: 1000 }).signal, 'default');
+
+// The invariant: both sides always close to the bank amount.
+for (const [label, r, amt] of [
+  ['regular', regular, 1000],
+  ['lump', lump, 50000],
+  ['small', small, 100],
+  ['repaid', repaid, 1000],
+  ['clamped', partlyRepaid, 1000],
+  ['interest-only', interestOnly, 50000]
+]) {
+  check(`configured split closes exactly (${label})`,
+    Math.round((r.capital + r.interest) * 100) / 100, amt);
+}
+
+
 console.log(`\n${failures === 0 ? 'All checks passed.' : `${failures} check(s) FAILED.`}`);
 process.exit(failures === 0 ? 0 : 1);
