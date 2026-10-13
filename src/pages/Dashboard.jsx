@@ -903,17 +903,17 @@ export default function Dashboard() {
           pendingLoans={pendingLoans}
         />
 
+        {/* Exceptions first: who has stopped paying, ahead of the balance rankings */}
+        <LatePaymentsCard
+          rows={latePayments}
+          isLoading={loansLoading || transactionsLoading || schedulesLoading}
+        />
+
         {/* Key Metrics Grid - Highest Balances & Credits */}
         <KeyMetricsGrid
           highestInterestBalances={highestInterestBalances}
           highestPrincipalBalances={highestPrincipalBalances}
           borrowersInCredit={borrowersInCredit}
-        />
-
-        {/* Who has stopped paying - above Recent Payments, which shows who has */}
-        <LatePaymentsCard
-          rows={latePayments}
-          isLoading={loansLoading || transactionsLoading || schedulesLoading}
         />
 
         {/* Recent Payments */}
