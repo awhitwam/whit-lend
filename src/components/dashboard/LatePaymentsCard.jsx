@@ -55,6 +55,25 @@ const RANK_CLASS = {
   5: 'bg-red-800 text-white'
 };
 
+/**
+ * What the borrower has stopped paying. Rent loans service a rent charge rather than
+ * interest and Fixed Charge loans settle through `fees_applied` (see
+ * lastInterestPayment in src/lib/latePayments.js), so calling all three "interest"
+ * misdescribes two of them. Keyed on row.schedulerType, which buildLatePaymentRows
+ * already resolves through the same product/scheduler authority the engine uses.
+ */
+const KIND_LABEL = {
+  rent: 'Rent',
+  fixed_charge: 'Charge'
+};
+
+const KIND_CLASS = {
+  rent: 'bg-amber-50 text-amber-700 ring-amber-200',
+  fixed_charge: 'bg-violet-50 text-violet-700 ring-violet-200'
+};
+
+const DEFAULT_KIND_CLASS = 'bg-white text-slate-600 ring-slate-200';
+
 export default function LatePaymentsCard({ rows = [], isLoading = false }) {
   const [expanded, setExpanded] = useState(false);
   const visible = expanded ? rows : rows.slice(0, COLLAPSED_ROWS);
@@ -75,8 +94,8 @@ export default function LatePaymentsCard({ rows = [], isLoading = false }) {
           )}
         </div>
         <p className="text-xs text-slate-500 mt-1">
-          Live loans that were servicing interest and have lapsed, measured against each
-          loan&apos;s own payment interval
+          Live loans that were servicing interest or rent and have lapsed, measured against
+          each loan&apos;s own payment interval
         </p>
       </CardHeader>
 
@@ -101,25 +120,39 @@ export default function LatePaymentsCard({ rows = [], isLoading = false }) {
                 <Link
                   key={row.loan.id}
                   to={createPageUrl(`LoanDetails?id=${row.loan.id}`)}
-                  className={`flex items-center gap-3 p-3 hover:bg-slate-50 transition-colors ${ROW_CLASS[row.tier]}`}
+                  className={`flex items-center gap-2 px-3 py-2 hover:bg-slate-50 transition-colors ${ROW_CLASS[row.tier]}`}
+                  title={row.lastPaidLabel
+                    ? `Last paid ${formatCurrency(row.lastPaidAmount)} on ${row.lastPaidLabel} · ${row.cadenceLabel}`
+                    : `Never paid · ${row.cadenceLabel} expected`}
                 >
-                  <div className={`w-6 h-6 rounded-full flex items-center justify-center text-xs font-bold shrink-0 ${RANK_CLASS[row.tier]}`}>
+                  <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0 ${RANK_CLASS[row.tier]}`}>
                     {idx + 1}
                   </div>
 
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-slate-900 truncate">
+                  {/* flex-1 + min-w-0 on this group, shrink-0 on everything after it:
+                      the borrower name is the only thing that truncates, so the loan
+                      number, the kind and the badge always stay readable. */}
+                  <div className="flex-1 min-w-0 flex items-center gap-2">
+                    <span className="text-sm font-medium text-slate-900 truncate">
                       {row.loan.borrower_name}
-                    </p>
-                    <p className="text-xs text-slate-500">#{row.loan.loan_number}</p>
-                    <p className="text-xs text-slate-400 truncate">
-                      {row.lastPaidLabel
-                        ? `Last paid ${formatCurrency(row.lastPaidAmount)} on ${row.lastPaidLabel} · ${row.cadenceLabel}`
-                        : `Never paid · ${row.cadenceLabel} expected`}
-                    </p>
+                    </span>
+                    <span className="text-xs text-slate-400 shrink-0">
+                      #{row.loan.loan_number}
+                    </span>
+                    <span className={`text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded ring-1 shrink-0 ${KIND_CLASS[row.schedulerType] || DEFAULT_KIND_CLASS}`}>
+                      {KIND_LABEL[row.schedulerType] || 'Interest'}
+                    </span>
                   </div>
 
-                  <div className={`text-xs font-semibold px-2.5 py-1 rounded-full shrink-0 ${BADGE_CLASS[row.tier]}`}>
+                  {/* Hidden below lg, where there is no room for it; the row `title`
+                      carries the same sentence for every width. */}
+                  <span className="text-xs text-slate-400 whitespace-nowrap shrink-0 hidden lg:block">
+                    {row.lastPaidLabel
+                      ? `${formatCurrency(row.lastPaidAmount)} · ${row.lastPaidLabel} · ${row.cadenceLabel}`
+                      : `Never paid · ${row.cadenceLabel}`}
+                  </span>
+
+                  <div className={`text-xs font-semibold px-2 py-0.5 rounded-full shrink-0 ${BADGE_CLASS[row.tier]}`}>
                     {row.daysLate}d late
                   </div>
                 </Link>
