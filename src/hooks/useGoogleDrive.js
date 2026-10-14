@@ -26,6 +26,48 @@ async function getAccessToken() {
   return session.access_token;
 }
 
+/**
+ * Where the OAuth round trip should land, and what to resume when it gets there.
+ *
+ * This rides in sessionStorage rather than in Google's `state` parameter because
+ * GoogleDriveCallback parses `state` as a bare organization id - packing a path into it
+ * would break the organization lookup on every existing connect. sessionStorage survives
+ * the cross-origin trip to Google and back in the same tab, which is the only trip that
+ * matters here.
+ */
+export const DRIVE_RETURN_KEY = 'whitlend:googleDriveReturn';
+
+/** Longer than any consent screen, short enough that a tab left open overnight and
+ *  reconnected the next morning does not silently fire yesterday's backup. */
+export const DRIVE_RETURN_TTL_MS = 10 * 60 * 1000;
+
+/**
+ * Read and clear the stored destination. Returns null when there is none, when it is
+ * stale, or when sessionStorage is unavailable (private browsing).
+ */
+export function consumeDriveReturn() {
+  try {
+    const raw = sessionStorage.getItem(DRIVE_RETURN_KEY);
+    sessionStorage.removeItem(DRIVE_RETURN_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed?.path) return null;
+    if (Date.now() - (parsed.at || 0) > DRIVE_RETURN_TTL_MS) return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+/** Drop any stored destination without acting on it. */
+export function clearDriveReturn() {
+  try {
+    sessionStorage.removeItem(DRIVE_RETURN_KEY);
+  } catch {
+    // Nothing stored means nothing to resume, which is the safe outcome anyway.
+  }
+}
+
 // Check if error indicates auth/token issue
 const isAuthError = (errorMessage) => {
   if (!errorMessage) return false;
@@ -91,7 +133,7 @@ export function useGoogleDrive() {
   /**
    * Initiate OAuth flow to connect Google Drive for current organization
    */
-  const initiateOAuth = useCallback(() => {
+  const initiateOAuth = useCallback((options = {}) => {
     const clientId = import.meta.env.VITE_GOOGLE_CLIENT_ID || '867728021178-umj71l6jen6k1ifvjm69bs1u71n8k6m4.apps.googleusercontent.com';
     if (!clientId) {
       console.error('VITE_GOOGLE_CLIENT_ID not configured');
@@ -110,6 +152,22 @@ export function useGoogleDrive() {
 
     // Pass organization_id through OAuth state parameter
     const state = encodeURIComponent(currentOrganization.id);
+
+    // Stored before the redirect, consumed by GoogleDriveCallback on success. Callers
+    // that pass nothing keep the old behaviour of landing on Settings.
+    if (options.returnTo) {
+      try {
+        sessionStorage.setItem(DRIVE_RETURN_KEY, JSON.stringify({
+          path: options.returnTo,
+          action: options.resumeAction || null,
+          at: Date.now()
+        }));
+      } catch {
+        // Private browsing: the connection still works, it just ends up on Settings.
+      }
+    } else {
+      clearDriveReturn();
+    }
 
     const authUrl =
       `https://accounts.google.com/o/oauth2/v2/auth?` +
@@ -327,6 +385,82 @@ export function useGoogleDrive() {
 
     return result.drives || [];
   }, [currentOrganization?.id, loadConnectionStatus]);
+
+  /**
+   * Live check that this organization's Drive link actually works.
+   *
+   * `google_drive_connected` is only a column. It stays true after the refresh token is
+   * revoked or expires at Google, and nothing clears it until a Drive call is actually
+   * attempted - refreshTokenIfNeeded in supabase/functions/_shared/tokenManagement.ts
+   * flips it to false only when a refresh fails. So reading the flag is not a check; the
+   * flag has to be read AND a real request made.
+   *
+   * listSharedDrives is the probe. It is the cheapest call that exercises the whole
+   * chain (stored tokens -> server-side refresh -> a real Drive API request), and a token
+   * granted narrower scopes than `drive` fails it with a 403, so it catches the stale-
+   * scope case that produces the "permissions outdated" upload error. Listing a folder's
+   * children would NOT work as a probe: Drive answers `'<id>' in parents` for a deleted
+   * or inaccessible folder with an empty list rather than an error, so it cannot tell a
+   * broken link from an empty folder.
+   *
+   * Returns the folder ids it read alongside the verdict. Callers need them in the same
+   * tick, and the state this hook sets is not visible to the closure that called in.
+   *
+   * @returns {Promise<{ok: boolean, reason: string, error?: string,
+   *                    backupFolderId: string|null, baseFolderId: string|null}>}
+   *   reason: 'ok' | 'no-organization' | 'not-connected' | 'reauth-required' |
+   *           'check-failed'
+   */
+  const verifyConnection = useCallback(async () => {
+    const miss = (reason, error) => ({
+      ok: false,
+      reason,
+      error,
+      backupFolderId: null,
+      baseFolderId: null
+    });
+
+    if (!currentOrganization?.id) return miss('no-organization');
+
+    // Re-read rather than trusting `isConnected`: another tab, or any failed Drive call
+    // elsewhere in the app, may have cleared the flag since this hook last loaded.
+    let orgData;
+    try {
+      const { data, error } = await supabase
+        .from('organizations')
+        .select('google_drive_connected, google_drive_base_folder_id, google_drive_backup_folder_id')
+        .eq('id', currentOrganization.id)
+        .single();
+      if (error) return miss('check-failed', error.message);
+      orgData = data;
+    } catch (err) {
+      return miss('check-failed', err.message);
+    }
+
+    if (!orgData?.google_drive_connected) {
+      setIsConnected(false);
+      return miss('not-connected');
+    }
+
+    try {
+      await listSharedDrives();
+    } catch (err) {
+      // listSharedDrives has already re-read the flag when the message looked like an
+      // auth failure. Anything reaching here needs the user back through consent, so it
+      // is reported as such rather than as a transient failure the caller might retry.
+      await loadConnectionStatus();
+      return miss('reauth-required', err.message);
+    }
+
+    await loadConnectionStatus();
+
+    return {
+      ok: true,
+      reason: 'ok',
+      backupFolderId: orgData.google_drive_backup_folder_id || null,
+      baseFolderId: orgData.google_drive_base_folder_id || null
+    };
+  }, [currentOrganization?.id, listSharedDrives, loadConnectionStatus]);
 
   /**
    * List folders in a folder
@@ -631,6 +765,7 @@ export function useGoogleDrive() {
     listFolders,
     saveBaseFolder,
     saveBackupFolder,
+    verifyConnection,
     refresh: loadConnectionStatus,
 
     // File browser actions

@@ -7,6 +7,7 @@
 import { useEffect, useState, useRef } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
+import { consumeDriveReturn, clearDriveReturn } from '@/hooks/useGoogleDrive';
 import { supabase } from '@/lib/supabaseClient';
 import { Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
@@ -17,6 +18,9 @@ export default function GoogleDriveCallback() {
   const { user, isLoadingAuth } = useAuth();
   const [status, setStatus] = useState('processing'); // processing, success, error
   const [errorMessage, setErrorMessage] = useState('');
+  // Where success lands. Settings unless the connect was started from somewhere that
+  // asked to be returned to - the backup button on the Dashboard, for instance.
+  const [destination, setDestination] = useState('/Config');
   const hasProcessed = useRef(false);
 
   useEffect(() => {
@@ -33,6 +37,7 @@ export default function GoogleDriveCallback() {
 
       if (error) {
         hasProcessed.current = true;
+        clearDriveReturn();
         setStatus('error');
         setErrorMessage(error === 'access_denied'
           ? 'Access was denied. Please try again.'
@@ -43,6 +48,7 @@ export default function GoogleDriveCallback() {
 
       if (!code) {
         hasProcessed.current = true;
+        clearDriveReturn();
         setStatus('error');
         setErrorMessage('No authorization code received');
         return;
@@ -50,6 +56,7 @@ export default function GoogleDriveCallback() {
 
       if (!state) {
         hasProcessed.current = true;
+        clearDriveReturn();
         setStatus('error');
         setErrorMessage('Missing organization context. Please try connecting again from Settings.');
         return;
@@ -104,12 +111,21 @@ export default function GoogleDriveCallback() {
         setStatus('success');
         toast.success(`Connected to Google Drive as ${data.email}`);
 
-        // Redirect to settings after a short delay
+        // `driveResume` tells the destination page which action to pick back up, so a
+        // connect started by clicking Backup finishes as a backup rather than dumping
+        // the user on Settings to start again.
+        const resume = consumeDriveReturn();
+        const target = resume
+          ? `${resume.path}${resume.action ? `?driveResume=${encodeURIComponent(resume.action)}` : ''}`
+          : '/Config';
+        setDestination(target);
+
         setTimeout(() => {
-          navigate('/Config', { replace: true });
+          navigate(target, { replace: true });
         }, 1500);
       } catch (err) {
         console.error('OAuth callback error:', err);
+        clearDriveReturn();
         setStatus('error');
         setErrorMessage(err.message || 'Failed to connect Google Drive');
       }
@@ -133,7 +149,11 @@ export default function GoogleDriveCallback() {
           <>
             <CheckCircle className="w-12 h-12 text-green-600 mx-auto mb-4" />
             <h2 className="text-xl font-semibold text-slate-900">Connected Successfully!</h2>
-            <p className="text-slate-500 mt-2">Redirecting to settings...</p>
+            <p className="text-slate-500 mt-2">
+              {destination.startsWith('/Config')
+                ? 'Redirecting to settings...'
+                : 'Taking you back to finish what you started...'}
+            </p>
           </>
         )}
 

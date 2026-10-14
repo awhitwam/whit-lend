@@ -1,5 +1,5 @@
-import { useState, useMemo, useCallback } from 'react';
-import { Link } from 'react-router-dom';
+import { useState, useMemo, useCallback, useEffect } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { api } from '@/api/dataClient';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -8,6 +8,9 @@ import { useGoogleDrive } from '@/hooks/useGoogleDrive';
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle
+} from "@/components/ui/dialog";
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 import { CURRENT_SCHEMA_VERSION } from '@/lib/backupSchema';
@@ -19,7 +22,9 @@ import {
   CheckCircle2,
   CircleDot,
   HardDrive,
-  Loader2
+  Loader2,
+  Cloud,
+  FolderOpen
 } from 'lucide-react';
 import { isPast, isToday, format, startOfMonth, endOfMonth, isWithinInterval, subMonths, differenceInDays } from 'date-fns';
 import QuickStatsRow from '@/components/dashboard/QuickStatsRow';
@@ -31,13 +36,56 @@ import BreakdownModal from '@/components/dashboard/BreakdownModal';
 import LatePaymentsCard from '@/components/dashboard/LatePaymentsCard';
 import { buildLatePaymentRows } from '@/lib/latePayments';
 
+/**
+ * What to tell the user for each verdict verifyConnection can return, and whether the
+ * fix is the consent screen or the folder picker in Settings. Keeping the copy out here
+ * keeps the dialog below to a single branch.
+ */
+const DRIVE_ISSUE_COPY = {
+  'not-connected': {
+    title: 'Google Drive is not connected',
+    body: 'Backups can be copied straight to Google Drive, but this organisation has no Google account linked yet. Connecting takes you to Google to grant access, then brings you back here to finish the backup.',
+    action: 'connect'
+  },
+  'reauth-required': {
+    title: 'The Google Drive connection has expired',
+    body: 'Google is no longer accepting the stored credentials, so the offsite copy would fail. This usually means access was revoked or the permissions have changed. Reconnecting takes you to Google, then brings you back here to finish the backup.',
+    action: 'connect'
+  },
+  'check-failed': {
+    title: 'Could not check Google Drive',
+    body: 'The Google Drive connection could not be verified just now. You can reconnect, or take a local backup and try the offsite copy later.',
+    action: 'connect'
+  },
+  'no-organization': {
+    title: 'No organisation selected',
+    body: 'Select an organisation before backing up.',
+    action: 'none'
+  },
+  'no-backup-folder': {
+    title: 'No backup folder chosen',
+    body: 'Google Drive is connected, but no folder has been set for backups, so there is nowhere to put the file. Choose one in Settings, or take a local backup now.',
+    action: 'settings'
+  }
+};
+
 export default function Dashboard() {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
   const { currentOrganization, isLoadingOrgs, currentTheme } = useOrganization();
-  const { isConnected: driveConnected, backupFolderId, uploadFileToFolder } = useGoogleDrive();
+  const {
+    isConnected: driveConnected,
+    uploadFileToFolder,
+    verifyConnection: verifyDriveConnection,
+    initiateOAuth: connectGoogleDrive
+  } = useGoogleDrive();
   const [activeBreakdown, setActiveBreakdown] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [isBackingUp, setIsBackingUp] = useState(false);
+  const [isCheckingDrive, setIsCheckingDrive] = useState(false);
+  // null when the Drive link checked out; otherwise the verdict driving the dialog.
+  const [driveIssue, setDriveIssue] = useState(null);
 
   // Dashboard queries use 2-minute stale time to reduce unnecessary refetches
   const DASHBOARD_STALE_TIME = 2 * 60 * 1000; // 2 minutes
@@ -580,8 +628,15 @@ export default function Dashboard() {
     return map[tableName] || tableName;
   };
 
-  // Handle backup export
-  const handleBackupNow = useCallback(async () => {
+  /**
+   * Export every org-scoped table, download it, and optionally push it to Drive.
+   *
+   * The Drive folder arrives as an argument rather than being read from the hook: the
+   * caller has just verified the link and holds a folder id read in that same tick,
+   * whereas the hook's `backupFolderId` is React state the verification has not
+   * necessarily flushed yet. Passing nothing is the deliberate "local copy only" path.
+   */
+  const runBackup = useCallback(async ({ driveFolderId = null } = {}) => {
     if (isBackingUp) return;
     setIsBackingUp(true);
 
@@ -649,7 +704,8 @@ export default function Dashboard() {
 
       // Upload to Google Drive if folder is configured
       let driveUploadSuccess = false;
-      if (backupFolderId && driveConnected) {
+      let driveUploadError = null;
+      if (driveFolderId) {
         try {
           // Use compact JSON and gzip compress for Drive upload
           // This reduces ~6MB+ JSON to ~500KB-1MB, well within Edge Function limits
@@ -666,10 +722,11 @@ export default function Dashboard() {
           }
           const base64Content = btoa(binary);
           console.log(`[Backup] Compressed: ${(compactJson.length / 1024 / 1024).toFixed(1)}MB → ${(compressedBytes.length / 1024).toFixed(0)}KB`);
-          await uploadFileToFolder(backupFolderId, fileName, base64Content, 'application/json', { compressed: 'gzip' });
+          await uploadFileToFolder(driveFolderId, fileName, base64Content, 'application/json', { compressed: 'gzip' });
           driveUploadSuccess = true;
         } catch (driveErr) {
           console.error('Google Drive upload failed:', driveErr);
+          driveUploadError = driveErr.message || 'Upload failed';
           if (driveErr.message?.toLowerCase().includes('scopes')) {
             toast.error('Google Drive permissions outdated. Please disconnect and reconnect Google Drive in Settings.');
           }
@@ -687,6 +744,10 @@ export default function Dashboard() {
 
       if (driveUploadSuccess) {
         toast.success(`Backup complete and uploaded to Google Drive (${totalRecords.toLocaleString()} records)`);
+      } else if (driveUploadError) {
+        // A plain "Backup complete" here would claim an offsite copy that does not
+        // exist, which is the one thing this button must never do.
+        toast.error(`Backup downloaded, but the Google Drive upload failed: ${driveUploadError}`);
       } else {
         toast.success(`Backup complete (${totalRecords.toLocaleString()} records)`);
       }
@@ -696,7 +757,86 @@ export default function Dashboard() {
     } finally {
       setIsBackingUp(false);
     }
-  }, [isBackingUp, currentOrganization, backupFolderId, driveConnected, uploadFileToFolder, queryClient, getEntityName]);
+  }, [isBackingUp, currentOrganization, uploadFileToFolder, queryClient, getEntityName]);
+
+  /**
+   * The backup button. Checks the Drive link for real before exporting anything.
+   *
+   * The green dot on the icon reflects `organizations.google_drive_connected`, which is
+   * only a column - it stays true after the refresh token is revoked at Google, and the
+   * old flow discovered that at the very end, having already spent a full table export,
+   * by swallowing the upload error into a "Backup complete" toast. Verifying first means
+   * a broken link is a question the user can answer, not a silent missing offsite copy.
+   */
+  const handleBackupClick = useCallback(async () => {
+    if (isBackingUp || isCheckingDrive) return;
+
+    setIsCheckingDrive(true);
+    let status;
+    try {
+      status = await verifyDriveConnection();
+    } catch (err) {
+      status = { ok: false, reason: 'check-failed', error: err.message };
+    } finally {
+      setIsCheckingDrive(false);
+    }
+
+    if (!status.ok) {
+      setDriveIssue(status);
+      return;
+    }
+
+    // Connected, but with nowhere to put the file. Not a broken link, so it gets its own
+    // branch pointing at the folder picker rather than at the consent screen.
+    if (!status.backupFolderId) {
+      setDriveIssue({ ...status, ok: true, reason: 'no-backup-folder' });
+      return;
+    }
+
+    runBackup({ driveFolderId: status.backupFolderId });
+  }, [isBackingUp, isCheckingDrive, verifyDriveConnection, runBackup]);
+
+  /** Send the user to Google, asking to be returned here to finish the backup. */
+  const handleConnectDrive = useCallback(() => {
+    setDriveIssue(null);
+    const result = connectGoogleDrive({
+      returnTo: createPageUrl('Dashboard'),
+      resumeAction: 'backup'
+    });
+    if (result && !result.success) {
+      toast.error(result.error);
+    }
+  }, [connectGoogleDrive]);
+
+  const handleBackupLocallyOnly = useCallback(() => {
+    setDriveIssue(null);
+    runBackup();
+  }, [runBackup]);
+
+  /**
+   * Pick the backup back up after the OAuth round trip.
+   *
+   * GoogleDriveCallback appends ?driveResume=backup when the connect was started from
+   * this button. The parameter is stripped before the backup runs so a refresh of the
+   * landing URL cannot export the whole database a second time.
+   */
+  useEffect(() => {
+    if (searchParams.get('driveResume') !== 'backup') return;
+
+    // On a cold load of the landing URL the organization context is still resolving, and
+    // verifying without an organization just reports 'no-organization'. Leave the
+    // parameter in place and let the effect re-fire once the organization is there.
+    if (!currentOrganization?.id) return;
+
+    const next = new URLSearchParams(searchParams);
+    next.delete('driveResume');
+    setSearchParams(next, { replace: true });
+
+    toast.info('Google Drive connected - resuming your backup');
+    handleBackupClick();
+    // handleBackupClick is deliberately not a dependency: its identity changes as the
+    // backup runs (isBackingUp), and re-running this effect would start a second export.
+  }, [searchParams, setSearchParams, currentOrganization?.id]);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 via-slate-50 to-slate-100">
@@ -712,17 +852,17 @@ export default function Dashboard() {
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      onClick={handleBackupNow}
-                      disabled={isBackingUp}
+                      onClick={handleBackupClick}
+                      disabled={isBackingUp || isCheckingDrive}
                       className={`p-1.5 rounded-lg transition-colors ${
-                        isBackingUp
+                        isBackingUp || isCheckingDrive
                           ? 'bg-slate-100 text-slate-400'
                           : backupNeeded
                             ? 'bg-amber-100 hover:bg-amber-200 text-amber-600'
                             : 'bg-slate-100 hover:bg-slate-200 text-slate-500'
                       }`}
                     >
-                      {isBackingUp ? (
+                      {isBackingUp || isCheckingDrive ? (
                         <Loader2 className="w-5 h-5 animate-spin" />
                       ) : (
                         <div className="relative">
@@ -733,7 +873,9 @@ export default function Dashboard() {
                     </button>
                   </TooltipTrigger>
                   <TooltipContent side="right" className="max-w-xs">
-                    {backupNeeded ? (
+                    {isCheckingDrive ? (
+                      <p className="font-medium">Checking Google Drive&hellip;</p>
+                    ) : backupNeeded ? (
                       <>
                         <p className="font-medium text-amber-600">Backup Recommended</p>
                         <p className="text-xs text-slate-400 mt-1">
@@ -753,7 +895,9 @@ export default function Dashboard() {
                     <p className={`text-xs ${driveConnected ? 'text-green-500' : 'text-slate-400'}`}>
                       {driveConnected ? 'Google Drive connected' : 'Google Drive not connected'}
                     </p>
-                    <p className="text-xs text-slate-400">Click to backup now</p>
+                    <p className="text-xs text-slate-400">
+                      Click to check Google Drive and back up now
+                    </p>
                   </TooltipContent>
                 </Tooltip>
               </TooltipProvider>
@@ -924,6 +1068,51 @@ export default function Dashboard() {
 
         {/* Alerts Section */}
         <AlertsSection securityMetrics={securityMetrics} loansMaturing={loansMaturing} />
+
+        {/* Google Drive check - raised by the backup button before it exports anything */}
+        <Dialog open={!!driveIssue} onOpenChange={(open) => !open && setDriveIssue(null)}>
+          <DialogContent className="sm:max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <Cloud className="w-5 h-5 text-blue-600" />
+                {DRIVE_ISSUE_COPY[driveIssue?.reason]?.title || 'Google Drive'}
+              </DialogTitle>
+              <DialogDescription>
+                {DRIVE_ISSUE_COPY[driveIssue?.reason]?.body}
+              </DialogDescription>
+            </DialogHeader>
+
+            {driveIssue?.error && (
+              <p className="text-xs text-slate-500 bg-slate-50 border rounded-md px-3 py-2 break-words">
+                {driveIssue.error}
+              </p>
+            )}
+
+            <DialogFooter className="gap-2 sm:gap-2">
+              <Button variant="ghost" onClick={() => setDriveIssue(null)}>
+                Cancel
+              </Button>
+              {DRIVE_ISSUE_COPY[driveIssue?.reason]?.action !== 'none' && (
+                <Button variant="outline" onClick={handleBackupLocallyOnly}>
+                  <HardDrive className="w-4 h-4 mr-2" />
+                  Back up locally only
+                </Button>
+              )}
+              {DRIVE_ISSUE_COPY[driveIssue?.reason]?.action === 'connect' && (
+                <Button onClick={handleConnectDrive}>
+                  <Cloud className="w-4 h-4 mr-2" />
+                  Connect Google Drive
+                </Button>
+              )}
+              {DRIVE_ISSUE_COPY[driveIssue?.reason]?.action === 'settings' && (
+                <Button onClick={() => navigate(createPageUrl('Config'))}>
+                  <FolderOpen className="w-4 h-4 mr-2" />
+                  Choose folder
+                </Button>
+              )}
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Breakdown Modal */}
         <BreakdownModal
