@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
-import { CURRENT_SCHEMA_VERSION } from '@/lib/backupSchema';
+import { CURRENT_SCHEMA_VERSION, BACKUP_TABLES, getEntityName } from '@/lib/backupSchema';
 import { toast } from 'sonner';
 import {
   AlertTriangle,
@@ -590,44 +590,6 @@ export default function Dashboard() {
     : null;
   const backupNeeded = daysSinceLastBackup === null || daysSinceLastBackup >= BACKUP_WARNING_DAYS;
 
-  // Entity name mapping for backup
-  const getEntityName = (tableName) => {
-    const map = {
-      'loan_products': 'LoanProduct',
-      'investor_products': 'InvestorProduct',
-      'expense_types': 'ExpenseType',
-      'first_charge_holders': 'FirstChargeHolder',
-      'borrowers': 'Borrower',
-      'properties': 'Property',
-      'Investor': 'Investor',
-      'loans': 'Loan',
-      'loan_comments': 'LoanComment',
-      'InvestorTransaction': 'InvestorTransaction',
-      'investor_interest': 'InvestorInterest',
-      'transactions': 'Transaction',
-      'repayment_schedules': 'RepaymentSchedule',
-      'loan_properties': 'LoanProperty',
-      'expenses': 'Expense',
-      'value_history': 'ValueHistory',
-      'bank_statements': 'BankStatement',
-      'other_income': 'OtherIncome',
-      'property_documents': 'PropertyDocument',
-      'borrower_loan_preferences': 'BorrowerLoanPreference',
-      'receipt_drafts': 'ReceiptDraft',
-      'reconciliation_patterns': 'ReconciliationPattern',
-      'reconciliation_entries': 'ReconciliationEntry',
-      'accepted_orphans': 'AcceptedOrphan',
-      'audit_logs': 'AuditLog',
-      'invitations': 'Invitation',
-      'nightly_job_runs': 'NightlyJobRun',
-      'organization_summary': 'OrganizationSummary',
-      'letter_templates': 'LetterTemplate',
-      'generated_letters': 'GeneratedLetter',
-      'user_profiles': 'UserProfile'
-    };
-    return map[tableName] || tableName;
-  };
-
   /**
    * Export every org-scoped table, download it, and optionally push it to Drive.
    *
@@ -647,41 +609,21 @@ export default function Dashboard() {
       organizationId: currentOrganization.id,
       organizationName: currentOrganization.name,
       organizationSettings: currentOrganization.settings || {},
+      // The whole org row, not just settings: the Drive folder ids, logo and postal
+      // address live here and are not recoverable from any backed-up table.
+      organizationRecord: currentOrganization,
       tables: {},
       metadata: { recordCounts: {} }
     };
 
-    // Tables to export in FK-safe order (all org-scoped data for full rebuild)
-    const tables = [
-      'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
-      'borrowers', 'properties', 'Investor',
-      'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
-      'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
-      'value_history', 'bank_statements', 'other_income', 'property_documents',
-      'borrower_loan_preferences', 'receipt_drafts',
-      'reconciliation_patterns', 'reconciliation_entries',
-      'accepted_orphans',
-      'audit_logs',
-      'invitations',
-      'nightly_job_runs',
-      'organization_summary',
-      'letter_templates',
-      'generated_letters',
-      'user_profiles'
-    ];
+    const tables = BACKUP_TABLES;
 
     try {
       for (const table of tables) {
-        const entityName = getEntityName(table);
-        try {
-          // Use listAll to get ALL records (no 1000-row limit)
-          const data = await api.entities[entityName].listAll();
-          backup.tables[table] = data;
-          backup.metadata.recordCounts[table] = data.length;
-        } catch {
-          backup.tables[table] = [];
-          backup.metadata.recordCounts[table] = 0;
-        }
+        // Use listAll to get ALL records (no 1000-row limit)
+        const data = await api.entities[getEntityName(table)].listAll();
+        backup.tables[table] = data;
+        backup.metadata.recordCounts[table] = data.length;
       }
 
       // Generate backup JSON
@@ -757,7 +699,7 @@ export default function Dashboard() {
     } finally {
       setIsBackingUp(false);
     }
-  }, [isBackingUp, currentOrganization, uploadFileToFolder, queryClient, getEntityName]);
+  }, [isBackingUp, currentOrganization, uploadFileToFolder, queryClient]);
 
   /**
    * The backup button. Checks the Drive link for real before exporting anything.

@@ -23,6 +23,10 @@ import { toast } from 'sonner';
 import { format } from 'date-fns';
 import {
   CURRENT_SCHEMA_VERSION,
+  BACKUP_TABLES,
+  RESTORE_TABLES,
+  RESTORE_FK_FIELDS,
+  getEntityName,
   tableSchemas,
   analyzeBackup,
   processRecordsForRestore,
@@ -1272,46 +1276,6 @@ export default function OrgAdmin() {
     }
   };
 
-  // Entity name mapping for backup/restore
-  const getEntityName = (tableName) => {
-    const map = {
-      'loan_products': 'LoanProduct',
-      'investor_products': 'InvestorProduct',
-      'expense_types': 'ExpenseType',
-      'first_charge_holders': 'FirstChargeHolder',
-      'borrowers': 'Borrower',
-      'properties': 'Property',
-      'Investor': 'Investor',
-      'loans': 'Loan',
-      'loan_comments': 'LoanComment',
-      'InvestorTransaction': 'InvestorTransaction',
-      'investor_interest': 'InvestorInterest',
-      'transactions': 'Transaction',
-      'repayment_schedules': 'RepaymentSchedule',
-      'loan_properties': 'LoanProperty',
-      'expenses': 'Expense',
-      'value_history': 'ValueHistory',
-      'bank_statements': 'BankStatement',
-      'other_income': 'OtherIncome',
-      'borrower_loan_preferences': 'BorrowerLoanPreference',
-      'receipt_drafts': 'ReceiptDraft',
-      'reconciliation_patterns': 'ReconciliationPattern',
-      'reconciliation_entries': 'ReconciliationEntry',
-      'internal_accounts': 'InternalAccount',
-      'internal_transfers': 'InternalTransfer',
-      'accepted_orphans': 'AcceptedOrphan',
-      'audit_logs': 'AuditLog',
-      'invitations': 'Invitation',
-      'nightly_job_runs': 'NightlyJobRun',
-      'organization_summary': 'OrganizationSummary',
-      'letter_templates': 'LetterTemplate',
-      'generated_letters': 'GeneratedLetter',
-      'property_documents': 'PropertyDocument',
-      'user_profiles': 'UserProfile'
-    };
-    return map[tableName] || tableName;
-  };
-
   // Export backup function
   const handleExportBackup = async () => {
     setIsExporting(true);
@@ -1325,29 +1289,14 @@ export default function OrgAdmin() {
       organizationId: currentOrganization.id,
       organizationName: currentOrganization.name,
       organizationSettings: currentOrganization.settings || {},
+      // The whole org row, not just settings: the Drive folder ids, logo and postal
+      // address live here and are not recoverable from any backed-up table.
+      organizationRecord: currentOrganization,
       tables: {},
       metadata: { recordCounts: {} }
     };
 
-    // Tables to export in FK-safe order (all org-scoped data for full rebuild)
-    const tables = [
-      'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
-      'borrowers', 'properties', 'Investor',
-      'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
-      'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
-      'value_history', 'bank_statements', 'other_income', 'property_documents',
-      'borrower_loan_preferences', 'receipt_drafts',
-      'internal_accounts', 'internal_transfers',
-      'reconciliation_patterns', 'reconciliation_entries',
-      'accepted_orphans',
-      'audit_logs',
-      'invitations',  // Pending org invitations
-      'nightly_job_runs',  // Job execution history
-      'organization_summary',  // Cached aggregates (can be regenerated but good to have)
-      'letter_templates',  // Letter templates
-      'generated_letters',  // Generated letter history
-      'user_profiles'  // User profiles (Google Drive settings backed up, but tokens are NOT backed up for security)
-    ];
+    const tables = BACKUP_TABLES;
 
     try {
       for (let i = 0; i < tables.length; i++) {
@@ -1363,9 +1312,8 @@ export default function OrgAdmin() {
           backup.metadata.recordCounts[table] = data.length;
           addLog(`    Found ${data.length} records`);
         } catch (err) {
-          addLog(`    Warning: Could not export ${table}: ${err.message}`);
-          backup.tables[table] = [];
-          backup.metadata.recordCounts[table] = 0;
+          addLog(`    FAILED to export ${table}: ${err.message}`);
+          throw new Error(`Backup aborted: could not export ${table} (${err.message})`);
         }
       }
 
@@ -1486,23 +1434,9 @@ export default function OrgAdmin() {
       addLog('Step 2: Restoring data from backup...');
       setRestoreProgress({ current: 2, total: 3, step: 'Restoring data...' });
 
-      // Restore in FK-safe order (matches export order, excludes audit_logs - they're records of the restore itself)
-      const restoreOrder = [
-        'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
-        'borrowers', 'properties', 'Investor',
-        'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
-        'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
-        'value_history', 'bank_statements', 'other_income', 'property_documents',
-        'borrower_loan_preferences', 'receipt_drafts',
-        'internal_accounts', 'internal_transfers',
-        'reconciliation_patterns', 'reconciliation_entries',
-        'accepted_orphans',
-        'invitations',  // Pending org invitations
-        'nightly_job_runs',  // Job execution history
-        'organization_summary',  // Cached aggregates
-        'letter_templates',  // Letter templates (no FKs to other tables except org)
-        'generated_letters'  // Generated letters (FKs to templates, loans, borrowers)
-      ];
+      // Restore in FK-safe order. Skips audit_logs (those rows would describe this
+      // restore) and user_profiles (auth-linked, no organization_id).
+      const restoreOrder = RESTORE_TABLES;
 
       let restoredCount = 0;
 
@@ -1526,29 +1460,7 @@ export default function OrgAdmin() {
         return rest;
       };
 
-      // FK field mappings for each table (column names must match actual DB schema)
-      // Note: loans.restructured_from_loan_id is handled specially (two-pass) since it's self-referential
-      const fkFieldMap = {
-        'loans': ['borrower_id', 'product_id'],  // restructured_from_loan_id handled in second pass
-        'loan_comments': ['loan_id', 'user_id'],  // user_id may be null for imported comments
-        'InvestorTransaction': ['investor_id', 'investor_product_id'],
-        'investor_interest': ['investor_id'],
-        'transactions': ['loan_id', 'borrower_id'],
-        'repayment_schedules': ['loan_id'],
-        'loan_properties': ['loan_id', 'property_id', 'first_charge_holder_id'],
-        'expenses': ['type_id', 'loan_id'],  // type_id for expense type, loan_id for loan reference
-        'reconciliation_patterns': ['expense_type_id'],  // patterns table DOES use expense_type_id
-        'value_history': ['loan_property_id'],
-        'property_documents': ['property_id'],
-        'borrower_loan_preferences': ['borrower_id', 'loan_id'],
-        'receipt_drafts': ['loan_id', 'borrower_id'],
-        'internal_transfers': ['internal_account_id'],
-        'reconciliation_entries': ['bank_statement_id', 'loan_transaction_id', 'investor_transaction_id', 'expense_id', 'other_income_id', 'interest_id', 'internal_transfer_id'],
-        'accepted_orphans': ['entity_id'],  // entity_id is polymorphic, handled specially
-        'organization_summary': [],  // Uses organization_id as PK, handled specially
-        'letter_templates': ['created_by'],  // created_by is user_id, may be null
-        'generated_letters': ['template_id', 'loan_id', 'borrower_id', 'created_by']  // FKs to templates, loans, borrowers
-      };
+      const fkFieldMap = RESTORE_FK_FIELDS;
 
       // Track loans with restructure references for second pass
       const loansWithRestructureRefs = [];

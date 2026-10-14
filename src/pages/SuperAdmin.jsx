@@ -58,6 +58,10 @@ import { api } from '@/api/dataClient';
 import { logAudit, AuditAction, EntityType } from '@/lib/auditLog';
 import {
   CURRENT_SCHEMA_VERSION,
+  BACKUP_TABLES,
+  RESTORE_TABLES,
+  RESTORE_FK_FIELDS,
+  getEntityName,
   tableSchemas,
   analyzeBackup,
   processRecordsForRestore
@@ -543,44 +547,6 @@ export default function SuperAdmin() {
   // Helper to add log entry
   const addLog = (message) => {
     setClearLogs(prev => [...prev, `[${new Date().toLocaleTimeString()}] ${message}`]);
-  };
-
-  // Entity name mapping for backup/restore
-  const getEntityName = (tableName) => {
-    const map = {
-      'loan_products': 'LoanProduct',
-      'investor_products': 'InvestorProduct',
-      'expense_types': 'ExpenseType',
-      'first_charge_holders': 'FirstChargeHolder',
-      'borrowers': 'Borrower',
-      'properties': 'Property',
-      'Investor': 'Investor',
-      'loans': 'Loan',
-      'loan_comments': 'LoanComment',
-      'InvestorTransaction': 'InvestorTransaction',
-      'investor_interest': 'InvestorInterest',
-      'transactions': 'Transaction',
-      'repayment_schedules': 'RepaymentSchedule',
-      'loan_properties': 'LoanProperty',
-      'expenses': 'Expense',
-      'value_history': 'ValueHistory',
-      'bank_statements': 'BankStatement',
-      'other_income': 'OtherIncome',
-      'borrower_loan_preferences': 'BorrowerLoanPreference',
-      'receipt_drafts': 'ReceiptDraft',
-      'reconciliation_patterns': 'ReconciliationPattern',
-      'reconciliation_entries': 'ReconciliationEntry',
-      'internal_accounts': 'InternalAccount',
-      'internal_transfers': 'InternalTransfer',
-      'accepted_orphans': 'AcceptedOrphan',
-      'audit_logs': 'AuditLog',
-      'invitations': 'Invitation',
-      'nightly_job_runs': 'NightlyJobRun',
-      'organization_summary': 'OrganizationSummary',
-      'letter_templates': 'LetterTemplate',
-      'generated_letters': 'GeneratedLetter'
-    };
-    return map[tableName] || tableName;
   };
 
   // Helper to run operations with a specific org context
@@ -1131,28 +1097,14 @@ export default function SuperAdmin() {
       organizationId: org.id,
       organizationName: org.name,
       organizationSettings: org.settings || {},
+      // The whole org row, not just settings: the Drive folder ids, logo and postal
+      // address live here and are not recoverable from any backed-up table.
+      organizationRecord: org,
       tables: {},
       metadata: { recordCounts: {} }
     };
 
-    const tables = [
-      'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
-      'borrowers', 'properties', 'Investor',
-      'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
-      'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
-      'value_history', 'bank_statements', 'other_income',
-      'borrower_loan_preferences', 'receipt_drafts',
-      'internal_accounts', 'internal_transfers',
-        'reconciliation_patterns', 'reconciliation_entries',
-      'accepted_orphans',
-      'audit_logs',
-      'invitations',
-      'nightly_job_runs',
-      'organization_summary',
-      'letter_templates',
-      'generated_letters',
-      'user_profiles'
-    ];
+    const tables = BACKUP_TABLES;
 
     try {
       await withOrgContext(orgId, async () => {
@@ -1168,9 +1120,8 @@ export default function SuperAdmin() {
             backup.metadata.recordCounts[table] = data.length;
             addLog(`    Found ${data.length} records`);
           } catch (err) {
-            addLog(`    Warning: Could not export ${table}: ${err.message}`);
-            backup.tables[table] = [];
-            backup.metadata.recordCounts[table] = 0;
+            addLog(`    FAILED to export ${table}: ${err.message}`);
+            throw new Error(`Backup aborted: could not export ${table} (${err.message})`);
           }
         }
       });
@@ -1264,22 +1215,9 @@ export default function SuperAdmin() {
         addLog('Step 2: Restoring data from backup...');
         setRestoreProgress({ current: 2, total: 3, step: 'Restoring data...' });
 
-        const restoreOrder = [
-          'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
-          'borrowers', 'properties', 'Investor',
-          'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
-          'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
-          'value_history', 'bank_statements', 'other_income',
-          'borrower_loan_preferences', 'receipt_drafts',
-          'internal_accounts', 'internal_transfers',
-          'reconciliation_patterns', 'reconciliation_entries',
-          'accepted_orphans',
-          'invitations',
-          'nightly_job_runs',
-          'organization_summary',
-          'letter_templates',
-          'generated_letters'
-        ];
+        // Skips audit_logs (those rows would describe this restore) and
+        // user_profiles (auth-linked, no organization_id).
+        const restoreOrder = RESTORE_TABLES;
 
         let restoredCount = 0;
         const idMap = new Map();
@@ -1296,26 +1234,7 @@ export default function SuperAdmin() {
           return rest;
         };
 
-        const fkFieldMap = {
-          'loans': ['borrower_id', 'product_id'],
-          'loan_comments': ['loan_id', 'user_id'],
-          'InvestorTransaction': ['investor_id', 'investor_product_id'],
-          'investor_interest': ['investor_id'],
-          'transactions': ['loan_id', 'borrower_id'],
-          'repayment_schedules': ['loan_id'],
-          'loan_properties': ['loan_id', 'property_id', 'first_charge_holder_id'],
-          'expenses': ['type_id', 'loan_id'],
-          'reconciliation_patterns': ['expense_type_id'],
-          'value_history': ['loan_property_id'],
-          'borrower_loan_preferences': ['borrower_id', 'loan_id'],
-          'receipt_drafts': ['loan_id', 'borrower_id'],
-          'internal_transfers': ['internal_account_id'],
-          'reconciliation_entries': ['bank_statement_id', 'loan_transaction_id', 'investor_transaction_id', 'expense_id', 'other_income_id', 'interest_id', 'internal_transfer_id'],
-          'accepted_orphans': ['entity_id'],
-          'organization_summary': [],
-          'letter_templates': ['created_by'],
-          'generated_letters': ['template_id', 'loan_id', 'borrower_id', 'created_by']
-        };
+        const fkFieldMap = RESTORE_FK_FIELDS;
 
         const loansWithRestructureRefs = [];
 

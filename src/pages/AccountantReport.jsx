@@ -214,8 +214,8 @@ export default function AccountantReport() {
       const target = allocatedByTarget[key];
       if (!target || target.count <= 1) return 1;
       const amount = Math.abs(parseFloat(re.amount) || 0);
-      // reconciliation_entries.amount is dropped by backup/restore (backupSchema.js), so it can
-      // be missing - fall back to an equal split rather than zeroing the breakdown out
+      // amount is NOT NULL only from migration 033 onwards, so rows predating it can still
+      // be null - fall back to an equal split rather than zeroing the breakdown out
       if (!(target.total > 0) || amount === 0) return 1 / target.count;
       return amount / target.total;
     };

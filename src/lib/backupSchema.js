@@ -1,318 +1,557 @@
-// Schema definitions for backup/restore compatibility
-// Update CURRENT_SCHEMA_VERSION when adding new migrations that affect table structure
+// Schema definitions for backup/restore compatibility.
+//
+// The column lists below are the REAL columns of each table, verified against the live
+// database rather than hand-maintained. They matter because processRecordsForRestore()
+// uses them as a whitelist: a column missing from this file is silently thrown away on
+// restore, and a column listed here that does not exist in the database makes the whole
+// insert fail with "column ... does not exist".
+//
+// Three fields per table:
+//   columns  - every real column, in alphabetical order
+//   required - NOT NULL with no database default. If one of these is absent from a backup
+//              and has no entry in `defaults`, that backup cannot be restored.
+//   defaults - fallback values for restoring OLDER backups taken before a column existed.
+//              Every value here matches the column's own database DEFAULT, so supplying it
+//              is equivalent to omitting the column.
+//
+// When a migration changes a table, update the entry here in the same commit and bump
+// CURRENT_SCHEMA_VERSION to the migration number.
 
-export const CURRENT_SCHEMA_VERSION = 87;
+export const CURRENT_SCHEMA_VERSION = 88;
 
-// Define columns and defaults for each table
-// When adding new columns to tables, add them here with appropriate defaults
+/**
+ * Tables exported by a per-organization backup, in FK-safe order (parents first).
+ * Both the export and the restore walk this list, so adding a table here is all that is
+ * needed to get it into every backup path.
+ *
+ * Deliberately excluded:
+ *   app_settings        - global, not org-scoped; restoring it would clobber other orgs
+ *   google_drive_tokens - OAuth refresh tokens
+ *   organizations       - the org's own row is stored as `organizationRecord` instead
+ *   organization_members / trusted_devices - auth-linked, rebuilt by invitation flow
+ */
+export const BACKUP_TABLES = [
+  // Reference data (no dependencies beyond the organization)
+  'loan_products', 'investor_products', 'expense_types', 'first_charge_holders',
+  'borrowers', 'properties', 'Investor',
+  // Loans and the ledgers hanging off them
+  'loans', 'loan_comments', 'InvestorTransaction', 'investor_interest',
+  'transactions', 'repayment_schedules', 'loan_properties', 'expenses',
+  'value_history', 'bank_statements', 'other_income', 'property_documents',
+  'borrower_loan_preferences', 'receipt_drafts',
+  'internal_accounts', 'internal_transfers',
+  'reconciliation_patterns', 'reconciliation_entries',
+  'accepted_orphans',
+  // History and cached aggregates
+  'audit_logs',
+  'invitations',
+  'nightly_job_runs',
+  'organization_summary',
+  'letter_templates',
+  'generated_letters',
+  'user_profiles',
+];
+
+/**
+ * Tables written back by a restore, in the same FK-safe order.
+ *
+ * audit_logs is skipped because the rows would describe the restore itself, and
+ * user_profiles because it is keyed to auth.users and carries no organization_id -
+ * membership is re-established through the invitation flow instead.
+ */
+export const RESTORE_TABLES = BACKUP_TABLES.filter(
+  (t) => t !== 'audit_logs' && t !== 'user_profiles'
+);
+
+/** Table name -> the api.entities key that reads it. */
+export const ENTITY_NAMES = {
+  loan_products: 'LoanProduct',
+  investor_products: 'InvestorProduct',
+  expense_types: 'ExpenseType',
+  first_charge_holders: 'FirstChargeHolder',
+  borrowers: 'Borrower',
+  properties: 'Property',
+  Investor: 'Investor',
+  loans: 'Loan',
+  loan_comments: 'LoanComment',
+  InvestorTransaction: 'InvestorTransaction',
+  investor_interest: 'InvestorInterest',
+  transactions: 'Transaction',
+  repayment_schedules: 'RepaymentSchedule',
+  loan_properties: 'LoanProperty',
+  expenses: 'Expense',
+  value_history: 'ValueHistory',
+  bank_statements: 'BankStatement',
+  other_income: 'OtherIncome',
+  property_documents: 'PropertyDocument',
+  borrower_loan_preferences: 'BorrowerLoanPreference',
+  receipt_drafts: 'ReceiptDraft',
+  internal_accounts: 'InternalAccount',
+  internal_transfers: 'InternalTransfer',
+  reconciliation_patterns: 'ReconciliationPattern',
+  reconciliation_entries: 'ReconciliationEntry',
+  accepted_orphans: 'AcceptedOrphan',
+  audit_logs: 'AuditLog',
+  invitations: 'Invitation',
+  nightly_job_runs: 'NightlyJobRun',
+  organization_summary: 'OrganizationSummary',
+  letter_templates: 'LetterTemplate',
+  generated_letters: 'GeneratedLetter',
+  user_profiles: 'UserProfile',
+};
+
+/**
+ * Foreign-key columns the restore rewrites from old ids to newly inserted ones.
+ *
+ * Only columns that actually exist are listed - a mapping for a column that
+ * processRecordsForRestore() has already stripped is dead code, and that kind of drift
+ * is what made the old per-page copies of this map diverge.
+ *
+ * Known limits, all of them ordering problems rather than missing entries:
+ *   transactions.linked_disbursement_id    self-referential; may point at a row not yet inserted
+ *   bank_statements.pattern_id             patterns are restored after statements
+ *   accepted_orphans.entity_id             polymorphic, handled separately
+ *   receipt_drafts.allocations / selected_loan_ids, borrower_loan_preferences.default_loan_ids
+ *                                          loan ids embedded in JSONB / arrays
+ */
+export const RESTORE_FK_FIELDS = {
+  // restructured_from_loan_id is self-referential and handled in a second pass
+  loans: ['borrower_id', 'product_id'],
+  loan_comments: ['loan_id', 'user_id'],  // user_id may be null for imported comments
+  Investor: ['investor_product_id'],
+  InvestorTransaction: ['investor_id'],
+  investor_interest: ['investor_id'],
+  transactions: ['loan_id', 'borrower_id'],
+  repayment_schedules: ['loan_id'],
+  loan_properties: ['loan_id', 'property_id', 'first_charge_holder_id'],
+  expenses: ['type_id', 'loan_id'],  // type_id for expense type, loan_id for loan reference
+  value_history: ['property_id', 'loan_property_id'],
+  bank_statements: ['suggested_loan_id', 'suggested_investor_id', 'suggested_expense_type_id'],
+  property_documents: ['property_id'],
+  borrower_loan_preferences: ['borrower_id'],
+  receipt_drafts: ['borrower_id', 'bank_statement_id'],
+  reconciliation_patterns: ['loan_id', 'investor_id', 'expense_type_id'],
+  reconciliation_entries: ['bank_statement_id', 'loan_transaction_id', 'investor_transaction_id',
+                           'expense_id', 'other_income_id', 'interest_id', 'internal_transfer_id'],
+  internal_transfers: ['internal_account_id'],
+  accepted_orphans: ['entity_id'],  // polymorphic, handled specially
+  organization_summary: [],  // keyed by organization_id, handled specially
+  letter_templates: ['created_by'],  // auth user id, may be null
+  generated_letters: ['template_id', 'loan_id', 'borrower_id', 'created_by'],
+};
+
+/**
+ * Resolve a table name to its api.entities key.
+ * Throws rather than returning the raw table name: a missing mapping used to surface as
+ * `api.entities[undefined].listAll()` throwing inside the per-table try/catch, which
+ * recorded the table as zero rows and produced a backup that looked complete.
+ */
+export function getEntityName(tableName) {
+  const entityName = ENTITY_NAMES[tableName];
+  if (!entityName) {
+    throw new Error(`No api.entities mapping for table "${tableName}" - add it to ENTITY_NAMES`);
+  }
+  return entityName;
+}
+
+// Columns present on every table that the restore always strips and lets the database
+// re-create, so their absence from a backup is never an incompatibility.
+const AUTO_COLUMNS = ['id', 'organization_id', 'created_at', 'updated_at'];
+
 export const tableSchemas = {
+
   loan_products: {
-    columns: ['id', 'organization_id', 'name', 'description', 'interest_rate',
-              'interest_type', 'min_term', 'max_term', 'min_amount', 'max_amount',
-              'arrangement_fee', 'exit_fee', 'default_rate', 'is_active',
-              'created_at', 'updated_at', 'product_type', 'period', 'interest_calculation_method',
-              'interest_alignment', 'interest_paid_in_advance', 'extend_for_full_period',
-              'interest_only_period', 'abbreviation', 'scheduler_type', 'scheduler_config',
-              'compound_after_rollup', 'default_additional_fees', 'default_additional_fees_note'],
+    // max_duration (not max_term) is the real column.
+    columns: ['abbreviation', 'compound_after_rollup', 'created_at', 'default_additional_fees',
+              'default_additional_fees_note', 'extend_for_full_period', 'id', 'interest_alignment',
+              'interest_calculation_method', 'interest_only_period', 'interest_paid_in_advance',
+              'interest_rate', 'interest_type', 'max_amount', 'max_duration', 'min_amount', 'name',
+              'organization_id', 'period', 'product_type', 'scheduler_config', 'scheduler_type'],
+    required: ['interest_rate', 'interest_type', 'name', 'period'],
     defaults: {
-      is_active: true,
+      product_type: 'Standard',
       scheduler_type: 'reducing_balance',
       scheduler_config: {},
       compound_after_rollup: false,
-      default_additional_fees: 0
+      default_additional_fees: 0,
     }
   },
 
   investor_products: {
-    columns: ['id', 'organization_id', 'name', 'description', 'interest_rate',
-              'min_investment', 'max_investment', 'is_active', 'created_at',
-              'interest_calculation_type', 'interest_posting_day'],
+    columns: ['created_at', 'description', 'id', 'interest_calculation_type',
+              'interest_posting_day', 'interest_posting_frequency', 'interest_rate_per_annum',
+              'min_balance_for_interest', 'min_balance_for_withdrawals', 'name', 'organization_id',
+              'status'],
+    required: ['name'],
     defaults: {
-      is_active: true,
+      status: 'Active',
+      interest_posting_frequency: 'monthly',
       interest_calculation_type: 'automatic',
-      interest_posting_day: 1
+      interest_posting_day: 1,
+      interest_rate_per_annum: 0,
+      min_balance_for_interest: 0,
+      min_balance_for_withdrawals: 0,
     }
   },
 
   expense_types: {
-    columns: ['id', 'organization_id', 'name', 'description', 'is_active', 'created_at'],
-    defaults: { is_active: true }
+    columns: ['description', 'id', 'name', 'organization_id'],
+    required: ['name'],
+    defaults: {}
   },
 
   first_charge_holders: {
-    columns: ['id', 'organization_id', 'name', 'contact_name', 'contact_email',
-              'contact_phone', 'address', 'notes', 'created_at'],
+    columns: ['contact_email', 'contact_phone', 'created_at', 'id', 'name', 'organization_id'],
+    required: ['name'],
     defaults: {}
   },
 
   borrowers: {
-    columns: ['id', 'organization_id', 'unique_number', 'full_name', 'first_name',
-              'last_name', 'email', 'phone', 'mobile', 'landline', 'address',
-              'city', 'zipcode', 'country', 'status', 'notes', 'created_at', 'updated_at',
-              'keywords'],
-    defaults: { status: 'Active', keywords: [] }
+    columns: ['address', 'archived_by', 'archived_date', 'business', 'city', 'country',
+              'created_at', 'email', 'first_name', 'full_name', 'gender', 'id', 'id_number',
+              'import_created_date', 'is_archived', 'keywords', 'landline', 'last_name', 'mobile',
+              'notes', 'organization_id', 'phone', 'status', 'unique_number', 'zipcode'],
+    required: ['first_name', 'last_name'],
+    defaults: {
+      status: 'Active',
+      keywords: [],
+      is_archived: false,
+    }
   },
 
   properties: {
-    columns: ['id', 'organization_id', 'address', 'city', 'postcode', 'property_type',
-              'tenure', 'purchase_price', 'current_value', 'valuation_date',
-              'gdv', 'notes', 'created_at'],
+    columns: ['address', 'city', 'country', 'created_at', 'created_by', 'current_value', 'id',
+              'notes', 'organization_id', 'postcode', 'property_type'],
+    required: ['address'],
     defaults: {}
   },
 
-  Investor: {
-    columns: ['id', 'organization_id', 'name', 'business_name', 'email', 'phone',
-              'address', 'account_number', 'sort_code', 'bank_name', 'notes',
-              'status', 'product_id', 'created_at', 'updated_at',
-              'investor_product_id', 'investor_number', 'first_name', 'last_name',
-              'accrued_interest', 'last_accrual_date', 'total_interest_paid'],
+  'Investor': {
+    // PascalCase table name in the database.
+    columns: ['account_number', 'accrued_interest', 'annual_interest_rate', 'business_name',
+              'current_capital_balance', 'default_capital_repayment', 'email', 'first_name', 'id',
+              'interest_calculation_type', 'investor_number', 'investor_product_id',
+              'last_accrual_date', 'last_name', 'manual_interest_amount', 'name',
+              'organization_id', 'phone', 'status', 'total_capital_contributed',
+              'total_interest_paid'],
+    required: ['name'],
     defaults: {
       status: 'Active',
       accrued_interest: 0,
-      total_interest_paid: 0
+      total_interest_paid: 0,
+      interest_calculation_type: 'annual_rate',
+      total_capital_contributed: 0,
+      current_capital_balance: 0,
     }
   },
 
   loans: {
-    columns: ['id', 'organization_id', 'borrower_id', 'product_id', 'loan_number',
-              'borrower_name', 'principal_amount', 'interest_rate', 'start_date',
-              'end_date', 'duration', 'duration_unit', 'status', 'notes',
-              'arrangement_fee', 'exit_fee', 'net_disbursed', 'default_rate',
-              'interest_type', 'compounding_frequency', 'first_charge_holder_id',
-              'redemption_date', 'restructured', 'restructured_from_loan_id',
-              'auto_extend', 'rolled_interest', 'scheduler_type',
-              'principal_outstanding', 'interest_outstanding', 'fees_outstanding',
-              'balance_updated_at', 'created_at', 'updated_at',
-              'product_type', 'period', 'product_name', 'description',
-              'principal_remaining', 'interest_remaining', 'has_penalty_rate',
-              'penalty_rate', 'penalty_rate_from', 'total_interest', 'total_repayable',
-              'roll_up_length', 'roll_up_amount', 'roll_up_amount_override',
-              'additional_deducted_fees', 'additional_deducted_fees_note', 'original_term'],
+    // No end_date / scheduler_type / notes column - term comes from duration, scheduler from the product.
+    columns: ['additional_deducted_fees', 'additional_deducted_fees_note', 'arrangement_fee',
+              'auto_extend', 'balance_updated_at', 'borrower_id', 'borrower_name', 'charges_paid',
+              'created_at', 'deleted_by', 'deleted_date', 'deleted_reason', 'description',
+              'duration', 'exit_fee', 'has_penalty_rate', 'id', 'interest_only_period',
+              'interest_paid', 'interest_rate', 'interest_remaining', 'interest_type',
+              'is_deleted', 'loan_number', 'monthly_charge', 'net_disbursed', 'organization_id',
+              'original_term', 'overpayment_credit', 'overridden_rate', 'override_interest_rate',
+              'penalty_rate', 'penalty_rate_from', 'period', 'principal_amount', 'principal_paid',
+              'principal_remaining', 'product_id', 'product_name', 'product_type',
+              'restructured_from_loan_id', 'restructured_from_loan_number', 'roll_up_amount',
+              'roll_up_amount_override', 'roll_up_length', 'start_date', 'status', 'total_charges',
+              'total_interest', 'total_repayable'],
+    required: ['borrower_id', 'duration', 'principal_amount', 'product_id', 'start_date'],
     defaults: {
       status: 'Live',
-      restructured: false,
+      is_deleted: false,
       auto_extend: false,
-      scheduler_type: 'standard',
-      rolled_interest: 0,
-      principal_outstanding: null,
-      interest_outstanding: null,
-      fees_outstanding: null,
+      has_penalty_rate: false,
+      override_interest_rate: false,
       roll_up_amount_override: false,
-      additional_deducted_fees: 0
+      additional_deducted_fees: 0,
     }
   },
 
-  InvestorTransaction: {
-    columns: ['id', 'organization_id', 'investor_id', 'investor_name', 'type', 'amount', 'date',
-              'reference', 'notes', 'created_at', 'transaction_id', 'description',
-              'bank_account', 'is_auto_generated', 'accrual_period_start', 'accrual_period_end'],
-    defaults: { is_auto_generated: false }
+  'InvestorTransaction': {
+    // PascalCase table name in the database.
+    columns: ['accrual_period_end', 'accrual_period_start', 'amount', 'bank_account', 'date',
+              'description', 'id', 'investor_id', 'investor_name', 'is_auto_generated', 'notes',
+              'organization_id', 'reference', 'transaction_id', 'type'],
+    required: ['amount', 'date', 'investor_id', 'type'],
+    defaults: {
+      is_auto_generated: false,
+    }
   },
 
   investor_interest: {
-    columns: ['id', 'organization_id', 'investor_id', 'type', 'amount', 'date',
-              'description', 'created_at'],
+    columns: ['amount', 'created_at', 'created_by', 'date', 'description', 'id', 'investor_id',
+              'organization_id', 'reference', 'type'],
+    required: ['amount', 'date', 'investor_id', 'type'],
     defaults: {}
   },
 
   transactions: {
-    columns: ['id', 'organization_id', 'loan_id', 'borrower_id', 'borrower_name',
-              'type', 'date', 'amount', 'principal_applied', 'interest_applied',
-              'fees_applied', 'reference', 'notes', 'is_deleted', 'created_at',
-              'gross_amount', 'deducted_fee', 'deducted_interest', 'linked_disbursement_id',
-              'is_initial_disbursement'],
-    defaults: { is_deleted: false, deducted_fee: 0, deducted_interest: 0, is_initial_disbursement: false }
+    columns: ['amount', 'borrower_id', 'created_at', 'date', 'deducted_fee', 'deducted_interest',
+              'deleted_by', 'deleted_date', 'deleted_reason', 'fees_applied', 'gross_amount', 'id',
+              'interest_applied', 'is_deleted', 'is_initial_disbursement',
+              'linked_disbursement_id', 'loan_id', 'notes', 'organization_id', 'principal_applied',
+              'reference', 'type'],
+    required: ['amount', 'date', 'loan_id', 'type'],
+    defaults: {
+      is_deleted: false,
+      deducted_fee: 0,
+      deducted_interest: 0,
+      is_initial_disbursement: false,
+    }
   },
 
   repayment_schedules: {
-    columns: ['id', 'organization_id', 'loan_id', 'due_date', 'principal_due',
-              'interest_due', 'fees_due', 'is_paid', 'paid_date', 'created_at',
-              'installment_number', 'principal_amount', 'interest_amount', 'total_due',
-              'balance', 'calculation_days', 'calculation_principal_start',
-              'is_extension_period', 'is_roll_up_period', 'is_serviced_period',
-              'rolled_up_interest'],
+    // Payment progress lives in principal_paid / interest_paid / status, not an is_paid flag.
+    columns: ['balance', 'calculation_days', 'calculation_method', 'calculation_principal_start',
+              'charge_amount', 'due_date', 'id', 'installment_number', 'interest_amount',
+              'interest_paid', 'is_extension_period', 'is_roll_up_period', 'is_serviced_period',
+              'loan_id', 'organization_id', 'principal_amount', 'principal_paid',
+              'rolled_up_interest', 'status', 'total_due'],
+    required: ['due_date', 'installment_number', 'interest_amount', 'loan_id', 'principal_amount',
+               'total_due'],
     defaults: {
-      is_paid: false,
       is_extension_period: false,
       is_roll_up_period: false,
-      is_serviced_period: false
+      is_serviced_period: false,
     }
   },
 
   loan_properties: {
-    columns: ['id', 'organization_id', 'loan_id', 'property_id', 'charge_type',
-              'charge_position', 'notes', 'created_at',
-              'first_charge_holder_id', 'first_charge_balance', 'status'],
-    defaults: { status: 'Active' }
+    columns: ['charge_type', 'created_at', 'first_charge_balance', 'first_charge_holder_id', 'id',
+              'loan_id', 'notes', 'organization_id', 'property_id', 'removed_date',
+              'removed_reason', 'status'],
+    required: ['loan_id', 'property_id'],
+    defaults: {
+      status: 'Active',
+    }
   },
 
   expenses: {
-    columns: ['id', 'organization_id', 'type_id', 'type_name', 'loan_id',
-              'borrower_name', 'amount', 'date', 'description', 'notes', 'created_at'],
+    columns: ['amount', 'borrower_name', 'date', 'description', 'id', 'loan_id', 'organization_id',
+              'type_id', 'type_name'],
+    required: ['amount', 'date', 'type_id'],
     defaults: {}
   },
 
   value_history: {
-    columns: ['id', 'organization_id', 'property_id', 'valuation_date', 'value',
-              'source', 'notes', 'created_at'],
-    defaults: {}
+    // value_type + effective_date are NOT NULL; there is no valuation_date or source column.
+    columns: ['created_at', 'created_by', 'effective_date', 'id', 'loan_property_id', 'notes',
+              'organization_id', 'property_id', 'value', 'value_type'],
+    required: ['effective_date', 'property_id', 'value', 'value_type'],
+    defaults: {
+      value_type: 'Property Valuation',
+    }
   },
 
   bank_statements: {
-    columns: ['id', 'organization_id', 'statement_date', 'description', 'amount',
-              'balance', 'bank_source', 'transaction_type', 'is_reconciled',
-              'created_at', 'suggested_match_type', 'suggested_loan_id',
-              'suggested_investor_id', 'suggested_expense_type_id',
-              'suggestion_confidence', 'suggestion_reason', 'pattern_id', 'was_created'],
-    defaults: { is_reconciled: false, was_created: false }
+    // Unreconcilable entries are flagged in place via is_unreconcilable + unreconcilable_*.
+    columns: ['amount', 'balance', 'bank_source', 'created_at', 'description',
+              'external_reference', 'id', 'is_reconciled', 'is_unreconcilable', 'organization_id',
+              'pattern_id', 'raw_data', 'reconciled_at', 'reconciled_by', 'statement_date',
+              'suggested_expense_type_id', 'suggested_investor_id', 'suggested_loan_id',
+              'suggested_match_type', 'suggestion_confidence', 'suggestion_reason',
+              'transaction_type', 'unreconcilable_at', 'unreconcilable_by',
+              'unreconcilable_group_id', 'unreconcilable_reason'],
+    required: ['amount', 'bank_source', 'statement_date'],
+    defaults: {
+      is_reconciled: false,
+      is_unreconcilable: false,
+    }
   },
 
   other_income: {
-    columns: ['id', 'organization_id', 'date', 'amount', 'description', 'source',
-              'notes', 'created_at'],
+    columns: ['amount', 'created_at', 'created_by', 'date', 'description', 'id', 'organization_id'],
+    required: ['amount', 'date'],
     defaults: {}
   },
 
   borrower_loan_preferences: {
-    columns: ['id', 'organization_id', 'borrower_id', 'loan_id', 'created_at'],
-    defaults: {}
+    columns: ['borrower_id', 'created_at', 'default_loan_ids', 'id', 'last_allocation_pattern',
+              'organization_id', 'updated_at'],
+    required: ['borrower_id'],
+    defaults: {
+      default_loan_ids: [],
+    }
   },
 
   receipt_drafts: {
-    columns: ['id', 'organization_id', 'date', 'amount', 'description', 'borrower_id',
-              'loan_id', 'status', 'notes', 'created_at'],
-    defaults: { status: 'draft' }
+    // entry_mode / receipt_date / receipt_amount are NOT NULL; allocations is a JSONB map of loan_id -> {principal, interest, fees}.
+    columns: ['allocations', 'bank_statement_id', 'borrower_id', 'created_at', 'created_by',
+              'entry_mode', 'filed_at', 'filed_by', 'id', 'organization_id', 'receipt_amount',
+              'receipt_date', 'reference', 'row_order', 'selected_loan_ids', 'status',
+              'updated_at'],
+    required: ['entry_mode', 'receipt_amount', 'receipt_date'],
+    defaults: {
+      entry_mode: 'manual',
+      status: 'draft',
+      allocations: {},
+      selected_loan_ids: [],
+    }
   },
 
   reconciliation_patterns: {
-    columns: ['id', 'organization_id', 'description_pattern', 'match_type',
-              'loan_id', 'investor_id', 'expense_type_id', 'confidence_score',
-              'match_count', 'transaction_type', 'amount_min', 'amount_max',
-              'default_capital_ratio', 'default_interest_ratio', 'default_fees_ratio',
-              'last_used_at', 'created_at', 'updated_at'],
-    defaults: { match_count: 1, confidence_score: 0.8 }
+    columns: ['amount_max', 'amount_min', 'bank_source', 'confidence_score', 'created_at',
+              'created_by', 'default_capital_ratio', 'default_fees_ratio',
+              'default_interest_ratio', 'description_pattern', 'expense_type_id', 'id',
+              'investor_id', 'last_used_at', 'loan_id', 'match_count', 'match_type',
+              'organization_id', 'transaction_type'],
+    required: ['description_pattern', 'match_type'],
+    defaults: {}
   },
 
   reconciliation_entries: {
-    // 'amount' is NOT NULL in the DB (migration 033) and was missing from this list,
-    // so a restored backup would have failed on it.
-    columns: ['id', 'organization_id', 'bank_statement_id', 'loan_transaction_id',
-              'investor_transaction_id', 'interest_id', 'expense_id', 'other_income_id',
-              'internal_transfer_id', 'amount',
-              'reconciliation_type', 'notes', 'created_at', 'was_created'],
-    defaults: { was_created: false }
+    columns: ['amount', 'bank_statement_id', 'created_at', 'created_by', 'expense_id', 'id',
+              'interest_id', 'internal_transfer_id', 'investor_transaction_id',
+              'loan_transaction_id', 'notes', 'organization_id', 'other_income_id',
+              'reconciliation_type', 'was_created'],
+    required: ['amount', 'bank_statement_id', 'reconciliation_type'],
+    defaults: {
+      was_created: false,
+    }
   },
 
   internal_accounts: {
-    columns: ['id', 'organization_id', 'name', 'description', 'match_keyword',
-              'is_active', 'created_at', 'updated_at', 'created_by'],
-    defaults: { is_active: true }
+    columns: ['created_at', 'created_by', 'description', 'id', 'is_active', 'match_keyword',
+              'name', 'organization_id', 'updated_at'],
+    required: ['name'],
+    defaults: {
+      is_active: true,
+    }
   },
 
   internal_transfers: {
-    columns: ['id', 'organization_id', 'internal_account_id', 'date', 'amount',
-              'direction', 'description', 'reference', 'created_at', 'created_by'],
+    columns: ['amount', 'created_at', 'created_by', 'date', 'description', 'direction', 'id',
+              'internal_account_id', 'organization_id', 'reference'],
+    required: ['amount', 'date', 'direction', 'internal_account_id'],
     defaults: {}
   },
 
   accepted_orphans: {
-    columns: ['id', 'organization_id', 'entity_type', 'entity_id', 'reason',
-              'accepted_by', 'created_at'],
+    columns: ['accepted_at', 'accepted_by', 'created_at', 'entity_id', 'entity_type', 'id',
+              'organization_id', 'reason', 'updated_at'],
+    required: ['entity_id', 'entity_type', 'reason'],
     defaults: {}
   },
 
   audit_logs: {
-    columns: ['id', 'organization_id', 'user_id', 'user_email', 'action',
-              'entity_type', 'entity_id', 'details', 'created_at'],
+    columns: ['action', 'created_at', 'details', 'entity_id', 'entity_name', 'entity_type', 'id',
+              'ip_address', 'new_values', 'organization_id', 'previous_values', 'user_agent',
+              'user_id'],
+    required: ['action'],
     defaults: {}
   },
 
   invitations: {
-    columns: ['id', 'organization_id', 'email', 'role', 'invited_by', 'status',
-              'expires_at', 'created_at'],
-    defaults: { status: 'pending' }
+    columns: ['accepted_at', 'created_at', 'email', 'expires_at', 'id', 'invited_by',
+              'organization_id', 'role', 'status', 'token'],
+    required: ['email', 'expires_at', 'invited_by', 'role', 'token'],
+    defaults: {
+      status: 'pending',
+    }
   },
 
   nightly_job_runs: {
-    columns: ['id', 'organization_id', 'job_type', 'status', 'started_at',
-              'completed_at', 'records_processed', 'error_message'],
+    columns: ['created_at', 'details', 'failed', 'id', 'organization_id', 'processed', 'run_date',
+              'skipped', 'status', 'succeeded', 'task_name'],
+    required: ['status', 'task_name'],
     defaults: {}
   },
 
   organization_summary: {
-    columns: ['organization_id', 'total_principal_outstanding', 'total_interest_outstanding',
-              'total_fees_outstanding', 'total_disbursed', 'total_repaid',
-              'live_loan_count', 'settled_loan_count', 'arrears_amount',
-              'investor_capital_balance', 'investor_interest_owed', 'updated_at'],
+    // Keyed by organization_id, not id - one cached row per org.
+    columns: ['arrears_amount', 'live_loan_count', 'organization_id', 'settled_loan_count',
+              'total_disbursed', 'total_interest_outstanding', 'total_principal_outstanding',
+              'total_repaid', 'updated_at'],
+    required: [],
     defaults: {}
   },
 
   app_settings: {
-    columns: ['key', 'value', 'description', 'updated_at', 'updated_by'],
+    // Keyed by `key`. Global (not org-scoped), so it is not part of a per-organization backup.
+    columns: ['description', 'key', 'updated_at', 'updated_by', 'value'],
+    required: ['value'],
     defaults: {}
   },
 
   organizations: {
-    columns: ['id', 'name', 'created_at', 'updated_at', 'address_line1', 'address_line2',
-              'city', 'postcode', 'country', 'phone', 'email', 'website', 'settings',
-              'google_drive_connected', 'google_drive_email'],
-    defaults: { settings: {}, google_drive_connected: false }
+    // The org row itself is captured as `organizationRecord` in the backup, not as a table.
+    columns: ['address_line1', 'address_line2', 'city', 'country', 'created_at', 'created_by',
+              'description', 'email', 'google_drive_backup_folder_id',
+              'google_drive_backup_folder_path', 'google_drive_base_folder_id',
+              'google_drive_base_folder_path', 'google_drive_connected', 'google_drive_email',
+              'id', 'is_active', 'logo_url', 'name', 'phone', 'postcode', 'settings', 'slug',
+              'updated_at', 'website'],
+    required: ['name', 'slug'],
+    defaults: {
+      settings: {},
+      google_drive_connected: false,
+      is_active: true,
+    }
   },
 
   user_profiles: {
-    columns: ['id', 'email', 'full_name', 'role', 'organization_id', 'created_at',
-              'updated_at', 'is_super_admin', 'default_organization_id',
-              'google_drive_connected', 'google_drive_email',
-              'google_drive_base_folder_id', 'google_drive_base_folder_path'],
+    // No organization_id / role column - membership and role live in organization_members.
+    columns: ['avatar_url', 'created_at', 'default_organization_id', 'email', 'full_name',
+              'google_drive_base_folder_id', 'google_drive_base_folder_path',
+              'google_drive_connected', 'google_drive_email', 'id', 'is_super_admin',
+              'preferences', 'signature_image_url', 'updated_at'],
+    required: [],
     defaults: {
       is_super_admin: false,
-      google_drive_connected: false
+      google_drive_connected: false,
     }
   },
 
   loan_comments: {
-    columns: ['id', 'organization_id', 'loan_id', 'user_id', 'user_name',
-              'comment', 'created_at'],
+    columns: ['comment', 'created_at', 'id', 'loan_id', 'organization_id', 'user_id', 'user_name'],
+    required: ['comment', 'loan_id'],
     defaults: {}
   },
 
   letter_templates: {
-    columns: ['id', 'organization_id', 'name', 'description', 'category',
-              'subject_template', 'body_template', 'email_body_template', 'available_placeholders',
-              'default_attachments', 'is_active', 'created_at', 'updated_at', 'created_by'],
+    columns: ['available_placeholders', 'body_template', 'category', 'created_at', 'created_by',
+              'default_attachments', 'description', 'email_body_template', 'id', 'is_active',
+              'name', 'organization_id', 'subject_template', 'updated_at'],
+    required: ['body_template', 'name'],
     defaults: {
       category: 'General',
       available_placeholders: [],
       default_attachments: [],
-      is_active: true
+      is_active: true,
     }
   },
 
   generated_letters: {
-    columns: ['id', 'organization_id', 'template_id', 'loan_id', 'borrower_id',
-              'subject', 'body_rendered', 'placeholder_values', 'attached_reports',
-              'settlement_date', 'pdf_storage_path', 'created_by', 'created_at',
-              'delivery_method', 'recipient_email', 'google_drive_file_id',
-              'google_drive_file_url', 'template_name'],
+    columns: ['attached_reports', 'body_rendered', 'borrower_id', 'created_at', 'created_by',
+              'delivery_method', 'google_drive_file_id', 'google_drive_file_url', 'id', 'loan_id',
+              'organization_id', 'pdf_storage_path', 'placeholder_values', 'recipient_email',
+              'settlement_date', 'subject', 'template_id', 'template_name'],
+    required: [],
     defaults: {
       placeholder_values: {},
-      attached_reports: []
+      attached_reports: [],
     }
   },
 
   property_documents: {
-    columns: ['id', 'organization_id', 'property_id', 'title', 'document_type',
-              'notes', 'external_url', 'storage_path', 'mime_type', 'file_size',
-              'created_at', 'updated_at', 'created_by'],
+    columns: ['created_at', 'created_by', 'document_type', 'external_url', 'file_size', 'id',
+              'mime_type', 'notes', 'organization_id', 'property_id', 'storage_path', 'title',
+              'updated_at'],
+    required: ['document_type', 'property_id', 'title'],
     defaults: {}
   },
 
   google_drive_tokens: {
-    columns: ['id', 'user_id', 'organization_id', 'access_token_encrypted', 'refresh_token_encrypted',
-              'token_expiry', 'created_at', 'updated_at'],
+    // Never exported: contains OAuth refresh tokens.
+    columns: ['access_token_encrypted', 'created_at', 'id', 'organization_id',
+              'refresh_token_encrypted', 'token_expiry', 'updated_at', 'user_id'],
+    required: ['access_token_encrypted', 'refresh_token_encrypted', 'token_expiry', 'user_id'],
     defaults: {}
-  }
-};
+  },};
 
 /**
  * Analyze a backup file for compatibility issues with current schema
@@ -325,7 +564,7 @@ export function analyzeBackup(backupData, currentSchema = tableSchemas) {
     unknownTables: [],
     droppedColumns: {},  // table -> [columns that will be dropped]
     addedColumns: {},    // table -> [{column, default}] columns that will use defaults
-    missingRequired: {}, // table -> [columns] without defaults that are missing
+    missingRequired: {}, // table -> [columns] NOT NULL with no default and no value in the backup
     backupVersion: backupData.schemaVersion || backupData.version || 'unknown',
     currentVersion: CURRENT_SCHEMA_VERSION,
     hasIssues: false
@@ -342,32 +581,36 @@ export function analyzeBackup(backupData, currentSchema = tableSchemas) {
 
     if (!records || records.length === 0) continue;
 
-    // Check first record for column differences
-    const sampleRecord = records[0];
-    const backupColumns = Object.keys(sampleRecord);
-    const schemaColumns = new Set(schema.columns);
+    // Union the keys across records rather than trusting the first one: a nullable column
+    // can be absent from an individual row in some exports.
+    const backupColSet = new Set();
+    for (const record of records) {
+      for (const key of Object.keys(record)) backupColSet.add(key);
+    }
 
-    // Find columns in backup but not in schema (will be dropped)
-    const dropped = backupColumns.filter(c => !schemaColumns.has(c) && c !== 'id');
+    const schemaColumns = new Set(schema.columns);
+    const defaults = schema.defaults || {};
+
+    // Columns in the backup that no longer exist - processRecordsForRestore drops these
+    const dropped = [...backupColSet].filter(c => !schemaColumns.has(c) && c !== 'id');
     if (dropped.length > 0) {
       issues.droppedColumns[tableName] = dropped;
       issues.hasIssues = true;
     }
 
-    // Find columns in schema but not in backup
-    const backupColSet = new Set(backupColumns);
-    const missing = schema.columns.filter(c => !backupColSet.has(c) && c !== 'id');
+    for (const col of schema.columns) {
+      if (backupColSet.has(col) || AUTO_COLUMNS.includes(col)) continue;
 
-    for (const col of missing) {
-      if (col in (schema.defaults || {})) {
+      if (col in defaults) {
         issues.addedColumns[tableName] = issues.addedColumns[tableName] || [];
-        issues.addedColumns[tableName].push({ column: col, default: schema.defaults[col] });
-      } else if (!['created_at', 'updated_at', 'organization_id'].includes(col)) {
-        // Columns without defaults that aren't auto-generated
+        issues.addedColumns[tableName].push({ column: col, default: defaults[col] });
+      } else if ((schema.required || []).includes(col)) {
+        // NOT NULL, no database default, nothing to fall back on - the insert will fail
         issues.missingRequired[tableName] = issues.missingRequired[tableName] || [];
         issues.missingRequired[tableName].push(col);
         issues.hasIssues = true;
       }
+      // Anything else is nullable or database-defaulted: safe to leave out entirely
     }
   }
 
@@ -389,7 +632,6 @@ export function processRecordsForRestore(tableName, records, schema = null) {
     return records;
   }
 
-  const schemaColumns = new Set(tableSchema.columns);
   const defaults = tableSchema.defaults || {};
 
   return records.map(record => {

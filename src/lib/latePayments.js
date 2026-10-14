@@ -75,9 +75,9 @@ const INTEREST_TYPE_MAP = {
 /**
  * Which scheduler governs this loan.
  *
- * loans.scheduler_type does not exist - backupSchema.js lists it but migration 056 adds
- * the column to loan_products only - so the product is the authority, and the loan's own
- * product_type/interest_type are the fallback for unmigrated products.
+ * loans.scheduler_type does not exist - migration 056 adds the column to loan_products
+ * only - so the product is the authority, and the loan's own product_type/interest_type
+ * are the fallback for unmigrated products.
  *
  * @param {Object} loan
  * @param {Object|null} [product]
