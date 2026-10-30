@@ -38,7 +38,7 @@ import {
   XCircle
 } from 'lucide-react';
 import { formatCurrency } from '@/components/loan/LoanCalculator';
-import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
+import { regenerateLoanSchedule, buildScheduleOptions } from '@/components/loan/LoanScheduleManager';
 import { getOrgItem, setOrgItem, removeOrgItem } from '@/lib/orgStorage';
 import { logBulkImportEvent, AuditAction } from '@/lib/auditLog';
 
@@ -1483,7 +1483,10 @@ export default function ImportLoandisc() {
                 addLog(`[DEBUG SCHEDULE ${loan.loan_number}] Starting schedule regeneration...`);
                 addLog(`  Loan: id=${loan.id}, auto_extend=${loan.auto_extend}, duration=${loan.duration}, status=${loan.status}`);
               }
-              const scheduleResult = await regenerateLoanSchedule(loan.id, { endDate: new Date(), skipDisbursement: true });
+              // skipDisbursement was a silent no-op: it is only read by applyScheduleToNewLoan,
+              // which has no callers. endDate is now resolved from the loan's own state.
+              const scheduleOptions = await buildScheduleOptions(loan);
+              const scheduleResult = await regenerateLoanSchedule(loan.id, scheduleOptions);
               if (isDebugLoan) {
                 addLog(`[DEBUG SCHEDULE ${loan.loan_number}] Generated ${scheduleResult.schedule.length} schedule entries`);
                 addLog(`  Total interest: ${scheduleResult.summary.totalInterest}, Total repayable: ${scheduleResult.summary.totalRepayable}`);

@@ -35,7 +35,7 @@ export default function NewLoan() {
   const suggestedLoanNumber = String(currentOrganization?.settings?.next_loan_number || 1001);
 
   const createLoanMutation = useMutation({
-    mutationFn: async ({ loanData, schedule }) => {
+    mutationFn: async ({ loanData }) => {
       // Ensure loan number is unique - if not, find next available
       if (loanData.loan_number) {
         let loanNumber = parseInt(loanData.loan_number);
@@ -107,13 +107,14 @@ export default function NewLoan() {
         return loan;
       }
 
-      // Standard loan flow - create schedule from preview
-      const scheduleWithLoanId = schedule.map(row => ({
-        ...row,
-        loan_id: loan.id
-      }));
-
-      await api.entities.RepaymentSchedule.createMany(scheduleWithLoanId);
+      // Standard loan flow.
+      //
+      // The schedule is NOT persisted from the form preview. The preview comes from
+      // LoanCalculator.generateRepaymentSchedule, which is a separate engine from the
+      // schedulers in src/lib/schedule - so saving it meant a new loan's schedule silently
+      // changed the first time anything regenerated it (a receipt, an edit, the Regenerate
+      // button). The disbursement is created first so the scheduler can see it, exactly as
+      // the Roll-Up & Serviced branch above does, then the scheduler generates the schedule.
 
       // Create initial Disbursement transaction if loan is released (has start_date)
       if (loan.start_date && loan.status !== 'Pending') {
@@ -164,6 +165,12 @@ export default function NewLoan() {
           }
         }
       }
+
+      // Generate the schedule with the scheduler system, now that the disbursement exists.
+      // No options are passed: buildScheduleOptions would supply endDate for an auto_extend
+      // loan, and on a brand-new loan the transaction-derived outstanding is still 0, which
+      // would trip the isSettledLoan branch in calculateScheduleDuration and truncate it.
+      await regenerateLoanSchedule(loan.id);
 
       return loan;
     },

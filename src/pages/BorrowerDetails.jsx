@@ -40,6 +40,7 @@ import BorrowerForm from '@/components/borrower/BorrowerForm';
 import BorrowerPaymentModal from '@/components/borrower/BorrowerPaymentModal';
 import ReceiptEntryPanel from '@/components/receipts/ReceiptEntryPanel';
 import { formatCurrency, applyManualPayment } from '@/components/loan/LoanCalculator';
+import { maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
 import { toast } from 'sonner';
 import { format } from 'date-fns';
 
@@ -213,6 +214,18 @@ export default function BorrowerDetails() {
         }
 
         await api.entities.Loan.update(allocation.loan_id, updateData);
+
+        // A principal repayment changes the interest-bearing balance, so the schedule has to
+        // be rebuilt. This was the only principal-affecting write path with no regeneration
+        // hook, so a multi-loan payment left the schedule still charging interest on capital
+        // that had just been repaid.
+        if (totalPrincipalApplied > 0) {
+          await maybeRegenerateScheduleAfterCapitalChange(allocation.loan_id, {
+            type: 'Repayment',
+            principal_applied: totalPrincipalApplied,
+            date: paymentData.date
+          }, 'create');
+        }
 
         results.push({
           loan_id: allocation.loan_id,

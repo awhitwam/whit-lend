@@ -31,7 +31,9 @@ export function calculateScheduleDuration({ loan, product, options, currentPrinc
   // periods on capital that has been repaid. Previously this also required !loan.auto_extend,
   // which made it unreachable from the automatic regeneration path - that path only supplies
   // options.endDate when auto_extend is on, so the two conditions were mutually exclusive.
-  const isSettledLoan = options.endDate && currentPrincipalOutstanding <= 0.01;
+  // Boolean(): without it this yields undefined rather than false when no endDate was
+  // supplied, and isSettledLoan is destructured and passed on by the schedulers.
+  const isSettledLoan = Boolean(options.endDate && currentPrincipalOutstanding <= 0.01);
   const baseDuration = options.duration !== undefined ? options.duration : loan.duration;
 
   let scheduleDuration;

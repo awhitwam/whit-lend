@@ -246,8 +246,15 @@ export class BaseScheduler {
         due_date: row.due_date,
         principal_amount: principalAmount,
         interest_amount: interestAmount,
-        total_due: principalAmount + interestAmount,
-        balance: Math.max(0, balance),
+        // Carry total_due and balance through as createScheduleEntry computed them rather
+        // than recomputing. Recomputing here produced a different value from the one in the
+        // schedule object generateSchedule returns - total_due was rounded there but not
+        // here - so the row in the database and the row the UI had just been handed could
+        // disagree by a penny, and which one you saw depended on whether the view re-read.
+        total_due: Number.isFinite(row.total_due)
+          ? roundCurrency(row.total_due)
+          : roundCurrency(principalAmount + interestAmount),
+        balance: Math.max(0, roundCurrency(balance)),
         principal_paid: row.principal_paid || 0,
         interest_paid: row.interest_paid || 0,
         status: row.status || 'Pending',

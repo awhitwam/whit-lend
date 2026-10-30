@@ -5,6 +5,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Loader2, Info } from 'lucide-react';
+import { deriveSchedulerType } from '@/lib/schedulerType';
 
 // Helper to derive interest timing from the two underlying fields
 const getInterestTiming = (data) => {
@@ -14,20 +15,9 @@ const getInterestTiming = (data) => {
   return 'arrears';
 };
 
-// Helper to derive scheduler_type from product settings
-const deriveSchedulerType = (data) => {
-  if (data.product_type === 'Fixed Charge') return 'fixed_charge';
-  if (data.product_type === 'Irregular Income') return 'irregular_income';
-  if (data.product_type === 'Rent') return 'rent';
-  if (data.product_type === 'Roll-Up & Serviced') return 'roll_up_serviced';
-  switch (data.interest_type) {
-    case 'Rolled-Up': return 'rolled_up';
-    case 'Interest-Only': return 'interest_only';
-    case 'Flat': return 'flat_rate';
-    case 'Reducing':
-    default: return 'reducing_balance';
-  }
-};
+// deriveSchedulerType now comes from '@/lib/schedulerType', the single source of truth for
+// this mapping. This form is what WRITES loan_products.scheduler_type, so a local copy
+// drifting from the engine's copy was the most consequential duplication of the four.
 
 // Build scheduler_config from form fields
 const buildSchedulerConfig = (data) => ({

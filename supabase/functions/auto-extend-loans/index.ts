@@ -1,6 +1,43 @@
 // Supabase Edge Function: Auto-Extend Loans
 // This function automatically extends loan schedules for loans with auto_extend enabled
 //
+// ============================================================================
+// WARNING: THIS IS A SECOND, DIVERGENT SCHEDULE GENERATOR. DO NOT EXTEND IT.
+// ============================================================================
+// It does not use the scheduler registry in src/lib/schedule. It selects
+// scheduler_type and scheduler_config below and then never reads them, so an
+// interest-only, roll-up-serviced, rent or fixed-charge loan is all extended
+// with the same naive formula. It also:
+//
+//   - APPENDS rows (insert) where the client path deletes and rebuilds, so the
+//     two produce different row sets and installment numbering for one loan;
+//   - ignores interest_paid_in_advance and interest_alignment, so due dates are
+//     always arrears-aligned;
+//   - ignores capitalised roll-up interest;
+//   - ignores loan.override_interest_rate / overridden_rate (it reads
+//     product.interest_rate || loan.interest_rate);
+//   - omits calculation_days, calculation_principal_start, is_roll_up_period
+//     and is_serviced_period, which the UI needs;
+//   - never re-applies payments, so paid columns stay zero on the rows it adds;
+//   - uses calculatePrincipalOutstanding, which ignores further advances, while
+//     its own calculatePrincipalAtDate identifies the initial disbursement by
+//     date-matching start_date rather than the is_initial_disbursement flag that
+//     migration 086 added for exactly that case.
+//
+// Whichever of this and the client path ran last wins, which is why the same
+// loan showed different schedules depending on where it was generated from.
+//
+// INTENDED RESOLUTION: collapse to one engine. Before changing it, establish
+// whether this function is actually scheduled:
+//
+//   SELECT jobname, schedule, command FROM cron.job;
+//
+// The cron.schedule calls in migration 032 are entirely commented out, so
+// nothing in the repo registers one. If a job posts here, point it at the real
+// scheduler instead; if not, delete this function. Either way the bespoke
+// generation below (the periodsToAdd loop) should go.
+// ============================================================================
+//
 // Deployment:
 //   supabase functions deploy auto-extend-loans
 //
@@ -368,13 +405,22 @@ async function logJobRun(
   results: Record<string, unknown>
 ): Promise<void> {
   try {
+    // run_date and created_at are left to their now() defaults, matching nightly-jobs,
+    // so the row records when the job actually ran rather than midnight UTC.
+    console.log(`[AutoExtend] Logging run for ${runDate} (${status})`)
+    // Column names must match migration 032: task_name (NOT NULL) and details jsonb.
+    // This previously inserted job_name/summary, which do not exist - the insert failed and
+    // was swallowed by the catch below, leaving the one job that writes schedule rows with
+    // no audit trail at all.
     await supabase.from('nightly_job_runs').insert({
-      job_name: 'auto-extend-loans',
-      run_date: runDate,
+      task_name: 'auto-extend-loans',
       status,
-      summary: JSON.stringify(results),
-      organization_id: null, // System-wide job, not org-specific
-      created_at: new Date().toISOString()
+      processed: (results.processed as number) ?? 0,
+      succeeded: (results.succeeded as number) ?? 0,
+      failed: (results.failed as number) ?? 0,
+      skipped: (results.skipped as number) ?? 0,
+      details: results,
+      organization_id: null // System-wide job, not org-specific
     })
   } catch (err) {
     // Don't fail the job if logging fails

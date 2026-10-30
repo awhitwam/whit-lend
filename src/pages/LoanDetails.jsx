@@ -78,7 +78,7 @@ import DisbursementModal from '@/components/loan/DisbursementModal';
 import EditLoanPanel from '@/components/loan/EditLoanModal';
 import SettleLoanModal from '@/components/loan/SettleLoanModal';
 import { formatCurrency, applyPaymentWaterfall, applyManualPayment, calculateLiveInterestOutstanding, calculateAccruedInterest, calculateAccruedInterestWithTransactions, exportScheduleCalculationData, calculateLoanInterestBalance, buildCapitalEvents, calculateInterestFromLedger, queueBalanceCacheUpdate, calculatePaymentsBehind, calculateRentalYield } from '@/components/loan/LoanCalculator';
-import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange } from '@/components/loan/LoanScheduleManager';
+import { regenerateLoanSchedule, maybeRegenerateScheduleAfterCapitalChange, buildScheduleOptions } from '@/components/loan/LoanScheduleManager';
 import { generateLoanStatementPDF } from '@/components/loan/LoanPDFGenerator';
 import SecurityTab from '@/components/loan/SecurityTab';
 import DisbursementsTab from '@/components/loan/DisbursementsTab';
@@ -396,49 +396,18 @@ export default function LoanDetails() {
       if (needsScheduleRegeneration) {
         toast.loading('Regenerating schedule...', { id: 'edit-loan' });
 
-        // Delete old schedule
-        const oldSchedule = await api.entities.RepaymentSchedule.filter({ loan_id: loanId });
-        for (const row of oldSchedule) {
-          await api.entities.RepaymentSchedule.delete(row.id);
-        }
+        // No manual delete needed - saveSchedule deletes and recreates every row.
 
-        // Use centralized schedule manager to regenerate
-        const today = new Date();
-        const isAutoExtend = updatedData.auto_extend !== undefined ? updatedData.auto_extend : loan.auto_extend;
-        const loanDuration = updatedData.duration ?? loan.duration;
-        const options = isAutoExtend
-          ? { endDate: format(today, 'yyyy-MM-dd'), duration: loanDuration }
-          : { duration: loanDuration };
+        // Resolve options from the loan as it will be AFTER this edit, since the edit may be
+        // what changed auto_extend or duration.
+        const options = await buildScheduleOptions(
+          { ...loan, ...updatedData },
+          { transactions }
+        );
+
+        // regenerateLoanSchedule re-derives paid state from transactions itself, so the
+        // hand-rolled reapply loop that used to follow is gone.
         await regenerateLoanSchedule(loanId, options);
-
-        toast.loading('Reapplying payments...', { id: 'edit-loan' });
-
-        // Reapply all non-deleted payments
-        const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
-        const newScheduleRows = await api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
-
-        let totalPrincipalPaid = 0;
-        let totalInterestPaid = 0;
-
-        for (const tx of activeTransactions) {
-          const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
-
-          for (const update of updates) {
-            await api.entities.RepaymentSchedule.update(update.id, {
-              interest_paid: update.interest_paid,
-              principal_paid: update.principal_paid,
-              status: update.status
-            });
-            totalPrincipalPaid += update.principalApplied;
-            totalInterestPaid += update.interestApplied;
-          }
-        }
-
-        // Update loan payment totals
-        await api.entities.Loan.update(loanId, {
-          principal_paid: totalPrincipalPaid,
-          interest_paid: totalInterestPaid
-        });
       }
 
       // Only update disbursement if principal, fees, or start_date actually changed
@@ -812,52 +781,18 @@ export default function LoanDetails() {
       setProcessingMessage('Regenerating schedule...');
       toast.loading('Regenerating repayment schedule...', { id: 'regenerate-schedule' });
 
-      // For closed/settled loans, find the settlement date (last principal payment)
-      let effectiveEndDate = endDate;
-      if (loan.status === 'Closed') {
-        const principalPayments = transactions
-          .filter(t => !t.is_deleted && t.type === 'Repayment' && t.principal_applied > 0)
-          .sort((a, b) => new Date(b.date) - new Date(a.date));
-        if (principalPayments.length > 0) {
-          effectiveEndDate = principalPayments[0].date;
-        }
-      }
-
-      // Use centralized schedule manager with end date for auto-extend or closed loans
-      // Always pass duration for consistency between Edit Loan and Regenerate Schedule
-      const options = (loan.auto_extend || loan.status === 'Closed')
-        ? { endDate: effectiveEndDate, duration: loan.duration }
-        : { duration: loan.duration };
-      await regenerateLoanSchedule(loanId, options);
-
-      toast.loading('Reapplying payments...', { id: 'regenerate-schedule' });
-
-      // Reapply all non-deleted payments
-      const activeTransactions = transactions.filter(t => !t.is_deleted && t.type === 'Repayment');
-      const newScheduleRows = await api.entities.RepaymentSchedule.filter({ loan_id: loanId }, 'installment_number');
-
-      let totalPrincipalPaid = 0;
-      let totalInterestPaid = 0;
-
-      for (const tx of activeTransactions) {
-        const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
-
-        for (const update of updates) {
-          await api.entities.RepaymentSchedule.update(update.id, {
-            interest_paid: update.interest_paid,
-            principal_paid: update.principal_paid,
-            status: update.status
-          });
-          totalPrincipalPaid += update.principalApplied;
-          totalInterestPaid += update.interestApplied;
-        }
-      }
-
-      // Update loan payment totals
-      await api.entities.Loan.update(loanId, {
-        principal_paid: totalPrincipalPaid,
-        interest_paid: totalInterestPaid
+      // The dialog's date box is only shown for auto_extend loans, so honour it as the
+      // horizon when given; otherwise resolve from the loan's own state. A Closed loan always
+      // stops at its actual settlement date, which buildScheduleOptions works out.
+      const options = await buildScheduleOptions(loan, {
+        asOf: endDate || new Date(),
+        transactions
       });
+
+      // regenerateLoanSchedule re-derives paid state from transactions itself, so the
+      // hand-rolled reapply loop that used to follow is gone.
+      await regenerateLoanSchedule(loanId, options);
+      // Loan-level principal_paid / interest_paid are updated by reapplyPaymentsToSchedule.
     },
     onSuccess: async () => {
       // Audit log: schedule regeneration
@@ -1307,7 +1242,9 @@ export default function LoanDetails() {
       await api.entities.Expense.delete(expense.id);
 
       // 3. Regenerate loan schedule
-      await regenerateLoanSchedule(loan.id);
+      // Was called with no options at all, so an auto_extend loan silently lost its
+      // extension periods whenever an expense was converted to a disbursement.
+      await regenerateLoanSchedule(loan.id, await buildScheduleOptions(loan, { transactions }));
 
       // 4. Log audit - use logLoanEvent(action, loan, details)
       await logLoanEvent(AuditAction.LOAN_UPDATE, loan, {

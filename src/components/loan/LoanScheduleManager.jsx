@@ -1,6 +1,7 @@
 import { api } from '@/api/dataClient';
 import { addMonths, addWeeks, format, differenceInDays, startOfMonth } from 'date-fns';
 import { formatCurrency } from '@/lib/formatters';
+import { roundCurrency } from '@/lib/schedule/utils/interestCalculations';
 
 /**
  * Calculate interest for a period based on product rules and principal balance
@@ -29,6 +30,34 @@ function calculatePeriodInterest(principal, annualRate, period, interestType, da
  * Event-driven: considers all past transactions and builds schedule from now forward
  */
 export async function regenerateLoanSchedule(loanId, options = {}) {
+  const result = await generateScheduleRows(loanId, options);
+
+  // Re-derive paid state from transactions. Every generation path ends in
+  // BaseScheduler.saveSchedule (or the legacy equivalent), which deletes all rows and
+  // recreates them as 'Pending' with zeroed paid columns.
+  //
+  // This is done HERE, inside the single dispatcher, rather than in each caller. Five
+  // callers used to do it by hand and five did not - so filing a receipt wiped the paid
+  // markers and left them wiped, while clicking Regenerate rebuilt them. That alone made
+  // the same loan look different depending on which action you took.
+  if (result?.schedule?.length) {
+    try {
+      await reapplyPaymentsToSchedule(loanId, { product: result.product });
+    } catch (error) {
+      console.error(`[Schedule] Failed to reapply payments for loan ${loanId}:`, error);
+      throw error;
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Generate and persist the schedule rows themselves, without touching paid state.
+ *
+ * Internal: callers should use regenerateLoanSchedule(), which also re-derives paid state.
+ */
+async function generateScheduleRows(loanId, options = {}) {
   // Fetch loan, product, and all transactions
   const loans = await api.entities.Loan.filter({ id: loanId });
   const loan = loans[0];
@@ -795,71 +824,188 @@ function generateMonthlyFirstSchedule(schedule, loan, product, duration, transac
   }
 }
 
-/**
- * Apply schedule to new loan during creation/import
- */
-export async function applyScheduleToNewLoan(loanData, product, options = {}) {
-  const { duration = 6, autoExtend = true } = options;
-  
-  const schedule = [];
-  generatePeriodBasedSchedule(schedule, 
-    { ...loanData, product_id: product.id }, 
-    product, 
-    duration,
-    [] // No transactions yet
-  );
-
-  const totalInterest = schedule.reduce((sum, row) => sum + row.interest_amount, 0);
-  const totalRepayable = totalInterest + loanData.principal_amount + (loanData.exit_fee || 0);
-
-  const loan = await api.entities.Loan.create({
-    ...loanData,
-    interest_rate: product.interest_rate,
-    interest_type: product.interest_type,
-    period: product.period,
-    duration: duration,
-    total_interest: Math.round(totalInterest * 100) / 100,
-    total_repayable: Math.round(totalRepayable * 100) / 100,
-    auto_extend: autoExtend,
-    principal_paid: 0,
-    interest_paid: 0
-  });
-
-  for (const row of schedule) {
-    await api.entities.RepaymentSchedule.create({
-      loan_id: loan.id,
-      ...row
-    });
-  }
-
-  // Create initial Disbursement transaction if loan is released (has start_date)
-  // Skip if already created (e.g., during import) via options.skipDisbursement
-  if (loan.start_date && loan.status !== 'Pending' && !options.skipDisbursement) {
-    // Check if a disbursement already exists for this loan
-    const existingDisbursements = transactions.filter(t => t.type === 'Disbursement');
-    if (existingDisbursements.length === 0) {
-      const disbursementAmount = loan.net_disbursed || (loan.principal_amount - (loan.arrangement_fee || 0));
-      if (disbursementAmount > 0) {
-        await api.entities.Transaction.create({
-          loan_id: loan.id,
-          borrower_id: loan.borrower_id,
-          date: loan.start_date,
-          type: 'Disbursement',
-          amount: disbursementAmount,
-          principal_applied: disbursementAmount,
-          interest_applied: 0,
-          fees_applied: 0,
-          notes: 'Initial loan disbursement'
-        });
-      }
-    }
-  }
-
-  return { loan, schedule, summary: { totalInterest, totalRepayable } };
-}
+// applyScheduleToNewLoan was removed here: it had no callers, and it was the only consumer of
+// the `skipDisbursement` option - which made that option look meaningful when in fact nothing
+// read it, so the callers passing it were silently doing nothing. It was also latently broken,
+// referencing an undeclared `transactions`. New loans now go through regenerateLoanSchedule
+// like every other path.
 
 // Re-export formatCurrency for backward compatibility
 export { formatCurrency } from '@/lib/formatters';
+
+/**
+ * Format any date-like value as a plain 'yyyy-MM-dd' string.
+ *
+ * Callers used to pass endDate inconsistently - some a Date object, some a formatted string -
+ * and `new Date(options.endDate)` then parses a bare date string as UTC midnight but a Date
+ * object as the current instant. Normalising here keeps one shape going in.
+ */
+function toDateOnly(value) {
+  if (!value) return null;
+  return typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+    ? value
+    : format(new Date(value), 'yyyy-MM-dd');
+}
+
+/**
+ * Build the generation options for a loan.
+ *
+ * WHY THIS EXISTS: calculateScheduleDuration() branches on whether `endDate` was supplied at
+ * all, so passing it changes the duration RULE rather than just the horizon:
+ *
+ *   endDate + principal <= 0.01   -> schedule TRUNCATED at the settlement date
+ *   endDate + auto_extend         -> periods to cover the horizon, plus one future period
+ *   endDate + principal > 0.01    -> loan.duration || 6
+ *   no endDate                    -> loan.duration
+ *
+ * Nine call sites each decided this for themselves, which is the main reason the same loan
+ * produced different schedules depending on which button was pressed. Decide it once, here.
+ *
+ * @param {Object} loan - Loan record
+ * @param {Object} [opts]
+ * @param {Date|string} [opts.asOf] - Treat this as "today" (defaults to now)
+ * @param {Array} [opts.transactions] - Pre-fetched transactions, to avoid a round trip
+ * @returns {Promise<Object>} Options for regenerateLoanSchedule
+ */
+export async function buildScheduleOptions(loan, { asOf = new Date(), transactions = null } = {}) {
+  const duration = loan.duration;
+
+  // A settled loan's schedule must stop on the day it was actually redeemed. Running it on to
+  // today keeps manufacturing interest periods on capital that has already been repaid.
+  if (loan.status === 'Closed') {
+    const txs = transactions || await api.entities.Transaction.filterAll(
+      { loan_id: loan.id, is_deleted: false },
+      'date'
+    );
+
+    const lastPrincipalPayment = txs
+      .filter(t => !t.is_deleted && t.type === 'Repayment' && (t.principal_applied || 0) > 0)
+      .sort((a, b) => new Date(b.date) - new Date(a.date))[0];
+
+    const endDate = toDateOnly(lastPrincipalPayment?.date || loan.settlement_date);
+    return endDate ? { endDate, duration } : { duration };
+  }
+
+  // auto_extend carries a LIVE loan past its maturity date, so the horizon is today.
+  if (loan.auto_extend) {
+    return { endDate: toDateOnly(asOf), duration };
+  }
+
+  // Everything else runs to its contractual duration. Supplying endDate here would switch
+  // branches above - notably a fully-repaid Live loan would have its schedule truncated,
+  // which is what SuperAdmin's unconditional `{ endDate: new Date() }` was doing.
+  return { duration };
+}
+
+/**
+ * Re-derive schedule paid state from the loan's transactions.
+ *
+ * BaseScheduler.saveSchedule deletes every row and recreates it with status 'Pending' and
+ * zeroed paid columns, so a regeneration always discards paid state. Transactions are the
+ * durable record (see src/lib/latePayments.js:4-10), so it is rebuilt from them here.
+ *
+ * This replaces a pattern that was repeated, and wrong, in five places. Those loops called
+ * applyPaymentWaterfall once per transaction against a single array fetched up front. The
+ * waterfall is PURE - it reads interest_paid / principal_paid / status off the rows it is
+ * given and never mutates them - so every payment was allocated as though it were the first,
+ * all of them piling onto the earliest rows, and because each write sets an ABSOLUTE value
+ * the last transaction processed overwrote all the others. They also passed no options, so
+ * interest was never capped at what had accrued by the payment date.
+ *
+ * @param {string} loanId
+ * @param {Object} [opts]
+ * @param {Object} [opts.product] - Pre-fetched product, to avoid a round trip
+ * @param {Array} [opts.transactions] - Pre-fetched transactions
+ * @returns {Promise<Object>} { totalPrincipalPaid, totalInterestPaid, rowsUpdated }
+ */
+export async function reapplyPaymentsToSchedule(loanId, { product = null, transactions = null } = {}) {
+  // Dynamic import: LoanCalculator statically imports '@/lib/schedule', whose
+  // InterestOnlyScheduler imports back from LoanCalculator. Importing it at module scope here
+  // would join that cycle, which is why regenerateLoanSchedule also imports dynamically.
+  const { applyPaymentWaterfall } = await import('@/components/loan/LoanCalculator');
+
+  const rows = await api.entities.RepaymentSchedule.filterAll(
+    { loan_id: loanId },
+    'installment_number'
+  );
+
+  if (rows.length === 0) {
+    return { totalPrincipalPaid: 0, totalInterestPaid: 0, rowsUpdated: 0 };
+  }
+
+  const txs = transactions || await api.entities.Transaction.filterAll(
+    { loan_id: loanId, is_deleted: false },
+    'date'
+  );
+
+  const repayments = txs
+    .filter(t => !t.is_deleted && t.type === 'Repayment')
+    .sort((a, b) => new Date(a.date) - new Date(b.date));
+
+  let effectiveProduct = product;
+  if (!effectiveProduct) {
+    const loans = await api.entities.Loan.filter({ id: loanId });
+    const productId = loans[0]?.product_id;
+    if (productId) {
+      const products = await api.entities.LoanProduct.filter({ id: productId });
+      effectiveProduct = products[0] || null;
+    }
+  }
+  const interestPaidInAdvance = effectiveProduct?.interest_paid_in_advance || false;
+
+  // Work on copies so each payment sees the effect of the ones before it.
+  const working = rows.map(row => ({ ...row }));
+  const byId = new Map(working.map(row => [row.id, row]));
+
+  let totalPrincipalPaid = 0;
+  let totalInterestPaid = 0;
+
+  for (const tx of repayments) {
+    const { updates } = applyPaymentWaterfall(tx.amount, working, 0, 'credit', {
+      paymentDate: tx.date,
+      interestPaidInAdvance
+    });
+
+    for (const update of updates) {
+      const row = byId.get(update.id);
+      if (!row) continue;
+      row.interest_paid = update.interest_paid;
+      row.principal_paid = update.principal_paid;
+      row.status = update.status;
+      totalPrincipalPaid += update.principalApplied;
+      totalInterestPaid += update.interestApplied;
+    }
+  }
+
+  // One write per changed row, rather than one per payment per row.
+  let rowsUpdated = 0;
+  for (const row of working) {
+    const original = rows.find(r => r.id === row.id);
+    const unchanged =
+      (original.interest_paid || 0) === (row.interest_paid || 0) &&
+      (original.principal_paid || 0) === (row.principal_paid || 0) &&
+      original.status === row.status;
+    if (unchanged) continue;
+
+    await api.entities.RepaymentSchedule.update(row.id, {
+      interest_paid: row.interest_paid,
+      principal_paid: row.principal_paid,
+      status: row.status
+    });
+    rowsUpdated++;
+  }
+
+  await api.entities.Loan.update(loanId, {
+    principal_paid: roundCurrency(totalPrincipalPaid),
+    interest_paid: roundCurrency(totalInterestPaid)
+  });
+
+  return {
+    totalPrincipalPaid: roundCurrency(totalPrincipalPaid),
+    totalInterestPaid: roundCurrency(totalInterestPaid),
+    rowsUpdated
+  };
+}
 
 /**
  * Regenerate schedule if a transaction affected capital balance.
@@ -890,10 +1036,9 @@ export async function maybeRegenerateScheduleAfterCapitalChange(loanId, transact
   const loan = loans[0];
   if (!loan) return false;
 
-  const today = new Date();
-  const options = loan.auto_extend
-    ? { endDate: format(today, 'yyyy-MM-dd'), duration: loan.duration }
-    : { duration: loan.duration };
+  // One resolver for every path, so a receipt and the Regenerate button agree.
+  // Note this now also handles a Closed loan correctly, which the old inline form did not.
+  const options = await buildScheduleOptions(loan);
 
   await regenerateLoanSchedule(loanId, options);
   return true;

@@ -70,7 +70,7 @@ import { format, formatDistanceToNow } from 'date-fns';
 import { toast } from 'sonner';
 import { setOrganizationIdGetter } from '@/api/dataClient';
 import CreateOrganizationDialog from '@/components/organization/CreateOrganizationDialog';
-import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
+import { regenerateLoanSchedule, buildScheduleOptions } from '@/components/loan/LoanScheduleManager';
 
 export default function SuperAdmin() {
   const { isSuperAdmin, user } = useAuth();
@@ -488,7 +488,7 @@ export default function SuperAdmin() {
       while (hasMore) {
         const { data: batch, error } = await supabase
           .from('loans')
-          .select('id, loan_number')
+          .select('id, loan_number, status, duration, auto_extend, settlement_date')
           .eq('organization_id', selectedOrgForSchedules)
           .eq('status', 'Live')
           .eq('is_deleted', false)
@@ -509,9 +509,12 @@ export default function SuperAdmin() {
       for (const loan of allLiveLoans) {
         result.processed++;
         try {
-          await regenerateLoanSchedule(loan.id, {
-            endDate: new Date() // Regenerate up to today
-          });
+          // Was `{ endDate: new Date() }` for every loan regardless of auto_extend. Because
+          // calculateScheduleDuration branches on whether endDate is present, a Live loan whose
+          // capital was fully repaid hit the isSettledLoan branch and had its schedule
+          // TRUNCATED here, while every other entry point generated the full duration.
+          const options = await buildScheduleOptions(loan);
+          await regenerateLoanSchedule(loan.id, options);
           result.succeeded++;
           result.details.push({
             loan: loan.loan_number,

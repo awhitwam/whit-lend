@@ -1,6 +1,5 @@
 import { api } from '@/api/dataClient';
-import { regenerateLoanSchedule } from '@/components/loan/LoanScheduleManager';
-import { applyPaymentWaterfall } from '@/components/loan/LoanCalculator';
+import { regenerateLoanSchedule, buildScheduleOptions } from '@/components/loan/LoanScheduleManager';
 import { format } from 'date-fns';
 
 /**
@@ -22,54 +21,14 @@ async function processLoanAutoExtend(loan, endDate = new Date()) {
   console.log(`[AutoExtend] Processing loan ${loan.loan_number || loanId}...`);
 
   try {
-    // Regenerate the schedule with the new end date
-    // skipDisbursement: true because auto-extend only extends existing loans
-    // that should already have their initial disbursement
-    await regenerateLoanSchedule(loanId, {
-      endDate: formattedEndDate,
-      duration: loan.duration,
-      skipDisbursement: true
-    });
+    // Options come from the shared resolver, and regenerateLoanSchedule re-derives paid state
+    // from transactions itself - so the hand-rolled reapply loop that used to live here is
+    // gone. It called the pure applyPaymentWaterfall repeatedly against one stale array, so
+    // every payment was allocated as though it were the first and each write overwrote the
+    // last. `skipDisbursement` was also a silent no-op; nothing reads it.
+    const options = await buildScheduleOptions(loan, { asOf: endDate });
 
-    // Fetch and reapply all non-deleted repayment transactions
-    const transactions = await api.entities.Transaction.filter({
-      loan_id: loanId,
-      is_deleted: false
-    }, 'date');
-
-    const repayments = transactions.filter(t => t.type === 'Repayment');
-
-    if (repayments.length > 0) {
-      // Get the new schedule
-      const newScheduleRows = await api.entities.RepaymentSchedule.filter(
-        { loan_id: loanId },
-        'installment_number'
-      );
-
-      let totalPrincipalPaid = 0;
-      let totalInterestPaid = 0;
-
-      // Reapply each repayment
-      for (const tx of repayments) {
-        const { updates } = applyPaymentWaterfall(tx.amount, newScheduleRows, 0, 'credit');
-
-        for (const update of updates) {
-          await api.entities.RepaymentSchedule.update(update.id, {
-            interest_paid: update.interest_paid,
-            principal_paid: update.principal_paid,
-            status: update.status
-          });
-          totalPrincipalPaid += update.principalApplied;
-          totalInterestPaid += update.interestApplied;
-        }
-      }
-
-      // Update loan payment totals
-      await api.entities.Loan.update(loanId, {
-        principal_paid: totalPrincipalPaid,
-        interest_paid: totalInterestPaid
-      });
-    }
+    await regenerateLoanSchedule(loanId, options);
 
     console.log(`[AutoExtend] Successfully extended loan ${loan.loan_number || loanId}`);
 

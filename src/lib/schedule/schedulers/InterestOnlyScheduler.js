@@ -7,7 +7,6 @@
  * Extracted from LoanScheduleManager.jsx lines 505-510 and period loop 381-543
  */
 
-import { api } from '@/api/dataClient';
 import { BaseScheduler } from '../BaseScheduler.js';
 import { registerScheduler } from '../registry.js';
 import { format, differenceInDays, addMonths, startOfMonth, addWeeks } from 'date-fns';
@@ -717,15 +716,7 @@ export class InterestOnlyScheduler extends BaseScheduler {
 
   // ============ Same-Day Adjustment Methods (Interest Paid in Advance) ============
 
-  /**
-   * Fetch existing schedule entries for a loan
-   * Used to preserve past paid entries during regeneration
-   */
-  async fetchExistingSchedule(loanId) {
-    // Use filterAll to handle loans with >1000 schedule entries
-    const entries = await api.entities.RepaymentSchedule.filterAll({ loan_id: loanId }, 'due_date');
-    return entries || [];
-  }
+  // fetchExistingSchedule was removed with saveScheduleWithPreservation, its only caller.
 
   /**
    * Find which period a given date falls within
@@ -1023,59 +1014,11 @@ export class InterestOnlyScheduler extends BaseScheduler {
     };
   }
 
-  /**
-   * Enhanced saveSchedule that preserves past paid entries
-   * and can insert same-day adjustment entries
-   */
-  async saveScheduleWithPreservation(loanId, newSchedule, options = {}) {
-    const { capitalChangeDate, preservePaidEntries = true } = options;
-
-    if (!preservePaidEntries) {
-      // Standard save - delete all and recreate
-      return this.saveSchedule(loanId, newSchedule);
-    }
-
-    // Fetch existing schedule
-    const existingSchedule = await this.fetchExistingSchedule(loanId);
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-
-    // Identify entries to preserve (past + paid)
-    const preservedEntries = existingSchedule.filter(entry => {
-      const dueDate = new Date(entry.due_date);
-      dueDate.setHours(0, 0, 0, 0);
-      // Preserve entries that are in the past AND marked as paid
-      return dueDate < today && entry.status === 'Paid';
-    });
-
-    // Get due dates of preserved entries to avoid duplicates
-    const preservedDates = new Set(preservedEntries.map(e => e.due_date));
-
-    // Filter new schedule to exclude dates that are preserved
-    const filteredNewSchedule = newSchedule.filter(entry => !preservedDates.has(entry.due_date));
-
-    // Combine preserved + new (sorted by date)
-    const combinedSchedule = [...preservedEntries, ...filteredNewSchedule].sort((a, b) => {
-      return new Date(a.due_date) - new Date(b.due_date);
-    });
-
-    // Re-number installments
-    combinedSchedule.forEach((entry, idx) => {
-      if (!entry.is_adjustment_entry) {
-        entry.installment_number = idx + 1;
-      }
-    });
-
-    // Delete old and save new
-    await api.entities.RepaymentSchedule.deleteWhere({ loan_id: loanId });
-    const scheduleWithLoanId = combinedSchedule.map(row => ({
-      loan_id: loanId,
-      ...row
-    }));
-    await api.entities.RepaymentSchedule.createMany(scheduleWithLoanId);
-
-    return combinedSchedule;
-  }
+  // saveScheduleWithPreservation was removed here. It had zero call sites - the live path
+  // uses BaseScheduler.saveSchedule - and it spread ...row straight into the insert, which
+  // bypassed the column whitelist saveSchedule deliberately applies. Paid state is now
+  // re-derived from transactions by reapplyPaymentsToSchedule in LoanScheduleManager,
+  // which matches the project rule that transactions are the durable record.
 
   // ============ Display Methods ============
 

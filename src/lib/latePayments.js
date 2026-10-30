@@ -24,6 +24,7 @@
  */
 
 import { toUtcDay, daysBetweenUtc, formatUtcDay } from './interestCalculation.js';
+import { resolveSchedulerType } from './schedulerType.js';
 
 /**
  * Days past the expected interval before a loan is listed.
@@ -52,48 +53,11 @@ const toNumber = (v) => {
 // CLASSIFICATION
 // ============================================================================
 
-// Mirrors deriveSchedulerType in src/components/product/ProductForm.jsx:18-30 and the
-// fallback map in src/components/loan/LoanScheduleManager.jsx:61-67, so this card can
-// never disagree with the engine that built the schedule.
-const PRODUCT_TYPE_MAP = {
-  'Fixed Charge': 'fixed_charge',
-  'Irregular Income': 'irregular_income',
-  'Rent': 'rent',
-  'Roll-Up & Serviced': 'roll_up_serviced'
-};
-
-// 'Roll-Up & Serviced' appears here too because LoanApplicationForm.jsx:392 writes it as
-// a literal interest_type on the loan.
-const INTEREST_TYPE_MAP = {
-  'Rolled-Up': 'rolled_up',
-  'Interest-Only': 'interest_only',
-  'Flat': 'flat_rate',
-  'Reducing': 'reducing_balance',
-  'Roll-Up & Serviced': 'roll_up_serviced'
-};
-
-/**
- * Which scheduler governs this loan.
- *
- * loans.scheduler_type does not exist - migration 056 adds the column to loan_products
- * only - so the product is the authority, and the loan's own product_type/interest_type
- * are the fallback for unmigrated products.
- *
- * @param {Object} loan
- * @param {Object|null} [product]
- * @returns {string} a registered scheduler id
- */
-export function resolveSchedulerType(loan, product) {
-  if (product?.scheduler_type) return product.scheduler_type;
-
-  const productType = product?.product_type || loan?.product_type;
-  if (productType && PRODUCT_TYPE_MAP[productType]) return PRODUCT_TYPE_MAP[productType];
-
-  const interestType = product?.interest_type || loan?.interest_type;
-  if (interestType && INTEREST_TYPE_MAP[interestType]) return INTEREST_TYPE_MAP[interestType];
-
-  return 'reducing_balance';
-}
+// The scheduler mapping now lives in ./schedulerType.js, which is a leaf module with no
+// imports of its own - so importing it keeps this file loadable under plain `node` and the
+// DEPENDENCY RULE above intact. Imported (used below) and re-exported, so existing importers
+// of this module keep working.
+export { resolveSchedulerType };
 
 /**
  * Add whole months to a UTC-midnight day, clamping to the target month's length so

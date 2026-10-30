@@ -865,13 +865,66 @@ async function processLoanSchedules(supabase: any): Promise<TaskResult> {
   // Track updates per loan for summary
   const loanUpdates = new Map<string, { loan_number: string, updated: number, toOverdue: number, toPartial: number }>()
 
+  // Paid-ness is derived from transactions, NOT from repayment_schedules.principal_paid /
+  // interest_paid. Those columns were never backfilled on the bulk-imported book - all 2,149
+  // rows sit at 0/0/'Pending' - so reading them marks the entire book Overdue. See the comment
+  // at src/lib/latePayments.js:4-10; transactions are the durable record.
+  //
+  // For each affected loan we build the pool of money actually allocated by its repayments,
+  // then consume it across that loan's schedule rows oldest-first (the same ordering
+  // applyPaymentWaterfall uses). A row is Overdue only if the pool never reached it.
+  const coverageByScheduleId = new Map<string, 'covered' | 'partial' | 'none'>()
+
+  for (const [loanId] of byLoan) {
+    const [{ data: allRows }, { data: repayments }] = await Promise.all([
+      supabase
+        .from('repayment_schedules')
+        .select('id, due_date, total_due')
+        .eq('loan_id', loanId)
+        .order('due_date', { ascending: true })
+        .limit(10000),
+      supabase
+        .from('transactions')
+        .select('principal_applied, interest_applied')
+        .eq('loan_id', loanId)
+        .eq('type', 'Repayment')
+        .eq('is_deleted', false)
+        .limit(10000)
+    ])
+
+    // Fees sit on the loan rather than on a schedule row, so they do not settle installments.
+    let pool = (repayments || []).reduce(
+      (sum: number, t: any) => sum + (t.principal_applied || 0) + (t.interest_applied || 0),
+      0
+    )
+
+    for (const row of (allRows || []) as any[]) {
+      const due = row.total_due || 0
+      if (pool >= due - 0.01) {
+        pool -= due
+        coverageByScheduleId.set(row.id, 'covered')
+      } else if (pool > 0.01) {
+        coverageByScheduleId.set(row.id, 'partial')
+        pool = 0
+      } else {
+        coverageByScheduleId.set(row.id, 'none')
+      }
+    }
+  }
+
   for (const schedule of (overdueSchedules || []) as any[]) {
     result.processed++
 
     try {
-      const totalPaid = (schedule.principal_paid || 0) + (schedule.interest_paid || 0)
-      const isPartiallyPaid = totalPaid > 0 && totalPaid < schedule.total_due
-      const newStatus = isPartiallyPaid ? 'Partial' : 'Overdue'
+      const coverage = coverageByScheduleId.get(schedule.id) ?? 'none'
+
+      // A row the payments fully covered is settled, not overdue.
+      if (coverage === 'covered') {
+        result.skipped++
+        continue
+      }
+
+      const newStatus = coverage === 'partial' ? 'Partial' : 'Overdue'
 
       // Update status
       const { error: updateError } = await supabase
@@ -1159,7 +1212,7 @@ async function recalculateLoanBalances(supabase: any): Promise<TaskResult> {
         // Fetch repayment schedule
         const { data: schedules, error: schedError } = await supabase
           .from('repayment_schedules')
-          .select('id, due_date, principal_due, interest_due, status')
+          .select('id, due_date, principal_amount, interest_amount, status')
           .eq('loan_id', loan.id)
           .order('due_date', { ascending: true })
           .limit(10000)
@@ -1209,7 +1262,7 @@ async function recalculateLoanBalances(supabase: any): Promise<TaskResult> {
           // Standard loans: sum interest from schedule minus interest paid
           const scheduleInterestDue = (schedules || [])
             .filter((s: any) => new Date(s.due_date) <= today)
-            .reduce((sum: number, s: any) => sum + (s.interest_due || 0), 0)
+            .reduce((sum: number, s: any) => sum + (s.interest_amount || 0), 0)
 
           const interestPaid = activeTx
             .filter((t: any) => t.type === 'Repayment')
