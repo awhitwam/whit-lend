@@ -13,6 +13,7 @@ import { Loader2, FileDown, FileSpreadsheet, Calendar, AlertCircle, CheckCircle2
 import { formatCurrency } from '@/components/loan/LoanCalculator';
 import { format, subMonths, startOfMonth } from 'date-fns';
 import { generateAccountantReportPDF, generateAccountantReportCSV } from '@/lib/accountantReportGenerator';
+import DateRangePresetButtons from '@/components/reports/DateRangePresetButtons';
 import {
   classifyBankEntry,
   summariseAccountantReport,
@@ -565,6 +566,12 @@ export default function AccountantReport() {
               {reportData.length !== summary.total && ` (${reportData.length} allocation lines)`}
             </div>
           </div>
+          <DateRangePresetButtons
+            fromDate={fromDate}
+            toDate={toDate}
+            onSelect={(preset) => { setFromDate(preset.from); setToDate(preset.to); }}
+            className="mt-4"
+          />
         </CardContent>
       </Card>
 

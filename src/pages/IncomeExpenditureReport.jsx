@@ -10,8 +10,8 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Loader2, Calendar, TrendingUp, TrendingDown, ArrowRightLeft, ChevronRight, ChevronDown } from 'lucide-react';
 import { formatCurrency } from '@/lib/formatters';
-import { format, subMonths, startOfMonth, endOfMonth } from 'date-fns';
-import { Button } from '@/components/ui/button';
+import { format, subMonths, startOfMonth } from 'date-fns';
+import DateRangePresetButtons from '@/components/reports/DateRangePresetButtons';
 
 export default function IncomeExpenditureReport() {
   const { currentOrganization } = useOrganization();
@@ -20,28 +20,6 @@ export default function IncomeExpenditureReport() {
   // Default to last 12 months
   const [fromDate, setFromDate] = useState(() => format(startOfMonth(subMonths(new Date(), 12)), 'yyyy-MM-dd'));
   const [toDate, setToDate] = useState(() => format(new Date(), 'yyyy-MM-dd'));
-
-  // Quick month selection
-  const selectMonth = (date) => {
-    setFromDate(format(startOfMonth(date), 'yyyy-MM-dd'));
-    setToDate(format(endOfMonth(date), 'yyyy-MM-dd'));
-  };
-
-  const months = useMemo(() => {
-    const result = [];
-    const now = new Date();
-    for (let i = 0; i < 12; i++) {
-      result.push(subMonths(now, i));
-    }
-    return result;
-  }, []);
-
-  const activeMonth = useMemo(() => {
-    const fromStart = startOfMonth(new Date(fromDate));
-    const toEnd = endOfMonth(new Date(fromDate));
-    if (format(toEnd, 'yyyy-MM-dd') === toDate) return format(fromStart, 'yyyy-MM');
-    return null;
-  }, [fromDate, toDate]);
 
   // Track which detail sections are expanded
   const [expandedRows, setExpandedRows] = useState(new Set());
@@ -534,23 +512,12 @@ export default function IncomeExpenditureReport() {
               </div>
             </div>
           </div>
-          <div className="flex items-center gap-1.5 mt-3 flex-wrap">
-            {months.map(m => {
-              const key = format(m, 'yyyy-MM');
-              const isActive = activeMonth === key;
-              return (
-                <Button
-                  key={key}
-                  variant={isActive ? 'default' : 'outline'}
-                  size="sm"
-                  className="h-7 px-2.5 text-xs"
-                  onClick={() => selectMonth(m)}
-                >
-                  {format(m, 'MMM yy')}
-                </Button>
-              );
-            })}
-          </div>
+          <DateRangePresetButtons
+            fromDate={fromDate}
+            toDate={toDate}
+            onSelect={(preset) => { setFromDate(preset.from); setToDate(preset.to); }}
+            className="mt-3"
+          />
         </CardContent>
       </Card>
 
